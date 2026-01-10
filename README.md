@@ -96,6 +96,20 @@ To push the generated schedule to Tunarr:
 ./schedularr generate --apply
 ```
 
+### Interactive Editor (TUI)
+
+Schedularr includes a terminal user interface to help you manage your scheduling rules interactively.
+
+```bash
+./schedularr tui
+```
+
+This interface allows you to:
+- List existing scheduling blocks
+- Add new blocks
+- Edit block details (Name, Cron, Duration, Channel ID)
+- Save changes back to your configuration file
+
 ## Development
 
 Run tests:

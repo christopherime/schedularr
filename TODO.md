@@ -21,6 +21,10 @@
 - [ ] **Metrics**: Expose Prometheus metrics for scheduling success/failure rates.
 
 ## UX / CLI
-- [ ] **Interactive Mode**: Add interactive prompts for configuration setup.
+- [x] **Interactive Mode**: Add interactive prompts for configuration setup (TUI implemented).
 - [ ] **Table Output**: Improve CLI output formatting for generated schedules.
 - [ ] **Validation**: Add command to validate configuration file syntax and logic.
+- [ ] **TUI Improvements**:
+    - [ ] Add field validation in the editor.
+    - [ ] Support editing Filter rules (Genres, Tags, etc.) in TUI.
+    - [ ] Add confirmation dialog before quitting without saving.
