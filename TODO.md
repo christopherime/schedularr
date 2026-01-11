@@ -253,10 +253,10 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Add `SeriesBlock` struct with series list
   - [x] Add `SeriesConfig` with show title, episodes per block, season/episode tracking
   - [x] Support mixing series and filter-based blocks
-- [ ] **Episode Tracking Schema**: Design state tracking structure
-  - [ ] Track current season/episode per series
-  - [ ] Track completion status
-  - [ ] Track last aired date/time
+- [x] **Episode Tracking Schema**: Design state tracking structure
+  - [x] Track current season/episode per series
+  - [x] Track completion status
+  - [x] Track last aired date/time
 
 #### 2.3.2 Persistence Layer
 
