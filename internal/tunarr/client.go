@@ -5,26 +5,34 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"time"
 )
 
 // Client is a Tunarr API client.
 type Client struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
+	baseURL       string
+	apiKey        string
+	httpClient    *http.Client
+	maxRetries    int
+	retryWaitMin  time.Duration
+	retryWaitMax  time.Duration
 }
 
 // NewClient creates a new Tunarr API client with the given configuration.
 func NewClient(cfg Config) *Client {
 	return &Client{
-		baseURL: cfg.URL,
-		apiKey:  cfg.APIKey,
+		baseURL:      cfg.URL,
+		apiKey:       cfg.APIKey,
+		maxRetries:   3,
+		retryWaitMin: 1 * time.Second,
+		retryWaitMax: 30 * time.Second,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second, // Increased from 10s to account for retries
 		},
 	}
 }
@@ -57,24 +65,157 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body inter
 	return req, nil
 }
 
-// do executes the HTTP request and handles common error cases.
+// APIError represents an error response from the Tunarr API.
+type APIError struct {
+	Method     string
+	URL        string
+	StatusCode int
+	Body       string
+	Err        error
+}
+
+func (e *APIError) Error() string {
+	if e.Body != "" {
+		return fmt.Sprintf("%s %s failed with status %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
+	}
+	if e.Err != nil {
+		return fmt.Sprintf("%s %s failed: %v", e.Method, e.URL, e.Err)
+	}
+	return fmt.Sprintf("%s %s failed with status %d", e.Method, e.URL, e.StatusCode)
+}
+
+func (e *APIError) Unwrap() error {
+	return e.Err
+}
+
+// isRetryable determines if an HTTP status code should be retried.
+func isRetryable(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests ||
+		statusCode == http.StatusServiceUnavailable ||
+		statusCode == http.StatusGatewayTimeout ||
+		statusCode >= 500
+}
+
+// backoff calculates the exponential backoff duration for a retry attempt.
+func (c *Client) backoff(attempt int) time.Duration {
+	backoff := float64(c.retryWaitMin) * math.Pow(2, float64(attempt))
+	if backoff > float64(c.retryWaitMax) {
+		backoff = float64(c.retryWaitMax)
+	}
+	return time.Duration(backoff)
+}
+
+// do executes the HTTP request with retry logic and enhanced error handling.
 func (c *Client) do(req *http.Request, v interface{}) error {
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("api returned non-ok status: %d", resp.StatusCode)
-	}
-
-	if v != nil {
-		if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
-			return fmt.Errorf("failed to decode response: %w", err)
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		// Clone request body for retries (if present)
+		var bodyBytes []byte
+		if req.Body != nil {
+			bodyBytes, _ = io.ReadAll(req.Body)
+			_ = req.Body.Close()
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = &APIError{
+				Method: req.Method,
+				URL:    req.URL.String(),
+				Err:    err,
+			}
+
+			// Network errors are retryable
+			if attempt < c.maxRetries {
+				time.Sleep(c.backoff(attempt))
+				// Restore request body for retry
+				if bodyBytes != nil {
+					req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		// Read response body for error reporting
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return &APIError{
+				Method:     req.Method,
+				URL:        req.URL.String(),
+				StatusCode: resp.StatusCode,
+				Err:        fmt.Errorf("failed to read response body: %w", err),
+			}
+		}
+
+		// Check status code
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			apiErr := &APIError{
+				Method:     req.Method,
+				URL:        req.URL.String(),
+				StatusCode: resp.StatusCode,
+				Body:       string(body),
+			}
+
+			// Retry on retryable status codes
+			if isRetryable(resp.StatusCode) && attempt < c.maxRetries {
+				lastErr = apiErr
+				time.Sleep(c.backoff(attempt))
+				// Restore request body for retry
+				if bodyBytes != nil {
+					req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				}
+				continue
+			}
+
+			return apiErr
+		}
+
+		// Decode response if destination is provided
+		if v != nil {
+			if err := json.Unmarshal(body, v); err != nil {
+				return &APIError{
+					Method:     req.Method,
+					URL:        req.URL.String(),
+					StatusCode: resp.StatusCode,
+					Err:        fmt.Errorf("failed to decode response: %w", err),
+				}
+			}
+		}
+
+		return nil
 	}
 
+	return lastErr
+}
+
+// validateChannel validates a Channel struct for required fields.
+func validateChannel(ch *Channel) error {
+	if ch.ID == "" {
+		return errors.New("channel missing required field: id")
+	}
+	if ch.Name == "" {
+		return fmt.Errorf("channel %s missing required field: name", ch.ID)
+	}
+	return nil
+}
+
+// validateProgram validates a Program struct for required fields.
+func validateProgram(p *Program) error {
+	if p.ID == "" {
+		return errors.New("program missing required field: id")
+	}
+	if p.Title == "" {
+		return fmt.Errorf("program %s missing required field: title", p.ID)
+	}
+	if p.Duration <= 0 {
+		return fmt.Errorf("program %s has invalid duration: %d", p.ID, p.Duration)
+	}
+	if p.Type != "movie" && p.Type != "episode" && p.Type != "track" && p.Type != "" {
+		return fmt.Errorf("program %s has invalid type: %s", p.ID, p.Type)
+	}
 	return nil
 }
 
@@ -88,6 +229,13 @@ func (c *Client) GetChannels() ([]Channel, error) {
 	var channels []Channel
 	if err := c.do(req, &channels); err != nil {
 		return nil, err
+	}
+
+	// Validate response
+	for i := range channels {
+		if err := validateChannel(&channels[i]); err != nil {
+			return nil, fmt.Errorf("invalid channel in response: %w", err)
+		}
 	}
 
 	return channels, nil
@@ -106,12 +254,30 @@ func (c *Client) GetPrograms() ([]Program, error) {
 		return nil, err
 	}
 
+	// Validate response
+	for i := range programs {
+		if err := validateProgram(&programs[i]); err != nil {
+			return nil, fmt.Errorf("invalid program in response: %w", err)
+		}
+	}
+
 	return programs, nil
 }
 
 // UpdateSchedule updates the programming schedule for a specific channel.
 // Note: This endpoint is a placeholder and may need to be updated based on actual Tunarr API.
 func (c *Client) UpdateSchedule(channelID string, schedule []Program) error {
+	if channelID == "" {
+		return errors.New("channel ID cannot be empty")
+	}
+
+	// Validate all programs in the schedule
+	for i := range schedule {
+		if err := validateProgram(&schedule[i]); err != nil {
+			return fmt.Errorf("invalid program in schedule at index %d: %w", i, err)
+		}
+	}
+
 	req, err := c.newRequest(context.Background(), http.MethodPost, "/api/channels/"+channelID+"/schedule", schedule)
 	if err != nil {
 		return err

@@ -122,7 +122,7 @@ func TestClient_GetPrograms(t *testing.T) {
 func TestClient_UpdateSchedule(t *testing.T) {
 	channelID := "channel-1"
 	schedule := []Program{
-		{ID: "prog-1", Title: "Show A"},
+		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
