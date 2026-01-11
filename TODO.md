@@ -198,13 +198,16 @@
 ### 4.1 Testing & Quality
 
 - [ ] **Unit Test Coverage**: Achieve >80% coverage
-  - [ ] Test all scheduler logic
-  - [ ] Test series progression
-  - [ ] Test state management
-  - [ ] Test API client
+  - [x] Test core scheduler logic (53.3% coverage for scheduler package)
+  - [x] Test conflict resolution (overlapping slots, priority)
+  - [x] Test gap filling logic (basic cases)
+  - [x] Test API client (68% coverage for tunarr package)
+  - [ ] Test series progression (not yet implemented)
+  - [ ] Test state management (not yet implemented)
+  - [ ] Add integration tests for full scheduling workflow
 - [ ] **Integration Tests**: Test against real Tunarr instance
 - [x] **Linting Compliance**: Fix all linter issues
-  - [x] Run `golangci-lint run` and fix issues (1 acceptable issue remaining)
+  - [x] Run `golangci-lint run` and fix issues (acceptable complexity warnings only)
   - [x] Run `gosec ./...` and fix security issues (0 issues)
   - [x] Run `govulncheck ./...` and address vulnerabilities (0 vulnerabilities)
 
