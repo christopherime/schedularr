@@ -8,6 +8,7 @@ import (
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -15,65 +16,216 @@ import (
 var (
 	apply         bool
 	schedulerFile string
+	dryRun        bool
+	verbose       bool
+)
+
+// Color helpers
+var (
+	successColor = color.New(color.FgGreen, color.Bold)
+	errorColor   = color.New(color.FgRed, color.Bold)
+	infoColor    = color.New(color.FgCyan)
+	warnColor    = color.New(color.FgYellow)
 )
 
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate schedule based on rules",
+	Long: `Generate programming schedules based on configured blocks.
+
+This command:
+1. Fetches available content from Tunarr libraries
+2. Applies filtering rules from each block
+3. Generates optimized schedules with conflict resolution
+4. Optionally applies the schedule to Tunarr channels
+
+Use --dry-run to preview schedules without applying them.
+Use --verbose for detailed output including filtering and history.`,
 	Run: func(_ *cobra.Command, _ []string) {
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			fmt.Printf("Error parsing config: %v\n", err)
+		if err := runGenerate(); err != nil {
+			errorColor.Fprintf(os.Stderr, "✗ Error: %v\n", err)
 			os.Exit(1)
 		}
+	},
+}
 
-		// Load scheduler configuration
-		schedCfg, err := config.LoadSchedulerConfig(&cfg, schedulerFile)
+func runGenerate() error {
+	// Parse configuration
+	var cfg config.Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Load scheduler configuration
+	schedCfg, err := config.LoadSchedulerConfig(&cfg, schedulerFile)
+	if err != nil {
+		return fmt.Errorf("failed to load scheduler config: %w", err)
+	}
+
+	if len(schedCfg.Blocks) == 0 {
+		return fmt.Errorf("no scheduling blocks configured")
+	}
+
+	infoColor.Printf("📋 Loaded %d scheduling block(s)\n", len(schedCfg.Blocks))
+
+	// Create Tunarr client
+	client := tunarr.NewClient(cfg.Tunarr)
+
+	// Fetch available content
+	infoColor.Println("📡 Fetching content from Tunarr...")
+	programs, err := fetchAllContent(client)
+	if err != nil {
+		return fmt.Errorf("failed to fetch content: %w", err)
+	}
+
+	if len(programs) == 0 {
+		warnColor.Println("⚠ No content available - using fallback GetPrograms()")
+		programs, err = client.GetPrograms()
 		if err != nil {
-			fmt.Printf("Error loading scheduler config: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to fetch programs: %w", err)
+		}
+	}
+
+	successColor.Printf("✓ Found %d program(s)\n", len(programs))
+
+	// Create scheduling engine
+	engine := scheduler.NewEngine(client, schedCfg.Blocks)
+
+	// Generate schedule
+	start := time.Now()
+	end := start.Add(24 * time.Hour) // Plan for next 24h
+
+	infoColor.Printf("🗓️  Generating schedule from %s to %s\n",
+		start.Format("2006-01-02 15:04"),
+		end.Format("2006-01-02 15:04"))
+
+	plan, err := engine.GenerateForTimeRange(start, end, programs)
+	if err != nil {
+		return fmt.Errorf("failed to generate schedule: %w", err)
+	}
+
+	// Display results
+	displaySchedule(plan, verbose)
+
+	// Apply to Tunarr if requested
+	if apply && !dryRun {
+		return applySchedule(client, plan)
+	} else if dryRun {
+		infoColor.Println("\n🔍 Dry run mode - schedule not applied")
+	} else {
+		infoColor.Println("\n💡 Use --apply to push schedule to Tunarr")
+	}
+
+	return nil
+}
+
+func fetchAllContent(client *tunarr.Client) ([]tunarr.Program, error) {
+	var allPrograms []tunarr.Program
+
+	// Try to fetch from libraries
+	libraries, err := client.GetLibraries()
+	if err != nil {
+		if verbose {
+			warnColor.Printf("⚠ Could not fetch libraries: %v\n", err)
+		}
+		return allPrograms, nil
+	}
+
+	if verbose {
+		infoColor.Printf("📚 Found %d librar(y/ies)\n", len(libraries))
+	}
+
+	for _, lib := range libraries {
+		if verbose {
+			fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
 		}
 
-		if len(schedCfg.Blocks) == 0 {
-			fmt.Println("No scheduling blocks configured")
-			os.Exit(1)
-		}
-
-		client := tunarr.NewClient(cfg.Tunarr)
-
-		// Fetch source content
-		programs, err := client.GetPrograms()
+		programs, err := client.GetLibraryPrograms(lib.ID)
 		if err != nil {
-			fmt.Printf("Error fetching content: %v\n", err)
-		}
-
-		engine := scheduler.NewEngine(client, schedCfg.Blocks)
-
-		start := time.Now()
-		end := start.Add(24 * time.Hour) // Plan for next 24h
-
-		plan, err := engine.GenerateForTimeRange(start, end, programs)
-		if err != nil {
-			fmt.Printf("Error generating schedule: %v\n", err)
-			os.Exit(1)
-		}
-
-		for cid, items := range plan {
-			fmt.Printf("Channel %s: %d items scheduled\n", cid, len(items))
-			for _, item := range items {
-				fmt.Printf(" - %s (%d min)\n", item.Title, item.Duration/60000)
+			if verbose {
+				warnColor.Printf("    ⚠ Could not fetch programs from %s: %v\n", lib.Name, err)
 			}
+			continue
+		}
 
-			if apply {
-				fmt.Printf("Applying schedule to channel %s...\n", cid)
-				if err := client.UpdateSchedule(cid, items); err != nil {
-					fmt.Printf("Failed to update schedule for channel %s: %v\n", cid, err)
-				} else {
-					fmt.Printf("Successfully updated schedule for channel %s\n", cid)
+		if verbose {
+			fmt.Printf("    ✓ %d programs\n", len(programs))
+		}
+
+		allPrograms = append(allPrograms, programs...)
+	}
+
+	return allPrograms, nil
+}
+
+func displaySchedule(plan map[string][]tunarr.Program, showVerbose bool) {
+	if len(plan) == 0 {
+		warnColor.Println("\n⚠ No schedule generated")
+		return
+	}
+
+	fmt.Println()
+	successColor.Println("✓ Schedule Generated")
+	fmt.Println("=" + fmt.Sprintf("%80s", "=")[1:])
+
+	totalItems := 0
+	for cid, items := range plan {
+		totalDuration := int64(0)
+		for _, item := range items {
+			totalDuration += item.Duration
+		}
+
+		fmt.Printf("\n📺 Channel %s: %d items (%d hours %d min)\n",
+			cid, len(items),
+			totalDuration/3600000,
+			(totalDuration%3600000)/60000)
+
+		if showVerbose {
+			for i, item := range items {
+				fmt.Printf("  %3d. %s (%d min)\n",
+					i+1, item.Title, item.Duration/60000)
+				if item.Type == "episode" && item.ShowTitle != "" {
+					fmt.Printf("       %s S%02dE%02d\n",
+						item.ShowTitle, item.Season, item.Episode)
 				}
 			}
 		}
-	},
+
+		totalItems += len(items)
+	}
+
+	fmt.Printf("\n📊 Total: %d items scheduled across %d channel(s)\n",
+		totalItems, len(plan))
+}
+
+func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) error {
+	fmt.Println()
+	infoColor.Println("🚀 Applying schedule to Tunarr...")
+
+	successCount := 0
+	failCount := 0
+
+	for cid, items := range plan {
+		fmt.Printf("  📺 Channel %s...", cid)
+
+		if err := client.UpdateSchedule(cid, items); err != nil {
+			errorColor.Print(" ✗\n")
+			errorColor.Printf("     Error: %v\n", err)
+			failCount++
+		} else {
+			successColor.Print(" ✓\n")
+			successCount++
+		}
+	}
+
+	fmt.Println()
+	if failCount == 0 {
+		successColor.Printf("✓ Successfully applied schedule to %d channel(s)\n", successCount)
+	} else {
+		warnColor.Printf("⚠ Applied to %d channel(s), %d failed\n", successCount, failCount)
+	}
+
+	return nil
 }
 
 func init() {
