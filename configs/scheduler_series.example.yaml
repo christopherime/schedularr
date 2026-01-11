@@ -1,0 +1,37 @@
+# Series-Based Scheduler Configuration Example
+blocks:
+  # Series Block: Schedules specific shows in order
+  - type: "series"
+    name: "Saturday Evening Anime"
+    cron: "0 20 * * 6" # Every Saturday at 8 PM
+    duration: 180      # 3 hours
+    channel_id: "channel-1"
+    priority: 10
+    series:
+      - show_title: "Series A"
+        episodes_per_block: 2
+        start_season: 1    # Optional: Start from specific season
+        start_episode: 1   # Optional: Start from specific episode
+      - show_title: "Series B"
+        episodes_per_block: 2
+      - show_title: "Series C"
+        episodes_per_block: 2
+    fallback:
+      mode: "filler"
+      filler_filter:
+        genres: ["Animation"]
+        max_duration: 30
+
+  # Filter Block: Traditional criteria-based scheduling
+  - type: "filter"
+    name: "Morning Movies"
+    cron: "0 9 * * *" # Every day at 9 AM
+    duration: 120     # 2 hours
+    channel_id: "channel-1"
+    filter:
+      genres: ["Comedy"]
+      max_duration: 90
+    filler:
+      enabled: true
+      filler_list_id: "bumpers-list"
+      min_gap_time: 2
