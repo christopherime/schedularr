@@ -84,14 +84,14 @@ This TODO is structured to align Schedularr with established architectural patte
   - [ ] Keep existing schedule generation as `generate schedule` subcommand
   - **Criteria:** `./schedularr generate --template=basic --output=my-scheduler.yaml` creates valid file
 
-- [ ] **Create `run` Command**
-  - [ ] Implement `./schedularr run [options]` command
-  - [ ] Start the scheduling system (daemon mode)
-  - [ ] Load and validate configuration
-  - [ ] Execute core scheduling logic on cron schedule
-  - [ ] Support `--daemon` flag for background operation
-  - [ ] Support `--once` flag for single execution
-  - [ ] Graceful shutdown on SIGTERM/SIGINT
+- [x] **Create `run` Command**
+  - [x] Implement `./schedularr run [options]` command
+  - [x] Start the scheduling system (daemon mode)
+  - [x] Load and validate configuration
+  - [x] Execute core scheduling logic on cron schedule
+  - [x] Support `--daemon` flag for background operation (Default behavior of run)
+  - [x] Support `--once` flag for single execution
+  - [x] Graceful shutdown on SIGTERM/SIGINT
   - **Criteria:** `./schedularr run --daemon` starts scheduler in background
 
 ### 0.3 Code Quality & Standards Alignment

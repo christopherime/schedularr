@@ -44,22 +44,23 @@ This command:
 Use --dry-run to preview schedules without applying them.
 Use --verbose for detailed output including filtering and history.`,
 	Run: func(_ *cobra.Command, _ []string) {
-		if err := runGenerate(); err != nil {
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error: failed to parse config:"), err)
+			os.Exit(1)
+		}
+
+		if err := ProcessSchedule(&cfg, schedulerFile, apply, dryRun); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error:"), err)
 			os.Exit(1)
 		}
 	},
 }
 
-func runGenerate() error {
-	// Parse configuration
-	var cfg config.Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return fmt.Errorf("failed to parse config: %w", err)
-	}
-
+// ProcessSchedule generates and optionally applies the schedule.
+func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bool) error {
 	// Load scheduler configuration
-	schedCfg, err := config.LoadSchedulerConfig(&cfg, schedulerFile)
+	schedCfg, err := config.LoadSchedulerConfig(cfg, schedFile)
 	if err != nil {
 		return fmt.Errorf("failed to load scheduler config: %w", err)
 	}
