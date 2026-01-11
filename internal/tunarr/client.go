@@ -1,18 +1,21 @@
+// Package tunarr provides a client for interacting with the Tunarr API.
 package tunarr
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
-	"bytes"
 )
 
+// Client is a Tunarr API client.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
 }
 
+// NewClient creates a new Tunarr API client with the given configuration.
 func NewClient(cfg Config) *Client {
 	return &Client{
 		baseURL: cfg.URL,
@@ -22,8 +25,9 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// GetChannels retrieves all channels from the Tunarr instance.
 func (c *Client) GetChannels() ([]Channel, error) {
-	url := fmt.Sprintf("%s/api/channels", c.baseURL)
+	url := c.baseURL + "/api/channels"
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch channels: %w", err)
@@ -42,9 +46,10 @@ func (c *Client) GetChannels() ([]Channel, error) {
 	return channels, nil
 }
 
+// GetPrograms retrieves all available programs from the Tunarr instance.
+// Note: This endpoint is a placeholder and may need to be updated based on actual Tunarr API.
 func (c *Client) GetPrograms() ([]Program, error) {
-	// Placeholder endpoint - likely different in reality
-	url := fmt.Sprintf("%s/api/programs", c.baseURL)
+	url := c.baseURL + "/api/programs"
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch programs: %w", err)
@@ -63,10 +68,11 @@ func (c *Client) GetPrograms() ([]Program, error) {
 	return programs, nil
 }
 
+// UpdateSchedule updates the programming schedule for a specific channel.
+// Note: This endpoint is a placeholder and may need to be updated based on actual Tunarr API.
 func (c *Client) UpdateSchedule(channelID string, schedule []Program) error {
-	// Placeholder endpoint
-	url := fmt.Sprintf("%s/api/channels/%s/schedule", c.baseURL, channelID)
-	
+	url := c.baseURL + "/api/channels/" + channelID + "/schedule"
+
 	// Create payload - likely list of content IDs or program objects
 	// Tunarr API specifics needed here. Assuming sending full objects or IDs.
 	body, err := json.Marshal(schedule)

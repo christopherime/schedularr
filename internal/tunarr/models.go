@@ -1,5 +1,6 @@
 package tunarr
 
+// Channel represents a Tunarr TV channel.
 type Channel struct {
 	ID      string `json:"id"`
 	Number  int    `json:"number"`
@@ -9,6 +10,7 @@ type Channel struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// Program represents a media program (movie, episode, or track) in Tunarr.
 type Program struct {
 	ID        string   `json:"id"`
 	Title     string   `json:"title"`

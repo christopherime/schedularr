@@ -7,50 +7,70 @@ import (
 	"github.com/geekxflood/schedularr/internal/tunarr"
 )
 
-// FilterPrograms filters a list of programs based on the provided filter criteria
+// FilterPrograms filters a list of programs based on the provided filter criteria.
 func FilterPrograms(programs []tunarr.Program, f Filter) ([]tunarr.Program, error) {
-	var filtered []tunarr.Program
-	var titleRegex *regexp.Regexp
-	var err error
+	filtered := make([]tunarr.Program, 0, len(programs))
 
-	if f.TitlePattern != "" {
-		titleRegex, err = regexp.Compile(f.TitlePattern)
-		if err != nil {
-			return nil, err
-		}
+	titleRegex, err := compileTitlePattern(f.TitlePattern)
+	if err != nil {
+		return nil, err
 	}
 
 	for _, p := range programs {
-		if titleRegex != nil && !titleRegex.MatchString(p.Title) {
+		if !matchesFilter(p, f, titleRegex) {
 			continue
 		}
-
-		if len(f.Genres) > 0 && !containsAny(p.Genres, f.Genres) {
-			continue
-		}
-
-		if len(f.Ratings) > 0 && !contains(f.Ratings, p.Rating) {
-			continue
-		}
-
-		if f.YearFrom > 0 && p.Year < f.YearFrom {
-			continue
-		}
-		if f.YearTo > 0 && p.Year > f.YearTo {
-			continue
-		}
-
-		durationMin := int(p.Duration / 60000) // convert ms to min
-		if f.MinDuration > 0 && durationMin < f.MinDuration {
-			continue
-		}
-		if f.MaxDuration > 0 && durationMin > f.MaxDuration {
-			continue
-		}
-
 		filtered = append(filtered, p)
 	}
 	return filtered, nil
+}
+
+func compileTitlePattern(pattern string) (*regexp.Regexp, error) {
+	if pattern == "" {
+		return nil, nil
+	}
+	return regexp.Compile(pattern)
+}
+
+func matchesFilter(p tunarr.Program, f Filter, titleRegex *regexp.Regexp) bool {
+	if titleRegex != nil && !titleRegex.MatchString(p.Title) {
+		return false
+	}
+
+	if len(f.Genres) > 0 && !containsAny(p.Genres, f.Genres) {
+		return false
+	}
+
+	if len(f.Ratings) > 0 && !contains(f.Ratings, p.Rating) {
+		return false
+	}
+
+	if !matchesYearRange(p.Year, f.YearFrom, f.YearTo) {
+		return false
+	}
+
+	durationMin := int(p.Duration / 60000) // convert ms to min
+	return matchesDurationRange(durationMin, f.MinDuration, f.MaxDuration)
+}
+
+func matchesYearRange(year, yearFrom, yearTo int) bool {
+	if yearFrom > 0 && year < yearFrom {
+		return false
+	}
+	if yearTo > 0 && year > yearTo {
+		return false
+	}
+	return true
+}
+
+func matchesDurationRange(duration, minDuration, maxDuration int) bool {
+	if minDuration > 0 && duration < minDuration {
+		return false
+	}
+	if maxDuration > 0 && duration > maxDuration {
+		return false
+	}
+	return true
 }
 
 func contains(slice []string, val string) bool {

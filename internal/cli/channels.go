@@ -1,3 +1,4 @@
+// Package cli provides command-line interface commands for Schedularr.
 package cli
 
 import (
@@ -14,16 +15,12 @@ import (
 var channelsCmd = &cobra.Command{
 	Use:   "channels",
 	Short: "List all Tunarr channels",
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		var cfg config.Config
 		if err := viper.Unmarshal(&cfg); err != nil {
 			fmt.Printf("Error parsing config: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Apply defaults if not set (viper unmarshal might not fill missing fields with struct defaults unless verified)
-		// For simplicity, we assume viper has defaults or we handle empty strings.
-		// Actually, let's manually check or rely on viper defaults set in root.
 
 		client := tunarr.NewClient(cfg.Tunarr)
 		channels, err := client.GetChannels()
@@ -33,11 +30,17 @@ var channelsCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "ID\tNumber\tName\tEnabled")
+		if _, err := fmt.Fprintln(w, "ID\tNumber\tName\tEnabled"); err != nil {
+			fmt.Printf("Error writing header: %v\n", err)
+			os.Exit(1)
+		}
 		for _, ch := range channels {
 			fmt.Fprintf(w, "%s\t%d\t%s\t%v\n", ch.ID, ch.Number, ch.Name, ch.Enabled)
 		}
-		w.Flush()
+		if err := w.Flush(); err != nil {
+			fmt.Printf("Error flushing output: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 

@@ -17,7 +17,7 @@ var apply bool
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate schedule based on rules",
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		var cfg config.Config
 		if err := viper.Unmarshal(&cfg); err != nil {
 			fmt.Printf("Error parsing config: %v\n", err)
@@ -48,7 +48,7 @@ var generateCmd = &cobra.Command{
 			for _, item := range items {
 				fmt.Printf(" - %s (%d min)\n", item.Title, item.Duration/60000)
 			}
-			
+
 			if apply {
 				fmt.Printf("Applying schedule to channel %s...\n", cid)
 				if err := client.UpdateSchedule(cid, items); err != nil {

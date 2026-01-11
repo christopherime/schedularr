@@ -1,7 +1,10 @@
+// Package tui provides a terminal user interface for managing Schedularr configuration.
 package tui
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -26,6 +29,7 @@ func (i item) Title() string       { return i.block.Name }
 func (i item) Description() string { return fmt.Sprintf("%s | %d min | %s", i.block.Cron, i.block.Duration, i.block.ChannelID) }
 func (i item) FilterValue() string { return i.block.Name }
 
+// Model is the Bubble Tea model for the TUI.
 type Model struct {
 	cfg        *config.Config
 	list       list.Model
@@ -35,6 +39,7 @@ type Model struct {
 	selected   int // index of block being edited
 }
 
+// NewModel creates a new TUI model with the given configuration.
 func NewModel(cfg *config.Config) Model {
 	items := make([]list.Item, len(cfg.Scheduler.Blocks))
 	for i, b := range cfg.Scheduler.Blocks {
@@ -77,6 +82,7 @@ func NewModel(cfg *config.Config) Model {
 	}
 }
 
+// Init initializes the TUI model.
 func (m Model) Init() tea.Cmd {
 	return textinput.Blink
 }
@@ -102,14 +108,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 							m.state = stateEditBlock
 							m.selected = m.list.Index()
-							
+
 							// Load selected block into inputs
 							b := m.cfg.Scheduler.Blocks[m.selected]
 							m.inputs[0].SetValue(b.Name)
 							m.inputs[1].SetValue(b.Cron)
-							m.inputs[2].SetValue(fmt.Sprintf("%d", b.Duration))
+							m.inputs[2].SetValue(strconv.Itoa(b.Duration))
 							m.inputs[3].SetValue(b.ChannelID)
-							
+
 							m.resetInputs()
 							return m, nil
 						case "n": // New block
@@ -120,7 +126,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 							m.resetInputs()
 							return m, nil
-			
 			}
 			m.list, cmd = m.list.Update(msg)
 			return m, cmd
@@ -168,7 +173,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, tea.Batch(cmds...)
 			}
-			
+
 			// Only update the focused input
 			if m.focusIndex < len(m.inputs) {
 				m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
@@ -196,13 +201,9 @@ func (m *Model) resetInputs() {
 }
 
 func (m *Model) saveBlock() {
-	// Simple parsing, assuming valid inputs for MVP
-	// In real app, valid integers, cron, etc.
-	
 	name := m.inputs[0].Value()
 	cronExp := m.inputs[1].Value()
-	duration := 0 // todo parse int
-	fmt.Sscanf(m.inputs[2].Value(), "%d", &duration)
+	duration, _ := strconv.Atoi(m.inputs[2].Value())
 	channelID := m.inputs[3].Value()
 
 	newBlock := scheduler.Block{
@@ -212,7 +213,7 @@ func (m *Model) saveBlock() {
 		ChannelID: channelID,
 		// Preserve filter if editing? For now, we overwrite or keep simple
 	}
-	
+
 	if m.selected == -1 {
 		m.cfg.Scheduler.Blocks = append(m.cfg.Scheduler.Blocks, newBlock)
 		m.list.InsertItem(len(m.list.Items()), item{block: newBlock})
@@ -225,26 +226,30 @@ func (m *Model) saveBlock() {
 	}
 }
 
+// View renders the TUI.
 func (m Model) View() string {
 	if m.state == stateListView {
 		return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View())
 	}
 
 	if m.state == stateEditBlock {
-		var s string
-		s += "Edit Block\n\n"
+		var builder strings.Builder
+		builder.WriteString("Edit Block\n\n")
 
 		for i := range m.inputs {
-			s += m.inputs[i].View() + "\n"
+			builder.WriteString(m.inputs[i].View())
+			builder.WriteString("\n")
 		}
 
 		button := "[ Save ]"
 		if m.focusIndex == len(m.inputs) {
 			button = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("[ Save ]")
 		}
-		s += "\n" + button + "\n\n(esc to cancel)"
+		builder.WriteString("\n")
+		builder.WriteString(button)
+		builder.WriteString("\n\n(esc to cancel)")
 
-		return lipgloss.NewStyle().Margin(1, 2).Render(s)
+		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 	}
 
 	return "Unknown state"

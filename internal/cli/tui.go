@@ -15,7 +15,7 @@ import (
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Interactive terminal interface for managing schedule",
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		var cfg config.Config
 		if err := viper.Unmarshal(&cfg); err != nil {
 			fmt.Printf("Error parsing config: %v\n", err)
@@ -45,11 +45,11 @@ var tuiCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if err := os.WriteFile(configFile, data, 0644); err != nil {
+		if err := os.WriteFile(configFile, data, 0600); err != nil {
 			fmt.Printf("Error saving config to %s: %v\n", configFile, err)
 			os.Exit(1)
 		}
-		
+
 		fmt.Printf("Configuration saved to %s\n", configFile)
 	},
 }

@@ -1,3 +1,4 @@
+// Package scheduler provides the core scheduling engine for Schedularr.
 package scheduler
 
 import (
@@ -9,12 +10,14 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// Engine is the scheduling engine that generates programming schedules.
 type Engine struct {
 	client *tunarr.Client
 	blocks []Block
 	parser cron.Parser
 }
 
+// NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
 func NewEngine(client *tunarr.Client, blocks []Block) *Engine {
 	return &Engine{
 		client: client,
@@ -36,11 +39,7 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 
 		// Find occurrences in range
 		nextTime := scheduleObj.Next(start.Add(-1 * time.Second))
-		for {
-			if nextTime.After(end) {
-				break
-			}
-
+		for !nextTime.After(end) {
 			// Generate content for this slot
 			planned, err := e.PlanBlock(block, availablePrograms)
 			if err != nil {
@@ -81,7 +80,7 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program) ([]t
 			playlist = append(playlist, p)
 			currentDuration += p.Duration
 		}
-		// Relaxed fit? Or strict? 
+		// Relaxed fit? Or strict?
 		// If strict, we might stop. If we want to fill exactly, we need a better algo (knapsack).
 		// For TV, usually "close enough" or filler.
 		if currentDuration >= targetDuration {
