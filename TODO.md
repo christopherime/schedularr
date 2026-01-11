@@ -13,14 +13,14 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ## Project Status Overview
 
-| Phase       | Status              | Description                                  |
-| :---------- | :------------------ | :------------------------------------------- |
-| **Phase 0** | 🔴 Not Started      | Architecture alignment with athena patterns  |
-| **Phase 1** | ✅ Completed        | Foundation & API verification                |
-| **Phase 2** | ✅ Completed        | Scheduler file architecture                  |
-| **Phase 3** | 🟢 Mostly Complete  | Enhanced scheduling engine                   |
-| **Phase 4** | 🟡 In Progress      | Operational excellence & testing             |
-| **Phase 5** | 🔴 Not Started      | UX enhancements                              |
+| Phase       | Status              | Description                                 |
+| :---------- | :------------------ | :------------------------------------------ |
+| **Phase 0** | 🔴 Not Started     | Architecture alignment with athena patterns |
+| **Phase 1** | ✅ Completed        | Foundation & API verification               |
+| **Phase 2** | ✅ Completed        | Scheduler file architecture                 |
+| **Phase 3** | 🟢 Mostly Complete | Enhanced scheduling engine                  |
+| **Phase 4** | 🟡 In Progress     | Operational excellence & testing            |
+| **Phase 5** | 🔴 Not Started     | UX enhancements                             |
 
 ## Phase 0: Architecture Alignment (NEW PRIORITY)
 
@@ -249,10 +249,10 @@ This TODO is structured to align Schedularr with established architectural patte
 
 #### 2.3.1 Data Models
 
-- [ ] **Define Series Block Type**: Create new block type for series scheduling
-  - [ ] Add `SeriesBlock` struct with series list
-  - [ ] Add `SeriesConfig` with show title, episodes per block, season/episode tracking
-  - [ ] Support mixing series and filter-based blocks
+- [x] **Define Series Block Type**: Create new block type for series scheduling
+  - [x] Add `SeriesBlock` struct with series list
+  - [x] Add `SeriesConfig` with show title, episodes per block, season/episode tracking
+  - [x] Support mixing series and filter-based blocks
 - [ ] **Episode Tracking Schema**: Design state tracking structure
   - [ ] Track current season/episode per series
   - [ ] Track completion status

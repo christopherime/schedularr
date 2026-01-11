@@ -1,14 +1,15 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/tunarr"
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -20,12 +21,12 @@ var (
 	verbose       bool
 )
 
-// Color helpers
+// Color styles
 var (
-	successColor = color.New(color.FgGreen, color.Bold)
-	errorColor   = color.New(color.FgRed, color.Bold)
-	infoColor    = color.New(color.FgCyan)
-	warnColor    = color.New(color.FgYellow)
+	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 )
 
 var generateCmd = &cobra.Command{
@@ -43,7 +44,7 @@ Use --dry-run to preview schedules without applying them.
 Use --verbose for detailed output including filtering and history.`,
 	Run: func(_ *cobra.Command, _ []string) {
 		if err := runGenerate(); err != nil {
-			errorColor.Fprintf(os.Stderr, "✗ Error: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error:"), err)
 			os.Exit(1)
 		}
 	},
@@ -63,30 +64,27 @@ func runGenerate() error {
 	}
 
 	if len(schedCfg.Blocks) == 0 {
-		return fmt.Errorf("no scheduling blocks configured")
+		return errors.New("no scheduling blocks configured")
 	}
 
-	infoColor.Printf("📋 Loaded %d scheduling block(s)\n", len(schedCfg.Blocks))
+	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(schedCfg.Blocks))))
 
 	// Create Tunarr client
 	client := tunarr.NewClient(cfg.Tunarr)
 
 	// Fetch available content
-	infoColor.Println("📡 Fetching content from Tunarr...")
-	programs, err := fetchAllContent(client)
-	if err != nil {
-		return fmt.Errorf("failed to fetch content: %w", err)
-	}
+	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
+	programs := fetchAllContent(client)
 
 	if len(programs) == 0 {
-		warnColor.Println("⚠ No content available - using fallback GetPrograms()")
+		fmt.Println(warnStyle.Render("⚠ No content available - using fallback GetPrograms()"))
 		programs, err = client.GetPrograms()
 		if err != nil {
 			return fmt.Errorf("failed to fetch programs: %w", err)
 		}
 	}
 
-	successColor.Printf("✓ Found %d program(s)\n", len(programs))
+	fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Found %d program(s)", len(programs))))
 
 	// Create scheduling engine
 	engine := scheduler.NewEngine(client, schedCfg.Blocks)
@@ -95,9 +93,9 @@ func runGenerate() error {
 	start := time.Now()
 	end := start.Add(24 * time.Hour) // Plan for next 24h
 
-	infoColor.Printf("🗓️  Generating schedule from %s to %s\n",
+	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗓️  Generating schedule from %s to %s",
 		start.Format("2006-01-02 15:04"),
-		end.Format("2006-01-02 15:04"))
+		end.Format("2006-01-02 15:04"))))
 
 	plan, err := engine.GenerateForTimeRange(start, end, programs)
 	if err != nil {
@@ -111,28 +109,28 @@ func runGenerate() error {
 	if apply && !dryRun {
 		return applySchedule(client, plan)
 	} else if dryRun {
-		infoColor.Println("\n🔍 Dry run mode - schedule not applied")
+		fmt.Println(infoStyle.Render("\n🔍 Dry run mode - schedule not applied"))
 	} else {
-		infoColor.Println("\n💡 Use --apply to push schedule to Tunarr")
+		fmt.Println(infoStyle.Render("\n💡 Use --apply to push schedule to Tunarr"))
 	}
 
 	return nil
 }
 
-func fetchAllContent(client *tunarr.Client) ([]tunarr.Program, error) {
+func fetchAllContent(client *tunarr.Client) []tunarr.Program {
 	var allPrograms []tunarr.Program
 
 	// Try to fetch from libraries
 	libraries, err := client.GetLibraries()
 	if err != nil {
 		if verbose {
-			warnColor.Printf("⚠ Could not fetch libraries: %v\n", err)
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries: %v", err)))
 		}
-		return allPrograms, nil
+		return allPrograms
 	}
 
 	if verbose {
-		infoColor.Printf("📚 Found %d librar(y/ies)\n", len(libraries))
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📚 Found %d librar(y/ies)", len(libraries))))
 	}
 
 	for _, lib := range libraries {
@@ -143,7 +141,7 @@ func fetchAllContent(client *tunarr.Client) ([]tunarr.Program, error) {
 		programs, err := client.GetLibraryPrograms(lib.ID)
 		if err != nil {
 			if verbose {
-				warnColor.Printf("    ⚠ Could not fetch programs from %s: %v\n", lib.Name, err)
+				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
 			}
 			continue
 		}
@@ -155,17 +153,17 @@ func fetchAllContent(client *tunarr.Client) ([]tunarr.Program, error) {
 		allPrograms = append(allPrograms, programs...)
 	}
 
-	return allPrograms, nil
+	return allPrograms
 }
 
 func displaySchedule(plan map[string][]tunarr.Program, showVerbose bool) {
 	if len(plan) == 0 {
-		warnColor.Println("\n⚠ No schedule generated")
+		fmt.Println(warnStyle.Render("\n⚠ No schedule generated"))
 		return
 	}
 
 	fmt.Println()
-	successColor.Println("✓ Schedule Generated")
+	fmt.Println(successStyle.Render("✓ Schedule Generated"))
 	fmt.Println("=" + fmt.Sprintf("%80s", "=")[1:])
 
 	totalItems := 0
@@ -200,7 +198,7 @@ func displaySchedule(plan map[string][]tunarr.Program, showVerbose bool) {
 
 func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) error {
 	fmt.Println()
-	infoColor.Println("🚀 Applying schedule to Tunarr...")
+	fmt.Println(infoStyle.Render("🚀 Applying schedule to Tunarr..."))
 
 	successCount := 0
 	failCount := 0
@@ -209,20 +207,20 @@ func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) erro
 		fmt.Printf("  📺 Channel %s...", cid)
 
 		if err := client.UpdateSchedule(cid, items); err != nil {
-			errorColor.Print(" ✗\n")
-			errorColor.Printf("     Error: %v\n", err)
+			fmt.Print(errorStyle.Render(" ✗\n"))
+			fmt.Printf("     %s %v\n", errorStyle.Render("Error:"), err)
 			failCount++
 		} else {
-			successColor.Print(" ✓\n")
+			fmt.Print(successStyle.Render(" ✓\n"))
 			successCount++
 		}
 	}
 
 	fmt.Println()
 	if failCount == 0 {
-		successColor.Printf("✓ Successfully applied schedule to %d channel(s)\n", successCount)
+		fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Successfully applied schedule to %d channel(s)", successCount)))
 	} else {
-		warnColor.Printf("⚠ Applied to %d channel(s), %d failed\n", successCount, failCount)
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Applied to %d channel(s), %d failed", successCount, failCount)))
 	}
 
 	return nil
