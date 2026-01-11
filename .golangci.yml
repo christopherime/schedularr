@@ -1,0 +1,200 @@
+---
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  exclusions:
+    paths:
+      - ".*_test.go"
+      - tests/
+      - scripts/
+      - docs/
+      - examples/
+    rules:
+      - linters:
+          - errcheck
+        text: "Error return value of.*\\.Close.* is not checked"
+      - linters:
+          - gosec
+        text: "G304"
+  enable:
+    - govet
+    - revive
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - unconvert
+    - unparam
+    - gosec
+    - copyloopvar
+    - perfsprint
+    - prealloc
+    - gocyclo
+    - gocognit
+    - nestif
+    - misspell
+    - sloglint
+    - errorlint
+    - contextcheck
+    - depguard
+    - whitespace
+    - predeclared
+    - nolintlint
+
+  disable:
+    - godot
+    - testpackage
+
+  settings:
+    revive:
+      severity: warning
+      rules:
+        - name: exported
+          severity: error
+        - name: package-comments
+          severity: error
+        - name: receiver-naming
+          severity: error
+        - name: var-naming
+          severity: error
+          arguments:
+            [["ID", "API", "URL", "HTTP", "JSON", "XML", "HTML"], ["VM"]]
+        - name: error-return
+          severity: error
+        - name: error-strings
+          severity: error
+        - name: error-naming
+          severity: error
+        - name: indent-error-flow
+          severity: error
+        - name: range-val-in-closure
+          severity: error
+        - name: unused-parameter
+          severity: warning
+        - name: unreachable-code
+          severity: error
+        - name: unnecessary-stmt
+          severity: error
+        - name: struct-tag
+          severity: error
+        - name: constant-logical-expr
+          severity: error
+        - name: bool-literal-in-expr
+          severity: error
+        - name: redefines-builtin-id
+          severity: error
+        - name: function-result-limit
+          severity: warning
+          arguments: [3]
+        - name: argument-limit
+          severity: warning
+          arguments: [5]
+        - name: cyclomatic
+          severity: warning
+          arguments: [15]
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+      exclude-functions:
+        - fmt.Print
+        - fmt.Println
+        - fmt.Printf
+        - fmt.Fprintf
+
+    gosec:
+      severity: medium
+      confidence: high
+      config:
+        global:
+          nosec: false
+          audit: true
+
+    gocyclo:
+      min-complexity: 15
+
+    gocognit:
+      min-complexity: 20
+
+    nestif:
+      min-complexity: 5
+
+    unused:
+      exported-fields-are-used: true
+
+    misspell:
+      locale: US
+
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: "github.com/pkg/errors"
+              desc: "Use standard library errors package instead"
+            - pkg: "github.com/sirupsen/logrus"
+              desc: "Use standard library slog instead"
+            - pkg: "crypto/md5"
+              desc: "MD5 is cryptographically broken"
+            - pkg: "crypto/sha1"
+              desc: "SHA1 is cryptographically weak"
+            - pkg: "io/ioutil"
+              desc: "Deprecated: use os and io packages instead"
+            - pkg: "gopkg.in/yaml.v1"
+              desc: "Deprecated: use another package"
+            - pkg: "gopkg.in/yaml.v2"
+              desc: "Deprecated: use another package"
+          allow:
+            - $gostd
+            - github.com/geekxflood/athena
+            - github.com/rs/zerolog
+            - github.com/go-chi/chi/v5
+            - athena
+            - cuelang.org/go
+            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/config.git
+            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/logging.git
+            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/ruler.git
+            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/batoille.git
+            - github.com/fsnotify/fsnotify
+            - github.com/spf13/cobra
+            - github.com/spf13/viper
+            - github.com/a8m/envsubst
+            - github.com/dustinkirkland/golang-petname
+            - gopkg.in/yaml.v3
+            - github.com/oklog/ulid
+            - github.com/swaggo/http-swagger
+            - github.com/swaggo/swag
+            - github.com/prometheus/client_golang
+            - github.com/swaggest/openapi-go
+            - github.com/grpc/grpc-go
+            - go.opentelemetry.io/otel
+            - go.opentelemetry.io/otel/trace
+            - go.opentelemetry.io/otel/attribute
+            - go.opentelemetry.io/otel/propagation
+            - go.opentelemetry.io/otel/sdk
+            - go.opentelemetry.io/otel/exporters/otlp
+            - go.opentelemetry.io/contrib
+            - github.com/alitto/pond/v2
+            - github.com/gosnmp/gosnmp
+            - github.com/go-resty/resty/v2
+            - github.com/prometheus/common
+            - github.com/avast/retry-go/v4
+            - github.com/patrickmn/go-cache
+            - github.com/stretchr/testify
+            - github.com/hashicorp/memberlist
+
+    sloglint:
+      no-mixed-args: true
+      kv-only: true
+      attr-only: false
+      static-msg: false
+      no-raw-keys: false
+      key-naming-case: snake
+      args-on-sep-lines: false

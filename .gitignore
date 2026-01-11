@@ -1,32 +1,122 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# Golang specific
+bin/
+build/
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
-
-# Code coverage profiles and other test artifacts
 *.out
-coverage.*
-*.coverprofile
-profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
 go.work
 go.work.sum
 
-# env file
-.env
+# Build and package directories
+dist/
+output/
+release/
+tmp/
+temp/
+!internal/*
 
-# Editor/IDE
+# Dependencies
+vendor/
+node_modules/
+
+# IDE and editor files
 # .idea/
+# .zed/
 # .vscode/
+# .junie/
+# .augment/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+.vs/
+*.iml
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+config/secrets/
+
+# Logs and databases
+*.log
+logs/
+e2e-logs/
+*.db
+*.sqlite
+*.sqlite3
+dump.rdb
+
+# Test coverage and profiling
+coverage/
+*.cover
+*.prof
+.coverage
+htmlcov/
+
+# Operating System
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# Project specific
+Chart.lock
+.$*.drawio.bkp
+
+# Documentation artifacts
+_site/
+.docusaurus
+.cache/
+public/
+docs/_build/
+
+# Temporary files
+*.tmp
+*.bak
+
+# Container and deployment
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+deployment/secrets/
+k8s/secrets/
+
+# Local development
+.local/
+.dev/
+docker-compose.override.yml
+
+!Dockerfile.test
+
+reports/
+
+golangci-lint-report*
+gosec-report*
+
+benchmarks/
+
+archive/*
+data/*
+storage/*
+
+argus
+
+!docs/**/*.log

@@ -1,0 +1,8 @@
+{
+  "exclude": [
+    ".gitlab-ci-local/**",
+    "tests/**",
+    "**/*_test.go",
+    ".go/**"
+  ]
+}

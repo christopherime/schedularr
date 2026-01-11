@@ -1,0 +1,35 @@
+---
+# Markdownlint configuration for applicationset repository
+# https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+default: true
+
+# MD003/heading-style - Heading style
+MD003:
+  style: atx
+
+# MD007/ul-indent - Unordered list indentation
+MD007:
+  indent: 2
+  start_indented: false
+  start_indent: 2
+
+# MD013/line-length - Line length
+# Disabled because we prefer readability over strict line length in docs
+MD013: false
+
+# MD024/no-duplicate-heading - Multiple headings with the same content
+# Disabled to allow duplicate headings in different sections
+MD024: false
+
+# MD033/no-inline-html - Inline HTML
+# Disabled to allow HTML when necessary (tables, etc.)
+MD033: false
+
+# MD041/first-line-heading - First line in a file should be a top-level heading
+# Disabled because some files start with YAML frontmatter or comments
+MD041: false
+
+# no-hard-tabs - Hard tabs
+# Disabled to allow tabs in code blocks
+no-hard-tabs: false

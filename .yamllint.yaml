@@ -1,0 +1,77 @@
+---
+# Yamllint configuration for applicationset repository
+# Optimized for Helm charts and Kubernetes manifests
+# https://yamllint.readthedocs.io/
+
+extends: default
+
+rules:
+  # Braces - allow both inline and multi-line
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+    min-spaces-inside-empty: 0
+    max-spaces-inside-empty: 0
+
+  # Brackets - allow both inline and multi-line
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 0
+    min-spaces-inside-empty: 0
+    max-spaces-inside-empty: 0
+
+  # Comments - require space after # and allow standalone comments
+  comments:
+    require-starting-space: true
+    ignore-shebangs: true
+    min-spaces-from-content: 1
+  comments-indentation: disable # Too strict for Helm values files
+
+  # Document start - allow files with or without ---
+  document-start: disable
+
+  # Empty lines - reasonable limits
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 0
+
+  # Indentation - 2 spaces for Kubernetes/Helm
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+
+  # Key duplicates - error on duplicate keys
+  key-duplicates: enable
+
+  # Line length - relaxed for Kubernetes manifests with long values
+  line-length:
+    max: 200
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # New lines - Unix style
+  new-line-at-end-of-file: enable
+  new-lines:
+    type: unix
+
+  # Truthy values - allow yes/no/on/off for Kubernetes compatibility
+  truthy:
+    allowed-values: ["true", "false", "yes", "no", "on", "off"]
+    check-keys: false
+
+  # Trailing spaces - no trailing spaces allowed
+  trailing-spaces: enable
+
+  # Quoted strings - allow both single and double quotes
+  quoted-strings:
+    quote-type: any
+    required: false
+
+# Ignore patterns for third-party or generated files
+ignore: |
+  .git/
+  node_modules/
+  .vscode/
+  tmp/
