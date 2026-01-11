@@ -153,15 +153,10 @@ linters:
               desc: "Deprecated: use another package"
           allow:
             - $gostd
-            - github.com/geekxflood/athena
+            - github.com/geekxflood/schedularr
             - github.com/rs/zerolog
             - github.com/go-chi/chi/v5
-            - athena
             - cuelang.org/go
-            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/config.git
-            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/logging.git
-            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/ruler.git
-            - gitlab-stel.prosdis.118-vaud.ch/stel/libs/go/batoille.git
             - github.com/fsnotify/fsnotify
             - github.com/spf13/cobra
             - github.com/spf13/viper
@@ -189,6 +184,10 @@ linters:
             - github.com/patrickmn/go-cache
             - github.com/stretchr/testify
             - github.com/hashicorp/memberlist
+            - github.com/charmbracelet/bubbles
+            - github.com/charmbracelet/bubbletea
+            - github.com/charmbracelet/lipgloss
+            - github.com/robfig/cron/v3
 
     sloglint:
       no-mixed-args: true

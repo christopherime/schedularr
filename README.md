@@ -20,12 +20,14 @@ Schedularr is a robust Go application designed to interface with the [Tunarr API
 ### Build from Source
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/geekxflood/schedularr.git
    cd schedularr
    ```
 
 2. Build the application:
+
    ```bash
    go build -o schedularr cmd/schedularr/main.go
    ```
@@ -60,7 +62,7 @@ scheduler:
       filter:
         genres: ["Animation", "Family"]
         max_duration: 30        # Max duration per item in minutes
-    
+
     - name: "Evening Movies"
       cron: "0 20 * * *"        # Runs daily at 8:00 PM
       duration: 180             # 3 hours
@@ -105,6 +107,7 @@ Schedularr includes a terminal user interface to help you manage your scheduling
 ```
 
 This interface allows you to:
+
 - List existing scheduling blocks
 - Add new blocks
 - Edit block details (Name, Cron, Duration, Channel ID)
