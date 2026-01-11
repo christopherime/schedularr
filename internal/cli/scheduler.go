@@ -1,0 +1,447 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/robfig/cron/v3"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+)
+
+var schedulerCmd = &cobra.Command{
+	Use:   "scheduler",
+	Short: "Manage scheduler configuration files",
+	Long:  `Commands for creating, validating, and managing scheduler configuration files.`,
+}
+
+var schedulerInitCmd = &cobra.Command{
+	Use:   "init [filename]",
+	Short: "Create a new scheduler configuration file",
+	Long: `Generate a boilerplate scheduler configuration file with example blocks.
+If no filename is provided, creates 'scheduler.yaml' in the current directory.`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(_ *cobra.Command, args []string) {
+		filename := "scheduler.yaml"
+		if len(args) > 0 {
+			filename = args[0]
+		}
+
+		// Check if file already exists
+		if _, err := os.Stat(filename); err == nil {
+			fmt.Printf("Error: File %s already exists. Remove it first or choose a different name.\n", filename)
+			os.Exit(1)
+		}
+
+		var template string
+		switch templateType {
+		case "basic":
+			template = basicTemplate
+		case "advanced":
+			template = advancedTemplate
+		case "series":
+			template = seriesTemplate
+		default:
+			fmt.Printf("Error: Unknown template type '%s'. Valid options: basic, advanced, series\n", templateType)
+			os.Exit(1)
+		}
+
+		if err := os.WriteFile(filename, []byte(template), 0o600); err != nil {
+			fmt.Printf("Error creating file: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Created scheduler configuration file: %s\n", filename)
+		fmt.Printf("Template: %s\n", templateType)
+		fmt.Printf("\nEdit this file to configure your scheduling blocks, then use:\n")
+		fmt.Printf("  schedularr generate --scheduler %s\n", filename)
+	},
+}
+
+var schedulerValidateCmd = &cobra.Command{
+	Use:   "validate [filename]",
+	Short: "Validate a scheduler configuration file",
+	Long: `Check a scheduler configuration file for syntax errors, invalid cron expressions,
+and other configuration issues.`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(_ *cobra.Command, args []string) {
+		var filename string
+		if len(args) > 0 {
+			filename = args[0]
+		} else {
+			// Try to find default scheduler file
+			filename = findDefaultSchedulerFile()
+			if filename == "" {
+				fmt.Println("Error: No scheduler file found. Specify a file or create scheduler.yaml")
+				os.Exit(1)
+			}
+			fmt.Printf("Validating: %s\n\n", filename)
+		}
+
+		// Load and validate the scheduler file
+		schedCfg, err := loadSchedulerFile(filename)
+		if err != nil {
+			fmt.Printf("❌ Validation failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Perform detailed validation
+		errors := validateSchedulerConfig(schedCfg)
+		if len(errors) > 0 {
+			fmt.Printf("❌ Found %d validation error(s):\n\n", len(errors))
+			for i, err := range errors {
+				fmt.Printf("%d. %v\n", i+1, err)
+			}
+			os.Exit(1)
+		}
+
+		fmt.Printf("✅ Scheduler configuration is valid\n")
+		fmt.Printf("   - %d block(s) configured\n", len(schedCfg.Blocks))
+		fmt.Printf("   - All cron expressions are valid\n")
+		fmt.Printf("   - All required fields present\n")
+	},
+}
+
+var schedulerListCmd = &cobra.Command{
+	Use:   "list [filename]",
+	Short: "List all scheduling blocks",
+	Long:  `Display all configured scheduling blocks with their details.`,
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(_ *cobra.Command, args []string) {
+		var filename string
+		if len(args) > 0 {
+			filename = args[0]
+		} else {
+			filename = findDefaultSchedulerFile()
+			if filename == "" {
+				fmt.Println("Error: No scheduler file found. Specify a file or create scheduler.yaml")
+				os.Exit(1)
+			}
+		}
+
+		schedCfg, err := loadSchedulerFile(filename)
+		if err != nil {
+			fmt.Printf("Error loading scheduler file: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(schedCfg.Blocks) == 0 {
+			fmt.Println("No scheduling blocks configured")
+			return
+		}
+
+		fmt.Printf("Scheduler configuration: %s\n\n", filename)
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(w, "NAME\tCRON\tDURATION\tCHANNEL\tPRIORITY\tFILTERS")
+		_, _ = fmt.Fprintln(w, "----\t----\t--------\t-------\t--------\t-------")
+
+		for _, block := range schedCfg.Blocks {
+			filters := buildFilterSummary(&block.Filter)
+			fmt.Fprintf(w, "%s\t%s\t%dm\t%s\t%d\t%s\n",
+				block.Name,
+				block.Cron,
+				block.Duration,
+				block.ChannelID,
+				block.Priority,
+				filters,
+			)
+		}
+		_ = w.Flush()
+
+		fmt.Printf("\nTotal blocks: %d\n", len(schedCfg.Blocks))
+	},
+}
+
+var templateType string
+
+func init() {
+	rootCmd.AddCommand(schedulerCmd)
+
+	schedulerCmd.AddCommand(schedulerInitCmd)
+	schedulerCmd.AddCommand(schedulerValidateCmd)
+	schedulerCmd.AddCommand(schedulerListCmd)
+
+	schedulerInitCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "Template type: basic, advanced, or series")
+}
+
+// findDefaultSchedulerFile searches for scheduler.yaml in common locations
+func findDefaultSchedulerFile() string {
+	searchPaths := []string{
+		"scheduler.yaml",
+		"./scheduler.yaml",
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		searchPaths = append(searchPaths, filepath.Join(home, "scheduler.yaml"))
+	}
+
+	for _, path := range searchPaths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	return ""
+}
+
+// loadSchedulerFile loads and parses a scheduler configuration file
+func loadSchedulerFile(filename string) (*scheduler.Config, error) {
+	// #nosec G304 - User-specified scheduler file path is intentional
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	var cfg scheduler.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// validateSchedulerConfig performs comprehensive validation on scheduler config
+func validateSchedulerConfig(cfg *scheduler.Config) []error {
+	var errs []error
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+	if len(cfg.Blocks) == 0 {
+		errs = append(errs, errors.New("no scheduling blocks defined"))
+		return errs
+	}
+
+	for i, block := range cfg.Blocks {
+		blockPrefix := fmt.Sprintf("Block %d (%s)", i+1, block.Name)
+
+		// Validate required fields
+		if block.Name == "" {
+			errs = append(errs, fmt.Errorf("%s: name is required", blockPrefix))
+		}
+
+		if block.Cron == "" {
+			errs = append(errs, fmt.Errorf("%s: cron expression is required", blockPrefix))
+		} else {
+			// Validate cron expression
+			if _, err := parser.Parse(block.Cron); err != nil {
+				errs = append(errs, fmt.Errorf("%s: invalid cron expression '%s': %w", blockPrefix, block.Cron, err))
+			}
+		}
+
+		if block.Duration <= 0 {
+			errs = append(errs, fmt.Errorf("%s: duration must be greater than 0", blockPrefix))
+		}
+
+		if block.ChannelID == "" {
+			errs = append(errs, fmt.Errorf("%s: channel_id is required", blockPrefix))
+		}
+
+		// Validate filter constraints
+		if block.Filter.MinDuration > 0 && block.Filter.MaxDuration > 0 {
+			if block.Filter.MinDuration > block.Filter.MaxDuration {
+				errs = append(errs, fmt.Errorf("%s: min_duration (%d) cannot be greater than max_duration (%d)",
+					blockPrefix, block.Filter.MinDuration, block.Filter.MaxDuration))
+			}
+		}
+
+		if block.Filter.YearFrom > 0 && block.Filter.YearTo > 0 {
+			if block.Filter.YearFrom > block.Filter.YearTo {
+				errs = append(errs, fmt.Errorf("%s: year_from (%d) cannot be greater than year_to (%d)",
+					blockPrefix, block.Filter.YearFrom, block.Filter.YearTo))
+			}
+		}
+	}
+
+	return errs
+}
+
+// buildFilterSummary creates a human-readable summary of filter criteria
+func buildFilterSummary(filter *scheduler.Filter) string {
+	var parts []string
+
+	if len(filter.Genres) > 0 {
+		parts = append(parts, fmt.Sprintf("genres:%d", len(filter.Genres)))
+	}
+
+	if len(filter.Ratings) > 0 {
+		parts = append(parts, fmt.Sprintf("ratings:%d", len(filter.Ratings)))
+	}
+
+	if filter.YearFrom > 0 || filter.YearTo > 0 {
+		if filter.YearFrom > 0 && filter.YearTo > 0 {
+			parts = append(parts, fmt.Sprintf("year:%d-%d", filter.YearFrom, filter.YearTo))
+		} else if filter.YearFrom > 0 {
+			parts = append(parts, fmt.Sprintf("year:%d+", filter.YearFrom))
+		} else {
+			parts = append(parts, fmt.Sprintf("year:-%d", filter.YearTo))
+		}
+	}
+
+	if filter.MinDuration > 0 || filter.MaxDuration > 0 {
+		if filter.MinDuration > 0 && filter.MaxDuration > 0 {
+			parts = append(parts, fmt.Sprintf("dur:%d-%dm", filter.MinDuration, filter.MaxDuration))
+		} else if filter.MinDuration > 0 {
+			parts = append(parts, fmt.Sprintf("dur:%d+m", filter.MinDuration))
+		} else {
+			parts = append(parts, fmt.Sprintf("dur:-%dm", filter.MaxDuration))
+		}
+	}
+
+	if filter.TitlePattern != "" {
+		parts = append(parts, "title:regex")
+	}
+
+	if len(filter.Tags) > 0 {
+		parts = append(parts, fmt.Sprintf("tags:%d", len(filter.Tags)))
+	}
+
+	if len(parts) == 0 {
+		return "none"
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+const basicTemplate = `# Basic Scheduler Configuration
+# Simple scheduling blocks for getting started
+
+blocks:
+  # Morning Programming
+  - name: "Morning Block"
+    cron: "0 6 * * *"        # Every day at 6:00 AM
+    duration: 180            # 3 hours
+    channel_id: "channel-1"
+    priority: 10
+    filter:
+      genres:
+        - Comedy
+        - Family
+      max_duration: 45       # Max 45 minutes per item
+
+  # Evening Programming
+  - name: "Evening Block"
+    cron: "0 20 * * *"       # Every day at 8:00 PM
+    duration: 120            # 2 hours
+    channel_id: "channel-1"
+    priority: 10
+    filter:
+      genres:
+        - Drama
+      min_duration: 40       # At least 40 minutes
+`
+
+const advancedTemplate = `# Advanced Scheduler Configuration
+# Multiple blocks with detailed filtering and priorities
+
+blocks:
+  # Morning Cartoons (High Priority)
+  - name: "Morning Cartoons"
+    cron: "0 6 * * *"
+    duration: 240
+    channel_id: "channel-1"
+    priority: 15
+    filter:
+      genres:
+        - Animation
+        - Family
+      ratings:
+        - TV-Y
+        - TV-G
+        - TV-Y7
+      max_duration: 30
+      year_from: 2000
+
+  # Daytime Movies
+  - name: "Daytime Movies"
+    cron: "0 10 * * *"
+    duration: 300
+    channel_id: "channel-1"
+    priority: 10
+    filter:
+      genres:
+        - Comedy
+        - Drama
+      ratings:
+        - PG
+        - PG-13
+      min_duration: 80
+      max_duration: 150
+      year_from: 1990
+
+  # Primetime (Highest Priority)
+  - name: "Primetime"
+    cron: "0 20 * * *"
+    duration: 180
+    channel_id: "channel-1"
+    priority: 20
+    filter:
+      genres:
+        - Action
+        - Thriller
+      ratings:
+        - PG-13
+        - R
+      min_duration: 90
+
+  # Late Night Comedy
+  - name: "Late Night"
+    cron: "0 23 * * *"
+    duration: 120
+    channel_id: "channel-2"
+    priority: 10
+    filter:
+      genres:
+        - Comedy
+      max_duration: 90
+
+  # Weekend Marathon
+  - name: "Weekend Sci-Fi Marathon"
+    cron: "0 14 * * 6,0"     # Sat/Sun at 2 PM
+    duration: 480
+    channel_id: "channel-3"
+    priority: 20
+    filter:
+      genres:
+        - Science Fiction
+        - Fantasy
+      year_from: 1980
+`
+
+const seriesTemplate = `# Series-Based Scheduler Configuration
+# Note: Series-based scheduling is coming in a future release
+# This template shows the planned format
+
+blocks:
+  # Filter-based block (currently supported)
+  - name: "Morning Block"
+    cron: "0 6 * * *"
+    duration: 180
+    channel_id: "channel-1"
+    priority: 10
+    filter:
+      genres:
+        - Comedy
+      max_duration: 45
+
+  # Series block example (planned feature - not yet implemented)
+  # - name: "Saturday Anime"
+  #   type: "series"
+  #   cron: "0 20 * * 6"
+  #   duration: 180
+  #   channel_id: "channel-2"
+  #   priority: 15
+  #   series:
+  #     - show_title: "Series Name"
+  #       episodes_per_block: 3
+  #       start_season: 1
+  #       start_episode: 1
+  #   fallback:
+  #     mode: "redistribute"
+  #     filler_filter:
+  #       genres: ["Animation"]
+`

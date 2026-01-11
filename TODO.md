@@ -42,18 +42,18 @@
 
 ### 2.2 Scheduler File Management Commands
 
-- [ ] **Create `scheduler init` Command**: Generate boilerplate scheduler files
-  - [ ] Create template with example blocks
-  - [ ] Support different templates (basic, advanced, series-based)
-  - [ ] Interactive prompts for initial setup
-- [ ] **Create `scheduler validate` Command**: Validate scheduler file syntax
-  - [ ] YAML/JSON syntax validation
-  - [ ] Cron expression validation
-  - [ ] Filter criteria validation
-  - [ ] Channel ID validation against Tunarr
-- [ ] **Create `scheduler list` Command**: List all configured blocks
-  - [ ] Table output with block details
-  - [ ] Filter by channel, priority, or status
+- [x] **Create `scheduler init` Command**: Generate boilerplate scheduler files
+  - [x] Create template with example blocks
+  - [x] Support different templates (basic, advanced, series-based)
+  - [ ] Interactive prompts for initial setup (deferred)
+- [x] **Create `scheduler validate` Command**: Validate scheduler file syntax
+  - [x] YAML syntax validation
+  - [x] Cron expression validation
+  - [x] Filter criteria validation
+  - [ ] Channel ID validation against Tunarr (deferred)
+- [x] **Create `scheduler list` Command**: List all configured blocks
+  - [x] Table output with block details
+  - [ ] Filter by channel, priority, or status (deferred)
 
 ### 2.3 Series-Based Scheduling (CORE FEATURE)
 
