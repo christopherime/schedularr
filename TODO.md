@@ -7,16 +7,16 @@
 - [x] **Research Tunarr API Documentation**: Study official Tunarr API docs to understand actual endpoints
   - Created docs/TUNARR_API_RESEARCH.md with findings
   - Identified key endpoints and data models
-- [ ] **Verify Channel Endpoints**: Test and confirm `/api/channels` endpoint structure
-- [ ] **Verify Content Endpoints**: Identify correct endpoint for fetching library content (programs/media)
-  - [ ] Test `/api/programs` endpoint
-  - [ ] Test `/api/filler-lists` endpoint (if exists)
-  - [ ] Test channel-specific content endpoints
-- [ ] **Verify Schedule Update Endpoints**: Confirm how to update channel programming
-  - [ ] Research schedule/programming API structure
-  - [ ] Understand payload format for schedule updates
-- [ ] **API Authentication**: Verify API key usage and authentication headers
-- [ ] **Create API Integration Tests**: Write tests against real/mock Tunarr instance
+- [x] **Verify Channel Endpoints**: Test and confirm `/api/channels` endpoint structure
+- [x] **Verify Content Endpoints**: Identify correct endpoint for fetching library content (programs/media)
+  - [x] Test `/api/programs` endpoint
+  - [x] Test `/api/filler-lists` endpoint (if exists)
+  - [x] Test channel-specific content endpoints
+- [x] **Verify Schedule Update Endpoints**: Confirm how to update channel programming
+  - [x] Research schedule/programming API structure
+  - [x] Understand payload format for schedule updates
+- [x] **API Authentication**: Verify API key usage and authentication headers
+- [x] **Create API Integration Tests**: Write tests against real/mock Tunarr instance
 
 ### 1.2 Enhanced Error Handling & Resilience
 
