@@ -1,6 +1,193 @@
 # Project TODOs
 
-## Phase 1: Foundation & API Verification (PRIORITY)
+## Overview
+
+This TODO is structured to align Schedularr with established architectural patterns from the athena project while maintaining its unique scheduling functionality. The alignment focuses on:
+
+- **CUE Schema Validation**: Configuration validation using CUE language for type safety and defaults
+- **CLI Structure**: Standardized command structure (root, validate, generate, run)
+- **Code Quality**: Strict linting rules, structured logging, and error handling patterns
+- **Documentation**: Comprehensive docs (ARCHITECTURE.md, SPECIFICATIONS.md, ROADMAP.md)
+- **Build Tooling**: Makefile-based build system with E2E testing support
+- **Testing**: Table-driven tests, integration tests, and E2E test infrastructure
+
+## Project Status Overview
+
+| Phase       | Status              | Description                                  |
+| :---------- | :------------------ | :------------------------------------------- |
+| **Phase 0** | 🔴 Not Started      | Architecture alignment with athena patterns  |
+| **Phase 1** | ✅ Completed        | Foundation & API verification                |
+| **Phase 2** | ✅ Completed        | Scheduler file architecture                  |
+| **Phase 3** | 🟢 Mostly Complete  | Enhanced scheduling engine                   |
+| **Phase 4** | 🟡 In Progress      | Operational excellence & testing             |
+| **Phase 5** | 🔴 Not Started      | UX enhancements                              |
+
+## Phase 0: Architecture Alignment (NEW PRIORITY)
+
+**Status:** 🔴 Not Started
+**Goal:** Adopt athena project patterns for configuration, CLI, and code quality
+
+### 0.1 CUE Schema Integration
+
+**Goal:** Adopt CUE language for configuration validation following athena project patterns.
+
+- [ ] **Create CUE Schema Files**
+  - [ ] Create `configs/schema/config.cue` - Application configuration schema
+    - Define server settings, logging, Tunarr connection
+    - Set default values (e.g., `port: int | *8080`)
+    - Add validation constraints
+  - [ ] Create `configs/schema/scheduler.cue` - Scheduler configuration schema
+    - Define block types (filter, series)
+    - Define cron expression validation
+    - Define filter criteria schema
+    - Set default values for optional fields
+  - **Criteria:** `cue vet configs/config.yaml configs/schema/config.cue` passes
+
+- [ ] **Integrate CUE Validation into Config Loading**
+  - [ ] Add CUE Go API dependency (`cuelang.org/go/cue`)
+  - [ ] Update `internal/config/config.go` to validate against CUE schema
+  - [ ] Provide detailed validation errors with line numbers
+  - [ ] Fail fast on invalid configuration
+  - **Criteria:** App refuses to start with invalid config and shows helpful error
+
+- [ ] **Update Error Messages**
+  - [ ] Show CUE validation errors with context
+  - [ ] Suggest corrections for common mistakes
+  - [ ] Reference schema documentation in errors
+
+### 0.2 CLI Command Restructuring
+
+**Goal:** Align CLI structure with athena patterns and user requirements.
+
+- [ ] **Restructure Root Command**
+  - [ ] Change default behavior: `./schedularr` launches TUI mode (no verb required)
+  - [ ] Keep existing functionality but make TUI the default entry point
+  - [ ] Add `--config` flag to root for config file path
+  - **Criteria:** Running `./schedularr` without arguments opens TUI
+
+- [ ] **Create `validate` Command**
+  - [ ] Implement `./schedularr validate [file]` command
+  - [ ] Support validating application config files
+  - [ ] Support validating scheduler config files
+  - [ ] Support validating combined configuration
+  - [ ] Leverage CUE schemas for validation
+  - [ ] Provide clear validation errors with line numbers and suggestions
+  - [ ] Exit with code 0 on success, 1 on validation failure
+  - **Criteria:** `./schedularr validate configs/scheduler.yaml` validates and reports errors
+
+- [ ] **Enhance `generate` Command**
+  - [ ] Rename/refactor to generate configuration files as output
+  - [ ] Use default values from `configs/schema/scheduler.cue`
+  - [ ] Support `--format` flag (yaml, json)
+  - [ ] Support `--template` flag (basic, advanced, series)
+  - [ ] Support `--output` flag for file path
+  - [ ] Keep existing schedule generation as `generate schedule` subcommand
+  - **Criteria:** `./schedularr generate --template=basic --output=my-scheduler.yaml` creates valid file
+
+- [ ] **Create `run` Command**
+  - [ ] Implement `./schedularr run [options]` command
+  - [ ] Start the scheduling system (daemon mode)
+  - [ ] Load and validate configuration
+  - [ ] Execute core scheduling logic on cron schedule
+  - [ ] Support `--daemon` flag for background operation
+  - [ ] Support `--once` flag for single execution
+  - [ ] Graceful shutdown on SIGTERM/SIGINT
+  - **Criteria:** `./schedularr run --daemon` starts scheduler in background
+
+### 0.3 Code Quality & Standards Alignment
+
+**Goal:** Match athena project's code quality standards and tooling.
+
+- [ ] **Update `.golangci.yml`**
+  - [ ] Adopt athena's linter configuration
+  - [ ] Set cyclomatic complexity max to 15
+  - [ ] Set cognitive complexity max to 20
+  - [ ] Set nesting depth max to 5
+  - [ ] Set function results max to 3
+  - [ ] Set arguments max to 5
+  - [ ] Enable sloglint for structured logging
+  - [ ] Add depguard to block deprecated packages
+
+- [ ] **Blocked Packages Policy**
+  - [ ] Block `github.com/pkg/errors` (use stdlib `fmt.Errorf`)
+  - [ ] Block `logrus` (use `log/slog`)
+  - [ ] Block `crypto/md5`, `crypto/sha1` (security)
+  - [ ] Block `io/ioutil` (deprecated)
+  - [ ] Block `gopkg.in/yaml.v1`, `gopkg.in/yaml.v2` (use v3)
+
+- [ ] **Structured Logging Migration**
+  - [ ] Replace current logging with `log/slog`
+  - [ ] Use JSON format for production
+  - [ ] Use text format for development
+  - [ ] Add context fields (channel_id, block_name, etc.)
+  - [ ] Use snake_case for log field names
+
+- [ ] **Error Handling Standards**
+  - [ ] Always wrap errors with context: `fmt.Errorf("context: %w", err)`
+  - [ ] Use `context.Context` for all API calls
+  - [ ] Respect timeouts from configuration
+  - [ ] Add retry logic with exponential backoff
+
+### 0.4 Project Documentation
+
+**Goal:** Create comprehensive documentation following athena patterns.
+
+- [ ] **Create `docs/ARCHITECTURE.md`**
+  - [ ] Document system architecture
+  - [ ] Explain data flow (Config → Engine → Tunarr)
+  - [ ] Describe component interactions
+  - [ ] Include architecture diagrams
+
+- [ ] **Create `docs/SPECIFICATIONS.md`**
+  - [ ] Define scheduler file format specification
+  - [ ] Document block types and their fields
+  - [ ] Explain filter criteria options
+  - [ ] Provide examples for each block type
+
+- [ ] **Update `CLAUDE.md`**
+  - [ ] Add development commands section
+  - [ ] Document architecture overview
+  - [ ] Add coding standards section
+  - [ ] Include API endpoints documentation
+  - [ ] Add configuration reference
+
+- [ ] **Create `ROADMAP.md`**
+  - [ ] Document project vision
+  - [ ] Create status overview table
+  - [ ] Define development phases
+  - [ ] List detailed task breakdown
+
+- [ ] **Create `CONTRIBUTING.md`**
+  - [ ] Define contribution guidelines
+  - [ ] Explain commit message format (Conventional Commits)
+  - [ ] Document PR process
+  - [ ] Add code review checklist
+
+### 0.5 Build & Development Tooling
+
+**Goal:** Standardize build process with Makefile following athena patterns.
+
+- [ ] **Create/Update `Makefile`**
+  - [ ] Add `make build` - Build binary to `./bin/schedularr`
+  - [ ] Add `make test` - Run tests with race detector
+  - [ ] Add `make lint` - Run golangci-lint
+  - [ ] Add `make clean` - Remove build artifacts
+  - [ ] Add `make validate` - Validate all config files with CUE
+  - [ ] Add `make e2e-up` - Start E2E test environment
+  - [ ] Add `make e2e-down` - Stop E2E test environment
+  - **Criteria:** `make build && ./bin/schedularr --help` works
+
+- [ ] **E2E Testing Infrastructure**
+  - [ ] Create `e2e/docker-compose.yaml`
+  - [ ] Include Tunarr service
+  - [ ] Include test data fixtures
+  - [ ] Add E2E test scripts
+  - **Criteria:** `make e2e-up` starts full test environment
+
+## Phase 1: Foundation & API Verification
+
+**Status:** ✅ Completed
+**Goal:** Verify Tunarr API integration and establish foundation
 
 ### 1.1 Tunarr API Research & Verification
 
@@ -24,7 +211,10 @@
 - [x] **Better Error Messages**: Improve error context and user-facing messages
 - [x] **API Response Validation**: Validate API responses match expected schema
 
-## Phase 2: Scheduler File Architecture (NEW PRIORITY)
+## Phase 2: Scheduler File Architecture
+
+**Status:** ✅ Completed
+**Goal:** Separate scheduler configuration from app configuration
 
 ### 2.1 Configuration Separation
 
@@ -155,6 +345,9 @@
 
 ## Phase 3: Enhanced Scheduling Engine
 
+**Status:** 🟢 Mostly Complete
+**Goal:** Advanced scheduling features and content management
+
 ### 3.1 Content Fetching Improvements
 
 - [x] **Content Source Integration**: Better content fetching
@@ -197,6 +390,9 @@
 
 ## Phase 4: Operational Excellence
 
+**Status:** 🟡 In Progress
+**Goal:** Production readiness with testing, deployment, and documentation
+
 ### 4.1 Testing & Quality
 
 - [ ] **Unit Test Coverage**: Achieve >80% coverage
@@ -208,24 +404,59 @@
   - [ ] Test series progression (not yet implemented)
   - [ ] Test state management (not yet implemented)
   - [ ] Add integration tests for full scheduling workflow
+  - [ ] Add table-driven tests for all core functions
+  - [ ] Test error paths and edge cases
+  - **Criteria:** `go test -cover ./...` shows >80% coverage
+
 - [ ] **Integration Tests**: Test against real Tunarr instance
+  - [ ] Create test fixtures with sample data
+  - [ ] Mock Tunarr API responses
+  - [ ] Test full scheduling workflow end-to-end
+  - [ ] Test configuration loading and validation
+  - [ ] Test CLI commands with real files
+  - **Criteria:** `make test` runs all tests including integration
+
+- [ ] **E2E Tests**: Full system testing
+  - [ ] Create E2E test suite with docker-compose
+  - [ ] Test scheduling against real Tunarr instance
+  - [ ] Verify schedule updates are applied correctly
+  - [ ] Test daemon mode operation
+  - [ ] Test graceful shutdown
+  - **Criteria:** `make e2e` runs full E2E test suite
+
 - [x] **Linting Compliance**: Fix all linter issues
-  - [x] Run `golangci-lint run` and fix issues (acceptable complexity warnings only)
+  - [x] Run `golangci-lint run` and fix issues (1 acceptable complexity warning)
   - [x] Run `gosec ./...` and fix security issues (0 issues)
   - [x] Run `govulncheck ./...` and address vulnerabilities (0 vulnerabilities)
+  - [ ] Update to athena's stricter linter config
+  - [ ] Fix any new issues from stricter config
+  - **Criteria:** `make lint` passes with zero issues (except acceptable warnings)
 
 ### 4.2 Deployment & Operations
 
 - [ ] **Dockerization**: Container support
-  - [ ] Create `Dockerfile`
-  - [ ] Create `docker-compose.yml`
-  - [ ] Multi-stage build for smaller images
-  - [ ] Health check endpoint
+  - [ ] Create multi-stage `Dockerfile` (build + runtime)
+  - [ ] Create `docker-compose.yml` for local development
+  - [ ] Optimize image size with Alpine base
+  - [ ] Add health check endpoint (`/health`, `/ready`)
+  - [ ] Support running as non-root user
+  - [ ] Add `.dockerignore` file
+  - **Criteria:** `docker build -t schedularr .` produces working image
+
 - [ ] **Observability**: Monitoring and metrics
-  - [ ] Add structured logging (slog)
-  - [ ] Prometheus metrics for scheduling operations
-  - [ ] Health check command/endpoint
-  - [ ] Scheduling success/failure tracking
+  - [ ] Migrate to structured logging with `log/slog`
+  - [ ] Add Prometheus metrics endpoint (`/metrics`)
+  - [ ] Track scheduling operations (success/failure/duration)
+  - [ ] Track API call latencies and errors
+  - [ ] Add health check endpoints
+  - [ ] Log scheduling decisions with context
+  - **Criteria:** Metrics endpoint exposes scheduling statistics
+
+- [ ] **Configuration Management**
+  - [ ] Support environment variable overrides
+  - [ ] Support config file hot-reload (SIGHUP)
+  - [ ] Validate config on reload
+  - [ ] Add config dump command for debugging
 
 ### 4.3 Documentation
 
@@ -235,6 +466,9 @@
 - [ ] **Migration Guide**: Guide for upgrading from old config format
 
 ## Phase 5: UX Enhancements
+
+**Status:** 🔴 Not Started
+**Goal:** Improve user experience with better CLI and TUI features
 
 ### 5.1 CLI Improvements
 
