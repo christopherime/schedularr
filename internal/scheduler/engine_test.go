@@ -129,7 +129,7 @@ func TestResolveConflicts(t *testing.T) {
 
 func TestPlanBlock_WithoutFiller(t *testing.T) {
 	client := &tunarr.Client{}
-	engine := NewEngine(client, []Block{})
+	engine := NewEngine(client, []Block{}, NewMockStateStore())
 
 	block := Block{
 		Name:     "Test Block",
@@ -179,7 +179,7 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 
 func TestPlanBlock_NoMatchingContent(t *testing.T) {
 	client := &tunarr.Client{}
-	engine := NewEngine(client, []Block{})
+	engine := NewEngine(client, []Block{}, NewMockStateStore())
 
 	block := Block{
 		Name:     "Test Block",
@@ -202,5 +202,54 @@ func TestPlanBlock_NoMatchingContent(t *testing.T) {
 	_, err := engine.PlanBlock(block, availablePrograms)
 	if err == nil {
 		t.Error("Expected error when no content matches filter, got nil")
+	}
+}
+
+func TestPlanBlock_Series(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store)
+
+	block := Block{
+		Name:     "Series Block",
+		Type:     BlockTypeSeries,
+		Duration: 120,
+		Series: []SeriesConfig{
+			{
+				ShowTitle:        "Show A",
+				EpisodesPerBlock: 2,
+			},
+		},
+		Fallback: SeriesFallback{
+			Mode: "none", // Disable fallback to test series logic only
+		},
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Ep 1", ShowTitle: "Show A", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Ep 2", ShowTitle: "Show A", Season: 1, Episode: 2, Duration: 1800000, Type: "episode"},
+		{ID: "p3", Title: "Ep 3", ShowTitle: "Show A", Season: 1, Episode: 3, Duration: 1800000, Type: "episode"},
+	}
+
+	playlist, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+
+	if len(playlist) != 2 {
+		t.Errorf("Expected 2 episodes, got %d", len(playlist))
+	}
+
+	if playlist[0].Episode != 1 || playlist[1].Episode != 2 {
+		t.Errorf("Expected Ep 1 and Ep 2, got %v", playlist)
+	}
+
+	// Verify pending state
+	state, ok := engine.pendingStates["Show A"]
+	if !ok {
+		t.Fatal("Expected pending state for Show A")
+	}
+	if state.CurrentEpisode != 3 {
+		t.Errorf("Expected next episode to be 3, got %d", state.CurrentEpisode)
 	}
 }

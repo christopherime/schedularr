@@ -277,17 +277,17 @@ This TODO is structured to align Schedularr with established architectural patte
 
 #### 2.3.3 Series Scheduling Logic
 
-- [ ] **Sequential Episode Selection**: Implement episode progression
-  - [ ] Fetch next N episodes for each series
-  - [ ] Handle season boundaries
-  - [ ] Handle series completion
-- [ ] **Smart Gap Filling**: Implement fallback logic
-  - [ ] When series completes, redistribute time to remaining series
-  - [ ] Fill remaining time with incomplete series
-  - [ ] Support filler content as last resort
-- [ ] **Completion Handling**: Graceful series completion
+- [x] **Sequential Episode Selection**: Implement episode progression
+  - [x] Fetch next N episodes for each series
+  - [x] Handle season boundaries
+  - [x] Handle series completion
+- [x] **Smart Gap Filling**: Implement fallback logic
+  - [x] When series completes, redistribute time to remaining series
+  - [x] Fill remaining time with incomplete series
+  - [x] Support filler content as last resort
+- [x] **Completion Handling**: Graceful series completion
   - [ ] Log INFO when series completes all episodes
-  - [ ] Mark series as complete in state
+  - [x] Mark series as complete in state
   - [ ] Option to auto-disable completed blocks
   - [ ] Option to restart series from beginning
 

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/geekxflood/schedularr/internal/tunarr"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -69,6 +70,13 @@ func runGenerate() error {
 
 	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(schedCfg.Blocks))))
 
+	// Initialize Store
+	st, err := store.New("schedularr.db")
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer st.Close()
+
 	// Create Tunarr client
 	client := tunarr.NewClient(cfg.Tunarr)
 
@@ -87,7 +95,7 @@ func runGenerate() error {
 	fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Found %d program(s)", len(programs))))
 
 	// Create scheduling engine
-	engine := scheduler.NewEngine(client, schedCfg.Blocks)
+	engine := scheduler.NewEngine(client, schedCfg.Blocks, st)
 
 	// Generate schedule
 	start := time.Now()
@@ -107,7 +115,14 @@ func runGenerate() error {
 
 	// Apply to Tunarr if requested
 	if apply && !dryRun {
-		return applySchedule(client, plan)
+		if err := applySchedule(client, plan); err != nil {
+			return err
+		}
+		// Commit state changes to DB
+		if err := engine.Commit(); err != nil {
+			return fmt.Errorf("failed to commit state: %w", err)
+		}
+		return nil
 	} else if dryRun {
 		fmt.Println(infoStyle.Render("\n🔍 Dry run mode - schedule not applied"))
 	} else {
@@ -219,11 +234,11 @@ func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) erro
 	fmt.Println()
 	if failCount == 0 {
 		fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Successfully applied schedule to %d channel(s)", successCount)))
-	} else {
-		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Applied to %d channel(s), %d failed", successCount, failCount)))
+		return nil
 	}
-
-	return nil
+	
+	fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Applied to %d channel(s), %d failed", successCount, failCount)))
+	return fmt.Errorf("failed to apply schedule to %d channel(s)", failCount)
 }
 
 func init() {

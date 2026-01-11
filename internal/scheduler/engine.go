@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -14,10 +15,12 @@ import (
 
 // Engine is the scheduling engine that generates programming schedules.
 type Engine struct {
-	client  *tunarr.Client
-	blocks  []Block
-	parser  cron.Parser
-	history *ScheduleHistory
+	client        *tunarr.Client
+	blocks        []Block
+	parser        cron.Parser
+	history       *ScheduleHistory
+	store         StateStore
+	pendingStates map[string]*SeriesState
 }
 
 // ScheduledSlot represents a scheduled time slot with its block and priority
@@ -29,22 +32,26 @@ type ScheduledSlot struct {
 }
 
 // NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
-func NewEngine(client *tunarr.Client, blocks []Block) *Engine {
+func NewEngine(client *tunarr.Client, blocks []Block, store StateStore) *Engine {
 	return &Engine{
-		client:  client,
-		blocks:  blocks,
-		parser:  cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
-		history: NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
+		client:        client,
+		blocks:        blocks,
+		parser:        cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		history:       NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
+		store:         store,
+		pendingStates: make(map[string]*SeriesState),
 	}
 }
 
 // NewEngineWithHistory creates a new scheduling engine with a custom history window
-func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration) *Engine {
+func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore) *Engine {
 	return &Engine{
-		client:  client,
-		blocks:  blocks,
-		parser:  cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
-		history: NewScheduleHistory(historyWindow),
+		client:        client,
+		blocks:        blocks,
+		parser:        cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		history:       NewScheduleHistory(historyWindow),
+		store:         store,
+		pendingStates: make(map[string]*SeriesState),
 	}
 }
 
@@ -94,6 +101,19 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 	}
 
 	return resolvedSchedule, nil
+}
+
+// Commit persists all pending state changes to the store.
+func (e *Engine) Commit() error {
+	ctx := context.Background()
+	for _, state := range e.pendingStates {
+		if err := e.store.UpdateSeriesState(ctx, state); err != nil {
+			return fmt.Errorf("failed to update state for %s: %w", state.ShowTitle, err)
+		}
+	}
+	// Clear pending states after commit
+	e.pendingStates = make(map[string]*SeriesState)
+	return nil
 }
 
 // resolveConflicts resolves overlapping slots by priority
@@ -151,6 +171,13 @@ func slotsOverlap(a, b ScheduledSlot) bool {
 
 // PlanBlock generates a list of programs to fill the block's duration
 func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program) ([]tunarr.Program, error) {
+	if block.Type == BlockTypeSeries {
+		return e.planSeriesBlock(block, availablePrograms)
+	}
+	return e.planFilterBlock(block, availablePrograms)
+}
+
+func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program) ([]tunarr.Program, error) {
 	candidates, err := FilterPrograms(availablePrograms, block.Filter)
 	if err != nil {
 		return nil, err
@@ -226,6 +253,133 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program) ([]t
 	e.history.RecordPrograms(playlist, block.ChannelID, block.Name, time.Now())
 
 	return playlist, nil
+}
+
+func (e *Engine) planSeriesBlock(block Block, availablePrograms []tunarr.Program) ([]tunarr.Program, error) {
+	var playlist []tunarr.Program
+	var currentDuration int64
+	targetDuration := int64(block.Duration) * 60000 // ms
+
+	for _, seriesConf := range block.Series {
+		// Get state
+		state, err := e.getSeriesState(seriesConf.ShowTitle)
+		if err != nil {
+			log.Printf("Error getting state for %s: %v", seriesConf.ShowTitle, err)
+			continue
+		}
+
+		// Initialize state from config if it's new
+		if state.LastAired.IsZero() {
+			if seriesConf.StartSeason > 0 {
+				state.CurrentSeason = seriesConf.StartSeason
+			}
+			if seriesConf.StartEpisode > 0 {
+				state.CurrentEpisode = seriesConf.StartEpisode
+			}
+		}
+
+		episodesAdded := 0
+		for episodesAdded < seriesConf.EpisodesPerBlock {
+			if currentDuration >= targetDuration {
+				break
+			}
+
+			// Find next episode
+			ep := findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason, state.CurrentEpisode)
+			
+			// Handle season rollover if not found
+			if ep == nil {
+				// Try next season, episode 1
+				ep = findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason+1, 1)
+				if ep != nil {
+					state.CurrentSeason++
+					state.CurrentEpisode = 1
+				} else {
+					// Series potentially complete or missing content
+					state.Completed = true
+					break
+				}
+			}
+
+			if ep != nil {
+				if currentDuration+ep.Duration <= targetDuration {
+					playlist = append(playlist, *ep)
+					currentDuration += ep.Duration
+					state.CurrentEpisode++
+					state.LastAired = time.Now()
+					episodesAdded++
+					
+					// Update pending state
+					// We need to store a COPY or valid pointer. state is a pointer to e.pendingStates or new from store.
+					// If it was new from store, we need to add it to pendingStates.
+					e.pendingStates[seriesConf.ShowTitle] = state
+				} else {
+					// No time for this episode
+					break
+				}
+			}
+		}
+	}
+
+	// Handle Fallback if time remains
+	if currentDuration < targetDuration {
+		if block.Fallback.Mode == FallbackModeFiller {
+			candidates, err := FilterPrograms(availablePrograms, block.Fallback.FillerFilter)
+			if err == nil && len(candidates) > 0 {
+				rand.Shuffle(len(candidates), func(i, j int) {
+					candidates[i], candidates[j] = candidates[j], candidates[i]
+				})
+				for _, p := range candidates {
+					if currentDuration+p.Duration <= targetDuration {
+						playlist = append(playlist, p)
+						currentDuration += p.Duration
+					}
+					if currentDuration >= targetDuration {
+						break
+					}
+				}
+			}
+		}
+		// Redistribute mode is implicit (just moves to next series in loop if implemented that way, 
+		// but here we loop sequentially once. Redistribute would mean looping again?)
+		// For now, Filler mode is implemented.
+	}
+	
+	// Add gap filling/bumper logic similar to filter block? 
+	// The prompt implies Fallback handles it. 
+	// But standard "Filler" (bumpers) might still be desired.
+	// block.Filler (bumpers) vs block.Fallback (filling empty space).
+	// Let's also apply standard filler (bumpers) if configured.
+	
+	gapDuration := targetDuration - currentDuration
+	gapMinutes := int(gapDuration / 60000)
+	
+	if block.Filler.Enabled && gapMinutes >= block.Filler.MinGapTime {
+		fillerPrograms, err := e.getFiller(block, gapDuration)
+		if err == nil && len(fillerPrograms) > 0 {
+			playlist = append(playlist, fillerPrograms...)
+		}
+	}
+
+	e.history.RecordPrograms(playlist, block.ChannelID, block.Name, time.Now())
+	return playlist, nil
+}
+
+func (e *Engine) getSeriesState(title string) (*SeriesState, error) {
+	if state, ok := e.pendingStates[title]; ok {
+		return state, nil
+	}
+	return e.store.GetSeriesState(context.Background(), title)
+}
+
+func findEpisode(programs []tunarr.Program, title string, season, episode int) *tunarr.Program {
+	for i := range programs {
+		p := &programs[i]
+		if p.Type == "episode" && p.ShowTitle == title && p.Season == season && p.Episode == episode {
+			return p
+		}
+	}
+	return nil
 }
 
 // getFiller retrieves filler content to fill the remaining time
