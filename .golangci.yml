@@ -188,6 +188,7 @@ linters:
             - github.com/charmbracelet/bubbletea
             - github.com/charmbracelet/lipgloss
             - github.com/robfig/cron/v3
+            - github.com/mattn/go-sqlite3
 
     sloglint:
       no-mixed-args: true

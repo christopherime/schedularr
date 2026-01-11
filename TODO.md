@@ -261,15 +261,15 @@ This TODO is structured to align Schedularr with established architectural patte
 #### 2.3.2 Persistence Layer
 
 - [ ] **Implement SQLite State Store**: Create database for episode tracking
-  - [ ] Design schema for series state table
+  - [x] Design schema for series state table
   - [ ] Design schema for scheduling history
-  - [ ] Create migration system
-  - [ ] Add database initialization
-- [ ] **State Management Functions**: CRUD operations for series state
-  - [ ] Get current episode for series
-  - [ ] Update episode progress
-  - [ ] Mark series as complete
-  - [ ] Reset series progress
+  - [x] Create migration system
+  - [x] Add database initialization
+- [x] **State Management Functions**: CRUD operations for series state
+  - [x] Get current episode for series
+  - [x] Update episode progress
+  - [x] Mark series as complete
+  - [x] Reset series progress
 - [ ] **State Backup/Export**: Allow exporting and importing state
   - [ ] Export to JSON
   - [ ] Import from JSON
