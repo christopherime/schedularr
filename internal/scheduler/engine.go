@@ -14,9 +14,10 @@ import (
 
 // Engine is the scheduling engine that generates programming schedules.
 type Engine struct {
-	client *tunarr.Client
-	blocks []Block
-	parser cron.Parser
+	client  *tunarr.Client
+	blocks  []Block
+	parser  cron.Parser
+	history *ScheduleHistory
 }
 
 // ScheduledSlot represents a scheduled time slot with its block and priority
@@ -30,9 +31,20 @@ type ScheduledSlot struct {
 // NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
 func NewEngine(client *tunarr.Client, blocks []Block) *Engine {
 	return &Engine{
-		client: client,
-		blocks: blocks,
-		parser: cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		client:  client,
+		blocks:  blocks,
+		parser:  cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		history: NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
+	}
+}
+
+// NewEngineWithHistory creates a new scheduling engine with a custom history window
+func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration) *Engine {
+	return &Engine{
+		client:  client,
+		blocks:  blocks,
+		parser:  cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		history: NewScheduleHistory(historyWindow),
 	}
 }
 
@@ -148,6 +160,23 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program) ([]t
 		return nil, fmt.Errorf("no content matches filter for block %s", block.Name)
 	}
 
+	// Filter out recently scheduled programs to prevent repetition
+	originalCount := len(candidates)
+	candidates = e.history.FilterByHistory(candidates, block.ChannelID)
+
+	if len(candidates) < originalCount {
+		log.Printf("Filtered out %d recently scheduled program(s) for block %s",
+			originalCount-len(candidates), block.Name)
+	}
+
+	// If we filtered everything out, fall back to all candidates
+	// (better to repeat than have no content)
+	if len(candidates) == 0 {
+		log.Printf("Warning: All candidates were recently scheduled for block %s, allowing repeats",
+			block.Name)
+		candidates, _ = FilterPrograms(availablePrograms, block.Filter)
+	}
+
 	var playlist []tunarr.Program
 	var currentDuration int64 = 0
 	targetDuration := int64(block.Duration) * 60000 // ms
@@ -192,6 +221,9 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program) ([]t
 	if finalGapMinutes > 5 {
 		log.Printf("Block %s has %d minute gap remaining after filling", block.Name, finalGapMinutes)
 	}
+
+	// Record scheduled programs in history
+	e.history.RecordPrograms(playlist, block.ChannelID, block.Name, time.Now())
 
 	return playlist, nil
 }

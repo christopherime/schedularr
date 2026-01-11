@@ -168,14 +168,16 @@
 
 ### 3.2 Duplicate Detection & History
 
-- [ ] **Scheduling History**: Track what has been scheduled
-  - [ ] Record scheduled content with timestamps
-  - [ ] Prevent re-scheduling within X days (configurable)
-  - [ ] History cleanup/archival
-- [ ] **Smart Rotation**: Avoid repetition
-  - [ ] Track last aired date per program
-  - [ ] Prefer least recently aired content
-  - [ ] Configurable rotation windows
+- [x] **Scheduling History**: Track what has been scheduled
+  - [x] Record scheduled content with timestamps
+  - [x] Prevent re-scheduling within X days (configurable, default 7 days)
+  - [x] History cleanup/archival with CleanupOldEntries
+  - [x] Per-channel tracking to avoid cross-channel conflicts
+- [x] **Smart Rotation**: Avoid repetition
+  - [x] Track last aired date per program per channel
+  - [x] Filter out recently scheduled content automatically
+  - [x] Configurable rotation windows via NewEngineWithHistory
+  - [x] Fallback to allow repeats if all content was recently scheduled
 
 ### 3.3 Advanced Scheduling Features
 
@@ -198,9 +200,10 @@
 ### 4.1 Testing & Quality
 
 - [ ] **Unit Test Coverage**: Achieve >80% coverage
-  - [x] Test core scheduler logic (53.3% coverage for scheduler package)
+  - [x] Test core scheduler logic (67.3% coverage for scheduler package)
   - [x] Test conflict resolution (overlapping slots, priority)
   - [x] Test gap filling logic (basic cases)
+  - [x] Test history tracking (record, filter, expiration, cleanup)
   - [x] Test API client (68% coverage for tunarr package)
   - [ ] Test series progression (not yet implemented)
   - [ ] Test state management (not yet implemented)
