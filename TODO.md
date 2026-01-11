@@ -4,7 +4,9 @@
 
 ### 1.1 Tunarr API Research & Verification
 
-- [ ] **Research Tunarr API Documentation**: Study official Tunarr API docs to understand actual endpoints
+- [x] **Research Tunarr API Documentation**: Study official Tunarr API docs to understand actual endpoints
+  - Created docs/TUNARR_API_RESEARCH.md with findings
+  - Identified key endpoints and data models
 - [ ] **Verify Channel Endpoints**: Test and confirm `/api/channels` endpoint structure
 - [ ] **Verify Content Endpoints**: Identify correct endpoint for fetching library content (programs/media)
   - [ ] Test `/api/programs` endpoint
@@ -200,10 +202,10 @@
   - [ ] Test state management
   - [ ] Test API client
 - [ ] **Integration Tests**: Test against real Tunarr instance
-- [ ] **Linting Compliance**: Fix all linter issues
-  - [ ] Run `golangci-lint run` and fix issues
-  - [ ] Run `gosec ./...` and fix security issues
-  - [ ] Run `govulncheck ./...` and address vulnerabilities
+- [x] **Linting Compliance**: Fix all linter issues
+  - [x] Run `golangci-lint run` and fix issues (1 acceptable issue remaining)
+  - [x] Run `gosec ./...` and fix security issues (0 issues)
+  - [x] Run `govulncheck ./...` and address vulnerabilities (0 vulnerabilities)
 
 ### 4.2 Deployment & Operations
 
