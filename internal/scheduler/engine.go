@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
@@ -17,6 +18,14 @@ type Engine struct {
 	parser cron.Parser
 }
 
+// ScheduledSlot represents a scheduled time slot with its block and priority
+type ScheduledSlot struct {
+	StartTime time.Time
+	EndTime   time.Time
+	Block     Block
+	Programs  []tunarr.Program
+}
+
 // NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
 func NewEngine(client *tunarr.Client, blocks []Block) *Engine {
 	return &Engine{
@@ -26,10 +35,11 @@ func NewEngine(client *tunarr.Client, blocks []Block) *Engine {
 	}
 }
 
-// GenerateForTimeRange generates a schedule for the given window.
+// GenerateForTimeRange generates a schedule for the given window with priority-based conflict resolution.
 // It returns a map of ChannelID -> []Program.
 func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []tunarr.Program) (map[string][]tunarr.Program, error) {
-	schedule := make(map[string][]tunarr.Program)
+	// First, generate all potential slots
+	channelSlots := make(map[string][]ScheduledSlot)
 
 	for _, block := range e.blocks {
 		scheduleObj, err := e.parser.Parse(block.Cron)
@@ -46,13 +56,84 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 				return nil, fmt.Errorf("failed to plan block %s: %w", block.Name, err)
 			}
 
-			schedule[block.ChannelID] = append(schedule[block.ChannelID], planned...)
+			slot := ScheduledSlot{
+				StartTime: nextTime,
+				EndTime:   nextTime.Add(time.Duration(block.Duration) * time.Minute),
+				Block:     block,
+				Programs:  planned,
+			}
+
+			channelSlots[block.ChannelID] = append(channelSlots[block.ChannelID], slot)
 
 			nextTime = scheduleObj.Next(nextTime)
 		}
 	}
 
-	return schedule, nil
+	// Resolve conflicts using priority
+	resolvedSchedule := make(map[string][]tunarr.Program)
+	for channelID, slots := range channelSlots {
+		resolvedSlots := resolveConflicts(slots)
+
+		// Flatten slots into program list
+		for _, slot := range resolvedSlots {
+			resolvedSchedule[channelID] = append(resolvedSchedule[channelID], slot.Programs...)
+		}
+	}
+
+	return resolvedSchedule, nil
+}
+
+// resolveConflicts resolves overlapping slots by priority
+func resolveConflicts(slots []ScheduledSlot) []ScheduledSlot {
+	if len(slots) == 0 {
+		return slots
+	}
+
+	var resolved []ScheduledSlot
+	conflicts := 0
+
+	for i := range slots {
+		shouldInclude := true
+
+		// Check against already resolved slots
+		for j := range resolved {
+			if slotsOverlap(slots[i], resolved[j]) {
+				conflicts++
+				// Higher priority wins (higher number = higher priority)
+				if slots[i].Block.Priority > resolved[j].Block.Priority {
+					// Remove the lower priority slot and add the higher one
+					log.Printf("Conflict: '%s' (priority %d) overrides '%s' (priority %d) at %s",
+						slots[i].Block.Name, slots[i].Block.Priority,
+						resolved[j].Block.Name, resolved[j].Block.Priority,
+						slots[i].StartTime.Format("2006-01-02 15:04"))
+					resolved = append(resolved[:j], resolved[j+1:]...)
+					break
+				} else {
+					log.Printf("Conflict: '%s' (priority %d) blocked by '%s' (priority %d) at %s",
+						slots[i].Block.Name, slots[i].Block.Priority,
+						resolved[j].Block.Name, resolved[j].Block.Priority,
+						slots[i].StartTime.Format("2006-01-02 15:04"))
+					shouldInclude = false
+					break
+				}
+			}
+		}
+
+		if shouldInclude {
+			resolved = append(resolved, slots[i])
+		}
+	}
+
+	if conflicts > 0 {
+		log.Printf("Resolved %d scheduling conflict(s) using priority", conflicts)
+	}
+
+	return resolved
+}
+
+// slotsOverlap returns true if two slots overlap in time
+func slotsOverlap(a, b ScheduledSlot) bool {
+	return a.StartTime.Before(b.EndTime) && a.EndTime.After(b.StartTime)
 }
 
 // PlanBlock generates a list of programs to fill the block's duration
