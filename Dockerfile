@@ -31,9 +31,6 @@ COPY --from=builder /app/schedularr .
 COPY configs/config.example.yaml config.yaml.example
 COPY configs/scheduler.example.yaml scheduler.yaml.example
 
-# Copy schema definition
-COPY cmd/schema /app/schema
-
 # Create data directory for SQLite DB
 RUN mkdir -p /data
 VOLUME /data

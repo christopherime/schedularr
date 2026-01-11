@@ -67,7 +67,7 @@ func LoadSchedulerConfig(cfg *Config, schedulerFile string) (*scheduler.Config, 
 		}
 
 		for _, path := range searchPaths {
-			if _, err := os.Stat(path); err == nil {
+			if _, statErr := os.Stat(path); statErr == nil {
 				schedCfg, err = loadSchedulerFromFile(path)
 				found = true
 				break
