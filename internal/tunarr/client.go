@@ -285,3 +285,159 @@ func (c *Client) UpdateSchedule(channelID string, schedule []Program) error {
 
 	return c.do(req, nil)
 }
+
+// GetLibraries retrieves all available media libraries from connected servers (Plex/Jellyfin/Emby).
+func (c *Client) GetLibraries() ([]Library, error) {
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/libraries", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var libraries []Library
+	if err := c.do(req, &libraries); err != nil {
+		return nil, err
+	}
+
+	return libraries, nil
+}
+
+// GetLibraryPrograms retrieves all programs from a specific library.
+// This can be used to fetch content from Plex/Jellyfin/Emby libraries.
+func (c *Client) GetLibraryPrograms(libraryID string) ([]Program, error) {
+	if libraryID == "" {
+		return nil, errors.New("library ID cannot be empty")
+	}
+
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/libraries/"+libraryID+"/programs", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var programs []Program
+	if err := c.do(req, &programs); err != nil {
+		return nil, err
+	}
+
+	// Validate response
+	for i := range programs {
+		if err := validateProgram(&programs[i]); err != nil {
+			return nil, fmt.Errorf("invalid program in library response: %w", err)
+		}
+	}
+
+	return programs, nil
+}
+
+// GetShows retrieves all TV shows from the connected media servers.
+func (c *Client) GetShows() ([]Show, error) {
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/shows", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var shows []Show
+	if err := c.do(req, &shows); err != nil {
+		return nil, err
+	}
+
+	return shows, nil
+}
+
+// GetShowEpisodes retrieves episodes for a specific show.
+// If season is 0, all episodes are returned. Otherwise, only episodes from that season.
+func (c *Client) GetShowEpisodes(showID string, season int) ([]Program, error) {
+	if showID == "" {
+		return nil, errors.New("show ID cannot be empty")
+	}
+
+	path := "/api/shows/" + showID + "/episodes"
+	if season > 0 {
+		path = fmt.Sprintf("%s?season=%d", path, season)
+	}
+
+	req, err := c.newRequest(context.Background(), http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var episodes []Program
+	if err := c.do(req, &episodes); err != nil {
+		return nil, err
+	}
+
+	// Validate response
+	for i := range episodes {
+		if err := validateProgram(&episodes[i]); err != nil {
+			return nil, fmt.Errorf("invalid episode in response: %w", err)
+		}
+	}
+
+	return episodes, nil
+}
+
+// SearchPrograms searches for programs by title.
+func (c *Client) SearchPrograms(query string) ([]Program, error) {
+	if query == "" {
+		return nil, errors.New("search query cannot be empty")
+	}
+
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/programs/search?q="+query, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var programs []Program
+	if err := c.do(req, &programs); err != nil {
+		return nil, err
+	}
+
+	// Validate response
+	for i := range programs {
+		if err := validateProgram(&programs[i]); err != nil {
+			return nil, fmt.Errorf("invalid program in search results: %w", err)
+		}
+	}
+
+	return programs, nil
+}
+
+// GetFillerLists retrieves all available filler content lists.
+func (c *Client) GetFillerLists() ([]FillerList, error) {
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/filler-lists", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var fillerLists []FillerList
+	if err := c.do(req, &fillerLists); err != nil {
+		return nil, err
+	}
+
+	return fillerLists, nil
+}
+
+// GetFillerContent retrieves programs from a specific filler list.
+func (c *Client) GetFillerContent(fillerListID string) ([]Program, error) {
+	if fillerListID == "" {
+		return nil, errors.New("filler list ID cannot be empty")
+	}
+
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/filler-lists/"+fillerListID+"/content", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var programs []Program
+	if err := c.do(req, &programs); err != nil {
+		return nil, err
+	}
+
+	// Validate response
+	for i := range programs {
+		if err := validateProgram(&programs[i]); err != nil {
+			return nil, fmt.Errorf("invalid program in filler content: %w", err)
+		}
+	}
+
+	return programs, nil
+}

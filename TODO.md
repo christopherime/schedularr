@@ -20,9 +20,9 @@
 
 ### 1.2 Enhanced Error Handling & Resilience
 
-- [ ] **Implement Retry Logic**: Add exponential backoff for API calls
-- [ ] **Better Error Messages**: Improve error context and user-facing messages
-- [ ] **API Response Validation**: Validate API responses match expected schema
+- [x] **Implement Retry Logic**: Add exponential backoff for API calls
+- [x] **Better Error Messages**: Improve error context and user-facing messages
+- [x] **API Response Validation**: Validate API responses match expected schema
 
 ## Phase 2: Scheduler File Architecture (NEW PRIORITY)
 
@@ -157,14 +157,14 @@
 
 ### 3.1 Content Fetching Improvements
 
-- [ ] **Content Source Integration**: Better content fetching
-  - [ ] Implement proper library content fetching from Tunarr
-  - [ ] Support Plex/Jellyfin/Emby integration via Tunarr
-  - [ ] Cache content metadata locally
-- [ ] **Series Episode Fetching**: Fetch episodes for specific series
-  - [ ] Query by show title
-  - [ ] Filter by season/episode range
-  - [ ] Handle missing episodes gracefully
+- [x] **Content Source Integration**: Better content fetching
+  - [x] Implement proper library content fetching from Tunarr
+  - [x] Support Plex/Jellyfin/Emby integration via Tunarr
+  - [ ] Cache content metadata locally (deferred - can be added later if needed)
+- [x] **Series Episode Fetching**: Fetch episodes for specific series
+  - [x] Query by show title/ID
+  - [x] Filter by season/episode range
+  - [x] Handle missing episodes gracefully (via validation)
 
 ### 3.2 Duplicate Detection & History
 

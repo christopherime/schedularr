@@ -24,3 +24,30 @@ type Program struct {
 	Season    int      `json:"season,omitempty"`
 	Episode   int      `json:"episode,omitempty"`
 }
+
+// Library represents a media library (Plex/Jellyfin/Emby).
+type Library struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`   // movie, show, music
+	Server string `json:"server"` // plex, jellyfin, emby
+}
+
+// Show represents a TV show with metadata.
+type Show struct {
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Year     int      `json:"year"`
+	Summary  string   `json:"summary"`
+	Genres   []string `json:"genres"`
+	Rating   string   `json:"rating"`
+	Seasons  int      `json:"seasons"`
+	Episodes int      `json:"episodes"`
+}
+
+// FillerList represents a collection of filler content.
+type FillerList struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Count int    `json:"count"` // number of items
+}

@@ -169,3 +169,220 @@ func TestClient_GetChannels_Error(t *testing.T) {
 		t.Error("expected error from non-200 status code, got nil")
 	}
 }
+
+func TestClient_GetLibraries(t *testing.T) {
+	mockLibraries := []Library{
+		{ID: "lib-1", Name: "Movies", Type: "movie", Server: "plex"},
+		{ID: "lib-2", Name: "TV Shows", Type: "show", Server: "plex"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET request, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/libraries" {
+			t.Errorf("expected /api/libraries path, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockLibraries)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	libraries, err := client.GetLibraries()
+	if err != nil {
+		t.Fatalf("GetLibraries returned error: %v", err)
+	}
+
+	if len(libraries) != len(mockLibraries) {
+		t.Errorf("expected %d libraries, got %d", len(mockLibraries), len(libraries))
+	}
+}
+
+func TestClient_GetLibraryPrograms(t *testing.T) {
+	libraryID := "lib-1"
+	mockPrograms := []Program{
+		{ID: "prog-1", Title: "Movie A", Duration: 7200000, Type: "movie"},
+		{ID: "prog-2", Title: "Movie B", Duration: 6000000, Type: "movie"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET request, got %s", r.Method)
+		}
+		expectedPath := "/api/libraries/" + libraryID + "/programs"
+		if r.URL.Path != expectedPath {
+			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockPrograms)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	programs, err := client.GetLibraryPrograms(libraryID)
+	if err != nil {
+		t.Fatalf("GetLibraryPrograms returned error: %v", err)
+	}
+
+	if len(programs) != len(mockPrograms) {
+		t.Errorf("expected %d programs, got %d", len(mockPrograms), len(programs))
+	}
+}
+
+func TestClient_GetShows(t *testing.T) {
+	mockShows := []Show{
+		{ID: "show-1", Title: "Show A", Seasons: 5, Episodes: 100},
+		{ID: "show-2", Title: "Show B", Seasons: 3, Episodes: 60},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET request, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/shows" {
+			t.Errorf("expected /api/shows path, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockShows)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	shows, err := client.GetShows()
+	if err != nil {
+		t.Fatalf("GetShows returned error: %v", err)
+	}
+
+	if len(shows) != len(mockShows) {
+		t.Errorf("expected %d shows, got %d", len(mockShows), len(shows))
+	}
+}
+
+func TestClient_GetShowEpisodes(t *testing.T) {
+	showID := "show-1"
+	season := 1
+	mockEpisodes := []Program{
+		{ID: "ep-1", Title: "Episode 1", Duration: 1800000, Type: "episode", Season: season, Episode: 1},
+		{ID: "ep-2", Title: "Episode 2", Duration: 1800000, Type: "episode", Season: season, Episode: 2},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET request, got %s", r.Method)
+		}
+		expectedPath := "/api/shows/" + showID + "/episodes"
+		if r.URL.Path != expectedPath {
+			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
+		}
+		if r.URL.RawQuery != "season=1" {
+			t.Errorf("expected season=1 query param, got %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockEpisodes)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	episodes, err := client.GetShowEpisodes(showID, season)
+	if err != nil {
+		t.Fatalf("GetShowEpisodes returned error: %v", err)
+	}
+
+	if len(episodes) != len(mockEpisodes) {
+		t.Errorf("expected %d episodes, got %d", len(mockEpisodes), len(episodes))
+	}
+}
+
+func TestClient_SearchPrograms(t *testing.T) {
+	query := "Star"
+	mockResults := []Program{
+		{ID: "prog-1", Title: "Star Wars", Duration: 7200000, Type: "movie"},
+		{ID: "prog-2", Title: "Star Trek", Duration: 6000000, Type: "movie"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET request, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/programs/search" {
+			t.Errorf("expected /api/programs/search path, got %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("q") != query {
+			t.Errorf("expected q=%s query param, got %s", query, r.URL.Query().Get("q"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResults)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	programs, err := client.SearchPrograms(query)
+	if err != nil {
+		t.Fatalf("SearchPrograms returned error: %v", err)
+	}
+
+	if len(programs) != len(mockResults) {
+		t.Errorf("expected %d programs, got %d", len(mockResults), len(programs))
+	}
+}
+
+func TestClient_GetFillerLists(t *testing.T) {
+	mockFillers := []FillerList{
+		{ID: "filler-1", Name: "Commercials", Count: 50},
+		{ID: "filler-2", Name: "Bumpers", Count: 30},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET request, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/filler-lists" {
+			t.Errorf("expected /api/filler-lists path, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockFillers)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	fillers, err := client.GetFillerLists()
+	if err != nil {
+		t.Fatalf("GetFillerLists returned error: %v", err)
+	}
+
+	if len(fillers) != len(mockFillers) {
+		t.Errorf("expected %d filler lists, got %d", len(mockFillers), len(fillers))
+	}
+}
+
+func TestClient_GetFillerContent(t *testing.T) {
+	fillerID := "filler-1"
+	mockContent := []Program{
+		{ID: "prog-1", Title: "Commercial A", Duration: 30000, Type: "track"},
+		{ID: "prog-2", Title: "Commercial B", Duration: 30000, Type: "track"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET request, got %s", r.Method)
+		}
+		expectedPath := "/api/filler-lists/" + fillerID + "/content"
+		if r.URL.Path != expectedPath {
+			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockContent)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	content, err := client.GetFillerContent(fillerID)
+	if err != nil {
+		t.Fatalf("GetFillerContent returned error: %v", err)
+	}
+
+	if len(content) != len(mockContent) {
+		t.Errorf("expected %d programs, got %d", len(mockContent), len(content))
+	}
+}
