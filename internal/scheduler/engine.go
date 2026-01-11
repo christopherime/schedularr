@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -161,13 +162,83 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program) ([]t
 			playlist = append(playlist, p)
 			currentDuration += p.Duration
 		}
-		// Relaxed fit? Or strict?
-		// If strict, we might stop. If we want to fill exactly, we need a better algo (knapsack).
-		// For TV, usually "close enough" or filler.
 		if currentDuration >= targetDuration {
 			break
 		}
 	}
 
+	// Gap filling with filler content
+	gapDuration := targetDuration - currentDuration
+	gapMinutes := int(gapDuration / 60000)
+
+	// Check if we should add filler content
+	if block.Filler.Enabled && gapMinutes >= block.Filler.MinGapTime {
+		fillerPrograms, err := e.getFiller(block, gapDuration)
+		if err != nil {
+			log.Printf("Warning: Failed to get filler for block %s: %v", block.Name, err)
+		} else if len(fillerPrograms) > 0 {
+			log.Printf("Adding %d filler program(s) to fill %d minute gap in block %s",
+				len(fillerPrograms), gapMinutes, block.Name)
+			playlist = append(playlist, fillerPrograms...)
+			for _, f := range fillerPrograms {
+				currentDuration += f.Duration
+			}
+		}
+	}
+
+	// Log if there's still a significant gap
+	finalGap := targetDuration - currentDuration
+	finalGapMinutes := int(finalGap / 60000)
+	if finalGapMinutes > 5 {
+		log.Printf("Block %s has %d minute gap remaining after filling", block.Name, finalGapMinutes)
+	}
+
 	return playlist, nil
+}
+
+// getFiller retrieves filler content to fill the remaining time
+func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Program, error) {
+	if block.Filler.FillerListID == "" {
+		return nil, errors.New("no filler list ID specified")
+	}
+
+	// Fetch filler content from the specified list
+	fillerContent, err := e.client.GetFillerContent(block.Filler.FillerListID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch filler content: %w", err)
+	}
+
+	if len(fillerContent) == 0 {
+		return nil, fmt.Errorf("filler list %s is empty", block.Filler.FillerListID)
+	}
+
+	var fillerPlaylist []tunarr.Program
+	var fillerDuration int64 = 0
+	maxFillerDuration := remainingDuration
+
+	// If max filler time is set, respect it
+	if block.Filler.MaxFillerTime > 0 {
+		maxFillerMs := int64(block.Filler.MaxFillerTime) * 60000
+		if maxFillerMs < remainingDuration {
+			maxFillerDuration = maxFillerMs
+		}
+	}
+
+	// Shuffle filler content for variety
+	rand.Shuffle(len(fillerContent), func(i, j int) {
+		fillerContent[i], fillerContent[j] = fillerContent[j], fillerContent[i]
+	})
+
+	// Fill remaining time with filler content
+	for _, f := range fillerContent {
+		if fillerDuration+f.Duration <= maxFillerDuration {
+			fillerPlaylist = append(fillerPlaylist, f)
+			fillerDuration += f.Duration
+		}
+		if fillerDuration >= maxFillerDuration {
+			break
+		}
+	}
+
+	return fillerPlaylist, nil
 }

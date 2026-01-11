@@ -322,6 +322,8 @@ blocks:
         - Comedy
         - Family
       max_duration: 45       # Max 45 minutes per item
+    filler:
+      enabled: false         # Set to true to enable gap filling
 
   # Evening Programming
   - name: "Evening Block"
@@ -333,13 +335,15 @@ blocks:
       genres:
         - Drama
       min_duration: 40       # At least 40 minutes
+    filler:
+      enabled: false
 `
 
 const advancedTemplate = `# Advanced Scheduler Configuration
 # Multiple blocks with detailed filtering and priorities
 
 blocks:
-  # Morning Cartoons (High Priority)
+  # Morning Cartoons (High Priority) with Filler
   - name: "Morning Cartoons"
     cron: "0 6 * * *"
     duration: 240
@@ -355,6 +359,11 @@ blocks:
         - TV-Y7
       max_duration: 30
       year_from: 2000
+    filler:
+      enabled: true
+      filler_list_id: "bumpers-kids"
+      max_filler_time: 20
+      min_gap_time: 5
 
   # Daytime Movies
   - name: "Daytime Movies"

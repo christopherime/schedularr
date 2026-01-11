@@ -179,10 +179,11 @@
 
 ### 3.3 Advanced Scheduling Features
 
-- [ ] **Gap Filling Logic**: Handle partial block fills
-  - [ ] Define filler content pools
-  - [ ] Smart filler selection based on remaining time
-  - [ ] Bumpers/commercials support
+- [x] **Gap Filling Logic**: Handle partial block fills
+  - [x] Define filler content pools via FillerConfig
+  - [x] Smart filler selection based on remaining time
+  - [x] Bumpers/commercials support via filler lists
+  - [x] Configurable min gap time and max filler time
 - [ ] **Strict Timing Mode**: Precise start time constraints
   - [ ] Ensure blocks start exactly at cron time
   - [ ] Handle time zone considerations

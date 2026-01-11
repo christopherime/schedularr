@@ -19,6 +19,11 @@ blocks:
         - TV-Y7
       max_duration: 30       # Max 30 minutes per episode
       year_from: 2000        # Only modern content
+    filler:
+      enabled: true          # Use filler content to fill gaps
+      filler_list_id: "filler-1"  # ID of filler list (bumpers, commercials, etc.)
+      max_filler_time: 30    # Max 30 minutes of filler
+      min_gap_time: 5        # Only add filler if gap is 5+ minutes
 
   # Primetime Movies Block
   - name: "Primetime Movies"
