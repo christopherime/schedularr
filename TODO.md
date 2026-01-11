@@ -28,17 +28,17 @@
 
 ### 2.1 Configuration Separation
 
-- [ ] **Separate Config Concerns**: Split configuration into app config and scheduler config
-  - [ ] Keep `config.yaml` for: Tunarr connection, logging, app settings
-  - [ ] Create `scheduler.yaml` structure for: scheduling blocks and rules
-- [ ] **Update Config Package**: Modify config loading to support separate scheduler files
-  - [ ] Add `SchedulerFile` field to main config
-  - [ ] Create scheduler config loader
-  - [ ] Support multiple scheduler file formats (YAML/JSON)
-- [ ] **CLI Parameter Support**: Add `--scheduler <file>` flag to commands
-  - [ ] Update `generate` command to accept scheduler file parameter
-  - [ ] Update `validate` command to validate scheduler files
-  - [ ] Add default scheduler file path resolution
+- [x] **Separate Config Concerns**: Split configuration into app config and scheduler config
+  - [x] Keep `config.yaml` for: Tunarr connection, logging, app settings
+  - [x] Create `scheduler.yaml` structure for: scheduling blocks and rules
+- [x] **Update Config Package**: Modify config loading to support separate scheduler files
+  - [x] Add `SchedulerFile` field to main config
+  - [x] Create scheduler config loader with priority system
+  - [x] Support YAML format for scheduler files
+- [x] **CLI Parameter Support**: Add `--scheduler <file>` flag to commands
+  - [x] Update `generate` command to accept scheduler file parameter
+  - [ ] Update `validate` command to validate scheduler files (deferred)
+  - [x] Add default scheduler file path resolution
 
 ### 2.2 Scheduler File Management Commands
 

@@ -12,7 +12,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-var apply bool
+var (
+	apply         bool
+	schedulerFile string
+)
 
 var generateCmd = &cobra.Command{
 	Use:   "generate",
@@ -24,6 +27,18 @@ var generateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Load scheduler configuration
+		schedCfg, err := config.LoadSchedulerConfig(&cfg, schedulerFile)
+		if err != nil {
+			fmt.Printf("Error loading scheduler config: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(schedCfg.Blocks) == 0 {
+			fmt.Println("No scheduling blocks configured")
+			os.Exit(1)
+		}
+
 		client := tunarr.NewClient(cfg.Tunarr)
 
 		// Fetch source content
@@ -32,7 +47,7 @@ var generateCmd = &cobra.Command{
 			fmt.Printf("Error fetching content: %v\n", err)
 		}
 
-		engine := scheduler.NewEngine(client, cfg.Scheduler.Blocks)
+		engine := scheduler.NewEngine(client, schedCfg.Blocks)
 
 		start := time.Now()
 		end := start.Add(24 * time.Hour) // Plan for next 24h
@@ -64,4 +79,5 @@ var generateCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(generateCmd)
 	generateCmd.Flags().BoolVar(&apply, "apply", false, "Apply generated schedule to Tunarr channels")
+	generateCmd.Flags().StringVar(&schedulerFile, "scheduler", "", "Path to scheduler config file (default: scheduler.yaml)")
 }

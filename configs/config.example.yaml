@@ -1,0 +1,25 @@
+# Schedularr Application Configuration
+# This file contains app-level settings (Tunarr connection, logging)
+# Scheduler configuration should be in a separate scheduler.yaml file
+
+tunarr:
+  url: http://localhost:8000
+  api_key: ""  # Optional: Set if your Tunarr instance requires API key authentication
+
+log:
+  level: info    # Options: debug, info, warn, error
+  format: text   # Options: text, json
+
+# Path to scheduler configuration file
+# If not specified, looks for scheduler.yaml in current dir or home directory
+scheduler_file: "scheduler.yaml"
+
+# Legacy: You can still define scheduler blocks inline (not recommended)
+# scheduler:
+#   blocks:
+#     - name: "Example Block"
+#       cron: "0 6 * * *"
+#       duration: 240
+#       channel_id: "channel-1"
+#       filter:
+#         genres: ["Animation"]
