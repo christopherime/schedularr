@@ -1,0 +1,17 @@
+services:
+  schedularr:
+    build: .
+    image: schedularr:latest
+    container_name: schedularr
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./scheduler.yaml:/app/scheduler.yaml
+      - schedularr_data:/data
+    environment:
+      - TZ=UTC
+      # Override config via env if needed
+      # - TUNARR_URL=http://tunarr:8000
+
+volumes:
+  schedularr_data:

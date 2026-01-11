@@ -1,0 +1,10 @@
+.git
+.vscode
+.gemini
+bin/
+tmp/
+*.log
+*.db
+.schedularr.yaml
+config.yaml
+scheduler.yaml
