@@ -1,0 +1,8 @@
+tunarr:
+  url: "http://localhost:8000"
+  api_key: ""
+
+log:
+  level: "debug"
+  format: "text"
+

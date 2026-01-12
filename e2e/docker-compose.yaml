@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  tunarr:
+    image: chrisbenincasa/tunarr:latest
+    container_name: schedularr-tunarr-e2e
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    volumes:
+      - tunarr-data:/config
+      - ./fixtures:/fixtures:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8000/api/version",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - schedularr-e2e
+
+  # Optional: Add a Plex/Jellyfin mock server for testing content sources
+  # This can be added later if needed for more comprehensive E2E tests
+
+volumes:
+  tunarr-data:
+    driver: local
+
+networks:
+  schedularr-e2e:
+    driver: bridge

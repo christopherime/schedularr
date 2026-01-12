@@ -1,0 +1,38 @@
+blocks:
+  - name: "E2E Test Block - Morning"
+    type: filter
+    cron: "0 6 * * *"
+    duration: 120
+    channel_id: "test-channel-1"
+    priority: 10
+    filter:
+      genres:
+        - "Comedy"
+        - "Family"
+      ratings:
+        - "TV-G"
+        - "TV-PG"
+      max_duration: 30
+      year_from: 2000
+
+  - name: "E2E Test Block - Evening"
+    type: filter
+    cron: "0 18 * * *"
+    duration: 180
+    channel_id: "test-channel-1"
+    priority: 5
+    filter:
+      genres:
+        - "Drama"
+        - "Action"
+      ratings:
+        - "TV-14"
+        - "TV-PG"
+      min_duration: 40
+      max_duration: 60
+
+settings:
+  rotation_window_days: 7
+  min_gap_minutes: 5
+  max_filler_minutes: 30
+

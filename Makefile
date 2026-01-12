@@ -1,4 +1,4 @@
-.PHONY: build test lint clean validate e2e-up e2e-down docker-build help
+.PHONY: build test lint clean validate e2e-up e2e-down e2e-test e2e-clean docker-build help
 
 # Variables
 BINARY_NAME=schedularr
@@ -79,6 +79,24 @@ e2e-down: ## Stop E2E test environment
 	@echo "Stopping E2E test environment..."
 	@if [ -f e2e/docker-compose.yaml ]; then \
 		cd e2e && docker-compose down; \
+	else \
+		echo "e2e/docker-compose.yaml not found"; \
+		exit 1; \
+	fi
+
+e2e-test: build ## Run E2E tests
+	@echo "Running E2E tests..."
+	@if [ -f e2e/test.sh ]; then \
+		./e2e/test.sh; \
+	else \
+		echo "e2e/test.sh not found"; \
+		exit 1; \
+	fi
+
+e2e-clean: ## Stop E2E environment and remove volumes
+	@echo "Cleaning E2E test environment..."
+	@if [ -f e2e/docker-compose.yaml ]; then \
+		cd e2e && docker-compose down -v; \
 	else \
 		echo "e2e/docker-compose.yaml not found"; \
 		exit 1; \
