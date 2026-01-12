@@ -364,3 +364,256 @@ func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
 		t.Error("Expected series to be marked completed")
 	}
 }
+
+func TestSeriesCompletion_Restart(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	// Set up initial state at end of series
+	store.States["Test Show"] = &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  2,
+		CurrentEpisode: 10,
+		Completed:      false,
+		RunCount:       0,
+	}
+
+	block := Block{
+		Name:     "Series Block",
+		Type:     BlockTypeSeries,
+		Duration: 30,
+		Series: []SeriesConfig{
+			{
+				ShowTitle:        "Test Show",
+				EpisodesPerBlock: 1,
+				OnComplete:       CompletionActionRestart,
+			},
+		},
+	}
+
+	// No more episodes available - should trigger completion
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+	}
+
+	_, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+
+	state, ok := engine.pendingStates["Test Show"]
+	if !ok {
+		t.Fatal("Expected pending state for Test Show")
+	}
+
+	if state.Completed {
+		t.Error("Expected series to be restarted, not marked completed")
+	}
+	if state.CurrentSeason != 1 {
+		t.Errorf("Expected season to be reset to 1, got %d", state.CurrentSeason)
+	}
+	if state.CurrentEpisode != 1 {
+		t.Errorf("Expected episode to be reset to 1, got %d", state.CurrentEpisode)
+	}
+	if state.RunCount != 1 {
+		t.Errorf("Expected run count to be 1, got %d", state.RunCount)
+	}
+}
+
+func TestSeriesCompletion_Disable(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	store.States["Test Show"] = &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 10,
+		Completed:      false,
+	}
+
+	block := Block{
+		Name:     "Series Block",
+		Type:     BlockTypeSeries,
+		Duration: 30,
+		Series: []SeriesConfig{
+			{
+				ShowTitle:        "Test Show",
+				EpisodesPerBlock: 1,
+				OnComplete:       CompletionActionDisable,
+			},
+		},
+	}
+
+	availablePrograms := []tunarr.Program{}
+
+	_, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+
+	state, ok := engine.pendingStates["Test Show"]
+	if !ok {
+		t.Fatal("Expected pending state for Test Show")
+	}
+
+	if !state.Completed {
+		t.Error("Expected series to be marked completed")
+	}
+	if !state.Disabled {
+		t.Error("Expected series to be disabled")
+	}
+}
+
+func TestSeriesCompletion_MaxRuns(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	// Series has already run twice
+	store.States["Test Show"] = &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 10,
+		Completed:      false,
+		RunCount:       2,
+	}
+
+	block := Block{
+		Name:     "Series Block",
+		Type:     BlockTypeSeries,
+		Duration: 30,
+		Series: []SeriesConfig{
+			{
+				ShowTitle:        "Test Show",
+				EpisodesPerBlock: 1,
+				OnComplete:       CompletionActionRestart,
+				MaxRuns:          3,
+			},
+		},
+	}
+
+	availablePrograms := []tunarr.Program{}
+
+	_, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+
+	state, ok := engine.pendingStates["Test Show"]
+	if !ok {
+		t.Fatal("Expected pending state for Test Show")
+	}
+
+	if state.RunCount != 3 {
+		t.Errorf("Expected run count to be 3, got %d", state.RunCount)
+	}
+	if !state.Disabled {
+		t.Error("Expected series to be disabled after reaching max runs")
+	}
+}
+
+func TestSeriesEpisodeSkipping(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	store.States["Test Show"] = &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 1,
+		Completed:      false,
+	}
+
+	block := Block{
+		Name:     "Series Block",
+		Type:     BlockTypeSeries,
+		Duration: 90, // 90 minutes
+		Series: []SeriesConfig{
+			{
+				ShowTitle:        "Test Show",
+				EpisodesPerBlock: 3,
+				SkipEpisodes:     []string{"S01E02", "S01E04"},
+			},
+		},
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Test Show S01E02", ShowTitle: "Test Show", Season: 1, Episode: 2, Duration: 1800000, Type: "episode"},
+		{ID: "p3", Title: "Test Show S01E03", ShowTitle: "Test Show", Season: 1, Episode: 3, Duration: 1800000, Type: "episode"},
+		{ID: "p4", Title: "Test Show S01E04", ShowTitle: "Test Show", Season: 1, Episode: 4, Duration: 1800000, Type: "episode"},
+		{ID: "p5", Title: "Test Show S01E05", ShowTitle: "Test Show", Season: 1, Episode: 5, Duration: 1800000, Type: "episode"},
+	}
+
+	playlist, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+
+	// Should get E01, skip E02, get E03, get E05 (skipping E02 and E04)
+	if len(playlist) != 3 {
+		t.Fatalf("Expected 3 episodes (E01, E03, E05 - skipping E02 and E04), got %d", len(playlist))
+	}
+
+	if playlist[0].Episode != 1 {
+		t.Errorf("Expected first episode to be E01, got E%02d", playlist[0].Episode)
+	}
+	if playlist[1].Episode != 3 {
+		t.Errorf("Expected second episode to be E03 (skipped E02), got E%02d", playlist[1].Episode)
+	}
+	if playlist[2].Episode != 5 {
+		t.Errorf("Expected third episode to be E05 (skipped E04), got E%02d", playlist[2].Episode)
+	}
+
+	state, ok := engine.pendingStates["Test Show"]
+	if !ok {
+		t.Fatal("Expected pending state for Test Show")
+	}
+
+	// Should be at E06 (next episode after E05)
+	if state.CurrentEpisode != 6 {
+		t.Errorf("Expected current episode to be 6, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestSeriesSkipDisabled(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	// Series is disabled
+	store.States["Test Show"] = &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 1,
+		Disabled:       true,
+	}
+
+	block := Block{
+		Name:     "Series Block",
+		Type:     BlockTypeSeries,
+		Duration: 30,
+		Series: []SeriesConfig{
+			{
+				ShowTitle:        "Test Show",
+				EpisodesPerBlock: 1,
+			},
+		},
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+	}
+
+	playlist, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+
+	// Should get empty playlist because series is disabled
+	if len(playlist) != 0 {
+		t.Errorf("Expected empty playlist for disabled series, got %d items", len(playlist))
+	}
+}
