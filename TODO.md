@@ -411,6 +411,7 @@ This TODO is structured to align Schedularr with established architectural patte
 
 - [x] **Scheduling History**: Track what has been scheduled
   - [x] Record scheduled content with timestamps
+  - [x] Persist scheduling history to SQLite for reuse across runs
   - [x] Prevent re-scheduling within X days (configurable, default 7 days)
   - [x] History cleanup/archival with CleanupOldEntries
   - [x] Per-channel tracking to avoid cross-channel conflicts

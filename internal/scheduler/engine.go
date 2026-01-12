@@ -15,13 +15,14 @@ import (
 
 // Engine is the scheduling engine that generates programming schedules.
 type Engine struct {
-	client        *tunarr.Client
-	blocks        []Block
-	parser        cron.Parser
-	history       *ScheduleHistory
-	store         StateStore
-	pendingStates map[string]*SeriesState
-	logger        *slog.Logger
+	client         *tunarr.Client
+	blocks         []Block
+	parser         cron.Parser
+	history        *ScheduleHistory
+	store          StateStore
+	pendingStates  map[string]*SeriesState
+	pendingHistory []ScheduleHistoryEntry
+	logger         *slog.Logger
 }
 
 // ScheduledSlot represents a scheduled time slot with its block and priority
@@ -38,13 +39,14 @@ func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *
 		logger = slog.Default()
 	}
 	return &Engine{
-		client:        client,
-		blocks:        blocks,
-		parser:        cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
-		history:       NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
-		store:         store,
-		pendingStates: make(map[string]*SeriesState),
-		logger:        logger,
+		client:         client,
+		blocks:         blocks,
+		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		history:        NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
+		store:          store,
+		pendingStates:  make(map[string]*SeriesState),
+		pendingHistory: nil,
+		logger:         logger,
 	}
 }
 
@@ -54,13 +56,14 @@ func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow t
 		logger = slog.Default()
 	}
 	return &Engine{
-		client:        client,
-		blocks:        blocks,
-		parser:        cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
-		history:       NewScheduleHistory(historyWindow),
-		store:         store,
-		pendingStates: make(map[string]*SeriesState),
-		logger:        logger,
+		client:         client,
+		blocks:         blocks,
+		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		history:        NewScheduleHistory(historyWindow),
+		store:          store,
+		pendingStates:  make(map[string]*SeriesState),
+		pendingHistory: nil,
+		logger:         logger,
 	}
 }
 
@@ -120,8 +123,14 @@ func (e *Engine) Commit() error {
 			return fmt.Errorf("failed to update state for %s: %w", state.ShowTitle, err)
 		}
 	}
+	if len(e.pendingHistory) > 0 {
+		if err := e.store.RecordScheduleHistory(ctx, e.pendingHistory); err != nil {
+			return fmt.Errorf("failed to record schedule history: %w", err)
+		}
+	}
 	// Clear pending states after commit
 	e.pendingStates = make(map[string]*SeriesState)
+	e.pendingHistory = nil
 	return nil
 }
 
@@ -202,7 +211,7 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 
 	// Filter out recently scheduled programs to prevent repetition
 	originalCount := len(candidates)
-	candidates = e.history.FilterByHistory(candidates, block.ChannelID)
+	candidates = e.filterByHistory(candidates, block.ChannelID)
 
 	if len(candidates) < originalCount {
 		e.logger.Debug("filtered out recently scheduled programs",
@@ -270,7 +279,7 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	}
 
 	// Record scheduled programs in history
-	e.history.RecordPrograms(playlist, block.ChannelID, block.Name, time.Now())
+	e.recordHistory(playlist, block.ChannelID, block.Name, time.Now())
 
 	return playlist, nil
 }
@@ -293,7 +302,7 @@ func (e *Engine) planSeriesBlock(block Block, availablePrograms []tunarr.Program
 	playlist, currentDuration = e.applySeriesFallback(block, availablePrograms, playlist, currentDuration, targetDuration)
 	playlist, _ = e.applyBlockFiller(block, playlist, currentDuration, targetDuration)
 
-	e.history.RecordPrograms(playlist, block.ChannelID, block.Name, time.Now())
+	e.recordHistory(playlist, block.ChannelID, block.Name, time.Now())
 	return playlist, nil
 }
 
@@ -448,6 +457,50 @@ func findEpisode(programs []tunarr.Program, title string, season, episode int) *
 		}
 	}
 	return nil
+}
+
+func (e *Engine) recordHistory(programs []tunarr.Program, channelID, blockName string, scheduledAt time.Time) {
+	e.history.RecordPrograms(programs, channelID, blockName, scheduledAt)
+	e.pendingHistory = append(e.pendingHistory, makeHistoryEntries(programs, channelID, blockName, scheduledAt)...)
+}
+
+func makeHistoryEntries(programs []tunarr.Program, channelID, blockName string, scheduledAt time.Time) []ScheduleHistoryEntry {
+	entries := make([]ScheduleHistoryEntry, 0, len(programs))
+	for _, program := range programs {
+		entries = append(entries, ScheduleHistoryEntry{
+			ProgramID:   program.ID,
+			ChannelID:   channelID,
+			BlockName:   blockName,
+			ScheduledAt: scheduledAt,
+		})
+	}
+	return entries
+}
+
+func (e *Engine) filterByHistory(programs []tunarr.Program, channelID string) []tunarr.Program {
+	filtered := make([]tunarr.Program, 0, len(programs))
+	window := e.history.Window()
+	ctx := context.Background()
+
+	for _, program := range programs {
+		if e.history.WasRecentlyScheduled(program.ID, channelID) {
+			continue
+		}
+		if e.store != nil {
+			recent, err := e.store.WasRecentlyScheduled(ctx, program.ID, channelID, window)
+			if err != nil {
+				e.logger.Warn("failed to check schedule history",
+					"program_id", program.ID,
+					"channel_id", channelID,
+					"error", err)
+			} else if recent {
+				continue
+			}
+		}
+		filtered = append(filtered, program)
+	}
+
+	return filtered
 }
 
 // getFiller retrieves filler content to fill the remaining time

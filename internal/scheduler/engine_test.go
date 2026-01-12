@@ -208,6 +208,44 @@ func TestPlanBlock_NoMatchingContent(t *testing.T) {
 	}
 }
 
+func TestPlanBlock_UsesStoreHistory(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	store.History = []ScheduleHistoryEntry{
+		{
+			ProgramID:   "prog-1",
+			ChannelID:   "channel-1",
+			BlockName:   "Recent Block",
+			ScheduledAt: time.Now(),
+		},
+	}
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	block := Block{
+		Name:      "History Block",
+		Duration:  30,
+		ChannelID: "channel-1",
+		Filter:    Filter{},
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "prog-1", Title: "Recent", Duration: 1800000, Type: "movie"},
+		{ID: "prog-2", Title: "Fresh", Duration: 1800000, Type: "movie"},
+	}
+
+	playlist, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+
+	if len(playlist) != 1 {
+		t.Fatalf("Expected 1 program, got %d", len(playlist))
+	}
+	if playlist[0].ID != "prog-2" {
+		t.Errorf("Expected prog-2 after filtering, got %s", playlist[0].ID)
+	}
+}
+
 func TestPlanBlock_Series(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()

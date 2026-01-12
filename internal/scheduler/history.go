@@ -30,6 +30,11 @@ func NewScheduleHistory(window time.Duration) *ScheduleHistory {
 	}
 }
 
+// Window returns the configured tracking window for history entries.
+func (sh *ScheduleHistory) Window() time.Duration {
+	return sh.window
+}
+
 // RecordScheduled records that a program was scheduled
 func (sh *ScheduleHistory) RecordScheduled(programID, channelID, blockName string, scheduledAt time.Time) {
 	sh.mu.Lock()
