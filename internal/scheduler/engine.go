@@ -128,6 +128,9 @@ func (e *Engine) Commit() error {
 			return fmt.Errorf("failed to record schedule history: %w", err)
 		}
 	}
+	if _, err := e.store.CleanupScheduleHistory(ctx, e.history.Window()); err != nil {
+		return fmt.Errorf("failed to cleanup schedule history: %w", err)
+	}
 	// Clear pending states after commit
 	e.pendingStates = make(map[string]*SeriesState)
 	e.pendingHistory = nil

@@ -55,3 +55,19 @@ func (m *MockStateStore) WasRecentlyScheduled(_ context.Context, programID, chan
 	}
 	return false, nil
 }
+
+// CleanupScheduleHistory removes history entries older than the window.
+func (m *MockStateStore) CleanupScheduleHistory(_ context.Context, window time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-window)
+	var kept []ScheduleHistoryEntry
+	removed := int64(0)
+	for _, entry := range m.History {
+		if entry.ScheduledAt.After(cutoff) {
+			kept = append(kept, entry)
+		} else {
+			removed++
+		}
+	}
+	m.History = kept
+	return removed, nil
+}

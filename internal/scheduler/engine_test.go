@@ -246,6 +246,38 @@ func TestPlanBlock_UsesStoreHistory(t *testing.T) {
 	}
 }
 
+func TestCommit_CleansUpScheduleHistory(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	store.History = []ScheduleHistoryEntry{
+		{
+			ProgramID:   "old-prog",
+			ChannelID:   "channel-1",
+			BlockName:   "Old Block",
+			ScheduledAt: time.Now().Add(-48 * time.Hour),
+		},
+		{
+			ProgramID:   "new-prog",
+			ChannelID:   "channel-1",
+			BlockName:   "New Block",
+			ScheduledAt: time.Now(),
+		},
+	}
+
+	engine := NewEngineWithHistory(client, []Block{}, 24*time.Hour, store, slog.Default())
+
+	if err := engine.Commit(); err != nil {
+		t.Fatalf("Commit returned error: %v", err)
+	}
+
+	if len(store.History) != 1 {
+		t.Fatalf("expected 1 history entry after cleanup, got %d", len(store.History))
+	}
+	if store.History[0].ProgramID != "new-prog" {
+		t.Errorf("expected new-prog to remain, got %s", store.History[0].ProgramID)
+	}
+}
+
 func TestPlanBlock_Series(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()

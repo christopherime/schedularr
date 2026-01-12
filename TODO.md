@@ -414,6 +414,7 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Persist scheduling history to SQLite for reuse across runs
   - [x] Prevent re-scheduling within X days (configurable, default 7 days)
   - [x] History cleanup/archival with CleanupOldEntries
+  - [x] Persisted history cleanup in SQLite store
   - [x] Per-channel tracking to avoid cross-channel conflicts
 - [x] **Smart Rotation**: Avoid repetition
   - [x] Track last aired date per program per channel
