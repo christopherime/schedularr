@@ -281,110 +281,156 @@ func (e *Engine) planSeriesBlock(block Block, availablePrograms []tunarr.Program
 	targetDuration := int64(block.Duration) * 60000 // ms
 
 	for _, seriesConf := range block.Series {
-		// Get state
-		state, err := e.getSeriesState(seriesConf.ShowTitle)
-		if err != nil {
-			e.logger.Error("failed to get series state",
-				"show_title", seriesConf.ShowTitle,
-				"error", err)
-			continue
-		}
+		seriesPlaylist, durationAdded := e.planSeriesForConfig(seriesConf, availablePrograms, targetDuration-currentDuration)
+		playlist = append(playlist, seriesPlaylist...)
+		currentDuration += durationAdded
 
-		// Initialize state from config if it's new
-		if state.LastAired.IsZero() {
-			if seriesConf.StartSeason > 0 {
-				state.CurrentSeason = seriesConf.StartSeason
-			}
-			if seriesConf.StartEpisode > 0 {
-				state.CurrentEpisode = seriesConf.StartEpisode
-			}
-		}
-
-		episodesAdded := 0
-		for episodesAdded < seriesConf.EpisodesPerBlock {
-			if currentDuration >= targetDuration {
-				break
-			}
-
-			// Find next episode
-			ep := findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason, state.CurrentEpisode)
-			
-			// Handle season rollover if not found
-			if ep == nil {
-				// Try next season, episode 1
-				ep = findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason+1, 1)
-				if ep != nil {
-					state.CurrentSeason++
-					state.CurrentEpisode = 1
-				} else {
-					// Series potentially complete or missing content
-					state.Completed = true
-					break
-				}
-			}
-
-			if ep != nil {
-				if currentDuration+ep.Duration <= targetDuration {
-					playlist = append(playlist, *ep)
-					currentDuration += ep.Duration
-					state.CurrentEpisode++
-					state.LastAired = time.Now()
-					episodesAdded++
-					
-					// Update pending state
-					// We need to store a COPY or valid pointer. state is a pointer to e.pendingStates or new from store.
-					// If it was new from store, we need to add it to pendingStates.
-					e.pendingStates[seriesConf.ShowTitle] = state
-				} else {
-					// No time for this episode
-					break
-				}
-			}
+		if currentDuration >= targetDuration {
+			break
 		}
 	}
 
-	// Handle Fallback if time remains
-	if currentDuration < targetDuration {
-		if block.Fallback.Mode == FallbackModeFiller {
-			candidates, err := FilterPrograms(availablePrograms, block.Fallback.FillerFilter)
-			if err == nil && len(candidates) > 0 {
-				rand.Shuffle(len(candidates), func(i, j int) {
-					candidates[i], candidates[j] = candidates[j], candidates[i]
-				})
-				for _, p := range candidates {
-					if currentDuration+p.Duration <= targetDuration {
-						playlist = append(playlist, p)
-						currentDuration += p.Duration
-					}
-					if currentDuration >= targetDuration {
-						break
-					}
-				}
-			}
-		}
-		// Redistribute mode is implicit (just moves to next series in loop if implemented that way, 
-		// but here we loop sequentially once. Redistribute would mean looping again?)
-		// For now, Filler mode is implemented.
-	}
-	
-	// Add gap filling/bumper logic similar to filter block? 
-	// The prompt implies Fallback handles it. 
-	// But standard "Filler" (bumpers) might still be desired.
-	// block.Filler (bumpers) vs block.Fallback (filling empty space).
-	// Let's also apply standard filler (bumpers) if configured.
-	
-	gapDuration := targetDuration - currentDuration
-	gapMinutes := int(gapDuration / 60000)
-	
-	if block.Filler.Enabled && gapMinutes >= block.Filler.MinGapTime {
-		fillerPrograms, err := e.getFiller(block, gapDuration)
-		if err == nil && len(fillerPrograms) > 0 {
-			playlist = append(playlist, fillerPrograms...)
-		}
-	}
+	playlist, currentDuration = e.applySeriesFallback(block, availablePrograms, playlist, currentDuration, targetDuration)
+	playlist, _ = e.applyBlockFiller(block, playlist, currentDuration, targetDuration)
 
 	e.history.RecordPrograms(playlist, block.ChannelID, block.Name, time.Now())
 	return playlist, nil
+}
+
+func (e *Engine) planSeriesForConfig(seriesConf SeriesConfig, availablePrograms []tunarr.Program, remainingDuration int64) ([]tunarr.Program, int64) {
+	if remainingDuration <= 0 {
+		return nil, 0
+	}
+
+	state, err := e.getSeriesState(seriesConf.ShowTitle)
+	if err != nil {
+		e.logger.Error("failed to get series state",
+			"show_title", seriesConf.ShowTitle,
+			"error", err)
+		return nil, 0
+	}
+
+	e.initializeSeriesState(state, seriesConf)
+
+	var playlist []tunarr.Program
+	var currentDuration int64
+	episodesAdded := 0
+
+	for episodesAdded < seriesConf.EpisodesPerBlock {
+		if currentDuration >= remainingDuration {
+			break
+		}
+
+		ep := e.findNextSeriesEpisode(seriesConf, state, availablePrograms)
+		if ep == nil {
+			break
+		}
+
+		if currentDuration+ep.Duration > remainingDuration {
+			break
+		}
+
+		playlist = append(playlist, *ep)
+		currentDuration += ep.Duration
+		state.CurrentEpisode++
+		state.LastAired = time.Now()
+		episodesAdded++
+		e.pendingStates[seriesConf.ShowTitle] = state
+	}
+
+	return playlist, currentDuration
+}
+
+func (e *Engine) initializeSeriesState(state *SeriesState, seriesConf SeriesConfig) {
+	if !state.LastAired.IsZero() {
+		return
+	}
+
+	if seriesConf.StartSeason > 0 {
+		state.CurrentSeason = seriesConf.StartSeason
+	}
+	if seriesConf.StartEpisode > 0 {
+		state.CurrentEpisode = seriesConf.StartEpisode
+	}
+}
+
+func (e *Engine) findNextSeriesEpisode(seriesConf SeriesConfig, state *SeriesState, availablePrograms []tunarr.Program) *tunarr.Program {
+	ep := findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason, state.CurrentEpisode)
+	if ep != nil {
+		return ep
+	}
+
+	ep = findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason+1, 1)
+	if ep != nil {
+		state.CurrentSeason++
+		state.CurrentEpisode = 1
+		return ep
+	}
+
+	e.markSeriesCompleted(seriesConf.ShowTitle, state)
+	return nil
+}
+
+func (e *Engine) markSeriesCompleted(showTitle string, state *SeriesState) {
+	if !state.Completed {
+		e.logger.Info("series completed all episodes",
+			"show_title", showTitle,
+			"season", state.CurrentSeason,
+			"episode", state.CurrentEpisode)
+	}
+	state.Completed = true
+	e.pendingStates[showTitle] = state
+}
+
+func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Program, playlist []tunarr.Program, currentDuration, targetDuration int64) ([]tunarr.Program, int64) {
+	if currentDuration >= targetDuration {
+		return playlist, currentDuration
+	}
+
+	if block.Fallback.Mode != FallbackModeFiller {
+		return playlist, currentDuration
+	}
+
+	candidates, err := FilterPrograms(availablePrograms, block.Fallback.FillerFilter)
+	if err != nil || len(candidates) == 0 {
+		return playlist, currentDuration
+	}
+
+	rand.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	})
+
+	for _, p := range candidates {
+		if currentDuration+p.Duration <= targetDuration {
+			playlist = append(playlist, p)
+			currentDuration += p.Duration
+		}
+		if currentDuration >= targetDuration {
+			break
+		}
+	}
+
+	return playlist, currentDuration
+}
+
+func (e *Engine) applyBlockFiller(block Block, playlist []tunarr.Program, currentDuration, targetDuration int64) ([]tunarr.Program, int64) {
+	gapDuration := targetDuration - currentDuration
+	gapMinutes := int(gapDuration / 60000)
+	if !block.Filler.Enabled || gapMinutes < block.Filler.MinGapTime {
+		return playlist, currentDuration
+	}
+
+	fillerPrograms, err := e.getFiller(block, gapDuration)
+	if err != nil || len(fillerPrograms) == 0 {
+		return playlist, currentDuration
+	}
+
+	playlist = append(playlist, fillerPrograms...)
+	for _, filler := range fillerPrograms {
+		currentDuration += filler.Duration
+	}
+
+	return playlist, currentDuration
 }
 
 func (e *Engine) getSeriesState(title string) (*SeriesState, error) {

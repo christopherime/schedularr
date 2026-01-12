@@ -25,8 +25,10 @@ type item struct {
 	block scheduler.Block
 }
 
-func (i item) Title() string       { return i.block.Name }
-func (i item) Description() string { return fmt.Sprintf("%s | %d min | %s", i.block.Cron, i.block.Duration, i.block.ChannelID) }
+func (i item) Title() string { return i.block.Name }
+func (i item) Description() string {
+	return fmt.Sprintf("%s | %d min | %s", i.block.Cron, i.block.Duration, i.block.ChannelID)
+}
 func (i item) FilterValue() string { return i.block.Name }
 
 // Model is the Bubble Tea model for the TUI.
@@ -87,101 +89,134 @@ func (m Model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+// Update handles Bubble Tea messages and updates the model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	var cmds []tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		h, v := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()
-		m.list.SetSize(msg.Width-h, msg.Height-v)
-
+		m.updateWindowSize(msg)
+		return m, nil
 	case tea.KeyMsg:
-		switch m.state {
-		case stateListView:
-			switch msg.String() {
-			case "q", "ctrl+c":
-				return m, tea.Quit
-						case "enter":
-							if len(m.cfg.Scheduler.Blocks) == 0 {
-								return m, nil
-							}
-							m.state = stateEditBlock
-							m.selected = m.list.Index()
+		return m.handleKeyMsg(msg)
+	}
 
-							// Load selected block into inputs
-							b := m.cfg.Scheduler.Blocks[m.selected]
-							m.inputs[0].SetValue(b.Name)
-							m.inputs[1].SetValue(b.Cron)
-							m.inputs[2].SetValue(strconv.Itoa(b.Duration))
-							m.inputs[3].SetValue(b.ChannelID)
+	return m, nil
+}
 
-							m.resetInputs()
-							return m, nil
-						case "n": // New block
-							m.state = stateEditBlock
-							m.selected = -1 // New
-							for i := range m.inputs {
-								m.inputs[i].SetValue("")
-							}
-							m.resetInputs()
-							return m, nil
-			}
-			m.list, cmd = m.list.Update(msg)
-			return m, cmd
+func (m *Model) updateWindowSize(msg tea.WindowSizeMsg) {
+	h, v := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()
+	m.list.SetSize(msg.Width-h, msg.Height-v)
+}
 
-		case stateEditBlock:
-			switch msg.String() {
-			case "esc":
-				m.state = stateListView
-				return m, nil
-			case "tab", "shift+tab", "enter", "up", "down":
-				s := msg.String()
+func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.state {
+	case stateListView:
+		return m.updateListView(msg)
+	case stateEditBlock:
+		return m.updateEditBlock(msg)
+	default:
+		return m, nil
+	}
+}
 
-				if s == "enter" && m.focusIndex == len(m.inputs) {
-					// Save
-					m.saveBlock()
-					m.state = stateListView
-					return m, nil
-				}
+func (m Model) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "enter":
+		if len(m.cfg.Scheduler.Blocks) == 0 {
+			return m, nil
+		}
+		m.startEditBlock(m.list.Index())
+		return m, nil
+	case "n":
+		m.startEditBlock(-1)
+		return m, nil
+	}
 
-				if s == "up" || s == "shift+tab" {
-					m.focusIndex--
-				} else {
-					m.focusIndex++
-				}
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
 
-				if m.focusIndex > len(m.inputs) {
-					m.focusIndex = 0
-				} else if m.focusIndex < 0 {
-					m.focusIndex = len(m.inputs)
-				}
+func (m Model) updateEditBlock(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.state = stateListView
+		return m, nil
+	case "tab", "shift+tab", "enter", "up", "down":
+		return m.handleEditNavigation(msg.String())
+	default:
+		return m.updateFocusedInput(msg)
+	}
+}
 
-				cmds = make([]tea.Cmd, len(m.inputs))
-				for i := 0; i <= len(m.inputs)-1; i++ {
-					if i == m.focusIndex {
-						// Set focused state
-						cmds[i] = m.inputs[i].Focus()
-						m.inputs[i].PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-						m.inputs[i].TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-						continue
-					}
-					// Remove focused state
-					m.inputs[i].Blur()
-					m.inputs[i].PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-					m.inputs[i].TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-				}
-				return m, tea.Batch(cmds...)
-			}
+func (m Model) handleEditNavigation(key string) (tea.Model, tea.Cmd) {
+	if key == "enter" && m.focusIndex == len(m.inputs) {
+		m.saveBlock()
+		m.state = stateListView
+		return m, nil
+	}
 
-			// Only update the focused input
-			if m.focusIndex < len(m.inputs) {
-				m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
-				return m, cmd
-			}
+	delta := 1
+	if key == "up" || key == "shift+tab" {
+		delta = -1
+	}
+
+	m.moveFocus(delta)
+	cmd := m.updateInputFocusStyles()
+	return m, cmd
+}
+
+func (m *Model) startEditBlock(index int) {
+	m.state = stateEditBlock
+	m.selected = index
+
+	if index >= 0 && index < len(m.cfg.Scheduler.Blocks) {
+		b := m.cfg.Scheduler.Blocks[index]
+		m.inputs[0].SetValue(b.Name)
+		m.inputs[1].SetValue(b.Cron)
+		m.inputs[2].SetValue(strconv.Itoa(b.Duration))
+		m.inputs[3].SetValue(b.ChannelID)
+	} else {
+		for i := range m.inputs {
+			m.inputs[i].SetValue("")
 		}
 	}
 
+	m.resetInputs()
+}
+
+func (m *Model) moveFocus(delta int) {
+	m.focusIndex += delta
+	if m.focusIndex > len(m.inputs) {
+		m.focusIndex = 0
+	} else if m.focusIndex < 0 {
+		m.focusIndex = len(m.inputs)
+	}
+}
+
+func (m *Model) updateInputFocusStyles() tea.Cmd {
+	cmds := make([]tea.Cmd, len(m.inputs))
+	for i := range m.inputs {
+		if i == m.focusIndex {
+			cmds[i] = m.inputs[i].Focus()
+			m.inputs[i].PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+			m.inputs[i].TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+			continue
+		}
+		m.inputs[i].Blur()
+		m.inputs[i].PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		m.inputs[i].TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) updateFocusedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.focusIndex < len(m.inputs) {
+		var cmd tea.Cmd
+		m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 

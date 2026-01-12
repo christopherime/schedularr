@@ -15,12 +15,12 @@ import (
 
 // Client is a Tunarr API client.
 type Client struct {
-	baseURL       string
-	apiKey        string
-	httpClient    *http.Client
-	maxRetries    int
-	retryWaitMin  time.Duration
-	retryWaitMax  time.Duration
+	baseURL      string
+	apiKey       string
+	httpClient   *http.Client
+	maxRetries   int
+	retryWaitMin time.Duration
+	retryWaitMax time.Duration
 }
 
 // NewClient creates a new Tunarr API client with the given configuration.
@@ -110,13 +110,7 @@ func (c *Client) do(req *http.Request, v interface{}) error {
 	var lastErr error
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
-		// Clone request body for retries (if present)
-		var bodyBytes []byte
-		if req.Body != nil {
-			bodyBytes, _ = io.ReadAll(req.Body)
-			_ = req.Body.Close()
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		}
+		bodyBytes := cloneRequestBody(req)
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -125,70 +119,94 @@ func (c *Client) do(req *http.Request, v interface{}) error {
 				URL:    req.URL.String(),
 				Err:    err,
 			}
-
-			// Network errors are retryable
 			if attempt < c.maxRetries {
 				time.Sleep(c.backoff(attempt))
-				// Restore request body for retry
-				if bodyBytes != nil {
-					req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				}
+				resetRequestBody(req, bodyBytes)
 				continue
 			}
 			return lastErr
 		}
 
-		// Read response body for error reporting
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			return &APIError{
-				Method:     req.Method,
-				URL:        req.URL.String(),
-				StatusCode: resp.StatusCode,
-				Err:        fmt.Errorf("failed to read response body: %w", err),
-			}
-		}
-
-		// Check status code
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			apiErr := &APIError{
-				Method:     req.Method,
-				URL:        req.URL.String(),
-				StatusCode: resp.StatusCode,
-				Body:       string(body),
-			}
-
-			// Retry on retryable status codes
-			if isRetryable(resp.StatusCode) && attempt < c.maxRetries {
-				lastErr = apiErr
+		if err := c.handleResponse(req, resp, v); err != nil {
+			if shouldRetryStatus(err) && attempt < c.maxRetries {
+				lastErr = err
 				time.Sleep(c.backoff(attempt))
-				// Restore request body for retry
-				if bodyBytes != nil {
-					req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				}
+				resetRequestBody(req, bodyBytes)
 				continue
 			}
-
-			return apiErr
-		}
-
-		// Decode response if destination is provided
-		if v != nil {
-			if err := json.Unmarshal(body, v); err != nil {
-				return &APIError{
-					Method:     req.Method,
-					URL:        req.URL.String(),
-					StatusCode: resp.StatusCode,
-					Err:        fmt.Errorf("failed to decode response: %w", err),
-				}
-			}
+			return err
 		}
 
 		return nil
 	}
 
 	return lastErr
+}
+
+func cloneRequestBody(req *http.Request) []byte {
+	if req.Body == nil {
+		return nil
+	}
+
+	bodyBytes, _ := io.ReadAll(req.Body)
+	_ = req.Body.Close()
+	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	return bodyBytes
+}
+
+func resetRequestBody(req *http.Request, bodyBytes []byte) {
+	if bodyBytes == nil {
+		return
+	}
+	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+}
+
+func (c *Client) handleResponse(req *http.Request, resp *http.Response, v interface{}) error {
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return &APIError{
+			Method:     req.Method,
+			URL:        req.URL.String(),
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("failed to read response body: %w", err),
+		}
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &APIError{
+			Method:     req.Method,
+			URL:        req.URL.String(),
+			StatusCode: resp.StatusCode,
+			Body:       string(body),
+		}
+	}
+
+	if v != nil {
+		if err := json.Unmarshal(body, v); err != nil {
+			return &APIError{
+				Method:     req.Method,
+				URL:        req.URL.String(),
+				StatusCode: resp.StatusCode,
+				Err:        fmt.Errorf("failed to decode response: %w", err),
+			}
+		}
+	}
+
+	return nil
+}
+
+func readResponseBody(resp *http.Response) ([]byte, error) {
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
+}
+
+func shouldRetryStatus(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return isRetryable(apiErr.StatusCode)
+	}
+	return false
 }
 
 // validateChannel validates a Channel struct for required fields.

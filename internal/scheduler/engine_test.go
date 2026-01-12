@@ -256,3 +256,41 @@ func TestPlanBlock_Series(t *testing.T) {
 		t.Errorf("Expected next episode to be 3, got %d", state.CurrentEpisode)
 	}
 }
+
+func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	block := Block{
+		Name:     "Series Block",
+		Type:     BlockTypeSeries,
+		Duration: 30,
+		Series: []SeriesConfig{
+			{
+				ShowTitle:        "Missing Show",
+				EpisodesPerBlock: 1,
+			},
+		},
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Other Show", ShowTitle: "Other Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+	}
+
+	playlist, err := engine.PlanBlock(block, availablePrograms)
+	if err != nil {
+		t.Fatalf("PlanBlock returned error: %v", err)
+	}
+	if len(playlist) != 0 {
+		t.Fatalf("Expected empty playlist, got %d items", len(playlist))
+	}
+
+	state, ok := engine.pendingStates["Missing Show"]
+	if !ok {
+		t.Fatal("Expected pending state for Missing Show")
+	}
+	if !state.Completed {
+		t.Error("Expected series to be marked completed")
+	}
+}

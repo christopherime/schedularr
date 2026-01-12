@@ -18,7 +18,7 @@ type Config struct {
 	Tunarr        tunarr.Config    `mapstructure:"tunarr" yaml:"tunarr" json:"tunarr"`
 	Log           LogConfig        `mapstructure:"log" yaml:"log" json:"log"`
 	SchedulerFile string           `mapstructure:"scheduler_file" yaml:"scheduler_file" json:"scheduler_file,omitempty"` // Path to scheduler config file
-	Scheduler     scheduler.Config `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler,omitempty"`            // Inline scheduler config (legacy)
+	Scheduler     scheduler.Config `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler,omitempty"`                // Inline scheduler config (legacy)
 }
 
 // LogConfig holds configuration for logging
@@ -44,54 +44,48 @@ func New() *Config {
 // LoadSchedulerConfig loads scheduler configuration from a file or inline config.
 // Priority: 1) schedulerFile parameter, 2) Config.SchedulerFile, 3) inline Config.Scheduler, 4) default scheduler.yaml
 func LoadSchedulerConfig(cfg *Config, schedulerFile string) (*scheduler.Config, error) {
-	var schedCfg *scheduler.Config
-	var err error
-
-	// Priority 1: Explicit scheduler file parameter
 	if schedulerFile != "" {
-		schedCfg, err = loadSchedulerFromFile(schedulerFile)
-	} else if cfg.SchedulerFile != "" {
-		// Priority 2: SchedulerFile field in config
-		schedCfg, err = loadSchedulerFromFile(cfg.SchedulerFile)
-	} else {
-		// Priority 3: Check for default scheduler.yaml in multiple locations
-		found := false
-		searchPaths := []string{
-			"scheduler.yaml",
-			"./scheduler.yaml",
-		}
-
-		// Add home directory path
-		if home, err := os.UserHomeDir(); err == nil {
-			searchPaths = append(searchPaths, filepath.Join(home, "scheduler.yaml"))
-		}
-
-		for _, path := range searchPaths {
-			if _, statErr := os.Stat(path); statErr == nil {
-				schedCfg, err = loadSchedulerFromFile(path)
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			// Priority 4: Use inline scheduler config (legacy support)
-			if len(cfg.Scheduler.Blocks) > 0 {
-				schedCfg = &cfg.Scheduler
-			} else {
-				return nil, errors.New("no scheduler configuration found")
-			}
-		}
+		return loadSchedulerFromFile(schedulerFile)
 	}
 
-	if err != nil {
+	if cfg.SchedulerFile != "" {
+		return loadSchedulerFromFile(cfg.SchedulerFile)
+	}
+
+	schedCfg, err := loadSchedulerFromDefaultLocations()
+	if err == nil {
+		return schedCfg, nil
+	}
+	if !errors.Is(err, errSchedulerConfigNotFound) {
 		return nil, err
 	}
 
-	// Note: Validation is now done via CUE schema in the validate command
-	// Runtime validation can be added here if needed
+	if len(cfg.Scheduler.Blocks) > 0 {
+		return &cfg.Scheduler, nil
+	}
 
-	return schedCfg, nil
+	return nil, errors.New("no scheduler configuration found")
+}
+
+var errSchedulerConfigNotFound = errors.New("no scheduler configuration found in default locations")
+
+func loadSchedulerFromDefaultLocations() (*scheduler.Config, error) {
+	searchPaths := []string{
+		"scheduler.yaml",
+		"./scheduler.yaml",
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		searchPaths = append(searchPaths, filepath.Join(home, "scheduler.yaml"))
+	}
+
+	for _, path := range searchPaths {
+		if _, statErr := os.Stat(path); statErr == nil {
+			return loadSchedulerFromFile(path)
+		}
+	}
+
+	return nil, errSchedulerConfigNotFound
 }
 
 // loadSchedulerFromFile loads scheduler config from a YAML file

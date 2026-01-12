@@ -214,53 +214,63 @@ func loadSchedulerFile(filename string) (*scheduler.Config, error) {
 
 // validateSchedulerConfig performs comprehensive validation on scheduler config
 func validateSchedulerConfig(cfg *scheduler.Config) []error {
-	var errs []error
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-
 	if len(cfg.Blocks) == 0 {
-		errs = append(errs, errors.New("no scheduling blocks defined"))
-		return errs
+		return []error{errors.New("no scheduling blocks defined")}
 	}
 
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+	var errs []error
 	for i, block := range cfg.Blocks {
-		blockPrefix := fmt.Sprintf("Block %d (%s)", i+1, block.Name)
+		errs = append(errs, validateBlock(block, i, parser)...)
+	}
 
-		// Validate required fields
-		if block.Name == "" {
-			errs = append(errs, fmt.Errorf("%s: name is required", blockPrefix))
-		}
+	return errs
+}
 
-		if block.Cron == "" {
-			errs = append(errs, fmt.Errorf("%s: cron expression is required", blockPrefix))
-		} else {
-			// Validate cron expression
-			if _, err := parser.Parse(block.Cron); err != nil {
-				errs = append(errs, fmt.Errorf("%s: invalid cron expression '%s': %w", blockPrefix, block.Cron, err))
-			}
-		}
+func validateBlock(block scheduler.Block, index int, parser cron.Parser) []error {
+	blockPrefix := fmt.Sprintf("Block %d (%s)", index+1, block.Name)
 
-		if block.Duration <= 0 {
-			errs = append(errs, fmt.Errorf("%s: duration must be greater than 0", blockPrefix))
-		}
+	var errs []error
+	errs = append(errs, validateBlockRequiredFields(block, blockPrefix, parser)...)
+	errs = append(errs, validateBlockFilter(block.Filter, blockPrefix)...)
 
-		if block.ChannelID == "" {
-			errs = append(errs, fmt.Errorf("%s: channel_id is required", blockPrefix))
-		}
+	return errs
+}
 
-		// Validate filter constraints
-		if block.Filter.MinDuration > 0 && block.Filter.MaxDuration > 0 {
-			if block.Filter.MinDuration > block.Filter.MaxDuration {
-				errs = append(errs, fmt.Errorf("%s: min_duration (%d) cannot be greater than max_duration (%d)",
-					blockPrefix, block.Filter.MinDuration, block.Filter.MaxDuration))
-			}
-		}
+func validateBlockRequiredFields(block scheduler.Block, blockPrefix string, parser cron.Parser) []error {
+	var errs []error
+	if block.Name == "" {
+		errs = append(errs, fmt.Errorf("%s: name is required", blockPrefix))
+	}
 
-		if block.Filter.YearFrom > 0 && block.Filter.YearTo > 0 {
-			if block.Filter.YearFrom > block.Filter.YearTo {
-				errs = append(errs, fmt.Errorf("%s: year_from (%d) cannot be greater than year_to (%d)",
-					blockPrefix, block.Filter.YearFrom, block.Filter.YearTo))
-			}
-		}
+	if block.Cron == "" {
+		errs = append(errs, fmt.Errorf("%s: cron expression is required", blockPrefix))
+	} else if _, err := parser.Parse(block.Cron); err != nil {
+		errs = append(errs, fmt.Errorf("%s: invalid cron expression '%s': %w", blockPrefix, block.Cron, err))
+	}
+
+	if block.Duration <= 0 {
+		errs = append(errs, fmt.Errorf("%s: duration must be greater than 0", blockPrefix))
+	}
+
+	if block.ChannelID == "" {
+		errs = append(errs, fmt.Errorf("%s: channel_id is required", blockPrefix))
+	}
+
+	return errs
+}
+
+func validateBlockFilter(filter scheduler.Filter, blockPrefix string) []error {
+	var errs []error
+	if filter.MinDuration > 0 && filter.MaxDuration > 0 && filter.MinDuration > filter.MaxDuration {
+		errs = append(errs, fmt.Errorf("%s: min_duration (%d) cannot be greater than max_duration (%d)",
+			blockPrefix, filter.MinDuration, filter.MaxDuration))
+	}
+
+	if filter.YearFrom > 0 && filter.YearTo > 0 && filter.YearFrom > filter.YearTo {
+		errs = append(errs, fmt.Errorf("%s: year_from (%d) cannot be greater than year_to (%d)",
+			blockPrefix, filter.YearFrom, filter.YearTo))
 	}
 
 	return errs
@@ -269,46 +279,58 @@ func validateSchedulerConfig(cfg *scheduler.Config) []error {
 // buildFilterSummary creates a human-readable summary of filter criteria
 func buildFilterSummary(filter *scheduler.Filter) string {
 	var parts []string
+	parts = appendCountSummary(parts, "genres", filter.Genres)
+	parts = appendCountSummary(parts, "ratings", filter.Ratings)
 
-	if len(filter.Genres) > 0 {
-		parts = append(parts, fmt.Sprintf("genres:%d", len(filter.Genres)))
+	if yearSummary := buildYearSummary(filter.YearFrom, filter.YearTo); yearSummary != "" {
+		parts = append(parts, yearSummary)
 	}
-
-	if len(filter.Ratings) > 0 {
-		parts = append(parts, fmt.Sprintf("ratings:%d", len(filter.Ratings)))
-	}
-
-	if filter.YearFrom > 0 || filter.YearTo > 0 {
-		if filter.YearFrom > 0 && filter.YearTo > 0 {
-			parts = append(parts, fmt.Sprintf("year:%d-%d", filter.YearFrom, filter.YearTo))
-		} else if filter.YearFrom > 0 {
-			parts = append(parts, fmt.Sprintf("year:%d+", filter.YearFrom))
-		} else {
-			parts = append(parts, fmt.Sprintf("year:-%d", filter.YearTo))
-		}
-	}
-
-	if filter.MinDuration > 0 || filter.MaxDuration > 0 {
-		if filter.MinDuration > 0 && filter.MaxDuration > 0 {
-			parts = append(parts, fmt.Sprintf("dur:%d-%dm", filter.MinDuration, filter.MaxDuration))
-		} else if filter.MinDuration > 0 {
-			parts = append(parts, fmt.Sprintf("dur:%d+m", filter.MinDuration))
-		} else {
-			parts = append(parts, fmt.Sprintf("dur:-%dm", filter.MaxDuration))
-		}
+	if durationSummary := buildDurationSummary(filter.MinDuration, filter.MaxDuration); durationSummary != "" {
+		parts = append(parts, durationSummary)
 	}
 
 	if filter.TitlePattern != "" {
 		parts = append(parts, "title:regex")
 	}
 
-	if len(filter.Tags) > 0 {
-		parts = append(parts, fmt.Sprintf("tags:%d", len(filter.Tags)))
-	}
+	parts = appendCountSummary(parts, "tags", filter.Tags)
 
 	if len(parts) == 0 {
 		return "none"
 	}
 
 	return strings.Join(parts, ", ")
+}
+
+func appendCountSummary(parts []string, label string, values []string) []string {
+	if len(values) == 0 {
+		return parts
+	}
+	return append(parts, fmt.Sprintf("%s:%d", label, len(values)))
+}
+
+func buildYearSummary(from int, to int) string {
+	switch {
+	case from > 0 && to > 0:
+		return fmt.Sprintf("year:%d-%d", from, to)
+	case from > 0:
+		return fmt.Sprintf("year:%d+", from)
+	case to > 0:
+		return fmt.Sprintf("year:-%d", to)
+	default:
+		return ""
+	}
+}
+
+func buildDurationSummary(minMinutes int, maxMinutes int) string {
+	switch {
+	case minMinutes > 0 && maxMinutes > 0:
+		return fmt.Sprintf("dur:%d-%dm", minMinutes, maxMinutes)
+	case minMinutes > 0:
+		return fmt.Sprintf("dur:%d+m", minMinutes)
+	case maxMinutes > 0:
+		return fmt.Sprintf("dur:-%dm", maxMinutes)
+	default:
+		return ""
+	}
 }
