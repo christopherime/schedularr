@@ -547,7 +547,7 @@ This TODO is structured to align Schedularr with established architectural patte
 - [x] **Better Table Output**: Improve schedule display formatting ✅ (2026-01-12)
 - [ ] **Progress Indicators**: Show progress during long operations
 - [x] **Colored Output**: Use colors for better readability ✅ (2026-01-12)
-- [ ] **Dry Run Enhancements**: More detailed dry run output
+- [x] **Dry Run Enhancements**: More detailed dry run output ✅ (2026-01-12)
 
 ### 5.2 TUI Enhancements
 
