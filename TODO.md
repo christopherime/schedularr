@@ -340,8 +340,10 @@ This TODO is structured to align Schedularr with established architectural patte
 - [x] **Completion Handling**: Graceful series completion
   - [x] Log INFO when series completes all episodes
   - [x] Mark series as complete in state
-  - [ ] Option to auto-disable completed blocks
-  - [ ] Option to restart series from beginning
+  - [x] Option to auto-disable completed blocks
+  - [x] Option to restart series from beginning
+  - [x] Episode skipping functionality
+  - [x] Max runs limit for restart action
 
 #### 2.3.4 Example Scheduler File Format
 
