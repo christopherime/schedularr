@@ -199,7 +199,7 @@ This TODO is structured to align Schedularr with established architectural patte
   - [ ] Include API endpoints documentation
   - [ ] Add configuration reference
 
-- [ ] **Create `ROADMAP.md`**
+- [ ] **Create `ROADMAP.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`**
   - [ ] Document project vision
   - [ ] Create status overview table
   - [ ] Define development phases
