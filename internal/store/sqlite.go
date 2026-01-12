@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -54,6 +55,15 @@ func (s *Store) initSchema(ctx context.Context) error {
 		completed BOOLEAN NOT NULL DEFAULT 0,
 		last_aired DATETIME
 	);
+	CREATE TABLE IF NOT EXISTS schedule_history (
+		program_id TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		block_name TEXT NOT NULL,
+		scheduled_at DATETIME NOT NULL,
+		PRIMARY KEY (program_id, channel_id, scheduled_at)
+	);
+	CREATE INDEX IF NOT EXISTS idx_schedule_history_recent
+		ON schedule_history (channel_id, scheduled_at);
 	`
 	_, err := s.db.ExecContext(ctx, query)
 	return err
@@ -109,4 +119,86 @@ func (s *Store) UpdateSeriesState(ctx context.Context, state *scheduler.SeriesSt
 		return fmt.Errorf("failed to update series state: %w", err)
 	}
 	return nil
+}
+
+// RecordScheduleHistory persists schedule history entries for future filtering.
+func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.ScheduleHistoryEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at)
+		VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("failed to prepare schedule history insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, entry := range entries {
+		if _, err := stmt.ExecContext(ctx, entry.ProgramID, entry.ChannelID, entry.BlockName, entry.ScheduledAt); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to insert schedule history: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit schedule history: %w", err)
+	}
+
+	return nil
+}
+
+// WasRecentlyScheduled returns true if a program was scheduled within the provided window.
+func (s *Store) WasRecentlyScheduled(ctx context.Context, programID, channelID string, window time.Duration) (bool, error) {
+	if programID == "" || channelID == "" {
+		return false, errors.New("program ID and channel ID are required")
+	}
+
+	cutoff := time.Now().Add(-window)
+	query := `
+		SELECT 1
+		FROM schedule_history
+		WHERE program_id = ? AND channel_id = ? AND scheduled_at > ?
+		LIMIT 1
+	`
+	row := s.db.QueryRowContext(ctx, query, programID, channelID, cutoff)
+
+	var exists int
+	if err := row.Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to query schedule history: %w", err)
+	}
+
+	return true, nil
+}
+
+// CleanupScheduleHistory removes schedule history entries older than the window.
+func (s *Store) CleanupScheduleHistory(ctx context.Context, window time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-window)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM schedule_history WHERE scheduled_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup schedule history: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read cleanup result: %w", err)
+	}
+
+	return affected, nil
 }

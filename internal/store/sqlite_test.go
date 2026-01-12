@@ -51,7 +51,7 @@ func TestStore_SeriesState(t *testing.T) {
 	if updatedState.CurrentSeason != 2 || updatedState.CurrentEpisode != 5 {
 		t.Errorf("Expected S02E05, got S%02dE%02d", updatedState.CurrentSeason, updatedState.CurrentEpisode)
 	}
-	// Check time is close enough (sqlite stores time, but might lose some precision depending on format, 
+	// Check time is close enough (sqlite stores time, but might lose some precision depending on format,
 	// though go-sqlite3 usually handles it well. Let's just check it's not zero).
 	if updatedState.LastAired.IsZero() {
 		t.Error("Expected LastAired to be set")
@@ -62,12 +62,91 @@ func TestStore_SeriesState(t *testing.T) {
 	if err := s.UpdateSeriesState(ctx, newState); err != nil {
 		t.Fatalf("UpdateSeriesState failed: %v", err)
 	}
-	
+
 	finalState, err := s.GetSeriesState(ctx, showTitle)
 	if err != nil {
 		t.Fatalf("GetSeriesState failed: %v", err)
 	}
 	if !finalState.Completed {
 		t.Error("Expected completed to be true")
+	}
+}
+
+func TestStore_ScheduleHistory(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now()
+	entry := scheduler.ScheduleHistoryEntry{
+		ProgramID:   "prog-1",
+		ChannelID:   "channel-1",
+		BlockName:   "Morning Block",
+		ScheduledAt: now,
+	}
+
+	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{entry}); err != nil {
+		t.Fatalf("RecordScheduleHistory failed: %v", err)
+	}
+
+	recent, err := s.WasRecentlyScheduled(ctx, "prog-1", "channel-1", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("WasRecentlyScheduled failed: %v", err)
+	}
+	if !recent {
+		t.Error("Expected program to be recently scheduled")
+	}
+}
+
+func TestStore_ScheduleHistoryCleanup(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	oldEntry := scheduler.ScheduleHistoryEntry{
+		ProgramID:   "old-prog",
+		ChannelID:   "channel-1",
+		BlockName:   "Old Block",
+		ScheduledAt: time.Now().Add(-48 * time.Hour),
+	}
+	newEntry := scheduler.ScheduleHistoryEntry{
+		ProgramID:   "new-prog",
+		ChannelID:   "channel-1",
+		BlockName:   "New Block",
+		ScheduledAt: time.Now(),
+	}
+
+	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{oldEntry, newEntry}); err != nil {
+		t.Fatalf("RecordScheduleHistory failed: %v", err)
+	}
+
+	removed, err := s.CleanupScheduleHistory(ctx, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("CleanupScheduleHistory failed: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("Expected 1 entry removed, got %d", removed)
+	}
+
+	oldRecent, err := s.WasRecentlyScheduled(ctx, "old-prog", "channel-1", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("WasRecentlyScheduled failed: %v", err)
+	}
+	if oldRecent {
+		t.Error("Expected old entry to be removed")
+	}
+
+	newRecent, err := s.WasRecentlyScheduled(ctx, "new-prog", "channel-1", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("WasRecentlyScheduled failed: %v", err)
+	}
+	if !newRecent {
+		t.Error("Expected new entry to remain")
 	}
 }
