@@ -1,226 +1,417 @@
-# Schedularr AI Coding Agent Instructions
+# GitHub Copilot Instructions for Schedularr
 
-## Project Overview
+This file provides context and guidelines for GitHub Copilot when suggesting code completions and generating code for the Schedularr project.
 
-Schedularr is a Go CLI tool for automated content scheduling on Tunarr TV channels using cron-based recurring blocks with advanced filtering. It features a Bubble Tea TUI, CUE schema validation, SQLite state persistence, and priority-based schedule conflict resolution.
+For general AI assistant guidance, see [AGENTS.md](../AGENTS.md).
 
-## Architecture & Component Boundaries
+## Project Context
 
-**Entry Point**: `main.go` → `cmd/` (Cobra commands) → `internal/` packages
+**Schedularr** automates TV channel scheduling for Tunarr using cron-based blocks with intelligent content filtering and series progression.
 
-### Key Components
+**Tech Stack:**
+- Go 1.25.5
+- Cobra (CLI) + Viper (config)
+- Bubble Tea (TUI)
+- CUE (schema validation)
+- SQLite (state persistence)
+- robfig/cron (scheduling)
 
-- **`cmd/`**: Cobra CLI commands (`root`, `channels`, `config`, `generate`, `run`, `scheduler`, `tui`, `validate`)
-- **`internal/scheduler/`**: Core scheduling engine with cron parsing, priority resolution, series state tracking
-  - `engine.go`: Main scheduling logic with `GenerateForTimeRange()` and conflict resolution
-  - `filter.go`: Content filtering by genre, rating, duration, year, title regex
-  - `history.go`: Prevents re-scheduling content within rotation windows
-  - `state.go`: SQLite-backed series episode progression tracking
-- **`internal/tunarr/`**: API client with exponential backoff retry logic
-  - ⚠️ **Critical**: Many endpoints are placeholders (see `docs/TUNARR_API_RESEARCH.md` before modifying)
-- **`internal/config/`**: Viper-based config loading from `~/.schedularr.yaml` or `./.schedularr.yaml`
-- **`internal/cueconfig/`**: CUE schema validation for type-safe configuration
-- **`internal/tui/`**: Bubble Tea interactive terminal UI
-- **`internal/store/`**: SQLite state persistence for series tracking
+## Code Style Rules
 
-### Data Flow
-
-1. **Config Load**: `cmd/root.go` → Viper → CUE validation → Domain types
-2. **Schedule Generation**: CLI → Engine.GenerateForTimeRange() → Tunarr API → Filter → Priority Resolution → Tunarr Update
-3. **Series State**: Engine → SQLite store → Track episode progression per series/block
-
-## Critical Developer Workflows
-
-### Build & Test
-
-```bash
-# Development build
-go build -o schedularr main.go
-
-# Optimized release build (required for distribution)
-go build -ldflags="-s -w" -o schedularr main.go
-
-# Run tests with race detection
-go test -race -cover ./...
-
-# Lint (strict rules enforced)
-golangci-lint run
-
-# Security scans
-gosec ./...
-govulncheck ./...
-```
-
-### Configuration Generation & Validation
-
-```bash
-# Generate default configs (CUE → YAML)
-schedularr config generate config.yaml
-schedularr scheduler init scheduler.yaml
-
-# Validate configs against CUE schemas
-schedularr validate config.yaml scheduler.yaml
-
-# Manual CUE validation
-cue vet configs/config.yaml cmd/schema/config.cue
-```
-
-### Debugging Schedule Generation
-
-```bash
-# Dry-run mode (preview without applying)
-schedularr generate --scheduler scheduler.yaml --dry-run
-
-# Enable debug logging
-schedularr --config config.yaml generate --scheduler scheduler.yaml --log-level debug
-```
-
-## Project-Specific Conventions
-
-### Configuration Schema Workflow
-
-**DO NOT** manually edit YAML examples without updating CUE schemas first:
-
-1. Edit schema: `cmd/schema/config.cue` or `cmd/schema/scheduler.cue`
-2. Validate: `cue vet <yaml-file> <schema-file>`
-3. Regenerate examples: `schedularr config generate` / `schedularr scheduler init`
-
-**Rationale**: CUE schemas are the source of truth for defaults, types, and validation rules.
-
-### Error Handling Pattern
+### Package Structure
 
 ```go
-// ✅ Correct: Contextual wrapping with %w
+// ✅ Correct package comment format
+// Package scheduler provides the core scheduling engine for Schedularr.
+package scheduler
+
+// ❌ Incorrect - missing "Package" prefix
+// Scheduler provides the core scheduling engine.
+package scheduler
+```
+
+### Logging Style
+
+Always use structured logging with `log/slog`:
+
+```go
+// ✅ Correct - structured logging with snake_case fields
+logger.Info("schedule generated",
+    "block_name", block.Name,
+    "program_count", len(programs),
+    "duration_minutes", duration)
+
+// ❌ Incorrect - printf-style logging
+log.Printf("Generated %d programs for %s (%d min)", len(programs), block.Name, duration)
+```
+
+### Error Handling
+
+Always wrap errors with context:
+
+```go
+// ✅ Correct - error wrapping with context
 if err != nil {
-    return fmt.Errorf("failed to parse cron '%s' for block %s: %w", block.Cron, block.Name, err)
+    return fmt.Errorf("failed to fetch library %s: %w", libID, err)
 }
 
-// ❌ Avoid: github.com/pkg/errors (blocked by depguard)
+// ❌ Incorrect - returning raw error
+if err != nil {
+    return err
+}
 ```
 
-### Logging Standards
+### Function Signatures
 
-**Use `log/slog` with structured fields, not string formatting:**
+Exported functions need godoc comments:
 
 ```go
-// ✅ Correct: Structured logging
-logger.Info("block scheduled",
-    "block_name", block.Name,
-    "channel_id", channelID,
-    "start_time", startTime,
-    "program_count", len(programs))
+// ✅ Correct - godoc comment present
+// FilterPrograms filters the given programs based on filter criteria.
+// Returns an error if the filter is invalid or malformed.
+func FilterPrograms(programs []tunarr.Program, filter Filter) ([]tunarr.Program, error) {
+    // implementation
+}
 
-// ❌ Avoid: Unstructured logging
-logger.Info(fmt.Sprintf("Block %s scheduled on %s", block.Name, channelID))
+// ❌ Incorrect - missing godoc
+func FilterPrograms(programs []tunarr.Program, filter Filter) ([]tunarr.Program, error) {
+    // implementation
+}
 ```
 
-**Field naming**: Use `snake_case` for log fields (matches JSON output).
+## Common Patterns
 
-### Testing Patterns
+### Table-Driven Tests
 
-**Use table-driven tests with meaningful scenario names:**
+Use this pattern for test generation:
 
 ```go
-func TestFilterPrograms_ExcludesShort(t *testing.T) {
+func TestFunctionName(t *testing.T) {
     tests := []struct {
-        name     string
-        filter   Filter
-        programs []Program
-        want     int
+        name    string
+        input   InputType
+        want    OutputType
+        wantErr bool
     }{
         {
-            name: "exclude programs under 20 minutes",
-            filter: Filter{MinDuration: 20},
-            programs: []Program{{Duration: 15}, {Duration: 25}},
-            want: 1,
+            name: "descriptive test case name",
+            input: InputType{/* ... */},
+            want: OutputType{/* ... */},
+            wantErr: false,
         },
+        // more test cases
     }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := FunctionName(tt.input)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("FunctionName() error = %v, wantErr %v", err, tt.wantErr)
+                return
+            }
+            if !reflect.DeepEqual(got, tt.want) {
+                t.Errorf("FunctionName() = %v, want %v", got, tt.want)
+            }
+        })
+    }
+}
+```
+
+### CLI Command Structure
+
+When suggesting CLI commands:
+
+```go
+var commandCmd = &cobra.Command{
+    Use:   "command [args]",
+    Short: "Brief one-line description",
+    Long: `Detailed description with:
+- Feature list
+- Usage examples
+- Important notes`,
+    Run: func(cmd *cobra.Command, args []string) {
+        // Implementation
+    },
+}
+
+func init() {
+    rootCmd.AddCommand(commandCmd)
+    commandCmd.Flags().StringVar(&variable, "flag", "default", "Description")
+}
+```
+
+### Configuration Struct Tags
+
+Always include all three tags:
+
+```go
+type Config struct {
+    FieldName string `mapstructure:"field_name" yaml:"field_name" json:"field_name"`
+    // mapstructure: for Viper
+    // yaml: for YAML marshaling
+    // json: for JSON marshaling
+}
+```
+
+## Complexity Limits
+
+Copilot should suggest refactoring when:
+- Cyclomatic complexity > 15
+- Cognitive complexity > 20
+- Nesting depth > 5
+- Function has > 5 parameters
+- Function returns > 3 values
+
+Suggest extracting:
+- Helper functions for complex logic
+- Early returns to reduce nesting
+- Separate functions for different responsibilities
+
+## Blocked Patterns
+
+Never suggest these (enforced by depguard):
+
+```go
+// ❌ NEVER use these packages
+import "github.com/pkg/errors"          // Use fmt.Errorf with %w
+import "github.com/sirupsen/logrus"     // Use log/slog
+import "crypto/md5"                      // Security risk
+import "crypto/sha1"                     // Security risk
+import "io/ioutil"                       // Deprecated
+import "gopkg.in/yaml.v2"                // Use v3
+
+// ✅ Use these instead
+import (
+    "fmt"
+    "log/slog"
+    "os"
+    "gopkg.in/yaml.v3"
+)
+```
+
+## File Operations
+
+Always clean user-provided paths:
+
+```go
+// ✅ Correct - clean path before use
+func readConfig(filePath string) error {
+    cleanPath := filepath.Clean(filePath)
+    // #nosec G304 - user-provided path is intentional
+    data, err := os.ReadFile(cleanPath)
+    // ...
+}
+
+// ❌ Incorrect - using raw user input
+func readConfig(filePath string) error {
+    data, err := os.ReadFile(filePath)
     // ...
 }
 ```
 
-**Mock Tunarr API**: Use `internal/scheduler/mock_store.go` pattern for interfaces.
+## Testing Conventions
 
-### Code Complexity Limits (enforced by golangci-lint)
+### Mock Interfaces
 
-- **Cyclomatic complexity**: max 15
-- **Cognitive complexity**: max 20
-- **Function nesting**: max 5 levels
-- **Function results**: max 3 return values
-- **Arguments**: max 5 parameters
+When suggesting mocks for interfaces:
 
-**Tip**: Extract helper functions when approaching limits (see `engine.go` for examples).
+```go
+// ✅ Correct mock pattern
+type MockStateStore struct {
+    GetSeriesStateFunc  func(showTitle string) (*SeriesState, error)
+    SaveSeriesStateFunc func(state *SeriesState) error
+}
+
+func (m *MockStateStore) GetSeriesState(showTitle string) (*SeriesState, error) {
+    if m.GetSeriesStateFunc != nil {
+        return m.GetSeriesStateFunc(showTitle)
+    }
+    return nil, nil
+}
+```
+
+### Test Helpers
+
+Suggest helper functions for common test setups:
+
+```go
+func createTestEngine(t *testing.T) *Engine {
+    t.Helper()
+    client := &tunarr.Client{}
+    store := NewMockStateStore()
+    logger := slog.Default()
+    return NewEngine(client, []Block{}, store, logger)
+}
+```
+
+## CUE Schema Patterns
+
+When working with CUE schemas:
+
+```go
+// CUE schema pattern for optional fields with defaults
+#Config: {
+    field: type | *default_value  // Optional with default
+    required: type                 // Required field
+    nested: {
+        inner: string | *"default"
+    }
+}
+
+// Instance with defaults applied
+Config: #Config & {
+    required: "value"
+    // field and nested.inner will use defaults
+}
+```
+
+## Copilot-Specific Tips
+
+### Context Files
+
+Copilot should prioritize these files for context:
+1. `AGENTS.md` - General patterns and standards
+2. `CLAUDE.md` - Project structure and commands
+3. `TODO.md` - Current priorities and tasks
+4. Files in the same package
+5. Related test files
+
+### Autocomplete Priority
+
+When suggesting completions:
+1. Follow existing patterns in the same file
+2. Match naming conventions from similar functions
+3. Use struct field names from the project
+4. Suggest error handling for all fallible operations
+5. Include logging for significant operations
+
+### Code Generation
+
+When generating new functions:
+1. Include godoc comments
+2. Add error handling
+3. Use structured logging where appropriate
+4. Follow complexity limits
+5. Suggest accompanying tests
+
+## Common Completions
+
+### Fetching from Tunarr
+
+```go
+// When seeing Tunarr client usage:
+programs, err := client.GetLibraryPrograms(libraryID)
+if err != nil {
+    return fmt.Errorf("failed to fetch programs from library %s: %w", libraryID, err)
+}
+logger.Info("fetched programs", "library_id", libraryID, "count", len(programs))
+```
+
+### State Management
+
+```go
+// When seeing series state operations:
+state, err := e.getSeriesState(showTitle)
+if err != nil {
+    e.logger.Error("failed to get series state",
+        "show_title", showTitle,
+        "error", err)
+    return nil, fmt.Errorf("failed to get series state for %s: %w", showTitle, err)
+}
+```
+
+### Schedule Generation
+
+```go
+// When seeing schedule generation code:
+plan, err := engine.GenerateForTimeRange(start, end, programs)
+if err != nil {
+    logger.Error("schedule generation failed",
+        "start", start.Format(time.RFC3339),
+        "end", end.Format(time.RFC3339),
+        "error", err)
+    return fmt.Errorf("failed to generate schedule: %w", err)
+}
+logger.Info("schedule generated",
+    "start", start.Format(time.RFC3339),
+    "end", end.Format(time.RFC3339),
+    "channel_count", len(plan))
+```
+
+## Documentation Suggestions
+
+When suggesting comments:
+- Explain *why*, not *what* (code shows what)
+- Document non-obvious behavior
+- Explain performance considerations
+- Note any limitations or edge cases
+
+```go
+// ✅ Good comment - explains why
+// Use pending states to ensure atomic commits.
+// If schedule application fails, we can rollback without
+// corrupting the database.
+e.pendingStates[showTitle] = state
+
+// ❌ Bad comment - just repeats code
+// Set the pending state for the show title
+e.pendingStates[showTitle] = state
+```
 
 ## Integration Points
 
-### Tunarr API Client
+### With CUE Validation
 
-**⚠️ CRITICAL**: Many endpoints in `internal/tunarr/client.go` are placeholders. **Always consult `docs/TUNARR_API_RESEARCH.md` before modifying API calls.**
-
-**Known issues**:
-
-- Programs endpoint (`/api/programs`) may not match actual API
-- Schedule update endpoint structure unverified
-- Requires runtime testing against actual Tunarr instance
-
-**Retry logic**: Exponential backoff with 3 retries (1s → 30s) for all API calls.
-
-### SQLite State Store
-
-**Series progression tracking**: `internal/store/sqlite.go` tracks last-scheduled episode per series/block to maintain continuity across runs.
-
-**Schema**: See `sqlite.go` migrations (auto-applied on first run).
-
-## Commit & PR Conventions
-
-**Conventional Commits required:**
-
-```
-feat(scheduler): add episode skip feature
-fix(tunarr): correct schedule endpoint payload
-docs(api): update Tunarr endpoint research
-test(filter): add genre filtering edge cases
-```
-
-**PR Checklist**:
-
-- [ ] Tests added/updated (`go test -cover ./...`)
-- [ ] Linting passes (`golangci-lint run`)
-- [ ] CUE schemas updated if config changes
-- [ ] `docs/TUNARR_API_RESEARCH.md` updated if API changes
-- [ ] TUI changes include screenshots
-
-## Frequently Missed Details
-
-1. **Entry point is `main.go` not `cmd/schedularr/main.go`** (common misconception from reading AGENTS.md)
-2. **Config lookup order**: Flag → `$HOME/.schedularr.yaml` → `./.schedularr.yaml`
-3. **Cron parser uses robfig/cron/v3 format**: minute, hour, day, month, weekday (no seconds)
-4. **Priority resolution**: Higher priority blocks win overlaps; same priority = first defined
-5. **History tracking**: `ScheduleHistory` prevents re-scheduling within 7-day default window
-6. **CGO required**: SQLite dependency (`mattn/go-sqlite3`) requires `CGO_ENABLED=1`
-
-## Quick Reference: Key Files
-
-| File/Directory                                               | Purpose                               |
-| ------------------------------------------------------------ | ------------------------------------- |
-| [main.go](main.go)                                           | Entry point (calls `cmd.Execute()`)   |
-| [cmd/root.go](cmd/root.go)                                   | Cobra root command & config init      |
-| [internal/scheduler/engine.go](internal/scheduler/engine.go) | Core scheduling algorithm             |
-| [internal/tunarr/client.go](internal/tunarr/client.go)       | Tunarr API client (many placeholders) |
-| [cmd/schema/config.cue](cmd/schema/config.cue)               | Application config schema             |
-| [cmd/schema/scheduler.cue](cmd/schema/scheduler.cue)         | Scheduler config schema               |
-| [.golangci.yml](.golangci.yml)                               | Linting rules & complexity limits     |
-| [docs/TUNARR_API_RESEARCH.md](docs/TUNARR_API_RESEARCH.md)   | API endpoint verification status      |
-
-## VS Code Settings
-
-Recommended `.vscode/settings.json`:
-
-```json
-{
-  "go.testFlags": ["-v", "-race", "-cover"],
-  "go.lintTool": "golangci-lint",
-  "go.lintOnSave": "package",
-  "go.buildOnSave": "package"
+```go
+// When validating configs, use CUE validator
+validator := cueconfig.NewValidator()
+if err := validator.ValidateScheduler(data, "yaml"); err != nil {
+    return fmt.Errorf("scheduler validation error: %w", err)
 }
 ```
+
+### With SQLite Store
+
+```go
+// Always defer Close() for store
+store, err := store.New("schedularr.db")
+if err != nil {
+    return fmt.Errorf("failed to open database: %w", err)
+}
+defer store.Close()
+```
+
+### With Logging
+
+```go
+// Create logger from config at startup
+logger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
+logging.SetDefault(logger)  // Set as default for the app
+```
+
+## Quick Reference
+
+**Key Directories:**
+- `cmd/` - CLI commands
+- `internal/scheduler/` - Core scheduling logic
+- `internal/tunarr/` - Tunarr API client
+- `internal/config/` - Configuration loading
+- `internal/store/` - SQLite persistence
+- `internal/logging/` - Structured logging
+
+**Key Files:**
+- `main.go` - Entry point
+- `internal/scheduler/engine.go` - Main scheduling engine
+- `internal/scheduler/filter.go` - Content filtering
+- `cmd/schema/*.cue` - Configuration schemas
+
+**Run Commands:**
+- `make build` - Build binary
+- `make test` - Run tests
+- `make lint` - Run linters
+- `go test ./...` - Quick test
+- `./bin/schedularr --help` - CLI help
+
+---
+
+*For detailed guidance, see [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md).*
