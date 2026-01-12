@@ -387,3 +387,185 @@ func TestClient_GetFillerContent(t *testing.T) {
 		t.Errorf("expected %d programs, got %d", len(mockContent), len(content))
 	}
 }
+
+func TestClient_ErrorHandling(t *testing.T) {
+	tests := []struct {
+		name           string
+		statusCode     int
+		responseBody   string
+		expectedErrMsg string
+	}{
+		{
+			name:           "404 Not Found",
+			statusCode:     http.StatusNotFound,
+			responseBody:   `{"error": "not found"}`,
+			expectedErrMsg: "404",
+		},
+		{
+			name:           "500 Internal Server Error",
+			statusCode:     http.StatusInternalServerError,
+			responseBody:   `{"error": "internal error"}`,
+			expectedErrMsg: "500",
+		},
+		{
+			name:           "401 Unauthorized",
+			statusCode:     http.StatusUnauthorized,
+			responseBody:   `{"error": "unauthorized"}`,
+			expectedErrMsg: "401",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				w.Write([]byte(tt.responseBody))
+			}))
+			defer server.Close()
+
+			client := NewClient(Config{URL: server.URL})
+			_, err := client.GetChannels(context.Background())
+			if err == nil {
+				t.Error("Expected error, got nil")
+			}
+			if err != nil && !contains(err.Error(), tt.expectedErrMsg) {
+				t.Errorf("Expected error to contain %q, got %q", tt.expectedErrMsg, err.Error())
+			}
+		})
+	}
+}
+
+func TestClient_ValidationErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return invalid channel data
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]Channel{
+			{ID: "", Name: "Invalid Channel"}, // Missing required ID
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetChannels(context.Background())
+	if err == nil {
+		t.Error("Expected validation error for invalid channel, got nil")
+	}
+}
+
+func TestClient_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("invalid json"))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetChannels(context.Background())
+	if err == nil {
+		t.Error("Expected JSON decode error, got nil")
+	}
+}
+
+func TestClient_ContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate slow response
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := client.GetChannels(ctx)
+	if err == nil {
+		t.Error("Expected context cancellation error, got nil")
+	}
+}
+
+func TestAPIError_Error(t *testing.T) {
+	tests := []struct {
+		name     string
+		apiErr   *APIError
+		contains []string
+	}{
+		{
+			name: "Error with body",
+			apiErr: &APIError{
+				Method:     "GET",
+				URL:        "/api/channels",
+				StatusCode: 404,
+				Body:       `{"error": "not found"}`,
+			},
+			contains: []string{"404", "GET", "/api/channels"},
+		},
+		{
+			name: "Error with wrapped error",
+			apiErr: &APIError{
+				Method: "POST",
+				URL:    "/api/schedule",
+				Err:    http.ErrServerClosed,
+			},
+			contains: []string{"POST", "/api/schedule", "failed"},
+		},
+		{
+			name: "Error with status code only",
+			apiErr: &APIError{
+				Method:     "DELETE",
+				URL:        "/api/programs",
+				StatusCode: 500,
+			},
+			contains: []string{"500", "DELETE"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errMsg := tt.apiErr.Error()
+			for _, substr := range tt.contains {
+				if !contains(errMsg, substr) {
+					t.Errorf("Expected error message to contain %q, got %q", substr, errMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestAPIError_Unwrap(t *testing.T) {
+	wrappedErr := http.ErrServerClosed
+	apiErr := &APIError{
+		Method:     "GET",
+		URL:        "/api/test",
+		StatusCode: 500,
+		Err:        wrappedErr,
+	}
+
+	// Unwrap should return the wrapped error
+	if apiErr.Unwrap() != wrappedErr {
+		t.Errorf("Expected Unwrap to return %v, got %v", wrappedErr, apiErr.Unwrap())
+	}
+
+	// Test with no wrapped error
+	apiErr2 := &APIError{
+		Method:     "GET",
+		URL:        "/api/test",
+		StatusCode: 404,
+	}
+	if apiErr2.Unwrap() != nil {
+		t.Error("Expected Unwrap to return nil when no error is wrapped")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
