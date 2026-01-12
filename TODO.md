@@ -320,10 +320,12 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Update episode progress
   - [x] Mark series as complete
   - [x] Reset series progress
-- [ ] **State Backup/Export**: Allow exporting and importing state
-  - [ ] Export to JSON
-  - [ ] Import from JSON
-  - [ ] Backup before major operations
+- [x] **State Backup/Export**: Allow exporting and importing state
+  - [x] Export to JSON
+  - [x] Import from JSON
+  - [x] List all series states
+  - [x] Reset series to beginning
+  - [ ] Backup before major operations (deferred)
 
 #### 2.3.3 Series Scheduling Logic
 

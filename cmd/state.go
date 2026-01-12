@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var stateCmd = &cobra.Command{
@@ -51,8 +53,14 @@ The exported file contains all series states including:
 Example:
   schedularr state export backup-2026-01-12.json`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		outputFile := args[0]
+
+		// Load config
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			return fmt.Errorf("failed to parse config: %w", err)
+		}
 
 		// Get database path from config or use default
 		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
@@ -101,10 +109,11 @@ Existing states with the same show title will be overwritten.
 Example:
   schedularr state import backup-2026-01-12.json`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		inputFile := args[0]
+	RunE: func(_ *cobra.Command, args []string) error {
+		inputFile := filepath.Clean(args[0])
 
 		// Read file
+		// #nosec G304 - user-provided file path is intentional for import command
 		data, err := os.ReadFile(inputFile)
 		if err != nil {
 			return fmt.Errorf("failed to read file: %w", err)
@@ -114,6 +123,12 @@ Example:
 		var states []scheduler.SeriesState
 		if err := json.Unmarshal(data, &states); err != nil {
 			return fmt.Errorf("failed to parse JSON: %w", err)
+		}
+
+		// Load config
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			return fmt.Errorf("failed to parse config: %w", err)
 		}
 
 		// Get database path from config or use default
@@ -150,8 +165,14 @@ This is useful when you want to restart a series from the beginning.
 Example:
   schedularr state reset "My Favorite Show"`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		showTitle := args[0]
+
+		// Load config
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			return fmt.Errorf("failed to parse config: %w", err)
+		}
 
 		// Get database path from config or use default
 		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
@@ -177,10 +198,73 @@ Example:
 	},
 }
 
+var stateListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all series states",
+	Long: `List all series progression states showing current episode and completion status.
+
+Example:
+  schedularr state list`,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		// Load config
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			return fmt.Errorf("failed to parse config: %w", err)
+		}
+
+		// Get database path from config or use default
+		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
+		if cfg.Database != "" {
+			dbPath = cfg.Database
+		}
+
+		// Open store
+		s, err := store.New(dbPath)
+		if err != nil {
+			return fmt.Errorf("failed to open database: %w", err)
+		}
+		defer s.Close()
+
+		// Export states
+		ctx := context.Background()
+		states, err := s.ExportAllSeriesStates(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list states: %w", err)
+		}
+
+		if len(states) == 0 {
+			fmt.Println("No series states found.")
+			return nil
+		}
+
+		// Print header
+		fmt.Printf("%-40s %-15s %-10s %-20s\n", "Show Title", "Current", "Status", "Last Aired")
+		fmt.Println(string(make([]byte, 90)))
+
+		// Print each state
+		for _, state := range states {
+			current := fmt.Sprintf("S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
+			status := "In Progress"
+			if state.Completed {
+				status = "Completed"
+			}
+			lastAired := "Never"
+			if !state.LastAired.IsZero() {
+				lastAired = state.LastAired.Format(time.RFC3339)
+			}
+
+			fmt.Printf("%-40s %-15s %-10s %-20s\n", state.ShowTitle, current, status, lastAired)
+		}
+
+		fmt.Printf("\nTotal: %d series\n", len(states))
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(stateCmd)
 	stateCmd.AddCommand(stateExportCmd)
 	stateCmd.AddCommand(stateImportCmd)
 	stateCmd.AddCommand(stateResetCmd)
+	stateCmd.AddCommand(stateListCmd)
 }
-
