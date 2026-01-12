@@ -181,16 +181,56 @@ type Program struct {
 
 ### API Client Considerations
 
-- The Tunarr client uses placeholder endpoints that may not match the actual Tunarr API
-- Always verify endpoint paths and payload structures when working on API integration
-- Authentication uses optional `X-API-Key` header (not all Tunarr instances require it)
-- Client has 10-second timeout for all requests
+- The Tunarr client now includes **Prometheus metrics instrumentation** for:
+  - Tracking total API calls (`schedularr_tunarr_api_calls_total`)
+  - Measuring API call durations (`schedularr_tunarr_api_call_duration_seconds`)
+  - Counting API call errors (`schedularr_tunarr_api_errors_total`)
+Each metric is labeled by `endpoint` (generalized path like `/api/channels`) and `method` (HTTP method).
+
+- The Tunarr client uses placeholder endpoints that may not match the actual Tunarr API.
+- Always verify endpoint paths and payload structures when working on API integration.
+- Authentication uses optional `X-API-Key` header (not all Tunarr instances require it).
+- Client has 30-second timeout for all requests, with exponential backoff and retries.
+
+### Tunarr API Endpoints Documentation (Implemented)
+
+The following public methods are available in `internal/tunarr/client.go` and interact with the Tunarr API:
+
+- `GetChannels()`: Fetches all channels from `/api/channels` (GET)
+- `GetPrograms()`: Fetches available programs from `/api/programs` (GET)
+- `UpdateSchedule(channelID string, schedule []Program)`: Updates programming schedule for a specific channel by POSTing to `/api/channels/{id}/schedule`
+- `GetLibraries()`: Retrieves all available media libraries from `/api/libraries` (GET)
+- `GetLibraryPrograms(libraryID string)`: Retrieves programs from a specific library from `/api/libraries/{libraryID}/programs` (GET)
+- `GetShows()`: Retrieves all TV shows from `/api/shows` (GET)
+- `GetShowEpisodes(showID string, season int)`: Retrieves episodes for a specific show from `/api/shows/{showID}/episodes` (GET), with optional `season` filter
+- `SearchPrograms(query string)`: Searches for programs by title from `/api/programs/search?q={query}` (GET)
+- `GetFillerLists()`: Retrieves all available filler content lists from `/api/filler-lists` (GET)
+- `GetFillerContent(fillerListID string)`: Retrieves programs from a specific filler list from `/api/filler-lists/{fillerListID}/content` (GET)
+
+
 
 ### Testing Notes
 
 - Most tests are in `internal/scheduler/filter_test.go` and `internal/tunarr/client_test.go`
 - Integration tests should use mocked Tunarr API responses
 - When adding new features, follow existing test patterns with table-driven tests
+
+#### Metrics Instrumentation
+
+Prometheus metrics have been added to track application performance and behavior:
+
+- **Scheduling Engine (`internal/scheduler/engine.go`)**:
+  - `schedularr_schedules_generated_total`: Total schedules generated, by `channel_id` and `block_name`.
+  - `schedularr_schedule_generation_duration_seconds`: Histogram of schedule generation duration.
+  - `schedularr_schedule_errors_total`: Total errors during schedule generation, by `error_type` (e.g., `cron_parse_error`, `plan_block_error`, `filter_programs_error`, `get_series_state_error`).
+  - `schedularr_programs_scheduled_total`: Total programs scheduled, by `channel_id`, `block_name`, and `program_type`.
+  - `schedularr_series_state_updates_total`: Total series state updates, by `show_title`.
+  - `schedularr_conflicts_resolved_total`: Total scheduling conflicts resolved by priority.
+
+- **Tunarr API Client (`internal/tunarr/client.go`)**:
+  - `schedularr_tunarr_api_calls_total`: Total Tunarr API calls, by `endpoint` and `method`.
+  - `schedularr_tunarr_api_call_duration_seconds`: Histogram of Tunarr API call duration, by `endpoint` and `method`.
+  - `schedularr_tunarr_api_errors_total`: Total Tunarr API errors, by `endpoint`, `method`, and `error_type` (e.g., `request_creation_error`, `api_call_error`, `invalid_channel_id`, `program_validation_error`, `response_validation_error`, `empty_query`).
 
 ## Configuration Reference
 

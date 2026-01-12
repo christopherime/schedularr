@@ -228,7 +228,12 @@ func validateSchedulerConfig(cfg *scheduler.Config) []error {
 		return []error{errors.New("no scheduling blocks defined")}
 	}
 
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	var appCfg config.Config
+	if err := viper.Unmarshal(&appCfg); err != nil {
+		return []error{fmt.Errorf("failed to load app config for cron parser: %w", err)}
+	}
+
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 	var errs []error
 	for i, block := range cfg.Blocks {

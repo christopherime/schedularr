@@ -493,7 +493,7 @@ Update documentation when:
 ### Documentation Files
 
 - **README.md** - Project overview and quick start
-- **CLAUDE.md** - Development guide and architecture
+
 - **TODO.md** - Development roadmap and tasks
 - **ROADMAP.md** - Project vision and future plans
 - **docs/** - Detailed documentation
@@ -512,8 +512,7 @@ Update documentation when:
 ### Resources
 
 - **Documentation:** [docs/](docs/) directory
-- **Architecture:** [CLAUDE.md](CLAUDE.md)
-- **AI Assistants:** [AGENTS.md](AGENTS.md), [GEMINI.md](GEMINI.md)
+- **AI Assistants:** [AGENTS.md](AGENTS.md), [GEMINI.md](GEMINI.md), [CLAUDE.md](CLAUDE.md)
 - **Project Status:** [TODO.md](TODO.md), [ROADMAP.md](ROADMAP.md)
 
 ### Communication

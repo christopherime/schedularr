@@ -29,6 +29,24 @@ func NewValidator() *SchemaValidator {
 	}
 }
 
+// ValidateConfigStruct validates a Config struct by marshaling it to YAML first
+func (v *SchemaValidator) ValidateConfigStruct(cfg interface{}) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+	return v.ValidateConfig(data, "yaml")
+}
+
+// ValidateSchedulerStruct validates a Scheduler config struct by marshaling it to YAML first
+func (v *SchemaValidator) ValidateSchedulerStruct(cfg interface{}) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal scheduler config: %w", err)
+	}
+	return v.ValidateScheduler(data, "yaml")
+}
+
 // ValidateConfig validates a configuration file against the config schema
 func (v *SchemaValidator) ValidateConfig(data []byte, format string) error {
 	// Compile the schema

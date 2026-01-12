@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -100,16 +102,22 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	// Create logger
 	logger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
 
+	loc, err := time.LoadLocation(cfg.Log.Timezone)
+	if err != nil {
+		return fmt.Errorf("invalid timezone '%s' in app config: %w", cfg.Log.Timezone, err)
+	}
+
 	// Create scheduling engine
-	engine := scheduler.NewEngine(client, schedCfg.Blocks, st, logger)
+	engine := scheduler.NewEngine(client, schedCfg.Blocks, st, logger, loc)
 
 	// Generate schedule
 	start := time.Now()
 	end := start.Add(24 * time.Hour) // Plan for next 24h
 
-	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗓️  Generating schedule from %s to %s",
+	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗓️  Generating schedule from %s to %s in %s",
 		start.Format("2006-01-02 15:04"),
-		end.Format("2006-01-02 15:04"))))
+		end.Format("2006-01-02 15:04"),
+		cfg.Log.Timezone)))
 
 	plan, err := engine.GenerateForTimeRange(start, end, programs)
 	if err != nil {
@@ -119,9 +127,17 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	// Display results
 	displaySchedule(plan, verbose)
 
+	// Flatten the schedule plan for applySchedule
+	flattenedPlan := make(map[string][]tunarr.Program)
+	for channelID, slots := range plan {
+		for _, slot := range slots {
+			flattenedPlan[channelID] = append(flattenedPlan[channelID], slot.Programs...)
+		}
+	}
+
 	// Apply to Tunarr if requested
 	if apply && !dryRun {
-		if err := applySchedule(client, plan); err != nil {
+		if err := applySchedule(client, flattenedPlan); err != nil {
 			return err
 		}
 		// Commit state changes to DB
@@ -177,7 +193,7 @@ func fetchAllContent(client *tunarr.Client) []tunarr.Program {
 	return allPrograms
 }
 
-func displaySchedule(plan map[string][]tunarr.Program, showVerbose bool) {
+func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 	if len(plan) == 0 {
 		fmt.Println(warnStyle.Render("\n⚠ No schedule generated"))
 		return
@@ -187,35 +203,68 @@ func displaySchedule(plan map[string][]tunarr.Program, showVerbose bool) {
 	fmt.Println(successStyle.Render("✓ Schedule Generated"))
 	fmt.Println("=" + fmt.Sprintf("%80s", "=")[1:])
 
-	totalItems := 0
-	for cid, items := range plan {
-		totalDuration := int64(0)
-		for _, item := range items {
-			totalDuration += item.Duration
-		}
+	totalProgramsScheduled := 0
+	for channelID, slots := range plan {
+		channelTotalDuration := int64(0)
+		channelProgramCount := 0
 
-		fmt.Printf("\n📺 Channel %s: %d items (%d hours %d min)\n",
-			cid, len(items),
-			totalDuration/3600000,
-			(totalDuration%3600000)/60000)
+		var output strings.Builder
+		output.WriteString(fmt.Sprintf("\n📺 Channel %s:\n", channelID))
 
-		if showVerbose {
-			for i, item := range items {
-				fmt.Printf("  %3d. %s (%d min)\n",
-					i+1, item.Title, item.Duration/60000)
-				if item.Type == "episode" && item.ShowTitle != "" {
-					fmt.Printf("       %s S%02dE%02d\n",
-						item.ShowTitle, item.Season, item.Episode)
-				}
+		w := tabwriter.NewWriter(&output, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "START TIME\tEND TIME\tBLOCK NAME\tPROGRAM\tDURATION\tTYPE\tSHOW\tSEASON\tEPISODE\n")
+		fmt.Fprintf(w, "----------\t--------\t----------\t-------\t--------\t----\t----\t------\t-------\n")
+
+		for _, slot := range slots {
+			slotStartTime := slot.StartTime
+			blockName := slot.Block.Name
+
+			currentProgramTime := slotStartTime
+			for _, p := range slot.Programs {
+				programEndTime := currentProgramTime.Add(time.Duration(p.Duration) * time.Millisecond)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n",
+					currentProgramTime.Format("15:04"),
+					programEndTime.Format("15:04"),
+					blockName,
+					p.Title,
+					fmtDuration(p.Duration),
+					p.Type,
+					p.ShowTitle,
+					p.Season,
+					p.Episode,
+				)
+				currentProgramTime = programEndTime
+				channelTotalDuration += p.Duration
+				channelProgramCount++
 			}
 		}
+		_ = w.Flush()
+		fmt.Print(output.String())
 
-		totalItems += len(items)
+		fmt.Printf("   Total items for channel: %d (%s)\n", channelProgramCount, fmtDuration(channelTotalDuration))
+		totalProgramsScheduled += channelProgramCount
 	}
 
-	fmt.Printf("\n📊 Total: %d items scheduled across %d channel(s)\n",
-		totalItems, len(plan))
+	fmt.Printf("\n📊 Total: %d programs scheduled across %d channel(s)\n",
+		totalProgramsScheduled, len(plan))
 }
+
+// fmtDuration converts duration in milliseconds to a human-readable string (e.g., 1h 30m).
+func fmtDuration(ms int64) string {
+	totalSeconds := ms / 1000
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
 
 func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) error {
 	fmt.Println()

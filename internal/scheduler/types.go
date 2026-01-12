@@ -77,8 +77,9 @@ type Block struct {
 	Duration  int            `mapstructure:"duration" yaml:"duration" json:"duration"` // Duration in minutes
 	Filter    Filter         `mapstructure:"filter" yaml:"filter" json:"filter,omitempty"`
 	ChannelID string         `mapstructure:"channel_id" yaml:"channel_id" json:"channel_id"`
-	Priority  int            `mapstructure:"priority" yaml:"priority" json:"priority"`           // Higher priority overrides overlapping blocks
-	Filler    FillerConfig   `mapstructure:"filler" yaml:"filler" json:"filler,omitempty"`       // Filler content configuration
+	Priority    int            `mapstructure:"priority" yaml:"priority" json:"priority"`               // Higher priority overrides overlapping blocks
+	MaxDurationOverflowMinutes int `mapstructure:"max_duration_overflow_minutes" yaml:"max_duration_overflow_minutes" json:"max_duration_overflow_minutes,omitempty"` // Max minutes a block's actual duration can exceed its planned duration
+	Filler      FillerConfig   `mapstructure:"filler" yaml:"filler" json:"filler,omitempty"`         // Filler content configuration
 	Series    []SeriesConfig `mapstructure:"series" yaml:"series" json:"series,omitempty"`       // For BlockTypeSeries
 	Fallback  SeriesFallback `mapstructure:"fallback" yaml:"fallback" json:"fallback,omitempty"` // For BlockTypeSeries
 }

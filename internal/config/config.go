@@ -17,6 +17,7 @@ import (
 type Config struct {
 	Tunarr        tunarr.Config    `mapstructure:"tunarr" yaml:"tunarr" json:"tunarr"`
 	Log           LogConfig        `mapstructure:"log" yaml:"log" json:"log"`
+	MetricsPort   int              `mapstructure:"metrics_port" yaml:"metrics_port" json:"metrics_port,omitempty"` // Port for Prometheus metrics endpoint
 	Database      string           `mapstructure:"database" yaml:"database" json:"database,omitempty"`                   // Path to SQLite database file
 	SchedulerFile string           `mapstructure:"scheduler_file" yaml:"scheduler_file" json:"scheduler_file,omitempty"` // Path to scheduler config file
 	Scheduler     scheduler.Config `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler,omitempty"`                // Inline scheduler config (legacy)
@@ -24,8 +25,9 @@ type Config struct {
 
 // LogConfig holds configuration for logging
 type LogConfig struct {
-	Level  string `mapstructure:"level" yaml:"level" json:"level"`
-	Format string `mapstructure:"format" yaml:"format" json:"format"`
+	Level    string `mapstructure:"level" yaml:"level" json:"level"`
+	Format   string `mapstructure:"format" yaml:"format" json:"format"`
+	Timezone string `mapstructure:"timezone" yaml:"timezone" json:"timezone,omitempty"` // IANA Time Zone name
 }
 
 // New creates a new Config with default values
@@ -35,10 +37,12 @@ func New() *Config {
 			URL: "http://localhost:8000",
 		},
 		Log: LogConfig{
-			Level:  "info",
-			Format: "text",
+			Level:    "info",
+			Format:   "text",
+			Timezone: "Local", // Default to system's local timezone
 		},
-		SchedulerFile: "", // Default to inline config or discover scheduler.yaml
+		MetricsPort:   9090, // Default metrics port
+		SchedulerFile: "",   // Default to inline config or discover scheduler.yaml
 	}
 }
 

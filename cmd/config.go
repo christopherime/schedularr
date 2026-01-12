@@ -6,8 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/geekxflood/schedularr/internal/config" // Added import
 	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper" // Added import
+	"gopkg.in/yaml.v3" // Added import
 )
 
 var configCmd = &cobra.Command{
@@ -70,7 +73,32 @@ Examples:
 	},
 }
 
+var configDumpCmd = &cobra.Command{
+	Use:   "dump",
+	Short: "Dump the current effective configuration",
+	Long: `Prints the currently active configuration (after loading from file,
+environment variables, and applying defaults) to standard output in YAML format.
+Useful for debugging.`,
+	Args: cobra.NoArgs,
+	Run: func(_ *cobra.Command, _ []string) {
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			fmt.Printf("%s Failed to unmarshal config: %v\n", errorStyle.Render("✗ Error:"), err)
+			os.Exit(1)
+		}
+
+		output, err := yaml.Marshal(cfg)
+		if err != nil {
+			fmt.Printf("%s Failed to marshal config to YAML: %v\n", errorStyle.Render("✗ Error:"), err)
+			os.Exit(1)
+		}
+
+		fmt.Println(string(output))
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configGenerateCmd)
+	configCmd.AddCommand(configDumpCmd) // Added config dump command
 }

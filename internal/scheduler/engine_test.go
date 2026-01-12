@@ -132,7 +132,7 @@ func TestResolveConflicts(t *testing.T) {
 
 func TestPlanBlock_WithoutFiller(t *testing.T) {
 	client := &tunarr.Client{}
-	engine := NewEngine(client, []Block{}, NewMockStateStore(), slog.Default())
+	engine := NewEngine(client, []Block{}, NewMockStateStore(), slog.Default(), time.UTC)
 
 	block := Block{
 		Name:     "Test Block",
@@ -182,7 +182,7 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 
 func TestPlanBlock_NoMatchingContent(t *testing.T) {
 	client := &tunarr.Client{}
-	engine := NewEngine(client, []Block{}, NewMockStateStore(), slog.Default())
+	engine := NewEngine(client, []Block{}, NewMockStateStore(), slog.Default(), time.UTC)
 
 	block := Block{
 		Name:     "Test Block",
@@ -219,7 +219,7 @@ func TestPlanBlock_UsesStoreHistory(t *testing.T) {
 			ScheduledAt: time.Now(),
 		},
 	}
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	block := Block{
 		Name:      "History Block",
@@ -264,7 +264,7 @@ func TestCommit_CleansUpScheduleHistory(t *testing.T) {
 		},
 	}
 
-	engine := NewEngineWithHistory(client, []Block{}, 24*time.Hour, store, slog.Default())
+	engine := NewEngineWithHistory(client, []Block{}, 24*time.Hour, store, slog.Default(), time.UTC)
 
 	if err := engine.Commit(); err != nil {
 		t.Fatalf("Commit returned error: %v", err)
@@ -281,7 +281,7 @@ func TestCommit_CleansUpScheduleHistory(t *testing.T) {
 func TestPlanBlock_Series(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	block := Block{
 		Name:     "Series Block",
@@ -330,7 +330,7 @@ func TestPlanBlock_Series(t *testing.T) {
 func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	block := Block{
 		Name:     "Series Block",
@@ -368,7 +368,7 @@ func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
 func TestSeriesCompletion_Restart(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	// Set up initial state at end of series
 	store.States["Test Show"] = &SeriesState{
@@ -424,7 +424,7 @@ func TestSeriesCompletion_Restart(t *testing.T) {
 func TestSeriesCompletion_Disable(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	store.States["Test Show"] = &SeriesState{
 		ShowTitle:      "Test Show",
@@ -469,7 +469,7 @@ func TestSeriesCompletion_Disable(t *testing.T) {
 func TestSeriesCompletion_MaxRuns(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	// Series has already run twice
 	store.States["Test Show"] = &SeriesState{
@@ -517,7 +517,7 @@ func TestSeriesCompletion_MaxRuns(t *testing.T) {
 func TestSeriesEpisodeSkipping(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	store.States["Test Show"] = &SeriesState{
 		ShowTitle:      "Test Show",
@@ -581,7 +581,7 @@ func TestSeriesEpisodeSkipping(t *testing.T) {
 func TestSeriesSkipDisabled(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	// Series is disabled
 	store.States["Test Show"] = &SeriesState{
@@ -647,7 +647,7 @@ func TestGenerateForTimeRange(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(client, blocks, store, slog.Default())
+	engine := NewEngine(client, blocks, store, slog.Default(), time.UTC)
 
 	availablePrograms := []tunarr.Program{
 		{ID: "p1", Title: "Comedy Show", Genres: []string{"Comedy"}, Duration: 1800000, Type: "episode"},
@@ -690,7 +690,7 @@ func TestGenerateForTimeRange_InvalidCron(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(client, blocks, store, slog.Default())
+	engine := NewEngine(client, blocks, store, slog.Default(), time.UTC)
 
 	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -730,7 +730,7 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(client, blocks, store, slog.Default())
+	engine := NewEngine(client, blocks, store, slog.Default(), time.UTC)
 
 	availablePrograms := []tunarr.Program{
 		{ID: "p1", Title: "Comedy Show", Genres: []string{"Comedy"}, Duration: 1800000, Type: "episode"},
@@ -759,7 +759,7 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 func TestCommit(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store, slog.Default())
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	// Add some pending states
 	engine.pendingStates["Show1"] = &SeriesState{
@@ -816,7 +816,7 @@ func TestFilterByHistory(t *testing.T) {
 		},
 	}
 
-	engine := NewEngineWithHistory(client, []Block{}, 7*24*time.Hour, store, slog.Default())
+	engine := NewEngineWithHistory(client, []Block{}, 7*24*time.Hour, store, slog.Default(), time.UTC)
 
 	availablePrograms := []tunarr.Program{
 		{ID: "p1", Title: "Recent Show", Duration: 1800000, Type: "episode"},

@@ -9,7 +9,9 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/geekxflood/schedularr/internal/metrics"
 	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
 )
 
@@ -18,6 +20,7 @@ type Engine struct {
 	client         *tunarr.Client
 	blocks         []Block
 	parser         cron.Parser
+	location       *time.Location // Location for cron parsing
 	history        *ScheduleHistory
 	store          StateStore
 	pendingStates  map[string]*SeriesState
@@ -34,14 +37,18 @@ type ScheduledSlot struct {
 }
 
 // NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
-func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *slog.Logger) *Engine {
+func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if loc == nil {
+		loc = time.Local
 	}
 	return &Engine{
 		client:         client,
 		blocks:         blocks,
-		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
+		location:       loc,
 		history:        NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
 		store:          store,
 		pendingStates:  make(map[string]*SeriesState),
@@ -51,14 +58,18 @@ func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *
 }
 
 // NewEngineWithHistory creates a new scheduling engine with a custom history window
-func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore, logger *slog.Logger) *Engine {
+func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if loc == nil {
+		loc = time.Local
 	}
 	return &Engine{
 		client:         client,
 		blocks:         blocks,
-		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
+		location:       loc,
 		history:        NewScheduleHistory(historyWindow),
 		store:          store,
 		pendingStates:  make(map[string]*SeriesState),
@@ -68,14 +79,19 @@ func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow t
 }
 
 // GenerateForTimeRange generates a schedule for the given window with priority-based conflict resolution.
-// It returns a map of ChannelID -> []Program.
-func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []tunarr.Program) (map[string][]tunarr.Program, error) {
+// It returns a map of ChannelID -> []ScheduledSlot.
+func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []tunarr.Program) (map[string][]ScheduledSlot, error) {
+	timer := prometheus.NewTimer(metrics.ScheduleGenerationDurationSeconds)
+	defer timer.ObserveDuration()
+
 	// First, generate all potential slots
 	channelSlots := make(map[string][]ScheduledSlot)
 
 	for _, block := range e.blocks {
+		metrics.SchedulesGeneratedTotal.WithLabelValues(block.ChannelID, block.Name).Inc()
 		scheduleObj, err := e.parser.Parse(block.Cron)
 		if err != nil {
+			metrics.ScheduleErrorsTotal.WithLabelValues("cron_parse_error").Inc()
 			return nil, fmt.Errorf("invalid cron '%s' for block %s: %w", block.Cron, block.Name, err)
 		}
 
@@ -85,6 +101,7 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 			// Generate content for this slot
 			planned, err := e.PlanBlock(block, availablePrograms)
 			if err != nil {
+				metrics.ScheduleErrorsTotal.WithLabelValues("plan_block_error").Inc()
 				return nil, fmt.Errorf("failed to plan block %s: %w", block.Name, err)
 			}
 
@@ -102,14 +119,10 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 	}
 
 	// Resolve conflicts using priority
-	resolvedSchedule := make(map[string][]tunarr.Program)
+	resolvedSchedule := make(map[string][]ScheduledSlot)
 	for channelID, slots := range channelSlots {
 		resolvedSlots := e.resolveConflicts(slots)
-
-		// Flatten slots into program list
-		for _, slot := range resolvedSlots {
-			resolvedSchedule[channelID] = append(resolvedSchedule[channelID], slot.Programs...)
-		}
+		resolvedSchedule[channelID] = resolvedSlots
 	}
 
 	return resolvedSchedule, nil
@@ -155,6 +168,7 @@ func (e *Engine) resolveConflicts(slots []ScheduledSlot) []ScheduledSlot {
 				conflicts++
 				// Higher priority wins (higher number = higher priority)
 				if slots[i].Block.Priority > resolved[j].Block.Priority {
+					metrics.ConflictsResolvedTotal.Inc()
 					// Remove the lower priority slot and add the higher one
 					e.logger.Info("scheduling conflict resolved by priority",
 						"winner_block", slots[i].Block.Name,
@@ -205,6 +219,7 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program) ([]t
 func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program) ([]tunarr.Program, error) {
 	candidates, err := FilterPrograms(availablePrograms, block.Filter)
 	if err != nil {
+		metrics.ScheduleErrorsTotal.WithLabelValues("filter_programs_error").Inc()
 		return nil, err
 	}
 
@@ -234,17 +249,20 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	var currentDuration int64 = 0
 	targetDuration := int64(block.Duration) * 60000 // ms
 
+	maxOverflowMs := int64(block.MaxDurationOverflowMinutes) * time.Minute.Milliseconds()
+	allowedDurationWithOverflow := targetDuration + maxOverflowMs
+
 	// Simple random shuffle and fill
 	rand.Shuffle(len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
 
 	for _, p := range candidates {
-		if currentDuration+p.Duration <= targetDuration {
+		if currentDuration+p.Duration <= allowedDurationWithOverflow {
 			playlist = append(playlist, p)
 			currentDuration += p.Duration
-		}
-		if currentDuration >= targetDuration {
+			metrics.ProgramsScheduledTotal.WithLabelValues(block.ChannelID, block.Name, p.Type).Inc()
+		} else {
 			break
 		}
 	}
@@ -293,7 +311,7 @@ func (e *Engine) planSeriesBlock(block Block, availablePrograms []tunarr.Program
 	targetDuration := int64(block.Duration) * 60000 // ms
 
 	for _, seriesConf := range block.Series {
-		seriesPlaylist, durationAdded := e.planSeriesForConfig(seriesConf, availablePrograms, targetDuration-currentDuration)
+		seriesPlaylist, durationAdded := e.planSeriesForConfig(block, seriesConf, availablePrograms, targetDuration-currentDuration)
 		playlist = append(playlist, seriesPlaylist...)
 		currentDuration += durationAdded
 
@@ -309,13 +327,14 @@ func (e *Engine) planSeriesBlock(block Block, availablePrograms []tunarr.Program
 	return playlist, nil
 }
 
-func (e *Engine) planSeriesForConfig(seriesConf SeriesConfig, availablePrograms []tunarr.Program, remainingDuration int64) ([]tunarr.Program, int64) {
+func (e *Engine) planSeriesForConfig(block Block, seriesConf SeriesConfig, availablePrograms []tunarr.Program, remainingDuration int64) ([]tunarr.Program, int64) {
 	if remainingDuration <= 0 {
 		return nil, 0
 	}
 
 	state, err := e.getSeriesState(seriesConf.ShowTitle)
 	if err != nil {
+		metrics.ScheduleErrorsTotal.WithLabelValues("get_series_state_error").Inc()
 		e.logger.Error("failed to get series state",
 			"show_title", seriesConf.ShowTitle,
 			"error", err)
@@ -335,26 +354,27 @@ func (e *Engine) planSeriesForConfig(seriesConf SeriesConfig, availablePrograms 
 	var currentDuration int64
 	episodesAdded := 0
 
-	for episodesAdded < seriesConf.EpisodesPerBlock {
-		if currentDuration >= remainingDuration {
-			break
-		}
+	maxOverflowMs := int64(block.MaxDurationOverflowMinutes) * time.Minute.Milliseconds()
+	allowedDurationWithOverflow := remainingDuration + maxOverflowMs
 
+	for episodesAdded < seriesConf.EpisodesPerBlock {
 		ep := e.findNextSeriesEpisode(seriesConf, state, availablePrograms)
 		if ep == nil {
 			break
 		}
 
-		if currentDuration+ep.Duration > remainingDuration {
+		if currentDuration+ep.Duration <= allowedDurationWithOverflow {
+			playlist = append(playlist, *ep)
+			currentDuration += ep.Duration
+			state.CurrentEpisode++
+			state.LastAired = time.Now()
+			episodesAdded++
+			e.pendingStates[seriesConf.ShowTitle] = state
+			metrics.ProgramsScheduledTotal.WithLabelValues(block.ChannelID, block.Name, ep.Type).Inc()
+			metrics.SeriesStateUpdatesTotal.WithLabelValues(seriesConf.ShowTitle).Inc()
+		} else {
 			break
 		}
-
-		playlist = append(playlist, *ep)
-		currentDuration += ep.Duration
-		state.CurrentEpisode++
-		state.LastAired = time.Now()
-		episodesAdded++
-		e.pendingStates[seriesConf.ShowTitle] = state
 	}
 
 	return playlist, currentDuration
@@ -429,6 +449,7 @@ func (e *Engine) markSeriesCompleted(seriesConf SeriesConfig, state *SeriesState
 
 	state.Completed = true
 	state.RunCount++
+	metrics.SeriesStateUpdatesTotal.WithLabelValues(seriesConf.ShowTitle).Inc()
 
 	// Handle completion action
 	action := seriesConf.OnComplete
