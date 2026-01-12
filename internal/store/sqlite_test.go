@@ -150,3 +150,154 @@ func TestStore_ScheduleHistoryCleanup(t *testing.T) {
 		t.Error("Expected new entry to remain")
 	}
 }
+
+func TestStore_ExportImportSeriesStates(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Create some test states
+	states := []scheduler.SeriesState{
+		{
+			ShowTitle:      "Show A",
+			CurrentSeason:  2,
+			CurrentEpisode: 5,
+			Completed:      false,
+			LastAired:      time.Now().Add(-24 * time.Hour),
+		},
+		{
+			ShowTitle:      "Show B",
+			CurrentSeason:  1,
+			CurrentEpisode: 10,
+			Completed:      false,
+			LastAired:      time.Now().Add(-12 * time.Hour),
+		},
+		{
+			ShowTitle:      "Show C",
+			CurrentSeason:  3,
+			CurrentEpisode: 1,
+			Completed:      true,
+			LastAired:      time.Now().Add(-48 * time.Hour),
+		},
+	}
+
+	// Import states
+	if err := s.ImportSeriesStates(ctx, states); err != nil {
+		t.Fatalf("ImportSeriesStates failed: %v", err)
+	}
+
+	// Export states
+	exported, err := s.ExportAllSeriesStates(ctx)
+	if err != nil {
+		t.Fatalf("ExportAllSeriesStates failed: %v", err)
+	}
+
+	// Verify count
+	if len(exported) != len(states) {
+		t.Fatalf("Expected %d states, got %d", len(states), len(exported))
+	}
+
+	// Verify each state (order should be by show_title due to ORDER BY)
+	expectedOrder := []string{"Show A", "Show B", "Show C"}
+	for i, expected := range expectedOrder {
+		if exported[i].ShowTitle != expected {
+			t.Errorf("Expected state %d to be %s, got %s", i, expected, exported[i].ShowTitle)
+		}
+	}
+
+	// Verify specific state details
+	for _, state := range exported {
+		var original *scheduler.SeriesState
+		for i := range states {
+			if states[i].ShowTitle == state.ShowTitle {
+				original = &states[i]
+				break
+			}
+		}
+		if original == nil {
+			t.Errorf("Exported state %s not found in original states", state.ShowTitle)
+			continue
+		}
+
+		if state.CurrentSeason != original.CurrentSeason {
+			t.Errorf("Season mismatch for %s: expected %d, got %d", state.ShowTitle, original.CurrentSeason, state.CurrentSeason)
+		}
+		if state.CurrentEpisode != original.CurrentEpisode {
+			t.Errorf("Episode mismatch for %s: expected %d, got %d", state.ShowTitle, original.CurrentEpisode, state.CurrentEpisode)
+		}
+		if state.Completed != original.Completed {
+			t.Errorf("Completed mismatch for %s: expected %v, got %v", state.ShowTitle, original.Completed, state.Completed)
+		}
+	}
+}
+
+func TestStore_ResetSeriesState(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	showTitle := "Test Show"
+
+	// Create a state with progress
+	state := &scheduler.SeriesState{
+		ShowTitle:      showTitle,
+		CurrentSeason:  3,
+		CurrentEpisode: 15,
+		Completed:      true,
+		LastAired:      time.Now(),
+	}
+	if err := s.UpdateSeriesState(ctx, state); err != nil {
+		t.Fatalf("UpdateSeriesState failed: %v", err)
+	}
+
+	// Reset the state
+	if err := s.ResetSeriesState(ctx, showTitle); err != nil {
+		t.Fatalf("ResetSeriesState failed: %v", err)
+	}
+
+	// Verify reset
+	resetState, err := s.GetSeriesState(ctx, showTitle)
+	if err != nil {
+		t.Fatalf("GetSeriesState failed: %v", err)
+	}
+
+	if resetState.CurrentSeason != 1 {
+		t.Errorf("Expected season 1 after reset, got %d", resetState.CurrentSeason)
+	}
+	if resetState.CurrentEpisode != 1 {
+		t.Errorf("Expected episode 1 after reset, got %d", resetState.CurrentEpisode)
+	}
+	if resetState.Completed {
+		t.Error("Expected completed to be false after reset")
+	}
+	if !resetState.LastAired.IsZero() {
+		t.Error("Expected LastAired to be zero after reset")
+	}
+}
+
+func TestStore_ImportSeriesStates_Empty(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Import empty slice should not error
+	if err := s.ImportSeriesStates(ctx, []scheduler.SeriesState{}); err != nil {
+		t.Errorf("ImportSeriesStates with empty slice should not error: %v", err)
+	}
+
+	// Import nil should not error
+	if err := s.ImportSeriesStates(ctx, nil); err != nil {
+		t.Errorf("ImportSeriesStates with nil should not error: %v", err)
+	}
+}

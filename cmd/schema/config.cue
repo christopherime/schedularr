@@ -8,6 +8,9 @@ package schema
 	// Logging configuration
 	log: #LogConfig
 
+	// Optional path to SQLite database file (defaults to ~/.schedularr.db)
+	database?: string
+
 	// Optional path to external scheduler configuration file
 	scheduler_file?: string
 

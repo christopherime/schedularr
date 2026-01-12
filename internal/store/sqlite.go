@@ -202,3 +202,107 @@ func (s *Store) CleanupScheduleHistory(ctx context.Context, window time.Duration
 
 	return affected, nil
 }
+
+// ExportAllSeriesStates exports all series states to a slice for backup/export.
+func (s *Store) ExportAllSeriesStates(ctx context.Context) ([]scheduler.SeriesState, error) {
+	query := `
+		SELECT show_title, current_season, current_episode, completed, last_aired
+		FROM series_state
+		ORDER BY show_title
+	`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query series states: %w", err)
+	}
+	defer rows.Close()
+
+	var states []scheduler.SeriesState
+	for rows.Next() {
+		var state scheduler.SeriesState
+		var lastAired sql.NullTime
+
+		if err := rows.Scan(&state.ShowTitle, &state.CurrentSeason, &state.CurrentEpisode, &state.Completed, &lastAired); err != nil {
+			return nil, fmt.Errorf("failed to scan series state: %w", err)
+		}
+
+		if lastAired.Valid {
+			state.LastAired = lastAired.Time
+		}
+
+		states = append(states, state)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating series states: %w", err)
+	}
+
+	return states, nil
+}
+
+// ImportSeriesStates imports series states from a slice, replacing existing states.
+func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.SeriesState) error {
+	if len(states) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(show_title) DO UPDATE SET
+			current_season = excluded.current_season,
+			current_episode = excluded.current_episode,
+			completed = excluded.completed,
+			last_aired = excluded.last_aired
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare import statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, state := range states {
+		if _, err := stmt.ExecContext(ctx, state.ShowTitle, state.CurrentSeason, state.CurrentEpisode, state.Completed, state.LastAired); err != nil {
+			return fmt.Errorf("failed to import state for %s: %w", state.ShowTitle, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit import: %w", err)
+	}
+
+	return nil
+}
+
+// ResetSeriesState resets a series to its starting state (S01E01, not completed).
+func (s *Store) ResetSeriesState(ctx context.Context, showTitle string) error {
+	query := `
+		UPDATE series_state
+		SET current_season = 1, current_episode = 1, completed = 0, last_aired = NULL
+		WHERE show_title = ?
+	`
+	result, err := s.db.ExecContext(ctx, query, showTitle)
+	if err != nil {
+		return fmt.Errorf("failed to reset series state: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check reset result: %w", err)
+	}
+
+	if affected == 0 {
+		// Series doesn't exist in database, nothing to reset
+		return nil
+	}
+
+	return nil
+}
