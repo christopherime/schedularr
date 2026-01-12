@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
+	"github.com/geekxflood/schedularr/internal/logging"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/geekxflood/schedularr/internal/tunarr"
@@ -95,8 +96,11 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 
 	fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Found %d program(s)", len(programs))))
 
+	// Create logger
+	logger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
+
 	// Create scheduling engine
-	engine := scheduler.NewEngine(client, schedCfg.Blocks, st)
+	engine := scheduler.NewEngine(client, schedCfg.Blocks, st, logger)
 
 	// Generate schedule
 	start := time.Now()

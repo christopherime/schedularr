@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
@@ -112,7 +113,9 @@ func TestResolveConflicts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolved := resolveConflicts(tt.slots)
+			// Create a minimal engine to call the method
+			engine := &Engine{logger: slog.Default()}
+			resolved := engine.resolveConflicts(tt.slots)
 			if len(resolved) != tt.expected {
 				t.Errorf("resolveConflicts() returned %d slots, expected %d", len(resolved), tt.expected)
 			}
@@ -129,7 +132,7 @@ func TestResolveConflicts(t *testing.T) {
 
 func TestPlanBlock_WithoutFiller(t *testing.T) {
 	client := &tunarr.Client{}
-	engine := NewEngine(client, []Block{}, NewMockStateStore())
+	engine := NewEngine(client, []Block{}, NewMockStateStore(), slog.Default())
 
 	block := Block{
 		Name:     "Test Block",
@@ -179,7 +182,7 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 
 func TestPlanBlock_NoMatchingContent(t *testing.T) {
 	client := &tunarr.Client{}
-	engine := NewEngine(client, []Block{}, NewMockStateStore())
+	engine := NewEngine(client, []Block{}, NewMockStateStore(), slog.Default())
 
 	block := Block{
 		Name:     "Test Block",
@@ -208,7 +211,7 @@ func TestPlanBlock_NoMatchingContent(t *testing.T) {
 func TestPlanBlock_Series(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
-	engine := NewEngine(client, []Block{}, store)
+	engine := NewEngine(client, []Block{}, store, slog.Default())
 
 	block := Block{
 		Name:     "Series Block",

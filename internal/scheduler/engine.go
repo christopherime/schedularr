@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"time"
 
@@ -21,6 +21,7 @@ type Engine struct {
 	history       *ScheduleHistory
 	store         StateStore
 	pendingStates map[string]*SeriesState
+	logger        *slog.Logger
 }
 
 // ScheduledSlot represents a scheduled time slot with its block and priority
@@ -32,7 +33,10 @@ type ScheduledSlot struct {
 }
 
 // NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
-func NewEngine(client *tunarr.Client, blocks []Block, store StateStore) *Engine {
+func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *slog.Logger) *Engine {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Engine{
 		client:        client,
 		blocks:        blocks,
@@ -40,11 +44,15 @@ func NewEngine(client *tunarr.Client, blocks []Block, store StateStore) *Engine 
 		history:       NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
 		store:         store,
 		pendingStates: make(map[string]*SeriesState),
+		logger:        logger,
 	}
 }
 
 // NewEngineWithHistory creates a new scheduling engine with a custom history window
-func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore) *Engine {
+func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore, logger *slog.Logger) *Engine {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Engine{
 		client:        client,
 		blocks:        blocks,
@@ -52,6 +60,7 @@ func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow t
 		history:       NewScheduleHistory(historyWindow),
 		store:         store,
 		pendingStates: make(map[string]*SeriesState),
+		logger:        logger,
 	}
 }
 
@@ -92,7 +101,7 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 	// Resolve conflicts using priority
 	resolvedSchedule := make(map[string][]tunarr.Program)
 	for channelID, slots := range channelSlots {
-		resolvedSlots := resolveConflicts(slots)
+		resolvedSlots := e.resolveConflicts(slots)
 
 		// Flatten slots into program list
 		for _, slot := range resolvedSlots {
@@ -117,7 +126,7 @@ func (e *Engine) Commit() error {
 }
 
 // resolveConflicts resolves overlapping slots by priority
-func resolveConflicts(slots []ScheduledSlot) []ScheduledSlot {
+func (e *Engine) resolveConflicts(slots []ScheduledSlot) []ScheduledSlot {
 	if len(slots) == 0 {
 		return slots
 	}
@@ -135,17 +144,21 @@ func resolveConflicts(slots []ScheduledSlot) []ScheduledSlot {
 				// Higher priority wins (higher number = higher priority)
 				if slots[i].Block.Priority > resolved[j].Block.Priority {
 					// Remove the lower priority slot and add the higher one
-					log.Printf("Conflict: '%s' (priority %d) overrides '%s' (priority %d) at %s",
-						slots[i].Block.Name, slots[i].Block.Priority,
-						resolved[j].Block.Name, resolved[j].Block.Priority,
-						slots[i].StartTime.Format("2006-01-02 15:04"))
+					e.logger.Info("scheduling conflict resolved by priority",
+						"winner_block", slots[i].Block.Name,
+						"winner_priority", slots[i].Block.Priority,
+						"loser_block", resolved[j].Block.Name,
+						"loser_priority", resolved[j].Block.Priority,
+						"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
 					resolved = append(resolved[:j], resolved[j+1:]...)
 					break
 				} else {
-					log.Printf("Conflict: '%s' (priority %d) blocked by '%s' (priority %d) at %s",
-						slots[i].Block.Name, slots[i].Block.Priority,
-						resolved[j].Block.Name, resolved[j].Block.Priority,
-						slots[i].StartTime.Format("2006-01-02 15:04"))
+					e.logger.Info("scheduling conflict - block blocked by higher priority",
+						"blocked_block", slots[i].Block.Name,
+						"blocked_priority", slots[i].Block.Priority,
+						"blocking_block", resolved[j].Block.Name,
+						"blocking_priority", resolved[j].Block.Priority,
+						"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
 					shouldInclude = false
 					break
 				}
@@ -158,7 +171,7 @@ func resolveConflicts(slots []ScheduledSlot) []ScheduledSlot {
 	}
 
 	if conflicts > 0 {
-		log.Printf("Resolved %d scheduling conflict(s) using priority", conflicts)
+		e.logger.Info("resolved scheduling conflicts using priority", "conflict_count", conflicts)
 	}
 
 	return resolved
@@ -192,15 +205,16 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	candidates = e.history.FilterByHistory(candidates, block.ChannelID)
 
 	if len(candidates) < originalCount {
-		log.Printf("Filtered out %d recently scheduled program(s) for block %s",
-			originalCount-len(candidates), block.Name)
+		e.logger.Debug("filtered out recently scheduled programs",
+			"filtered_count", originalCount-len(candidates),
+			"block_name", block.Name)
 	}
 
 	// If we filtered everything out, fall back to all candidates
 	// (better to repeat than have no content)
 	if len(candidates) == 0 {
-		log.Printf("Warning: All candidates were recently scheduled for block %s, allowing repeats",
-			block.Name)
+		e.logger.Warn("all candidates recently scheduled, allowing repeats",
+			"block_name", block.Name)
 		candidates, _ = FilterPrograms(availablePrograms, block.Filter)
 	}
 
@@ -231,10 +245,14 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	if block.Filler.Enabled && gapMinutes >= block.Filler.MinGapTime {
 		fillerPrograms, err := e.getFiller(block, gapDuration)
 		if err != nil {
-			log.Printf("Warning: Failed to get filler for block %s: %v", block.Name, err)
+			e.logger.Warn("failed to get filler for block",
+				"block_name", block.Name,
+				"error", err)
 		} else if len(fillerPrograms) > 0 {
-			log.Printf("Adding %d filler program(s) to fill %d minute gap in block %s",
-				len(fillerPrograms), gapMinutes, block.Name)
+			e.logger.Info("adding filler programs to fill gap",
+				"filler_count", len(fillerPrograms),
+				"gap_minutes", gapMinutes,
+				"block_name", block.Name)
 			playlist = append(playlist, fillerPrograms...)
 			for _, f := range fillerPrograms {
 				currentDuration += f.Duration
@@ -246,7 +264,9 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	finalGap := targetDuration - currentDuration
 	finalGapMinutes := int(finalGap / 60000)
 	if finalGapMinutes > 5 {
-		log.Printf("Block %s has %d minute gap remaining after filling", block.Name, finalGapMinutes)
+		e.logger.Info("block has remaining gap after filling",
+			"block_name", block.Name,
+			"gap_minutes", finalGapMinutes)
 	}
 
 	// Record scheduled programs in history
@@ -264,7 +284,9 @@ func (e *Engine) planSeriesBlock(block Block, availablePrograms []tunarr.Program
 		// Get state
 		state, err := e.getSeriesState(seriesConf.ShowTitle)
 		if err != nil {
-			log.Printf("Error getting state for %s: %v", seriesConf.ShowTitle, err)
+			e.logger.Error("failed to get series state",
+				"show_title", seriesConf.ShowTitle,
+				"error", err)
 			continue
 		}
 

@@ -146,29 +146,29 @@ This TODO is structured to align Schedularr with established architectural patte
 
 **Goal:** Match athena project's code quality standards and tooling.
 
-- [ ] **Update `.golangci.yml`**
-  - [ ] Adopt athena's linter configuration
-  - [ ] Set cyclomatic complexity max to 15
-  - [ ] Set cognitive complexity max to 20
-  - [ ] Set nesting depth max to 5
-  - [ ] Set function results max to 3
-  - [ ] Set arguments max to 5
-  - [ ] Enable sloglint for structured logging
-  - [ ] Add depguard to block deprecated packages
+- [x] **Update `.golangci.yml`** ✅ COMPLETED
+  - [x] Adopt athena's linter configuration
+  - [x] Set cyclomatic complexity max to 15
+  - [x] Set cognitive complexity max to 20
+  - [x] Set nesting depth max to 5
+  - [x] Set function results max to 3
+  - [x] Set arguments max to 5
+  - [x] Enable sloglint for structured logging
+  - [x] Add depguard to block deprecated packages
 
-- [ ] **Blocked Packages Policy**
-  - [ ] Block `github.com/pkg/errors` (use stdlib `fmt.Errorf`)
-  - [ ] Block `logrus` (use `log/slog`)
-  - [ ] Block `crypto/md5`, `crypto/sha1` (security)
-  - [ ] Block `io/ioutil` (deprecated)
-  - [ ] Block `gopkg.in/yaml.v1`, `gopkg.in/yaml.v2` (use v3)
+- [x] **Blocked Packages Policy** ✅ COMPLETED
+  - [x] Block `github.com/pkg/errors` (use stdlib `fmt.Errorf`)
+  - [x] Block `logrus` (use `log/slog`)
+  - [x] Block `crypto/md5`, `crypto/sha1` (security)
+  - [x] Block `io/ioutil` (deprecated)
+  - [x] Block `gopkg.in/yaml.v1`, `gopkg.in/yaml.v2` (use v3)
 
-- [ ] **Structured Logging Migration**
-  - [ ] Replace current logging with `log/slog`
-  - [ ] Use JSON format for production
-  - [ ] Use text format for development
-  - [ ] Add context fields (channel_id, block_name, etc.)
-  - [ ] Use snake_case for log field names
+- [x] **Structured Logging Migration** ✅ COMPLETED
+  - [x] Replace current logging with `log/slog`
+  - [x] Use JSON format for production
+  - [x] Use text format for development
+  - [x] Add context fields (channel_id, block_name, etc.)
+  - [x] Use snake_case for log field names
 
 - [ ] **Error Handling Standards**
   - [ ] Always wrap errors with context: `fmt.Errorf("context: %w", err)`
@@ -215,15 +215,15 @@ This TODO is structured to align Schedularr with established architectural patte
 
 **Goal:** Standardize build process with Makefile following athena patterns.
 
-- [ ] **Create/Update `Makefile`**
-  - [ ] Add `make build` - Build binary to `./bin/schedularr`
-  - [ ] Add `make test` - Run tests with race detector
-  - [ ] Add `make lint` - Run golangci-lint
-  - [ ] Add `make clean` - Remove build artifacts
-  - [ ] Add `make validate` - Validate all config files with CUE
-  - [ ] Add `make e2e-up` - Start E2E test environment
-  - [ ] Add `make e2e-down` - Stop E2E test environment
-  - **Criteria:** `make build && ./bin/schedularr --help` works
+- [x] **Create/Update `Makefile`** ✅ COMPLETED
+  - [x] Add `make build` - Build binary to `./bin/schedularr`
+  - [x] Add `make test` - Run tests with race detector
+  - [x] Add `make lint` - Run golangci-lint
+  - [x] Add `make clean` - Remove build artifacts
+  - [x] Add `make validate` - Validate all config files with CUE
+  - [x] Add `make e2e-up` - Start E2E test environment
+  - [x] Add `make e2e-down` - Stop E2E test environment
+  - **Criteria:** `make build && ./bin/schedularr --help` works ✅
 
 - [ ] **E2E Testing Infrastructure**
   - [ ] Create `e2e/docker-compose.yaml`
