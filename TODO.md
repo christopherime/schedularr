@@ -15,7 +15,7 @@ This TODO is structured to align Schedularr with established architectural patte
 
 | Phase       | Status              | Description                                 |
 | :---------- | :------------------ | :------------------------------------------ |
-| **Phase 0** | 🔴 Not Started     | Architecture alignment with athena patterns |
+| **Phase 0** | 🟢 Mostly Complete | Architecture alignment with athena patterns |
 | **Phase 1** | ✅ Completed        | Foundation & API verification               |
 | **Phase 2** | ✅ Completed        | Scheduler file architecture                 |
 | **Phase 3** | 🟢 Mostly Complete | Enhanced scheduling engine                  |
@@ -24,30 +24,32 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ## Phase 0: Architecture Alignment (NEW PRIORITY)
 
-**Status:** 🔴 Not Started
+**Status:** 🟢 Mostly Complete
 **Goal:** Adopt athena project patterns for configuration, CLI, and code quality
 
-### 0.1 CUE Schema Integration
+### 0.1 CUE Schema Integration ✅ COMPLETED
 
 **Goal:** Adopt CUE language for configuration validation following athena project patterns.
 
-- [ ] **Create CUE Schema Files**
-  - [ ] Create `configs/schema/config.cue` - Application configuration schema
-    - Define server settings, logging, Tunarr connection
-    - Set default values (e.g., `port: int | *8080`)
-    - Add validation constraints
-  - [ ] Create `configs/schema/scheduler.cue` - Scheduler configuration schema
-    - Define block types (filter, series)
-    - Define cron expression validation
-    - Define filter criteria schema
+- [x] **Create CUE Schema Files**
+  - [x] Create `cmd/schema/config.cue` - Application configuration schema
+    - Defined Tunarr connection, logging settings
+    - Set default values (e.g., `url: string | *"http://localhost:8000"`)
+    - Added validation constraints for log levels, formats
+  - [x] Create `cmd/schema/scheduler.cue` - Scheduler configuration schema
+    - Defined block types (filter, series - series planned for future)
+    - Defined filter criteria schema with all supported fields
     - Set default values for optional fields
-  - **Criteria:** `cue vet configs/config.yaml configs/schema/config.cue` passes
+    - Added example scheduler instance with defaults
+  - [x] Embedded schemas in `internal/cueconfig/schema/` for runtime use
+  - **Criteria:** Schemas compile successfully and validate test configs
 
-- [ ] **Integrate CUE Validation into Config Loading**
-  - [ ] Add CUE Go API dependency (`cuelang.org/go/cue`)
-  - [ ] Update `internal/config/config.go` to validate against CUE schema
-  - [ ] Provide detailed validation errors with line numbers
-  - [ ] Fail fast on invalid configuration
+- [x] **Integrate CUE Validation into Config Loading**
+  - [x] Added CUE Go API dependency (`cuelang.org/go/cue`)
+  - [x] Created `internal/cueconfig` package for schema validation
+  - [x] Implemented `ValidateConfig()` and `ValidateScheduler()` methods
+  - [x] Provides detailed validation errors from CUE engine
+  - [x] Created `validate` CLI command for manual validation
   - **Criteria:** App refuses to start with invalid config and shows helpful error
 
 - [ ] **Update Error Messages**

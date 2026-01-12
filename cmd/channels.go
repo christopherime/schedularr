@@ -1,5 +1,5 @@
 // Package cli provides command-line interface commands for Schedularr.
-package cli
+package cmd
 
 import (
 	"fmt"

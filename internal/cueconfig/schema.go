@@ -8,7 +8,6 @@ import (
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
-	cueyaml "cuelang.org/go/encoding/yaml"
 	"gopkg.in/yaml.v3"
 )
 
@@ -61,7 +60,7 @@ func (v *SchemaValidator) ValidateConfig(data []byte, format string) error {
 	}
 
 	// Unify with schema
-	unified := schemaValue.LookupPath(cue.ParsePath("schema.#Config")).Unify(dataValue)
+	unified := schemaValue.LookupPath(cue.ParsePath("#Config")).Unify(dataValue)
 	if err := unified.Validate(cue.Concrete(true)); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
@@ -100,7 +99,7 @@ func (v *SchemaValidator) ValidateScheduler(data []byte, format string) error {
 	}
 
 	// Unify with schema
-	unified := schemaValue.LookupPath(cue.ParsePath("schema.#SchedulerFile")).Unify(dataValue)
+	unified := schemaValue.LookupPath(cue.ParsePath("#SchedulerFile")).Unify(dataValue)
 	if err := unified.Validate(cue.Concrete(true)); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
@@ -117,17 +116,23 @@ func (v *SchemaValidator) GenerateConfig(format string) ([]byte, error) {
 	}
 
 	// Get the default config instance
-	defaultConfig := schemaValue.LookupPath(cue.ParsePath("schema.config"))
+	defaultConfig := schemaValue.LookupPath(cue.ParsePath("config"))
 	if defaultConfig.Err() != nil {
 		return nil, fmt.Errorf("failed to get default config: %w", defaultConfig.Err())
+	}
+
+	// Convert to Go value
+	var configData interface{}
+	if err := defaultConfig.Decode(&configData); err != nil {
+		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
 
 	// Convert to requested format
 	switch format {
 	case "yaml", "yml":
-		return yaml.Encode(defaultConfig)
+		return yaml.Marshal(configData)
 	case "json":
-		return json.MarshalIndent(defaultConfig, "", "  ")
+		return json.MarshalIndent(configData, "", "  ")
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
 	}
@@ -142,17 +147,23 @@ func (v *SchemaValidator) GenerateScheduler(format string) ([]byte, error) {
 	}
 
 	// Get the default scheduler instance
-	defaultScheduler := schemaValue.LookupPath(cue.ParsePath("schema.scheduler"))
+	defaultScheduler := schemaValue.LookupPath(cue.ParsePath("scheduler"))
 	if defaultScheduler.Err() != nil {
 		return nil, fmt.Errorf("failed to get default scheduler: %w", defaultScheduler.Err())
+	}
+
+	// Convert to Go value
+	var schedulerData interface{}
+	if err := defaultScheduler.Decode(&schedulerData); err != nil {
+		return nil, fmt.Errorf("failed to decode scheduler: %w", err)
 	}
 
 	// Convert to requested format
 	switch format {
 	case "yaml", "yml":
-		return yaml.Encode(defaultScheduler)
+		return yaml.Marshal(schedulerData)
 	case "json":
-		return json.MarshalIndent(defaultScheduler, "", "  ")
+		return json.MarshalIndent(schedulerData, "", "  ")
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
 	}
