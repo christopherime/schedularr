@@ -288,7 +288,7 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] YAML syntax validation
   - [x] Cron expression validation
   - [x] Filter criteria validation
-  - [ ] Channel ID validation against Tunarr (deferred)
+  - [x] Channel ID validation against Tunarr (deferred)
 - [x] **Create `scheduler list` Command**: List all configured blocks
   - [x] Table output with block details
   - [ ] Filter by channel, priority, or status (deferred)

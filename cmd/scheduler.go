@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,10 +9,13 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/geekxflood/schedularr/internal/tunarr"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,6 +102,10 @@ and other configuration issues.`,
 
 		// Perform detailed validation
 		errors := validateSchedulerConfig(schedCfg)
+		if schedulerValidateCheckChannels {
+			channelErrors := validateChannelIDs(schedCfg)
+			errors = append(errors, channelErrors...)
+		}
 		if len(errors) > 0 {
 			fmt.Printf("❌ Found %d validation error(s):\n\n", len(errors))
 			for i, err := range errors {
@@ -165,6 +173,7 @@ var schedulerListCmd = &cobra.Command{
 }
 
 var templateType string
+var schedulerValidateCheckChannels bool
 
 func init() {
 	rootCmd.AddCommand(schedulerCmd)
@@ -174,6 +183,7 @@ func init() {
 	schedulerCmd.AddCommand(schedulerListCmd)
 
 	schedulerInitCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "Template type: basic, advanced, or series")
+	schedulerValidateCmd.Flags().BoolVar(&schedulerValidateCheckChannels, "check-channels", false, "validate channel IDs against Tunarr")
 }
 
 // findDefaultSchedulerFile searches for scheduler.yaml in common locations
@@ -271,6 +281,39 @@ func validateBlockFilter(filter scheduler.Filter, blockPrefix string) []error {
 	if filter.YearFrom > 0 && filter.YearTo > 0 && filter.YearFrom > filter.YearTo {
 		errs = append(errs, fmt.Errorf("%s: year_from (%d) cannot be greater than year_to (%d)",
 			blockPrefix, filter.YearFrom, filter.YearTo))
+	}
+
+	return errs
+}
+
+func validateChannelIDs(cfg *scheduler.Config) []error {
+	var appCfg config.Config
+	if err := viper.Unmarshal(&appCfg); err != nil {
+		return []error{fmt.Errorf("failed to load app config for channel validation: %w", err)}
+	}
+	if appCfg.Tunarr.URL == "" {
+		return []error{errors.New("tunarr.url is required for channel validation")}
+	}
+
+	client := tunarr.NewClient(appCfg.Tunarr)
+	channels, err := client.GetChannels(context.Background())
+	if err != nil {
+		return []error{fmt.Errorf("failed to fetch channels: %w", err)}
+	}
+
+	channelIDs := make(map[string]struct{}, len(channels))
+	for _, ch := range channels {
+		channelIDs[ch.ID] = struct{}{}
+	}
+
+	var errs []error
+	for i, block := range cfg.Blocks {
+		if block.ChannelID == "" {
+			continue
+		}
+		if _, ok := channelIDs[block.ChannelID]; !ok {
+			errs = append(errs, fmt.Errorf("block %d (%s): channel_id %q not found in Tunarr", i+1, block.Name, block.ChannelID))
+		}
 	}
 
 	return errs
