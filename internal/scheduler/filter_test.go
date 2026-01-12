@@ -9,7 +9,7 @@ import (
 func TestFilterPrograms(t *testing.T) {
 	programs := []tunarr.Program{
 		{Title: "Movie A", Year: 2000, Genres: []string{"Action"}, Duration: 6000000}, // 100 min
-		{Title: "Show B", Year: 2020, Genres: []string{"Comedy"}, Duration: 1800000}, // 30 min
+		{Title: "Show B", Year: 2020, Genres: []string{"Comedy"}, Duration: 1800000},  // 30 min
 	}
 
 	f := Filter{

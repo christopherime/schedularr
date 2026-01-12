@@ -20,7 +20,7 @@ var (
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Start the scheduling daemon",
-	Long:  `Starts Schedularr in daemon mode, continuously generating and applying schedules based on configuration.`, 
+	Long:  `Starts Schedularr in daemon mode, continuously generating and applying schedules based on configuration.`,
 	Run: func(_ *cobra.Command, _ []string) {
 		runDaemon()
 	},

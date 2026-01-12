@@ -83,4 +83,3 @@ func validateFile(filePath string) error {
 func init() {
 	rootCmd.AddCommand(validateCmd)
 }
-

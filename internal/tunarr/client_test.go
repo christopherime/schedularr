@@ -39,7 +39,7 @@ func TestClient_GetChannels(t *testing.T) {
 		if r.URL.Path != "/api/channels" {
 			t.Errorf("expected /api/channels path, got %s", r.URL.Path)
 		}
-		
+
 		// check auth header
 		if r.Header.Get("X-API-Key") != "test-api-key" {
 			t.Errorf("expected X-API-Key header to be test-api-key, got %s", r.Header.Get("X-API-Key"))
@@ -138,7 +138,7 @@ func TestClient_UpdateSchedule(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&receivedSchedule); err != nil {
 			t.Fatalf("failed to decode request body: %v", err)
 		}
-		
+
 		if len(receivedSchedule) != len(schedule) {
 			t.Errorf("expected %d items in schedule, got %d", len(schedule), len(receivedSchedule))
 		}

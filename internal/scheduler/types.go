@@ -34,18 +34,18 @@ type Filter struct {
 
 // FillerConfig defines filler content configuration for a block
 type FillerConfig struct {
-	Enabled       bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`                             // Whether to use filler content
-	FillerListID  string `mapstructure:"filler_list_id" yaml:"filler_list_id" json:"filler_list_id,omitempty"` // ID of filler list to use
+	Enabled       bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`                                   // Whether to use filler content
+	FillerListID  string `mapstructure:"filler_list_id" yaml:"filler_list_id" json:"filler_list_id,omitempty"`    // ID of filler list to use
 	MaxFillerTime int    `mapstructure:"max_filler_time" yaml:"max_filler_time" json:"max_filler_time,omitempty"` // Max minutes of filler allowed (0 = unlimited)
-	MinGapTime    int    `mapstructure:"min_gap_time" yaml:"min_gap_time" json:"min_gap_time,omitempty"`    // Minimum gap (minutes) before adding filler
+	MinGapTime    int    `mapstructure:"min_gap_time" yaml:"min_gap_time" json:"min_gap_time,omitempty"`          // Minimum gap (minutes) before adding filler
 }
 
 // SeriesConfig defines configuration for a specific series in a block
 type SeriesConfig struct {
 	ShowTitle        string `mapstructure:"show_title" yaml:"show_title" json:"show_title"`
 	EpisodesPerBlock int    `mapstructure:"episodes_per_block" yaml:"episodes_per_block" json:"episodes_per_block"`
-	StartSeason      int    `mapstructure:"start_season" yaml:"start_season" json:"start_season,omitempty"`     // Optional: override start point
-	StartEpisode     int    `mapstructure:"start_episode" yaml:"start_episode" json:"start_episode,omitempty"`   // Optional: override start point
+	StartSeason      int    `mapstructure:"start_season" yaml:"start_season" json:"start_season,omitempty"`    // Optional: override start point
+	StartEpisode     int    `mapstructure:"start_episode" yaml:"start_episode" json:"start_episode,omitempty"` // Optional: override start point
 }
 
 // SeriesFallback defines fallback behavior when series content runs out or doesn't fill duration
@@ -56,15 +56,15 @@ type SeriesFallback struct {
 
 // Block defines a scheduled programming block
 type Block struct {
-	Type      BlockType      `mapstructure:"type" yaml:"type" json:"type"`         // "filter" or "series", default "filter"
+	Type      BlockType      `mapstructure:"type" yaml:"type" json:"type"` // "filter" or "series", default "filter"
 	Name      string         `mapstructure:"name" yaml:"name" json:"name"`
-	Cron      string         `mapstructure:"cron" yaml:"cron" json:"cron"`         // Cron expression for start time
+	Cron      string         `mapstructure:"cron" yaml:"cron" json:"cron"`             // Cron expression for start time
 	Duration  int            `mapstructure:"duration" yaml:"duration" json:"duration"` // Duration in minutes
 	Filter    Filter         `mapstructure:"filter" yaml:"filter" json:"filter,omitempty"`
 	ChannelID string         `mapstructure:"channel_id" yaml:"channel_id" json:"channel_id"`
-	Priority  int            `mapstructure:"priority" yaml:"priority" json:"priority"` // Higher priority overrides overlapping blocks
-	Filler    FillerConfig   `mapstructure:"filler" yaml:"filler" json:"filler,omitempty"`     // Filler content configuration
-	Series    []SeriesConfig `mapstructure:"series" yaml:"series" json:"series,omitempty"`     // For BlockTypeSeries
+	Priority  int            `mapstructure:"priority" yaml:"priority" json:"priority"`           // Higher priority overrides overlapping blocks
+	Filler    FillerConfig   `mapstructure:"filler" yaml:"filler" json:"filler,omitempty"`       // Filler content configuration
+	Series    []SeriesConfig `mapstructure:"series" yaml:"series" json:"series,omitempty"`       // For BlockTypeSeries
 	Fallback  SeriesFallback `mapstructure:"fallback" yaml:"fallback" json:"fallback,omitempty"` // For BlockTypeSeries
 }
 
