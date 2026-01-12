@@ -456,7 +456,7 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Test conflict resolution (overlapping slots, priority)
   - [x] Test gap filling logic (basic cases)
   - [x] Test history tracking (record, filter, expiration, cleanup)
-  - [x] Test API client (71.1% coverage for tunarr package)
+  - [x] Test API client (77.5% coverage for tunarr package)
   - [x] Test config package (74.2% coverage)
   - [x] Test cueconfig package (78.7% coverage)
   - [x] Test logging package (100.0% coverage)
@@ -467,11 +467,14 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Test GenerateForTimeRange function
   - [x] Test Commit and state persistence
   - [x] Test CUE schema generation (YAML and JSON)
+  - [x] Test error handling and validation
+  - [x] Test context cancellation
+  - [x] Test APIError formatting and unwrapping
   - [ ] Add integration tests for full scheduling workflow
   - [ ] Add table-driven tests for all core functions
   - [ ] Test error paths and edge cases
   - **Criteria:** `go test -cover ./...` shows >80% coverage
-  - **Current Status:** Most packages >70%, logging at 100%, scheduler at 77.1%, cueconfig at 78.7%
+  - **Current Status:** Most packages >75%, logging at 100%, scheduler at 77.1%, cueconfig at 78.7%, tunarr at 77.5%
 
 - [ ] **Integration Tests**: Test against real Tunarr instance
   - [ ] Create test fixtures with sample data
