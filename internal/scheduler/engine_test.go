@@ -617,3 +617,226 @@ func TestSeriesSkipDisabled(t *testing.T) {
 		t.Errorf("Expected empty playlist for disabled series, got %d items", len(playlist))
 	}
 }
+
+func TestGenerateForTimeRange(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	blocks := []Block{
+		{
+			Name:      "Morning Block",
+			Type:      BlockTypeFilter,
+			Cron:      "0 9 * * *", // Daily at 9 AM
+			Duration:  60,          // 1 hour
+			ChannelID: "channel-1",
+			Priority:  10,
+			Filter: Filter{
+				Genres: []string{"Comedy"},
+			},
+		},
+		{
+			Name:      "Evening Block",
+			Type:      BlockTypeFilter,
+			Cron:      "0 20 * * *", // Daily at 8 PM
+			Duration:  120,          // 2 hours
+			ChannelID: "channel-1",
+			Priority:  10,
+			Filter: Filter{
+				Genres: []string{"Drama"},
+			},
+		},
+	}
+
+	engine := NewEngine(client, blocks, store, slog.Default())
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Comedy Show", Genres: []string{"Comedy"}, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Drama Show", Genres: []string{"Drama"}, Duration: 3600000, Type: "episode"},
+	}
+
+	// Test a 24-hour period
+	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
+	if err != nil {
+		t.Fatalf("GenerateForTimeRange returned error: %v", err)
+	}
+
+	// Should have schedule for channel-1
+	programs, ok := schedule["channel-1"]
+	if !ok {
+		t.Fatal("Expected schedule for channel-1")
+	}
+
+	// Should have programs from both blocks (morning and evening)
+	if len(programs) == 0 {
+		t.Error("Expected programs in schedule")
+	}
+}
+
+func TestGenerateForTimeRange_InvalidCron(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	blocks := []Block{
+		{
+			Name:      "Invalid Block",
+			Type:      BlockTypeFilter,
+			Cron:      "invalid cron",
+			Duration:  60,
+			ChannelID: "channel-1",
+			Priority:  10,
+		},
+	}
+
+	engine := NewEngine(client, blocks, store, slog.Default())
+
+	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	_, err := engine.GenerateForTimeRange(start, end, []tunarr.Program{})
+	if err == nil {
+		t.Error("Expected error for invalid cron expression")
+	}
+}
+
+func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	blocks := []Block{
+		{
+			Name:      "Low Priority Block",
+			Type:      BlockTypeFilter,
+			Cron:      "0 9 * * *",
+			Duration:  120, // 2 hours
+			ChannelID: "channel-1",
+			Priority:  5,
+			Filter: Filter{
+				Genres: []string{"Comedy"},
+			},
+		},
+		{
+			Name:      "High Priority Block",
+			Type:      BlockTypeFilter,
+			Cron:      "30 9 * * *", // Overlaps with low priority
+			Duration:  60,           // 1 hour
+			ChannelID: "channel-1",
+			Priority:  10,
+			Filter: Filter{
+				Genres: []string{"Drama"},
+			},
+		},
+	}
+
+	engine := NewEngine(client, blocks, store, slog.Default())
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Comedy Show", Genres: []string{"Comedy"}, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Drama Show", Genres: []string{"Drama"}, Duration: 1800000, Type: "episode"},
+	}
+
+	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
+	if err != nil {
+		t.Fatalf("GenerateForTimeRange returned error: %v", err)
+	}
+
+	programs, ok := schedule["channel-1"]
+	if !ok {
+		t.Fatal("Expected schedule for channel-1")
+	}
+
+	// Should have programs from both blocks, with high priority winning conflicts
+	if len(programs) == 0 {
+		t.Error("Expected programs in schedule")
+	}
+}
+
+func TestCommit(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default())
+
+	// Add some pending states
+	engine.pendingStates["Show1"] = &SeriesState{
+		ShowTitle:      "Show1",
+		CurrentSeason:  1,
+		CurrentEpisode: 5,
+	}
+	engine.pendingStates["Show2"] = &SeriesState{
+		ShowTitle:      "Show2",
+		CurrentSeason:  2,
+		CurrentEpisode: 3,
+	}
+
+	err := engine.Commit()
+	if err != nil {
+		t.Fatalf("Commit returned error: %v", err)
+	}
+
+	// Verify states were saved to store
+	if len(store.States) != 2 {
+		t.Errorf("Expected 2 states in store, got %d", len(store.States))
+	}
+
+	state1, ok := store.States["Show1"]
+	if !ok {
+		t.Error("Expected Show1 in store")
+	} else if state1.CurrentEpisode != 5 {
+		t.Errorf("Expected Show1 episode 5, got %d", state1.CurrentEpisode)
+	}
+
+	// Verify pending states were cleared
+	if len(engine.pendingStates) != 0 {
+		t.Errorf("Expected pending states to be cleared, got %d", len(engine.pendingStates))
+	}
+}
+
+func TestFilterByHistory(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	// Add some history
+	store.History = []ScheduleHistoryEntry{
+		{
+			ProgramID:   "p1",
+			ChannelID:   "channel-1",
+			ScheduledAt: time.Now().Add(-3 * 24 * time.Hour), // 3 days ago
+			BlockName:   "Test Block",
+		},
+		{
+			ProgramID:   "p2",
+			ChannelID:   "channel-1",
+			ScheduledAt: time.Now().Add(-10 * 24 * time.Hour), // 10 days ago
+			BlockName:   "Test Block",
+		},
+	}
+
+	engine := NewEngineWithHistory(client, []Block{}, 7*24*time.Hour, store, slog.Default())
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Recent Show", Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Old Show", Duration: 1800000, Type: "episode"},
+		{ID: "p3", Title: "New Show", Duration: 1800000, Type: "episode"},
+	}
+
+	filtered := engine.filterByHistory(availablePrograms, "channel-1")
+
+	// p1 should be filtered out (aired 3 days ago, within 7 day window)
+	// p2 should be included (aired 10 days ago, outside 7 day window)
+	// p3 should be included (never aired)
+	if len(filtered) != 2 {
+		t.Errorf("Expected 2 programs after filtering, got %d", len(filtered))
+	}
+
+	// Verify p1 was filtered out
+	for _, p := range filtered {
+		if p.ID == "p1" {
+			t.Error("Expected p1 to be filtered out")
+		}
+	}
+}
