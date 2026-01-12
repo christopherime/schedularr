@@ -170,3 +170,138 @@ func TestGenerateConfig_JSON(t *testing.T) {
 		t.Errorf("Generated config is invalid: %v", err)
 	}
 }
+
+func TestGenerateScheduler_YAML(t *testing.T) {
+	v := NewValidator()
+
+	data, err := v.GenerateScheduler("yaml")
+	if err != nil {
+		t.Fatalf("GenerateScheduler failed: %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Error("GenerateScheduler returned empty data")
+	}
+
+	// Validate the generated scheduler
+	if err := v.ValidateScheduler(data, "yaml"); err != nil {
+		t.Errorf("Generated scheduler is invalid: %v", err)
+	}
+
+	// Check that it contains expected fields
+	dataStr := string(data)
+	if !strings.Contains(dataStr, "blocks:") {
+		t.Error("Generated scheduler missing 'blocks' field")
+	}
+	if !strings.Contains(dataStr, "name:") {
+		t.Error("Generated scheduler missing 'name' field")
+	}
+	if !strings.Contains(dataStr, "type:") {
+		t.Error("Generated scheduler missing 'type' field")
+	}
+}
+
+func TestGenerateScheduler_JSON(t *testing.T) {
+	v := NewValidator()
+
+	data, err := v.GenerateScheduler("json")
+	if err != nil {
+		t.Fatalf("GenerateScheduler failed: %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Error("GenerateScheduler returned empty data")
+	}
+
+	// Validate the generated scheduler
+	if err := v.ValidateScheduler(data, "json"); err != nil {
+		t.Errorf("Generated scheduler is invalid: %v", err)
+	}
+
+	// Check that it contains expected fields
+	dataStr := string(data)
+	if !strings.Contains(dataStr, "blocks") {
+		t.Error("Generated scheduler missing 'blocks' field")
+	}
+}
+
+func TestGenerateScheduler_UnsupportedFormat(t *testing.T) {
+	v := NewValidator()
+
+	_, err := v.GenerateScheduler("xml")
+	if err == nil {
+		t.Error("Expected error for unsupported format, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "unsupported format") {
+		t.Errorf("Expected 'unsupported format' error, got: %v", err)
+	}
+}
+
+func TestValidateScheduler_InvalidBlockType(t *testing.T) {
+	v := NewValidator()
+
+	invalidScheduler := `
+blocks:
+  - name: "Test Block"
+    type: "invalid_type"
+    cron: "0 9 * * *"
+    duration: 120
+    channel_id: "channel-1"
+    priority: 10
+`
+
+	err := v.ValidateScheduler([]byte(invalidScheduler), "yaml")
+	if err == nil {
+		t.Error("Expected validation error for invalid block type, got nil")
+	}
+}
+
+func TestValidateScheduler_NegativeDuration(t *testing.T) {
+	v := NewValidator()
+
+	invalidScheduler := `
+blocks:
+  - name: "Test Block"
+    type: "filter"
+    cron: "0 9 * * *"
+    duration: -10
+    channel_id: "channel-1"
+    priority: 10
+`
+
+	err := v.ValidateScheduler([]byte(invalidScheduler), "yaml")
+	if err == nil {
+		t.Error("Expected validation error for negative duration, got nil")
+	}
+}
+
+func TestValidateConfig_InvalidFormat(t *testing.T) {
+	v := NewValidator()
+
+	invalidConfig := `
+tunarr:
+  url: "http://localhost:8000"
+log:
+  level: "info"
+  format: "invalid_format"
+`
+
+	err := v.ValidateConfig([]byte(invalidConfig), "yaml")
+	if err == nil {
+		t.Error("Expected validation error for invalid log format, got nil")
+	}
+}
+
+func TestGenerateConfig_UnsupportedFormat(t *testing.T) {
+	v := NewValidator()
+
+	_, err := v.GenerateConfig("xml")
+	if err == nil {
+		t.Error("Expected error for unsupported format, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "unsupported format") {
+		t.Errorf("Expected 'unsupported format' error, got: %v", err)
+	}
+}
