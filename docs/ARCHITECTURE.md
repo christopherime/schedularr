@@ -1,10 +1,363 @@
-# Architecture Alignment with Athena Project
+# Schedularr Architecture
 
-This document describes the architectural patterns adopted from the athena project to improve Schedularr's code quality, maintainability, and operational excellence.
+This document describes Schedularr's system architecture, including component interactions, data flow, and design patterns adopted from the athena project.
 
-## Overview
+## Table of Contents
 
-The athena project is a well-structured Go application that follows industry best practices for configuration management, CLI design, testing, and deployment. Schedularr is adopting these patterns to ensure consistency across projects and leverage proven architectural decisions.
+1. [System Overview](#system-overview)
+2. [Architecture Diagram](#architecture-diagram)
+3. [Component Details](#component-details)
+4. [Data Flow](#data-flow)
+5. [Athena Project Patterns](#athena-project-patterns)
+
+## System Overview
+
+Schedularr is an intelligent automation tool for Tunarr TV channel programming. It uses cron-based scheduling to automatically generate and apply content schedules based on user-defined rules (blocks). The system handles content filtering, series progression tracking, conflict resolution, and gap filling to create optimal channel lineups.
+
+### Key Components
+
+- **CLI Interface** (`cmd/`) - User commands for configuration, scheduling, and monitoring
+- **Scheduling Engine** (`internal/scheduler/`) - Core logic for schedule generation and content selection
+- **Tunarr Client** (`internal/tunarr/`) - API client for communication with Tunarr instances
+- **State Store** (`internal/store/`) - SQLite-based persistence for series progression and history
+- **Configuration** (`internal/config/`) - CUE schema-based configuration management
+- **TUI** (`internal/tui/`) - Interactive terminal interface for block editing
+
+## Architecture Diagram
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                         User Interface                           │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐  ┌────────────────┐ │
+│  │   CLI    │  │   TUI    │  │  Config   │  │   Validate     │ │
+│  │ Commands │  │  Editor  │  │ Generate  │  │   Command      │ │
+│  └────┬─────┘  └────┬─────┘  └─────┬─────┘  └──────┬─────────┘ │
+└───────┼─────────────┼──────────────┼────────────────┼───────────┘
+        │             │              │                │
+        ▼             ▼              ▼                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Configuration Layer                           │
+│  ┌────────────────────┐          ┌───────────────────────────┐  │
+│  │  config.yaml       │          │  scheduler.yaml           │  │
+│  │  ─────────────     │          │  ─────────────────        │  │
+│  │  - tunarr.url      │          │  blocks:                  │  │
+│  │  - tunarr.api_key  │◄────────►│  - name: "Block A"        │  │
+│  │  - log.level       │  Loaded  │    cron: "0 6 * * *"      │  │
+│  │  - log.format      │    by    │    duration: 240          │  │
+│  └────────────────────┘  Viper   │    filter: {...}          │  │
+│           │                       └───────────────────────────┘  │
+│           │ Validated by CUE Schema                              │
+│           ▼                                                      │
+│  ┌────────────────────┐                                         │
+│  │  CUE Validator     │                                         │
+│  │  ───────────────   │                                         │
+│  │  - config.cue      │                                         │
+│  │  - scheduler.cue   │                                         │
+│  └────────────────────┘                                         │
+└─────────────────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Scheduling Engine                            │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Engine (engine.go)                                        │ │
+│  │  ──────────────────                                        │ │
+│  │  • GenerateForTimeRange() - Main entry point              │ │
+│  │  • PlanBlock() - Process single scheduling block          │ │
+│  │  • PlanSeriesBlock() - Handle series progression          │ │
+│  │  • ResolveConflicts() - Handle overlapping blocks         │ │
+│  │  • GetFiller() - Fill time gaps with filler content       │ │
+│  └────────┬─────────────────────────────────┬─────────────────┘ │
+│           │                                 │                   │
+│           ▼                                 ▼                   │
+│  ┌────────────────┐              ┌────────────────────────┐    │
+│  │ Filter Engine  │              │  Schedule History      │    │
+│  │ ─────────────  │              │  ────────────────      │    │
+│  │ • FilterPrograms()            │  • Track recent plays  │    │
+│  │ • Genre filter │              │  • Prevent repeats     │    │
+│  │ • Rating filter│              │  • 7-day window        │    │
+│  │ • Duration     │              └────────────────────────┘    │
+│  │ • Year range   │                                            │
+│  │ • Title regex  │                                            │
+│  └────────────────┘                                            │
+└───────┬─────────────────────────────┬──────────────────────────┘
+        │                             │
+        ▼                             ▼
+┌─────────────────────┐   ┌──────────────────────────────────────┐
+│   State Store       │   │      Tunarr API Client               │
+│   ─────────────     │   │      ─────────────────               │
+│   SQLite Database   │   │  ┌────────────────────────────────┐  │
+│                     │   │  │  Client (client.go)            │  │
+│  ┌──────────────┐   │   │  │  ──────────────               │  │
+│  │ Series State │   │   │  │  • GetChannels()              │  │
+│  │ ────────────│   │   │  │  • GetPrograms()              │  │
+│  │ - show_id    │   │   │  │  • GetLibraries()             │  │
+│  │ - season     │   │   │  │  • GetLibraryPrograms()       │  │
+│  │ - episode    │   │   │  │  • GetShowEpisodes()          │  │
+│  │ - last_used  │   │   │  │  • UpdateSchedule()           │  │
+│  └──────────────┘   │   │  │  • SearchPrograms()           │  │
+│                     │   │  │  • GetFillerContent()         │  │
+└─────────────────────┘   │  └────────┬───────────────────────┘  │
+                          │           │ HTTP + Retry Logic       │
+                          └───────────┼──────────────────────────┘
+                                      │
+                                      ▼
+                          ┌──────────────────────────┐
+                          │    Tunarr Instance       │
+                          │    ────────────────      │
+                          │    REST API Server       │
+                          │    - Channels            │
+                          │    - Programs            │
+                          │    - Libraries (Plex/    │
+                          │      Jellyfin/Emby)      │
+                          └──────────────────────────┘
+```
+
+## Component Details
+
+### CLI Interface (`cmd/`)
+
+The CLI provides commands for all user interactions:
+
+- **`schedularr generate`** - Generate and optionally apply schedules
+- **`schedularr run`** - Start daemon mode with cron-based execution
+- **`schedularr channels`** - List available Tunarr channels
+- **`schedularr tui`** - Launch interactive block editor
+- **`schedularr validate`** - Validate configuration files
+- **`schedularr config generate`** - Generate config templates
+- **`schedularr scheduler init`** - Create scheduler configuration
+
+### Scheduling Engine (`internal/scheduler/`)
+
+Core scheduling logic with multiple responsibilities:
+
+#### Engine (`engine.go`)
+
+- **GenerateForTimeRange(start, end, programs)** - Main entry point that:
+  1. Parses cron expressions for each block
+  2. Identifies scheduling windows within time range
+  3. Plans content for each window
+  4. Resolves conflicts between overlapping blocks
+  5. Returns map of channel_id → []Program
+
+- **PlanBlock(block, startTime, programs)** - Handles single block:
+  1. Applies filter criteria to available programs
+  2. Removes recently played content (history check)
+  3. Randomly shuffles candidates
+  4. Fills block duration using greedy selection
+  5. Optionally adds filler content for gaps
+  6. Records scheduled programs in history
+
+- **PlanSeriesBlock(block, programs)** - Series progression:
+  1. Loads current episode state from SQLite
+  2. Fetches next N episodes from Tunarr
+  3. Updates episode state (season/episode increment)
+  4. Handles series completion (restart or fallback)
+  5. Stores pending state for commit
+
+#### Filter Engine (`filter.go`)
+
+Applies multiple filter criteria using AND logic:
+
+- **Genre Filtering** - Match any genre in list
+- **Rating Filtering** - Match specific content ratings
+- **Year Range** - Filter by release year (min/max)
+- **Duration Range** - Filter by program length
+- **Title Regex** - Pattern matching on titles
+- **Tag Filtering** - Match custom tags
+
+#### Schedule History (`history.go`)
+
+Tracks recently scheduled content per channel:
+
+- **Window**: Configurable time period (default 7 days)
+- **Purpose**: Prevent content repetition
+- **Storage**: In-memory map with cleanup
+- **Key**: `channel_id:program_id`
+
+### Tunarr Client (`internal/tunarr/`)
+
+HTTP client with robust error handling:
+
+#### Features
+
+- **Exponential Backoff Retry** - Retries on 429, 503, 5xx errors
+- **Context Support** - All methods accept `context.Context`
+- **Request Validation** - Validates inputs and responses
+- **Error Wrapping** - Descriptive error context
+- **Authentication** - Optional `X-API-Key` header
+
+#### API Methods
+
+- `GetChannels(ctx)` - List all channels
+- `GetPrograms(ctx)` - List all programs (fallback)
+- `GetLibraries(ctx)` - List media libraries (Plex/Jellyfin/Emby)
+- `GetLibraryPrograms(ctx, libraryID)` - Get content from library
+- `GetShows(ctx)` - List TV shows
+- `GetShowEpisodes(ctx, showID, season)` - Get episodes for show
+- `SearchPrograms(ctx, query)` - Search by title
+- `GetFillerLists(ctx)` - List filler content collections
+- `GetFillerContent(ctx, fillerListID)` - Get filler programs
+- `UpdateSchedule(ctx, channelID, programs)` - Apply schedule to channel
+
+### State Store (`internal/store/`)
+
+SQLite-based persistence for series state:
+
+#### Schema
+
+```sql
+CREATE TABLE series_state (
+    block_id TEXT PRIMARY KEY,
+    show_id TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    episode INTEGER NOT NULL,
+    last_updated INTEGER NOT NULL
+);
+```
+
+#### Operations
+
+- `LoadSeriesState(blockID)` - Retrieve current episode
+- `SaveSeriesState(blockID, state)` - Persist updated state
+- **Transaction Support** - Pending states for atomic commits
+- **Rollback** - Discard uncommitted state changes
+
+### Configuration (`internal/config/`)
+
+CUE schema-based configuration with Viper loading:
+
+#### Config Files
+
+- **`config.yaml`** - Application settings
+  - Tunarr connection (URL, API key)
+  - Logging configuration (level, format)
+
+- **`scheduler.yaml`** - Scheduling rules
+  - Block definitions (cron, duration, filters)
+  - Series configuration (show ID, progression rules)
+  - Filler settings (list ID, max duration)
+
+#### CUE Schemas
+
+- **`cmd/schema/config.cue`** - App config validation
+- **`cmd/schema/scheduler.cue`** - Scheduler validation
+
+## Data Flow
+
+### Schedule Generation Flow
+
+```text
+1. User runs: schedularr generate --apply
+
+2. Load Configuration
+   ├─► Load config.yaml (Tunarr URL, logging)
+   ├─► Load scheduler.yaml (blocks, rules)
+   └─► Validate both with CUE schemas
+
+3. Initialize Components
+   ├─► Create Tunarr client
+   ├─► Create SQLite store
+   ├─► Create scheduling engine
+   └─► Create logger
+
+4. Fetch Available Content
+   ├─► GetLibraries() from Tunarr
+   ├─► For each library:
+   │   └─► GetLibraryPrograms(libraryID)
+   └─► Result: []Program (all available content)
+
+5. Generate Schedule
+   ├─► For each block in scheduler.yaml:
+   │   ├─► Parse cron expression
+   │   ├─► Find next occurrence in time range
+   │   └─► For each occurrence:
+   │       ├─► If series block:
+   │       │   ├─► Load series state from SQLite
+   │       │   ├─► Fetch next episodes from Tunarr
+   │       │   └─► Update episode counter
+   │       ├─► If filter block:
+   │       │   ├─► Apply genre/rating/year/duration filters
+   │       │   ├─► Check schedule history (no recent repeats)
+   │       │   ├─► Shuffle remaining candidates
+   │       │   └─► Fill block duration (greedy selection)
+   │       └─► If gap remaining:
+   │           └─► GetFillerContent() and fill
+   │
+   ├─► Collect all scheduled slots
+   ├─► Resolve conflicts (priority-based)
+   └─► Group by channel_id
+
+6. Apply to Tunarr (if --apply)
+   ├─► For each channel_id:
+   │   └─► UpdateSchedule(channel_id, programs[])
+   ├─► Commit series state to SQLite
+   └─► Display success/failure summary
+
+7. Result
+   └─► Tunarr channels updated with new schedules
+```
+
+### Series Progression Flow
+
+```text
+1. PlanSeriesBlock called with:
+   ├─► Block config (show_id, episodes_per_block)
+   ├─► Start time
+   └─► All available programs
+
+2. Load Current State
+   ├─► Query SQLite: SELECT * FROM series_state WHERE block_id = ?
+   └─► Result: {show_id, season, episode, last_updated}
+
+3. Fetch Next Episodes
+   ├─► GetShowEpisodes(ctx, show_id, season)
+   ├─► Filter: episode >= current_episode
+   ├─► Take: episodes_per_block (e.g., 3 episodes)
+   └─► Result: []Program (next 3 episodes)
+
+4. Update State
+   ├─► If got full block of episodes:
+   │   └─► Increment episode counter
+   ├─► If reached end of season:
+   │   ├─► Increment season
+   │   └─► Reset episode to 1
+   ├─► If series complete:
+   │   └─► Restart from S01E01 OR use fallback content
+   └─► Store in pending_states (not committed yet)
+
+5. Return Episodes
+   └─► []Program with proper duration and metadata
+
+6. Commit (after successful schedule apply)
+   └─► SQLite: INSERT OR REPLACE INTO series_state VALUES (...)
+```
+
+### Conflict Resolution Flow
+
+```text
+1. Collect All Scheduled Slots
+   ├─► Each slot has: {StartTime, EndTime, Block, Programs}
+   └─► Multiple blocks may schedule same time
+
+2. Detect Overlaps
+   ├─► For each pair of slots:
+   └─► If time ranges overlap:
+       └─► Mark as conflict
+
+3. Resolve by Priority
+   ├─► Sort conflicting slots by Block.Priority (descending)
+   ├─► Keep highest priority
+   ├─► Log conflict resolution
+   └─► Discard lower priority slots
+
+4. Return Non-Overlapping Schedule
+   └─► []ScheduledSlot with no time conflicts
+```
+
+## Athena Project Patterns
+
+Schedularr adopts the following patterns from the athena project to improve code quality and maintainability.
 
 ## Key Patterns Adopted
 
