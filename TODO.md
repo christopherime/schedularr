@@ -538,15 +538,15 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ## Phase 5: UX Enhancements
 
-**Status:** 🔴 Not Started
+**Status:** 🟡 In Progress
 **Goal:** Improve user experience with better CLI and TUI features
 
 ### 5.1 CLI Improvements
 
 - [x] **Interactive Mode**: TUI for configuration (DONE)
-- [ ] **Better Table Output**: Improve schedule display formatting
+- [x] **Better Table Output**: Improve schedule display formatting ✅ (2026-01-12)
 - [ ] **Progress Indicators**: Show progress during long operations
-- [ ] **Colored Output**: Use colors for better readability
+- [x] **Colored Output**: Use colors for better readability ✅ (2026-01-12)
 - [ ] **Dry Run Enhancements**: More detailed dry run output
 
 ### 5.2 TUI Enhancements
