@@ -52,18 +52,18 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ## Project Status Overview
 
-| Phase       | Status                        | Description                                 |
-| :---------- | :---------------------------- | :------------------------------------------ |
-| **Phase 0** | 🟡 In Progress (E2E Testing) | Architecture alignment with athena patterns |
-| **Phase 1** | ✅ Completed                  | Foundation & API verification               |
-| **Phase 2** | ✅ Completed                  | Scheduler file architecture                 |
-| **Phase 3** | 🟢 Mostly Complete           | Enhanced scheduling engine                  |
-| **Phase 4** | 🟡 In Progress               | Operational excellence & testing            |
-| **Phase 5** | 🔴 Not Started               | UX enhancements                             |
+| Phase       | Status             | Description                                 |
+| :---------- | :----------------- | :------------------------------------------ |
+| **Phase 0** | ✅ Completed       | Architecture alignment with athena patterns |
+| **Phase 1** | ✅ Completed       | Foundation & API verification               |
+| **Phase 2** | ✅ Completed       | Scheduler file architecture                 |
+| **Phase 3** | 🟢 Mostly Complete | Enhanced scheduling engine                  |
+| **Phase 4** | 🟡 In Progress     | Operational excellence & testing            |
+| **Phase 5** | 🔴 Not Started     | UX enhancements                             |
 
-## Phase 0: Architecture Alignment (NEW PRIORITY)
+## Phase 0: Architecture Alignment ✅ COMPLETED
 
-**Status:** 🟡 In Progress (E2E Testing Remaining)
+**Status:** ✅ Completed
 **Goal:** Adopt athena project patterns for configuration, CLI, and code quality
 
 ### 0.1 CUE Schema Integration ✅ COMPLETED
@@ -225,12 +225,14 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Add `make e2e-down` - Stop E2E test environment
   - **Criteria:** `make build && ./bin/schedularr --help` works ✅
 
-- [ ] **E2E Testing Infrastructure**
-  - [ ] Create `e2e/docker-compose.yaml`
-  - [ ] Include Tunarr service
-  - [ ] Include test data fixtures
-  - [ ] Add E2E test scripts
-  - **Criteria:** `make e2e-up` starts full test environment
+- [x] **E2E Testing Infrastructure** ✅ COMPLETED
+  - [x] Create `e2e/docker-compose.yaml`
+  - [x] Include Tunarr service with healthcheck
+  - [x] Include test data fixtures (test-config.yaml, test-scheduler.yaml)
+  - [x] Add E2E test scripts (e2e/test.sh)
+  - [x] Update Makefile with e2e-test and e2e-clean targets
+  - [x] Add comprehensive E2E documentation (e2e/README.md)
+  - **Criteria:** `make e2e-up` starts full test environment ✅
 
 ## Phase 1: Foundation & API Verification
 
