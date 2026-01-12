@@ -39,12 +39,14 @@ This project follows a Code of Conduct to ensure a welcoming environment for all
 
 1. Fork the repository on GitHub
 2. Clone your fork:
+
 ```bash
 git clone https://github.com/YOUR_USERNAME/schedularr.git
 cd schedularr
 ```
 
-3. Add upstream remote:
+1. Add upstream remote:
+
 ```bash
 git remote add upstream https://github.com/geekxflood/schedularr.git
 ```
@@ -65,7 +67,7 @@ make lint
 
 ### Project Structure
 
-```
+```txt
 schedularr/
 ├── main.go                 # Application entry point
 ├── cmd/                    # CLI commands (Cobra)
@@ -100,6 +102,7 @@ git checkout -b fix/bug-description
 ```
 
 Branch naming conventions:
+
 - `feature/` - New features
 - `fix/` - Bug fixes
 - `docs/` - Documentation changes
@@ -180,6 +183,7 @@ if err != nil {
 #### Complexity Limits
 
 Keep functions simple and maintainable:
+
 - **Cyclomatic complexity:** max 15
 - **Cognitive complexity:** max 20
 - **Nesting depth:** max 5
@@ -191,6 +195,7 @@ If you exceed these limits, refactor by extracting helper functions.
 #### Blocked Packages
 
 Never use these packages (enforced by linters):
+
 - `github.com/pkg/errors` → Use `fmt.Errorf` with `%w`
 - `github.com/sirupsen/logrus` → Use `log/slog`
 - `crypto/md5`, `crypto/sha1` → Security risk
@@ -203,10 +208,12 @@ When adding configuration fields:
 
 1. Update CUE schema in `cmd/schema/*.cue`
 2. Add field to Go struct with proper tags:
+
 ```go
 Field string `mapstructure:"field" yaml:"field" json:"field"`
 ```
-3. Test with `./schedularr validate`
+
+1. Test with `./schedularr validate`
 
 ### Adding CLI Commands
 
@@ -221,7 +228,7 @@ See existing commands for examples.
 
 We use [Conventional Commits](https://www.conventionalcommits.org/) format:
 
-```
+```txt
 <type>(<scope>): <subject>
 
 <body>
@@ -243,6 +250,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) format:
 ### Examples
 
 **Simple feature:**
+
 ```
 feat(scheduler): add episode skip functionality
 
@@ -251,7 +259,8 @@ by specifying episode numbers in the configuration.
 ```
 
 **Bug fix:**
-```
+
+```txt
 fix(tunarr): handle connection timeout gracefully
 
 Add exponential backoff retry logic for Tunarr API calls
@@ -261,7 +270,8 @@ Closes #123
 ```
 
 **Breaking change:**
-```
+
+```txt
 feat(config)!: migrate to CUE schema validation
 
 BREAKING CHANGE: Configuration format has changed.
@@ -293,19 +303,21 @@ Migration guide: docs/MIGRATION.md
 ### Before Submitting
 
 1. **Sync with upstream:**
+
 ```bash
 git fetch upstream
 git rebase upstream/main
 ```
 
-2. **Run all checks:**
+1. **Run all checks:**
+
 ```bash
 make lint
 make test
 make build
 ```
 
-3. **Update documentation:**
+1. **Update documentation:**
    - Add/update godoc comments
    - Update README.md if user-facing changes
    - Update TODO.md to mark completed tasks
@@ -313,7 +325,8 @@ make build
 ### PR Title
 
 Use the same format as commit messages:
-```
+
+```txt
 feat(scheduler): add episode skip functionality
 ```
 
@@ -349,6 +362,7 @@ Closes #(issue number)
 ### PR Size
 
 Keep PRs focused and reasonably sized:
+
 - **Small** (preferred): <200 lines changed
 - **Medium**: 200-500 lines changed
 - **Large**: >500 lines (consider splitting)
@@ -362,12 +376,14 @@ Large PRs may take longer to review and merge.
 When reviewing PRs, check:
 
 #### Functionality
+
 - [ ] Code works as described
 - [ ] Edge cases are handled
 - [ ] Error handling is appropriate
 - [ ] No obvious bugs
 
 #### Code Quality
+
 - [ ] Follows Go best practices
 - [ ] Complexity limits respected
 - [ ] No code duplication
@@ -375,18 +391,21 @@ When reviewing PRs, check:
 - [ ] Appropriate use of comments
 
 #### Testing
+
 - [ ] Tests are included
 - [ ] Tests cover edge cases
 - [ ] All tests pass
 - [ ] Test coverage maintained/improved
 
 #### Documentation
+
 - [ ] Godoc comments on exported items
 - [ ] README updated if needed
 - [ ] CHANGELOG updated if needed
 - [ ] TODO.md updated if applicable
 
 #### Security
+
 - [ ] No security vulnerabilities
 - [ ] Input validation where needed
 - [ ] No hardcoded secrets
@@ -395,6 +414,7 @@ When reviewing PRs, check:
 ### For Authors
 
 When your PR is reviewed:
+
 - **Respond promptly** to feedback
 - **Ask questions** if feedback is unclear
 - **Make requested changes** or discuss alternatives
@@ -463,6 +483,7 @@ func TestFilterPrograms(t *testing.T) {
 ### When to Update Documentation
 
 Update documentation when:
+
 - Adding new features
 - Changing user-facing behavior
 - Modifying configuration format

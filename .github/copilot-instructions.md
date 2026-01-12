@@ -9,6 +9,7 @@ For general AI assistant guidance, see [AGENTS.md](../AGENTS.md).
 **Schedularr** automates TV channel scheduling for Tunarr using cron-based blocks with intelligent content filtering and series progression.
 
 **Tech Stack:**
+
 - Go 1.25.5
 - Cobra (CLI) + Viper (config)
 - Bubble Tea (TUI)
@@ -156,6 +157,7 @@ type Config struct {
 ## Complexity Limits
 
 Copilot should suggest refactoring when:
+
 - Cyclomatic complexity > 15
 - Cognitive complexity > 20
 - Nesting depth > 5
@@ -163,6 +165,7 @@ Copilot should suggest refactoring when:
 - Function returns > 3 values
 
 Suggest extracting:
+
 - Helper functions for complex logic
 - Early returns to reduce nesting
 - Separate functions for different responsibilities
@@ -270,6 +273,7 @@ Config: #Config & {
 ### Context Files
 
 Copilot should prioritize these files for context:
+
 1. `AGENTS.md` - General patterns and standards
 2. `CLAUDE.md` - Project structure and commands
 3. `TODO.md` - Current priorities and tasks
@@ -279,6 +283,7 @@ Copilot should prioritize these files for context:
 ### Autocomplete Priority
 
 When suggesting completions:
+
 1. Follow existing patterns in the same file
 2. Match naming conventions from similar functions
 3. Use struct field names from the project
@@ -288,6 +293,7 @@ When suggesting completions:
 ### Code Generation
 
 When generating new functions:
+
 1. Include godoc comments
 2. Add error handling
 3. Use structured logging where appropriate
@@ -341,7 +347,8 @@ logger.Info("schedule generated",
 ## Documentation Suggestions
 
 When suggesting comments:
-- Explain *why*, not *what* (code shows what)
+
+- Explain _why_, not _what_ (code shows what)
 - Document non-obvious behavior
 - Explain performance considerations
 - Note any limitations or edge cases
@@ -392,6 +399,7 @@ logging.SetDefault(logger)  // Set as default for the app
 ## Quick Reference
 
 **Key Directories:**
+
 - `cmd/` - CLI commands
 - `internal/scheduler/` - Core scheduling logic
 - `internal/tunarr/` - Tunarr API client
@@ -400,12 +408,14 @@ logging.SetDefault(logger)  // Set as default for the app
 - `internal/logging/` - Structured logging
 
 **Key Files:**
+
 - `main.go` - Entry point
 - `internal/scheduler/engine.go` - Main scheduling engine
 - `internal/scheduler/filter.go` - Content filtering
 - `cmd/schema/*.cue` - Configuration schemas
 
 **Run Commands:**
+
 - `make build` - Build binary
 - `make test` - Run tests
 - `make lint` - Run linters
@@ -414,4 +424,4 @@ logging.SetDefault(logger)  // Set as default for the app
 
 ---
 
-*For detailed guidance, see [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md).*
+_For detailed guidance, see [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md)._

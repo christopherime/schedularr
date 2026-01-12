@@ -39,6 +39,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 **Status:** 🟢 Mostly Complete
 
 **Completed:**
+
 - ✅ CUE schema validation for configurations
 - ✅ CLI command restructuring (main.go + cmd/ pattern)
 - ✅ Structured logging with log/slog
@@ -47,6 +48,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 - ✅ Makefile-based build system
 
 **Remaining:**
+
 - 🔄 Error handling standards (context.Context, retries)
 - 🔄 Complete project documentation (ARCHITECTURE.md, SPECIFICATIONS.md, CONTRIBUTING.md)
 - 🔄 E2E testing infrastructure
@@ -62,6 +64,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 **Status:** ✅ Completed
 
 **Achievements:**
+
 - ✅ Tunarr API research and endpoint verification
 - ✅ Enhanced error handling with exponential backoff
 - ✅ API response validation
@@ -78,6 +81,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 **Status:** ✅ Completed
 
 **Achievements:**
+
 - ✅ Configuration separation (config.yaml vs scheduler.yaml)
 - ✅ Priority-based scheduler file loading
 - ✅ `scheduler init` command with CUE generation
@@ -97,6 +101,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 **Status:** 🟢 Mostly Complete
 
 **Completed:**
+
 - ✅ Content fetching from Tunarr libraries
 - ✅ Series episode fetching and validation
 - ✅ Scheduling history tracking (7-day window)
@@ -107,6 +112,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 - ✅ Series state management (SQLite)
 
 **Remaining:**
+
 - 🔄 Strict timing mode (precise cron start times)
 - 🔄 Timezone and DST handling
 - 🔄 Series completion logging and auto-restart
@@ -122,6 +128,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 **Status:** 🟡 In Progress
 
 **Completed:**
+
 - ✅ Unit tests for core scheduling logic (67% coverage)
 - ✅ Conflict resolution tests
 - ✅ Gap filling tests
@@ -130,6 +137,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 - ✅ Dockerization with multi-stage builds
 
 **In Progress:**
+
 - 🔄 Increase test coverage to >80%
 - 🔄 Integration tests for full workflow
 - 🔄 E2E tests with real Tunarr instance
@@ -137,6 +145,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 - 🔄 Configuration management (env vars, hot-reload)
 
 **Remaining:**
+
 - ⏳ Structured logging migration (partial - engine only)
 - ⏳ API documentation
 - ⏳ Migration guides
@@ -154,12 +163,14 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 **Planned Features:**
 
 **CLI Improvements:**
+
 - Better table output with colors and formatting
 - Progress indicators for long operations
 - Real-time schedule preview
 - Dry run enhancements
 
 **TUI Enhancements:**
+
 - Real-time field validation
 - Visual filter rule builder
 - Confirmation dialogs for destructive actions
@@ -234,6 +245,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 ## Success Metrics
 
 ### Technical Metrics
+
 - **Test Coverage:** >80% across all packages
 - **Linting:** Zero errors, <10 acceptable warnings
 - **Security:** Zero vulnerabilities (gosec, govulncheck)
@@ -241,12 +253,14 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 - **Reliability:** >99.9% uptime in daemon mode
 
 ### User Metrics
+
 - **Setup Time:** <5 minutes from install to first schedule
 - **Schedule Accuracy:** >99% blocks scheduled without errors
 - **Documentation Coverage:** 100% of features documented
 - **Support Requests:** <1% of users need support for basic tasks
 
 ### Community Metrics
+
 - **GitHub Stars:** 100+ (indicates usefulness)
 - **Contributors:** 5+ active contributors
 - **Issues Closed:** >90% within 30 days
@@ -257,6 +271,7 @@ Schedularr aims to be the most intuitive and powerful automation tool for Tunarr
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
+
 - Code style and standards
 - Commit message format
 - Pull request process
@@ -269,6 +284,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
 ### Versioning
 
 Schedularr follows [Semantic Versioning 2.0.0](https://semver.org/):
+
 - **MAJOR:** Breaking changes to configuration or API
 - **MINOR:** New features, backwards-compatible
 - **PATCH:** Bug fixes, backwards-compatible

@@ -11,6 +11,7 @@ For GitHub Copilot specific instructions, see [.github/copilot-instructions.md](
 Schedularr is a Go application that automates content scheduling for Tunarr TV channels using cron-based recurring blocks with advanced filtering and series progression.
 
 **Key Technologies:**
+
 - **Language:** Go 1.25.5
 - **CLI Framework:** Cobra + Viper
 - **TUI Framework:** Bubble Tea
@@ -98,6 +99,7 @@ if err != nil {
 #### Complexity Limits
 
 Enforced by golangci-lint:
+
 - **Cyclomatic complexity:** max 15
 - **Cognitive complexity:** max 20
 - **Nesting depth:** max 5
@@ -105,6 +107,7 @@ Enforced by golangci-lint:
 - **Function arguments:** max 5
 
 If you exceed these limits, refactor by:
+
 - Extracting helper functions
 - Using early returns to reduce nesting
 - Splitting complex functions into smaller pieces
@@ -112,6 +115,7 @@ If you exceed these limits, refactor by:
 #### Blocked Packages
 
 Never use these packages (enforced by depguard):
+
 - `github.com/pkg/errors` → Use `fmt.Errorf` with `%w`
 - `github.com/sirupsen/logrus` → Use `log/slog`
 - `crypto/md5`, `crypto/sha1` → Security risk
@@ -177,6 +181,7 @@ func TestFilterPrograms(t *testing.T) {
 
 1. Create new file in `cmd/` directory (e.g., `cmd/mycommand.go`)
 2. Define command with Cobra:
+
 ```go
 var myCmd = &cobra.Command{
     Use:   "mycommand [args]",
@@ -259,6 +264,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 ```
 
 **Types:**
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `docs`: Documentation changes
@@ -344,11 +350,11 @@ data, err := os.ReadFile(cleanPath)
 
 ## Useful Resources
 
-- **Go Documentation:** https://go.dev/doc/
-- **Cobra Guide:** https://github.com/spf13/cobra
-- **CUE Language:** https://cuelang.org/
-- **golangci-lint:** https://golangci-lint.run/
-- **Conventional Commits:** https://www.conventionalcommits.org/
+- **Go Documentation:** <https://go.dev/doc/>
+- **Cobra Guide:** <https://github.com/spf13/cobra>
+- **CUE Language:** <https://cuelang.org/>
+- **golangci-lint:** <https://golangci-lint.run/>
+- **Conventional Commits:** <https://www.conventionalcommits.org/>
 - **Tunarr Documentation:** (see docs/TUNARR_API_RESEARCH.md)
 
 ## Project-Specific Notes

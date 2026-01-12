@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added - 2026-01-12
 
 #### CUE Schema Integration
+
 - **CUE Schema Files**: Created comprehensive schemas for application and scheduler configurations
   - `cmd/schema/config.cue` - Application configuration schema with validation and defaults
   - `cmd/schema/scheduler.cue` - Scheduler configuration schema with block types and filters
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Support for both YAML and JSON formats
 
 #### CLI Restructuring
+
 - **New CLI Structure**: Migrated from `cmd/schedularr/main.go` + `internal/cli/` to standard Cobra layout
   - Entry point: `main.go`
   - Commands: `cmd/` package
@@ -39,12 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Auto-detection of config files in home and current directories
 
 #### Documentation
+
 - **CLI Reference**: Comprehensive CLI documentation in `docs/CLI_REFERENCE.md`
   - Complete command reference with examples
   - Configuration file templates
   - Quick start workflows
   - Exit codes and environment variables
-- **Updated README**: 
+- **Updated README**:
   - New installation instructions
   - Updated quick start guide with new commands
   - Added reference to CLI documentation
@@ -54,16 +57,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 #### Build Process
+
 - **Build Command**: Updated from `go build -o schedularr cmd/schedularr/main.go` to `go build -o schedularr main.go`
 - **Import Paths**: All CLI commands now use `cmd` package instead of `internal/cli`
 
 #### Configuration Generation
+
 - **Scheduler Init**: Changed from template-based to CUE schema-based generation
   - Removed hardcoded templates (basic, advanced, series)
   - Now generates from schema defaults with example blocks
   - Auto-detects output format from file extension
 
 #### Validation
+
 - **Config Loading**: Removed inline CUE validation from config loading
   - Validation now explicit via `validate` command
   - Runtime validation can be added separately if needed
@@ -78,12 +84,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Technical Details
 
 #### Dependencies
+
 - Added `cuelang.org/go/cue` for CUE schema support
 - Added `cuelang.org/go/cue/cuecontext` for CUE context management
 - Using `gopkg.in/yaml.v3` for YAML marshaling
 
 #### File Structure
-```
+
+```txt
 schedularr/
 ├── main.go                          # Entry point
 ├── cmd/
@@ -114,6 +122,7 @@ schedularr/
 ```
 
 #### Testing
+
 - ✅ All existing tests pass
 - ✅ Config generation tested with YAML and JSON
 - ✅ Scheduler generation tested with YAML and JSON
@@ -125,24 +134,27 @@ schedularr/
 For users upgrading from previous versions:
 
 1. **Update Build Command**:
+
    ```bash
    # Old
    go build -o schedularr cmd/schedularr/main.go
-   
+
    # New
    go build -o schedularr main.go
    ```
 
 2. **Generate New Configs**:
+
    ```bash
    # Generate application config
    schedularr config generate config.yaml
-   
+
    # Generate scheduler config
    schedularr scheduler init scheduler.yaml
    ```
 
 3. **Validate Existing Configs**:
+
    ```bash
    schedularr validate ~/.schedularr.yaml
    schedularr validate scheduler.yaml
@@ -155,6 +167,7 @@ For users upgrading from previous versions:
 ## [0.1.0] - 2026-01-XX (Previous Release)
 
 ### Added
+
 - Initial release with basic scheduling functionality
 - Tunarr API integration
 - Filter-based content selection
@@ -164,4 +177,3 @@ For users upgrading from previous versions:
 
 [Unreleased]: https://github.com/geekxflood/schedularr/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/geekxflood/schedularr/releases/tag/v0.1.0
-
