@@ -452,7 +452,7 @@ This TODO is structured to align Schedularr with established architectural patte
 ### 4.1 Testing & Quality
 
 - [ ] **Unit Test Coverage**: Achieve >80% coverage
-  - [x] Test core scheduler logic (68.9% coverage for scheduler package)
+  - [x] Test core scheduler logic (71.5% coverage for scheduler package)
   - [x] Test conflict resolution (overlapping slots, priority)
   - [x] Test gap filling logic (basic cases)
   - [x] Test history tracking (record, filter, expiration, cleanup)
@@ -461,13 +461,14 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Test cueconfig package (59.0% coverage)
   - [x] Test logging package (100.0% coverage)
   - [x] Test store package (75.2% coverage)
-  - [ ] Test series progression (not yet implemented)
-  - [ ] Test state management (not yet implemented)
+  - [x] Test series progression (completion actions, restart, disable)
+  - [x] Test episode skipping functionality
+  - [x] Test max runs limit enforcement
   - [ ] Add integration tests for full scheduling workflow
   - [ ] Add table-driven tests for all core functions
   - [ ] Test error paths and edge cases
   - **Criteria:** `go test -cover ./...` shows >80% coverage
-  - **Current Status:** Most packages >60%, several >70%, logging at 100%
+  - **Current Status:** Most packages >70%, logging at 100%, scheduler at 71.5%
 
 - [ ] **Integration Tests**: Test against real Tunarr instance
   - [ ] Create test fixtures with sample data
