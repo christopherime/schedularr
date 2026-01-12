@@ -53,7 +53,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		current_season INTEGER NOT NULL DEFAULT 1,
 		current_episode INTEGER NOT NULL DEFAULT 1,
 		completed BOOLEAN NOT NULL DEFAULT 0,
-		last_aired DATETIME
+		last_aired DATETIME,
+		run_count INTEGER NOT NULL DEFAULT 0,
+		disabled BOOLEAN NOT NULL DEFAULT 0
 	);
 	CREATE TABLE IF NOT EXISTS schedule_history (
 		program_id TEXT NOT NULL,
@@ -65,15 +67,29 @@ func (s *Store) initSchema(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_schedule_history_recent
 		ON schedule_history (channel_id, scheduled_at);
 	`
-	_, err := s.db.ExecContext(ctx, query)
-	return err
+	if _, err := s.db.ExecContext(ctx, query); err != nil {
+		return err
+	}
+
+	// Migrate existing tables to add new columns if they don't exist
+	migrations := []string{
+		`ALTER TABLE series_state ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE series_state ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0`,
+	}
+
+	for _, migration := range migrations {
+		// Ignore errors for columns that already exist
+		_, _ = s.db.ExecContext(ctx, migration)
+	}
+
+	return nil
 }
 
 // GetSeriesState retrieves the tracking state for a given show.
 // If no state exists, it returns a default starting state (S01E01).
 func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
 	query := `
-	SELECT show_title, current_season, current_episode, completed, last_aired
+	SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled
 	FROM series_state
 	WHERE show_title = ?
 	`
@@ -82,7 +98,7 @@ func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*schedule
 	var state scheduler.SeriesState
 	var lastAired sql.NullTime
 
-	err := row.Scan(&state.ShowTitle, &state.CurrentSeason, &state.CurrentEpisode, &state.Completed, &lastAired)
+	err := row.Scan(&state.ShowTitle, &state.CurrentSeason, &state.CurrentEpisode, &state.Completed, &lastAired, &state.RunCount, &state.Disabled)
 	if err == sql.ErrNoRows {
 		// Return default state if not found
 		return &scheduler.SeriesState{
@@ -90,6 +106,8 @@ func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*schedule
 			CurrentSeason:  1,
 			CurrentEpisode: 1,
 			Completed:      false,
+			RunCount:       0,
+			Disabled:       false,
 		}, nil
 	}
 	if err != nil {
@@ -106,15 +124,17 @@ func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*schedule
 // UpdateSeriesState updates or inserts the tracking state for a show.
 func (s *Store) UpdateSeriesState(ctx context.Context, state *scheduler.SeriesState) error {
 	query := `
-	INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired)
-	VALUES (?, ?, ?, ?, ?)
+	INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(show_title) DO UPDATE SET
 		current_season = excluded.current_season,
 		current_episode = excluded.current_episode,
 		completed = excluded.completed,
-		last_aired = excluded.last_aired
+		last_aired = excluded.last_aired,
+		run_count = excluded.run_count,
+		disabled = excluded.disabled
 	`
-	_, err := s.db.ExecContext(ctx, query, state.ShowTitle, state.CurrentSeason, state.CurrentEpisode, state.Completed, state.LastAired)
+	_, err := s.db.ExecContext(ctx, query, state.ShowTitle, state.CurrentSeason, state.CurrentEpisode, state.Completed, state.LastAired, state.RunCount, state.Disabled)
 	if err != nil {
 		return fmt.Errorf("failed to update series state: %w", err)
 	}

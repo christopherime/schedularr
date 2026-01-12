@@ -322,6 +322,13 @@ func (e *Engine) planSeriesForConfig(seriesConf SeriesConfig, availablePrograms 
 		return nil, 0
 	}
 
+	// Skip disabled series
+	if state.Disabled {
+		e.logger.Debug("skipping disabled series",
+			"show_title", seriesConf.ShowTitle)
+		return nil, 0
+	}
+
 	e.initializeSeriesState(state, seriesConf)
 
 	var playlist []tunarr.Program
@@ -367,31 +374,98 @@ func (e *Engine) initializeSeriesState(state *SeriesState, seriesConf SeriesConf
 }
 
 func (e *Engine) findNextSeriesEpisode(seriesConf SeriesConfig, state *SeriesState, availablePrograms []tunarr.Program) *tunarr.Program {
+	// Skip episodes if configured
+	for e.shouldSkipEpisode(seriesConf, state) {
+		e.logger.Debug("skipping episode",
+			"show_title", seriesConf.ShowTitle,
+			"season", state.CurrentSeason,
+			"episode", state.CurrentEpisode)
+		state.CurrentEpisode++
+	}
+
 	ep := findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason, state.CurrentEpisode)
 	if ep != nil {
 		return ep
 	}
 
+	// Try next season
 	ep = findEpisode(availablePrograms, seriesConf.ShowTitle, state.CurrentSeason+1, 1)
 	if ep != nil {
 		state.CurrentSeason++
 		state.CurrentEpisode = 1
+		// Check if first episode of new season should be skipped
+		if e.shouldSkipEpisode(seriesConf, state) {
+			return e.findNextSeriesEpisode(seriesConf, state, availablePrograms)
+		}
 		return ep
 	}
 
-	e.markSeriesCompleted(seriesConf.ShowTitle, state)
+	e.markSeriesCompleted(seriesConf, state)
 	return nil
 }
 
-func (e *Engine) markSeriesCompleted(showTitle string, state *SeriesState) {
+func (e *Engine) shouldSkipEpisode(seriesConf SeriesConfig, state *SeriesState) bool {
+	if len(seriesConf.SkipEpisodes) == 0 {
+		return false
+	}
+
+	episodeID := fmt.Sprintf("S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
+	for _, skip := range seriesConf.SkipEpisodes {
+		if skip == episodeID {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) markSeriesCompleted(seriesConf SeriesConfig, state *SeriesState) {
 	if !state.Completed {
 		e.logger.Info("series completed all episodes",
-			"show_title", showTitle,
+			"show_title", seriesConf.ShowTitle,
 			"season", state.CurrentSeason,
-			"episode", state.CurrentEpisode)
+			"episode", state.CurrentEpisode,
+			"on_complete", seriesConf.OnComplete)
 	}
+
 	state.Completed = true
-	e.pendingStates[showTitle] = state
+	state.RunCount++
+
+	// Handle completion action
+	action := seriesConf.OnComplete
+	if action == "" {
+		action = CompletionActionContinue // Default
+	}
+
+	switch action {
+	case CompletionActionRestart:
+		// Check if max runs is set and exceeded
+		if seriesConf.MaxRuns > 0 && state.RunCount >= seriesConf.MaxRuns {
+			e.logger.Info("series reached max runs, disabling",
+				"show_title", seriesConf.ShowTitle,
+				"run_count", state.RunCount,
+				"max_runs", seriesConf.MaxRuns)
+			state.Disabled = true
+		} else {
+			e.logger.Info("restarting series from beginning",
+				"show_title", seriesConf.ShowTitle,
+				"run_count", state.RunCount)
+			state.CurrentSeason = 1
+			state.CurrentEpisode = 1
+			state.Completed = false
+		}
+
+	case CompletionActionDisable:
+		e.logger.Info("disabling completed series",
+			"show_title", seriesConf.ShowTitle)
+		state.Disabled = true
+
+	case CompletionActionContinue:
+		// Do nothing, just mark as completed
+		e.logger.Debug("series marked as completed, will continue in block",
+			"show_title", seriesConf.ShowTitle)
+	}
+
+	e.pendingStates[seriesConf.ShowTitle] = state
 }
 
 func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Program, playlist []tunarr.Program, currentDuration, targetDuration int64) ([]tunarr.Program, int64) {

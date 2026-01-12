@@ -87,6 +87,15 @@ package schema
 
 	// Starting episode (optional, defaults to 1)
 	start_episode?: int & >0 | *1
+
+	// Action when series completes: "continue", "restart", or "disable"
+	on_complete?: "continue" | "restart" | "disable" | *"continue"
+
+	// Episodes to skip (format: "S01E05", "S02E10")
+	skip_episodes?: [...string]
+
+	// Maximum number of times to run through series (0 = unlimited)
+	max_runs?: int & >=0 | *0
 }
 
 // FallbackConfig defines fallback behavior when series completes

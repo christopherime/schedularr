@@ -40,12 +40,27 @@ type FillerConfig struct {
 	MinGapTime    int    `mapstructure:"min_gap_time" yaml:"min_gap_time" json:"min_gap_time,omitempty"`          // Minimum gap (minutes) before adding filler
 }
 
+// CompletionAction defines what to do when a series completes all episodes
+type CompletionAction string
+
+const (
+	// CompletionActionContinue keeps the series in the block but marks it complete (default)
+	CompletionActionContinue CompletionAction = "continue"
+	// CompletionActionRestart restarts the series from the beginning
+	CompletionActionRestart CompletionAction = "restart"
+	// CompletionActionDisable removes the series from future scheduling
+	CompletionActionDisable CompletionAction = "disable"
+)
+
 // SeriesConfig defines configuration for a specific series in a block
 type SeriesConfig struct {
-	ShowTitle        string `mapstructure:"show_title" yaml:"show_title" json:"show_title"`
-	EpisodesPerBlock int    `mapstructure:"episodes_per_block" yaml:"episodes_per_block" json:"episodes_per_block"`
-	StartSeason      int    `mapstructure:"start_season" yaml:"start_season" json:"start_season,omitempty"`    // Optional: override start point
-	StartEpisode     int    `mapstructure:"start_episode" yaml:"start_episode" json:"start_episode,omitempty"` // Optional: override start point
+	ShowTitle        string           `mapstructure:"show_title" yaml:"show_title" json:"show_title"`
+	EpisodesPerBlock int              `mapstructure:"episodes_per_block" yaml:"episodes_per_block" json:"episodes_per_block"`
+	StartSeason      int              `mapstructure:"start_season" yaml:"start_season" json:"start_season,omitempty"`       // Optional: override start point
+	StartEpisode     int              `mapstructure:"start_episode" yaml:"start_episode" json:"start_episode,omitempty"`    // Optional: override start point
+	OnComplete       CompletionAction `mapstructure:"on_complete" yaml:"on_complete" json:"on_complete,omitempty"`         // Action when series completes (default: continue)
+	SkipEpisodes     []string         `mapstructure:"skip_episodes" yaml:"skip_episodes" json:"skip_episodes,omitempty"`   // Episodes to skip (format: "S01E05", "S02E10")
+	MaxRuns          int              `mapstructure:"max_runs" yaml:"max_runs" json:"max_runs,omitempty"`                  // Max times to run through series (0 = unlimited)
 }
 
 // SeriesFallback defines fallback behavior when series content runs out or doesn't fill duration
