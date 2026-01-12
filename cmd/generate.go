@@ -32,6 +32,13 @@ var (
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
 	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+
+	// Program type colors
+	movieStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))   // Magenta
+	episodeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))   // Blue
+	trackStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))   // Cyan
+	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Bold(true) // White/Bold
+	channelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true) // Green/Bold
 )
 
 var generateCmd = &cobra.Command{
@@ -201,19 +208,27 @@ func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 
 	fmt.Println()
 	fmt.Println(successStyle.Render("✓ Schedule Generated"))
-	fmt.Println("=" + fmt.Sprintf("%80s", "=")[1:])
+	fmt.Println(headerStyle.Render(strings.Repeat("═", 100)))
 
 	totalProgramsScheduled := 0
+	totalMovies := 0
+	totalEpisodes := 0
+	totalTracks := 0
+
 	for channelID, slots := range plan {
 		channelTotalDuration := int64(0)
 		channelProgramCount := 0
+		channelMovies := 0
+		channelEpisodes := 0
+		channelTracks := 0
 
 		var output strings.Builder
-		output.WriteString(fmt.Sprintf("\n📺 Channel %s:\n", channelID))
+		output.WriteString("\n" + channelStyle.Render("📺 Channel "+channelID) + "\n")
 
 		w := tabwriter.NewWriter(&output, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(w, "START TIME\tEND TIME\tBLOCK NAME\tPROGRAM\tDURATION\tTYPE\tSHOW\tSEASON\tEPISODE\n")
-		fmt.Fprintf(w, "----------\t--------\t----------\t-------\t--------\t----\t----\t------\t-------\n")
+		header := headerStyle.Render("START\tEND\tBLOCK\tPROGRAM\tDURATION\tTYPE\tSHOW\tS\tE\n")
+		separator := headerStyle.Render(strings.Repeat("─", 90) + "\n")
+		_, _ = fmt.Fprint(w, header+separator)
 
 		for _, slot := range slots {
 			slotStartTime := slot.StartTime
@@ -222,14 +237,47 @@ func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 			currentProgramTime := slotStartTime
 			for _, p := range slot.Programs {
 				programEndTime := currentProgramTime.Add(time.Duration(p.Duration) * time.Millisecond)
+
+				// Apply color based on program type
+				var typeStyle lipgloss.Style
+				switch p.Type {
+				case "movie":
+					typeStyle = movieStyle
+					channelMovies++
+				case "episode":
+					typeStyle = episodeStyle
+					channelEpisodes++
+				case "track":
+					typeStyle = trackStyle
+					channelTracks++
+				default:
+					typeStyle = infoStyle
+				}
+
+				// Format the row with colors
+				timeStr := infoStyle.Render(currentProgramTime.Format("15:04"))
+				endTimeStr := infoStyle.Render(programEndTime.Format("15:04"))
+				typeStr := typeStyle.Render(p.Type)
+
+				// Truncate long titles
+				title := p.Title
+				if len(title) > 30 {
+					title = title[:27] + "..."
+				}
+
+				showStr := p.ShowTitle
+				if len(showStr) > 20 {
+					showStr = showStr[:17] + "..."
+				}
+
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n",
-					currentProgramTime.Format("15:04"),
-					programEndTime.Format("15:04"),
+					timeStr,
+					endTimeStr,
 					blockName,
-					p.Title,
+					title,
 					fmtDuration(p.Duration),
-					p.Type,
-					p.ShowTitle,
+					typeStr,
+					showStr,
 					p.Season,
 					p.Episode,
 				)
@@ -241,12 +289,48 @@ func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 		_ = w.Flush()
 		fmt.Print(output.String())
 
-		fmt.Printf("   Total items for channel: %d (%s)\n", channelProgramCount, fmtDuration(channelTotalDuration))
+		// Channel summary with type breakdown
+		summary := fmt.Sprintf("   Total: %d programs (%s)", channelProgramCount, fmtDuration(channelTotalDuration))
+		breakdown := ""
+		if channelMovies > 0 {
+			breakdown += movieStyle.Render(fmt.Sprintf(" • %d movies", channelMovies))
+		}
+		if channelEpisodes > 0 {
+			breakdown += episodeStyle.Render(fmt.Sprintf(" • %d episodes", channelEpisodes))
+		}
+		if channelTracks > 0 {
+			breakdown += trackStyle.Render(fmt.Sprintf(" • %d tracks", channelTracks))
+		}
+		fmt.Println(infoStyle.Render(summary) + breakdown)
+
 		totalProgramsScheduled += channelProgramCount
+		totalMovies += channelMovies
+		totalEpisodes += channelEpisodes
+		totalTracks += channelTracks
 	}
 
-	fmt.Printf("\n📊 Total: %d programs scheduled across %d channel(s)\n",
+	// Overall summary
+	fmt.Println()
+	fmt.Println(headerStyle.Render(strings.Repeat("═", 100)))
+	fmt.Printf("📊 %s: %d programs across %d channel(s)\n",
+		successStyle.Render("Total"),
 		totalProgramsScheduled, len(plan))
+
+	// Type breakdown
+	typeBreakdown := ""
+	if totalMovies > 0 {
+		typeBreakdown += movieStyle.Render(fmt.Sprintf("   • %d movies", totalMovies))
+	}
+	if totalEpisodes > 0 {
+		typeBreakdown += episodeStyle.Render(fmt.Sprintf("   • %d episodes", totalEpisodes))
+	}
+	if totalTracks > 0 {
+		typeBreakdown += trackStyle.Render(fmt.Sprintf("   • %d tracks", totalTracks))
+	}
+	if typeBreakdown != "" {
+		fmt.Println(typeBreakdown)
+	}
+	fmt.Println()
 }
 
 // fmtDuration converts duration in milliseconds to a human-readable string (e.g., 1h 30m).
