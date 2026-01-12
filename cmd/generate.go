@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -153,9 +154,10 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 		}
 		return nil
 	} else if dryRun {
-		fmt.Println(infoStyle.Render("\n🔍 Dry run mode - schedule not applied"))
+		displayDryRunSummary(flattenedPlan)
 	} else {
 		fmt.Println(infoStyle.Render("\n💡 Use --apply to push schedule to Tunarr"))
+		fmt.Println(infoStyle.Render("   Use --dry-run to see what would be applied without making changes"))
 	}
 
 	return nil
@@ -330,6 +332,65 @@ func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 	if typeBreakdown != "" {
 		fmt.Println(typeBreakdown)
 	}
+	fmt.Println()
+}
+
+// displayDryRunSummary shows what would be applied in dry-run mode
+func displayDryRunSummary(plan map[string][]tunarr.Program) {
+	fmt.Println()
+	fmt.Println(warnStyle.Render("🔍 DRY RUN MODE"))
+	fmt.Println(infoStyle.Render("The following changes would be applied to Tunarr:"))
+	fmt.Println()
+
+	totalPrograms := 0
+	for channelID, programs := range plan {
+		totalPrograms += len(programs)
+		fmt.Printf("  %s %s\n", channelStyle.Render("📺 Channel:"), channelID)
+		fmt.Printf("     Programs to schedule: %s\n", successStyle.Render(strconv.Itoa(len(programs))))
+
+		// Calculate total duration
+		totalDuration := int64(0)
+		for _, p := range programs {
+			totalDuration += p.Duration
+		}
+		fmt.Printf("     Total duration: %s\n", infoStyle.Render(fmtDuration(totalDuration)))
+
+		// Show first few programs as preview
+		previewCount := 3
+		if len(programs) < previewCount {
+			previewCount = len(programs)
+		}
+		if previewCount > 0 {
+			fmt.Println("     Preview:")
+			for i := 0; i < previewCount; i++ {
+				p := programs[i]
+				var typeStyle lipgloss.Style
+				switch p.Type {
+				case "movie":
+					typeStyle = movieStyle
+				case "episode":
+					typeStyle = episodeStyle
+				case "track":
+					typeStyle = trackStyle
+				default:
+					typeStyle = infoStyle
+				}
+				fmt.Printf("       %d. %s (%s)\n", i+1, p.Title, typeStyle.Render(p.Type))
+			}
+			if len(programs) > previewCount {
+				fmt.Printf("       ... and %d more\n", len(programs)-previewCount)
+			}
+		}
+		fmt.Println()
+	}
+
+	fmt.Println(headerStyle.Render(strings.Repeat("─", 60)))
+	fmt.Printf("%s would schedule %s across %s\n",
+		warnStyle.Render("Summary:"),
+		successStyle.Render(fmt.Sprintf("%d programs", totalPrograms)),
+		successStyle.Render(fmt.Sprintf("%d channel(s)", len(plan))))
+	fmt.Println()
+	fmt.Println(infoStyle.Render("💡 Use --apply (without --dry-run) to actually apply these changes"))
 	fmt.Println()
 }
 
