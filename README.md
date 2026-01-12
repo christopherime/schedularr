@@ -65,7 +65,7 @@ git clone https://github.com/geekxflood/schedularr.git
 cd schedularr
 
 # Build the binary
-go build -o schedularr cmd/schedularr/main.go
+go build -o schedularr main.go
 
 # Optional: Install to your PATH
 sudo mv schedularr /usr/local/bin/
@@ -74,35 +74,46 @@ sudo mv schedularr /usr/local/bin/
 #### Option 2: Using Go Install
 
 ```bash
-go install github.com/geekxflood/schedularr/cmd/schedularr@latest
+go install github.com/geekxflood/schedularr@latest
 ```
 
 ### Initial Setup
 
-1. **Create your configuration file:**
+1. **Generate configuration files:**
 
 ```bash
-# Copy the example configuration
-cp configs/config.yaml ~/.schedularr.yaml
+# Generate application config
+schedularr config generate config.yaml
 
-# Or create a new one
-schedularr init  # (if implemented)
+# Generate scheduler config
+schedularr scheduler init scheduler.yaml
 ```
 
 1. **Configure Tunarr connection:**
 
-Edit `~/.schedularr.yaml` and set your Tunarr instance details:
+Edit `config.yaml` and set your Tunarr instance details:
 
 ```yaml
 tunarr:
   url: "http://localhost:8000"
   api_key: "your-api-key-here"  # Optional, if authentication is enabled
+log:
+  level: "info"
+  format: "text"
 ```
 
-1. **Verify connection:**
+1. **Validate your configuration:**
 
 ```bash
-schedularr channels
+# Validate both configs
+schedularr validate config.yaml
+schedularr validate scheduler.yaml
+```
+
+1. **Verify Tunarr connection:**
+
+```bash
+schedularr --config config.yaml channels
 ```
 
 ---
@@ -183,7 +194,27 @@ scheduler:
 schedularr [command] [flags]
 ```
 
+**📚 For complete CLI documentation, see [CLI Reference](docs/CLI_REFERENCE.md)**
+
 ### Available Commands
+
+#### ⚙️ Configuration Management
+
+Generate and validate configuration files:
+
+```bash
+# Generate application config
+schedularr config generate [filename]
+
+# Generate scheduler config
+schedularr scheduler init [filename]
+
+# Validate any config file
+schedularr validate <file>
+
+# List scheduler blocks
+schedularr scheduler list [filename]
+```
 
 #### 📋 List Channels
 
