@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -88,7 +89,7 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 
 	if len(programs) == 0 {
 		fmt.Println(warnStyle.Render("⚠ No content available - using fallback GetPrograms()"))
-		programs, err = client.GetPrograms()
+		programs, err = client.GetPrograms(context.Background())
 		if err != nil {
 			return fmt.Errorf("failed to fetch programs: %w", err)
 		}
@@ -141,7 +142,7 @@ func fetchAllContent(client *tunarr.Client) []tunarr.Program {
 	var allPrograms []tunarr.Program
 
 	// Try to fetch from libraries
-	libraries, err := client.GetLibraries()
+	libraries, err := client.GetLibraries(context.Background())
 	if err != nil {
 		if verbose {
 			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries: %v", err)))
@@ -158,7 +159,7 @@ func fetchAllContent(client *tunarr.Client) []tunarr.Program {
 			fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
 		}
 
-		programs, err := client.GetLibraryPrograms(lib.ID)
+		programs, err := client.GetLibraryPrograms(context.Background(), lib.ID)
 		if err != nil {
 			if verbose {
 				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
@@ -226,7 +227,7 @@ func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) erro
 	for cid, items := range plan {
 		fmt.Printf("  📺 Channel %s...", cid)
 
-		if err := client.UpdateSchedule(cid, items); err != nil {
+		if err := client.UpdateSchedule(context.Background(), cid, items); err != nil {
 			fmt.Print(errorStyle.Render(" ✗\n"))
 			fmt.Printf("     %s %v\n", errorStyle.Render("Error:"), err)
 			failCount++
@@ -241,7 +242,7 @@ func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) erro
 		fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Successfully applied schedule to %d channel(s)", successCount)))
 		return nil
 	}
-	
+
 	fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Applied to %d channel(s), %d failed", successCount, failCount)))
 	return fmt.Errorf("failed to apply schedule to %d channel(s)", failCount)
 }

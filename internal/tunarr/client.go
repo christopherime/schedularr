@@ -220,15 +220,15 @@ func validateProgram(p *Program) error {
 }
 
 // GetChannels retrieves all channels from the Tunarr instance.
-func (c *Client) GetChannels() ([]Channel, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/channels", nil)
+func (c *Client) GetChannels(ctx context.Context) ([]Channel, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/channels", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create channels request: %w", err)
 	}
 
 	var channels []Channel
 	if err := c.do(req, &channels); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get channels: %w", err)
 	}
 
 	// Validate response
@@ -243,15 +243,15 @@ func (c *Client) GetChannels() ([]Channel, error) {
 
 // GetPrograms retrieves all available programs from the Tunarr instance.
 // Note: This endpoint is a placeholder and may need to be updated based on actual Tunarr API.
-func (c *Client) GetPrograms() ([]Program, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/programs", nil)
+func (c *Client) GetPrograms(ctx context.Context) ([]Program, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/programs", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create programs request: %w", err)
 	}
 
 	var programs []Program
 	if err := c.do(req, &programs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get programs: %w", err)
 	}
 
 	// Validate response
@@ -266,7 +266,7 @@ func (c *Client) GetPrograms() ([]Program, error) {
 
 // UpdateSchedule updates the programming schedule for a specific channel.
 // Note: This endpoint is a placeholder and may need to be updated based on actual Tunarr API.
-func (c *Client) UpdateSchedule(channelID string, schedule []Program) error {
+func (c *Client) UpdateSchedule(ctx context.Context, channelID string, schedule []Program) error {
 	if channelID == "" {
 		return errors.New("channel ID cannot be empty")
 	}
@@ -278,24 +278,28 @@ func (c *Client) UpdateSchedule(channelID string, schedule []Program) error {
 		}
 	}
 
-	req, err := c.newRequest(context.Background(), http.MethodPost, "/api/channels/"+channelID+"/schedule", schedule)
+	req, err := c.newRequest(ctx, http.MethodPost, "/api/channels/"+channelID+"/schedule", schedule)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create schedule update request: %w", err)
 	}
 
-	return c.do(req, nil)
+	if err := c.do(req, nil); err != nil {
+		return fmt.Errorf("failed to update schedule for channel %s: %w", channelID, err)
+	}
+
+	return nil
 }
 
 // GetLibraries retrieves all available media libraries from connected servers (Plex/Jellyfin/Emby).
-func (c *Client) GetLibraries() ([]Library, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/libraries", nil)
+func (c *Client) GetLibraries(ctx context.Context) ([]Library, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/libraries", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create libraries request: %w", err)
 	}
 
 	var libraries []Library
 	if err := c.do(req, &libraries); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get libraries: %w", err)
 	}
 
 	return libraries, nil
@@ -303,19 +307,19 @@ func (c *Client) GetLibraries() ([]Library, error) {
 
 // GetLibraryPrograms retrieves all programs from a specific library.
 // This can be used to fetch content from Plex/Jellyfin/Emby libraries.
-func (c *Client) GetLibraryPrograms(libraryID string) ([]Program, error) {
+func (c *Client) GetLibraryPrograms(ctx context.Context, libraryID string) ([]Program, error) {
 	if libraryID == "" {
 		return nil, errors.New("library ID cannot be empty")
 	}
 
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/libraries/"+libraryID+"/programs", nil)
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/libraries/"+libraryID+"/programs", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create library programs request: %w", err)
 	}
 
 	var programs []Program
 	if err := c.do(req, &programs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get programs from library %s: %w", libraryID, err)
 	}
 
 	// Validate response
@@ -329,15 +333,15 @@ func (c *Client) GetLibraryPrograms(libraryID string) ([]Program, error) {
 }
 
 // GetShows retrieves all TV shows from the connected media servers.
-func (c *Client) GetShows() ([]Show, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/shows", nil)
+func (c *Client) GetShows(ctx context.Context) ([]Show, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/shows", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create shows request: %w", err)
 	}
 
 	var shows []Show
 	if err := c.do(req, &shows); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get shows: %w", err)
 	}
 
 	return shows, nil
@@ -345,7 +349,7 @@ func (c *Client) GetShows() ([]Show, error) {
 
 // GetShowEpisodes retrieves episodes for a specific show.
 // If season is 0, all episodes are returned. Otherwise, only episodes from that season.
-func (c *Client) GetShowEpisodes(showID string, season int) ([]Program, error) {
+func (c *Client) GetShowEpisodes(ctx context.Context, showID string, season int) ([]Program, error) {
 	if showID == "" {
 		return nil, errors.New("show ID cannot be empty")
 	}
@@ -355,14 +359,14 @@ func (c *Client) GetShowEpisodes(showID string, season int) ([]Program, error) {
 		path = fmt.Sprintf("%s?season=%d", path, season)
 	}
 
-	req, err := c.newRequest(context.Background(), http.MethodGet, path, nil)
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create show episodes request: %w", err)
 	}
 
 	var episodes []Program
 	if err := c.do(req, &episodes); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get episodes for show %s: %w", showID, err)
 	}
 
 	// Validate response
@@ -376,19 +380,19 @@ func (c *Client) GetShowEpisodes(showID string, season int) ([]Program, error) {
 }
 
 // SearchPrograms searches for programs by title.
-func (c *Client) SearchPrograms(query string) ([]Program, error) {
+func (c *Client) SearchPrograms(ctx context.Context, query string) ([]Program, error) {
 	if query == "" {
 		return nil, errors.New("search query cannot be empty")
 	}
 
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/programs/search?q="+query, nil)
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/programs/search?q="+query, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create search request: %w", err)
 	}
 
 	var programs []Program
 	if err := c.do(req, &programs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to search programs with query '%s': %w", query, err)
 	}
 
 	// Validate response
@@ -402,34 +406,34 @@ func (c *Client) SearchPrograms(query string) ([]Program, error) {
 }
 
 // GetFillerLists retrieves all available filler content lists.
-func (c *Client) GetFillerLists() ([]FillerList, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/filler-lists", nil)
+func (c *Client) GetFillerLists(ctx context.Context) ([]FillerList, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/filler-lists", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create filler lists request: %w", err)
 	}
 
 	var fillerLists []FillerList
 	if err := c.do(req, &fillerLists); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get filler lists: %w", err)
 	}
 
 	return fillerLists, nil
 }
 
 // GetFillerContent retrieves programs from a specific filler list.
-func (c *Client) GetFillerContent(fillerListID string) ([]Program, error) {
+func (c *Client) GetFillerContent(ctx context.Context, fillerListID string) ([]Program, error) {
 	if fillerListID == "" {
 		return nil, errors.New("filler list ID cannot be empty")
 	}
 
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/filler-lists/"+fillerListID+"/content", nil)
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/filler-lists/"+fillerListID+"/content", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create filler content request: %w", err)
 	}
 
 	var programs []Program
 	if err := c.do(req, &programs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get filler content for list %s: %w", fillerListID, err)
 	}
 
 	// Validate response

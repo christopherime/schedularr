@@ -1,6 +1,7 @@
 package tunarr
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -61,7 +62,7 @@ func TestClient_GetChannels(t *testing.T) {
 	client := NewClient(cfg)
 
 	// test GetChannels
-	channels, err := client.GetChannels()
+	channels, err := client.GetChannels(context.Background())
 	if err != nil {
 		t.Fatalf("GetChannels returned error: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestClient_GetPrograms(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	programs, err := client.GetPrograms()
+	programs, err := client.GetPrograms(context.Background())
 	if err != nil {
 		t.Fatalf("GetPrograms returned error: %v", err)
 	}
@@ -147,7 +148,7 @@ func TestClient_UpdateSchedule(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	err := client.UpdateSchedule(channelID, schedule)
+	err := client.UpdateSchedule(context.Background(), channelID, schedule)
 	if err != nil {
 		t.Fatalf("UpdateSchedule returned error: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestClient_GetChannels_Error(t *testing.T) {
 	}
 	client := NewClient(cfg)
 
-	_, err := client.GetChannels()
+	_, err := client.GetChannels(context.Background())
 	if err == nil {
 		t.Error("expected error from non-200 status code, got nil")
 	}
@@ -189,7 +190,7 @@ func TestClient_GetLibraries(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	libraries, err := client.GetLibraries()
+	libraries, err := client.GetLibraries(context.Background())
 	if err != nil {
 		t.Fatalf("GetLibraries returned error: %v", err)
 	}
@@ -220,7 +221,7 @@ func TestClient_GetLibraryPrograms(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	programs, err := client.GetLibraryPrograms(libraryID)
+	programs, err := client.GetLibraryPrograms(context.Background(), libraryID)
 	if err != nil {
 		t.Fatalf("GetLibraryPrograms returned error: %v", err)
 	}
@@ -249,7 +250,7 @@ func TestClient_GetShows(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	shows, err := client.GetShows()
+	shows, err := client.GetShows(context.Background())
 	if err != nil {
 		t.Fatalf("GetShows returned error: %v", err)
 	}
@@ -284,7 +285,7 @@ func TestClient_GetShowEpisodes(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	episodes, err := client.GetShowEpisodes(showID, season)
+	episodes, err := client.GetShowEpisodes(context.Background(), showID, season)
 	if err != nil {
 		t.Fatalf("GetShowEpisodes returned error: %v", err)
 	}
@@ -317,7 +318,7 @@ func TestClient_SearchPrograms(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	programs, err := client.SearchPrograms(query)
+	programs, err := client.SearchPrograms(context.Background(), query)
 	if err != nil {
 		t.Fatalf("SearchPrograms returned error: %v", err)
 	}
@@ -346,7 +347,7 @@ func TestClient_GetFillerLists(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	fillers, err := client.GetFillerLists()
+	fillers, err := client.GetFillerLists(context.Background())
 	if err != nil {
 		t.Fatalf("GetFillerLists returned error: %v", err)
 	}
@@ -377,7 +378,7 @@ func TestClient_GetFillerContent(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	content, err := client.GetFillerContent(fillerID)
+	content, err := client.GetFillerContent(context.Background(), fillerID)
 	if err != nil {
 		t.Fatalf("GetFillerContent returned error: %v", err)
 	}

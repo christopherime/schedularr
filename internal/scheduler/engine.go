@@ -411,7 +411,7 @@ func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Progr
 	}
 
 	// Fetch filler content from the specified list
-	fillerContent, err := e.client.GetFillerContent(block.Filler.FillerListID)
+	fillerContent, err := e.client.GetFillerContent(context.Background(), block.Filler.FillerListID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch filler content: %w", err)
 	}

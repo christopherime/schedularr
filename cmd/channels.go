@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -23,7 +24,7 @@ var channelsCmd = &cobra.Command{
 		}
 
 		client := tunarr.NewClient(cfg.Tunarr)
-		channels, err := client.GetChannels()
+		channels, err := client.GetChannels(context.Background())
 		if err != nil {
 			fmt.Printf("Error fetching channels: %v\n", err)
 			os.Exit(1)
