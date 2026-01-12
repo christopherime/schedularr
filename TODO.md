@@ -192,12 +192,12 @@ This TODO is structured to align Schedularr with established architectural patte
   - [ ] Explain filter criteria options
   - [ ] Provide examples for each block type
 
-- [ ] **Update `CLAUDE.md`**
-  - [ ] Add development commands section
-  - [ ] Document architecture overview
-  - [ ] Add coding standards section
-  - [ ] Include API endpoints documentation
-  - [ ] Add configuration reference
+- [x] **Update `CLAUDE.md`** ✅ COMPLETED
+  - [x] Add development commands section
+  - [x] Document architecture overview
+  - [x] Add coding standards section
+  - [x] Include API endpoints documentation
+  - [x] Add configuration reference
 
 - [x] **Create `ROADMAP.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`** ✅ COMPLETED
   - [x] Document project vision
@@ -205,11 +205,11 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Define development phases
   - [x] List detailed task breakdown
 
-- [ ] **Create `CONTRIBUTING.md`**
-  - [ ] Define contribution guidelines
-  - [ ] Explain commit message format (Conventional Commits)
-  - [ ] Document PR process
-  - [ ] Add code review checklist
+- [x] **Create `CONTRIBUTING.md`** ✅ COMPLETED
+  - [x] Define contribution guidelines
+  - [x] Explain commit message format (Conventional Commits)
+  - [x] Document PR process
+  - [x] Add code review checklist
 
 ### 0.5 Build & Development Tooling
 

@@ -11,23 +11,26 @@ Schedularr is a Go application that automates content scheduling for Tunarr TV c
 ### Build & Run
 
 ```bash
-# Build the binary
-go build -o schedularr cmd/schedularr/main.go
-
-# Production build with optimizations
-go build -ldflags="-s -w" -o schedularr cmd/schedularr/main.go
+# Build the binary (recommended - uses Makefile)
+make build
 
 # Run the application
-./schedularr --help
-./schedularr channels
-./schedularr generate --apply
-./schedularr tui
+./bin/schedularr --help
+./bin/schedularr channels
+./bin/schedularr generate --apply
+./bin/schedularr tui
+
+# Direct Go build (if needed)
+go build -o schedularr main.go
 ```
 
 ### Testing
 
 ```bash
-# Run all tests
+# Run all tests (recommended - uses Makefile)
+make test
+
+# Run tests manually
 go test ./...
 
 # Run with coverage
@@ -35,22 +38,35 @@ go test -cover ./...
 
 # Run specific package tests
 go test ./internal/scheduler/...
+
+# Generate coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
 ```
 
 ### Code Quality
 
 ```bash
+# Run all linters (recommended - uses Makefile)
+make lint
+
+# Individual linting tools
+golangci-lint run  # Code quality and style
+gosec ./...        # Security vulnerabilities
+govulncheck ./...  # Known CVEs
+
 # Format code
 go fmt ./...
+make fmt
+```
 
-# Lint (uses .golangci.yml config)
-golangci-lint run
+### Other Makefile Targets
 
-# Security scan
-gosec ./...
-
-# Vulnerability check
-govulncheck ./...
+```bash
+make clean      # Remove build artifacts
+make validate   # Validate config files with CUE
+make deps       # Download and tidy dependencies
+make help       # Show all available targets
 ```
 
 ## Architecture Overview
@@ -222,6 +238,151 @@ scheduler:
 - Viper searches for `.schedularr.yaml` in home directory and current directory
 - Default values set in `internal/config/config.go:New()`
 - Config can be overridden with `--config` flag on any command
+
+## Coding Standards
+
+### Code Style
+
+Follow standard Go conventions plus project-specific standards from the athena project:
+
+**Package Comments:**
+
+```go
+// Package scheduler provides the core scheduling engine for Schedularr.
+package scheduler
+```
+
+**Exported Functions:**
+
+```go
+// NewEngine creates a new scheduling engine with the given parameters.
+// The logger parameter is optional; if nil, slog.Default() will be used.
+func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *slog.Logger) *Engine
+```
+
+**Structured Logging:**
+
+```go
+// ✅ GOOD - Use slog with snake_case fields
+logger.Info("schedule generated",
+    "block_name", block.Name,
+    "program_count", len(programs),
+    "duration_minutes", duration)
+
+// ❌ BAD - Don't use log.Printf
+log.Printf("Generated %d programs for %s", len(programs), block.Name)
+```
+
+**Error Wrapping:**
+
+```go
+// ✅ GOOD - Wrap errors with context
+if err != nil {
+    return fmt.Errorf("failed to fetch library %s: %w", libID, err)
+}
+
+// ❌ BAD - Don't return raw errors
+if err != nil {
+    return err
+}
+```
+
+### Complexity Limits
+
+Enforced by golangci-lint (.golangci.yml):
+
+- Cyclomatic complexity: max 15
+- Cognitive complexity: max 20
+- Nesting depth: max 5
+- Function parameters: max 5
+- Function return values: max 3
+
+**Refactoring strategies when exceeding limits:**
+
+- Extract helper functions for complex logic
+- Use early returns to reduce nesting
+- Split large functions into smaller focused functions
+- Use table-driven approaches for multiple similar cases
+
+### Blocked Packages
+
+Never use these packages (enforced by depguard):
+
+- `github.com/pkg/errors` → Use `fmt.Errorf` with `%w`
+- `github.com/sirupsen/logrus` → Use `log/slog`
+- `crypto/md5`, `crypto/sha1` → Security vulnerabilities
+- `io/ioutil` → Deprecated, use `os` and `io` packages
+- `gopkg.in/yaml.v1`, `gopkg.in/yaml.v2` → Use `gopkg.in/yaml.v3`
+
+### Testing Standards
+
+**Table-Driven Tests:**
+
+```go
+func TestFunction(t *testing.T) {
+    tests := []struct {
+        name    string
+        input   InputType
+        want    OutputType
+        wantErr bool
+    }{
+        {
+            name: "descriptive test case",
+            input: InputType{/* ... */},
+            want: OutputType{/* ... */},
+            wantErr: false,
+        },
+        // more cases
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := Function(tt.input)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
+                return
+            }
+            if !reflect.DeepEqual(got, tt.want) {
+                t.Errorf("got %v, want %v", got, tt.want)
+            }
+        })
+    }
+}
+```
+
+**Test Coverage Goals:**
+
+- Target: >80% coverage across all packages
+- Current status: Run `go test -cover ./...` to check
+- Priority areas: scheduler engine, filter logic, state management, API client
+
+### Commit Message Format
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```text
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+**Types:** feat, fix, docs, style, refactor, test, chore
+
+**Example:**
+
+```text
+feat(scheduler): add episode skip functionality
+
+Allow users to skip specific episodes in series blocks.
+
+- Add SkipEpisodes field to SeriesConfig
+- Update planSeriesBlock to check skip list
+- Add tests for episode skipping
+
+Closes #123
+```
 
 ## Dependencies
 
