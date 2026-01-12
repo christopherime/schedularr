@@ -18,6 +18,7 @@ Schedularr provides a comprehensive command-line interface for managing TV chann
 Generate an application configuration file from the CUE schema with default values.
 
 **Usage:**
+
 ```bash
 # Generate default config.yaml
 schedularr config generate
@@ -30,6 +31,7 @@ schedularr config generate config.json
 ```
 
 **Output:**
+
 - Creates a YAML or JSON file (auto-detected from extension)
 - Includes all configuration options with defaults from CUE schema
 - File includes: Tunarr connection settings, logging configuration
@@ -43,6 +45,7 @@ schedularr config generate config.json
 Generate a scheduler configuration file from the CUE schema with example blocks.
 
 **Usage:**
+
 ```bash
 # Generate default scheduler.yaml
 schedularr scheduler init
@@ -55,6 +58,7 @@ schedularr scheduler init schedule.json
 ```
 
 **Output:**
+
 - Creates a YAML or JSON file with example scheduling blocks
 - Includes default settings for rotation, filler, and gap management
 - Example block includes filter-based scheduling with common genres
@@ -64,6 +68,7 @@ schedularr scheduler init schedule.json
 Validate a scheduler configuration file against the CUE schema.
 
 **Usage:**
+
 ```bash
 # Validate specific file
 schedularr scheduler validate my-schedule.yaml
@@ -73,6 +78,7 @@ schedularr scheduler validate
 ```
 
 **Exit Codes:**
+
 - `0` - Validation passed
 - `1` - Validation failed (shows detailed errors)
 
@@ -81,12 +87,14 @@ schedularr scheduler validate
 Display all configured scheduling blocks in a table format.
 
 **Usage:**
+
 ```bash
 schedularr scheduler list
 schedularr scheduler list my-schedule.yaml
 ```
 
 **Output:**
+
 - Table showing: Name, Cron, Duration, Channel, Priority, Filters
 - Summary of total blocks configured
 
@@ -99,6 +107,7 @@ schedularr scheduler list my-schedule.yaml
 Validate any configuration file (app config or scheduler config) against CUE schemas.
 
 **Usage:**
+
 ```bash
 # Validate application config
 schedularr validate config.yaml
@@ -111,11 +120,13 @@ schedularr validate ~/.schedularr.yaml
 ```
 
 **Features:**
+
 - Auto-detects file type based on filename
 - Provides detailed validation errors from CUE engine
 - Shows field paths and constraint violations
 
 **Exit Codes:**
+
 - `0` - Validation passed
 - `1` - Validation failed
 
@@ -128,6 +139,7 @@ schedularr validate ~/.schedularr.yaml
 Generate TV channel schedules based on scheduler configuration.
 
 **Usage:**
+
 ```bash
 # Generate schedule (dry-run)
 schedularr generate --scheduler my-schedule.yaml
@@ -140,6 +152,7 @@ schedularr generate --scheduler my-schedule.yaml --from "2026-01-15" --to "2026-
 ```
 
 **Flags:**
+
 - `--scheduler <file>` - Path to scheduler configuration file
 - `--apply` - Apply generated schedule to Tunarr (default: dry-run)
 - `--from <date>` - Start date for schedule generation
@@ -154,6 +167,7 @@ schedularr generate --scheduler my-schedule.yaml --from "2026-01-15" --to "2026-
 Start the scheduling daemon to automatically generate and apply schedules.
 
 **Usage:**
+
 ```bash
 # Start daemon (runs continuously)
 schedularr run --scheduler my-schedule.yaml
@@ -163,11 +177,13 @@ schedularr run --scheduler my-schedule.yaml --once
 ```
 
 **Flags:**
+
 - `--scheduler <file>` - Path to scheduler configuration file
 - `--once` - Run once and exit (default: continuous)
 - `--daemon` - Run in background (default behavior)
 
 **Features:**
+
 - Graceful shutdown on SIGTERM/SIGINT
 - Automatic schedule generation based on cron expressions
 - Continuous monitoring and updates
@@ -181,11 +197,13 @@ schedularr run --scheduler my-schedule.yaml --once
 Launch the interactive terminal user interface for managing schedules.
 
 **Usage:**
+
 ```bash
 schedularr tui
 ```
 
 **Features:**
+
 - Visual block editor
 - Real-time schedule preview
 - Interactive configuration management
@@ -199,11 +217,13 @@ schedularr tui
 List all available Tunarr channels.
 
 **Usage:**
+
 ```bash
 schedularr channels
 ```
 
 **Output:**
+
 - Table of channels with ID, name, and number
 - Used to identify channel IDs for scheduler configuration
 
@@ -316,4 +336,3 @@ settings:
 - [Architecture Documentation](ARCHITECTURE.md)
 - [Tunarr API Research](TUNARR_API_RESEARCH.md)
 - [Project TODO](../TODO.md)
-

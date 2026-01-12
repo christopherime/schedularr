@@ -3,7 +3,7 @@
 # Variables
 BINARY_NAME=schedularr
 BUILD_DIR=./bin
-MAIN_PATH=./cmd/schedularr/main.go
+MAIN_PATH=./main.go
 DOCKER_IMAGE=schedularr
 DOCKER_TAG=latest
 

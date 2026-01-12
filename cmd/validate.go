@@ -41,14 +41,18 @@ Examples:
 }
 
 func validateFile(filePath string) error {
+	// Clean the file path to prevent directory traversal issues
+	cleanPath := filepath.Clean(filePath)
+
 	// Read the file
-	data, err := os.ReadFile(filePath)
+	// #nosec G304 - file path is provided by user via CLI argument
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	// Determine format from extension
-	ext := strings.ToLower(filepath.Ext(filePath))
+	ext := strings.ToLower(filepath.Ext(cleanPath))
 	format := "yaml"
 	if ext == ".json" {
 		format = "json"
@@ -58,7 +62,7 @@ func validateFile(filePath string) error {
 	validator := cueconfig.NewValidator()
 
 	// Determine which schema to use based on filename
-	baseName := filepath.Base(filePath)
+	baseName := filepath.Base(cleanPath)
 	isScheduler := strings.Contains(baseName, "scheduler")
 
 	if isScheduler {

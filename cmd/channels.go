@@ -1,4 +1,4 @@
-// Package cli provides command-line interface commands for Schedularr.
+// Package cmd provides command-line interface commands for Schedularr.
 package cmd
 
 import (
