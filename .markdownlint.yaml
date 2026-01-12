@@ -30,6 +30,9 @@ MD033: false
 # Disabled because some files start with YAML frontmatter or comments
 MD041: false
 
+MD060:
+  style: aligned
+
 # no-hard-tabs - Hard tabs
 # Disabled to allow tabs in code blocks
 no-hard-tabs: false

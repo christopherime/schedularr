@@ -10,7 +10,7 @@
 
 **Automate your TV channel programming with powerful rule-based scheduling, advanced content filtering, and seamless Tunarr integration.**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Examples](#-examples) • [Contributing](#-contributing)
+[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [Contributing](#-contributing)
 
 </div>
 

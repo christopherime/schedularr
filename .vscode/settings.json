@@ -286,6 +286,9 @@
     "MD051": false,
     "MD055": {
       "style": "consistent"
+    },
+    "MD060": {
+      "style": "aligned"
     }
   },
   "[makefile]": {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
@@ -23,8 +24,11 @@ var schedulerCmd = &cobra.Command{
 var schedulerInitCmd = &cobra.Command{
 	Use:   "init [filename]",
 	Short: "Create a new scheduler configuration file",
-	Long: `Generate a boilerplate scheduler configuration file with example blocks.
-If no filename is provided, creates 'scheduler.yaml' in the current directory.`,
+	Long: `Generate a scheduler configuration file from the CUE schema with defaults.
+If no filename is provided, creates 'scheduler.yaml' in the current directory.
+
+The generated file will contain example blocks with all default values
+extracted from the CUE schema.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(_ *cobra.Command, args []string) {
 		filename := "scheduler.yaml"
@@ -38,26 +42,28 @@ If no filename is provided, creates 'scheduler.yaml' in the current directory.`,
 			os.Exit(1)
 		}
 
-		var template string
-		switch templateType {
-		case "basic":
-			template = basicTemplate
-		case "advanced":
-			template = advancedTemplate
-		case "series":
-			template = seriesTemplate
-		default:
-			fmt.Printf("Error: Unknown template type '%s'. Valid options: basic, advanced, series\n", templateType)
+		// Determine format from extension
+		ext := strings.ToLower(filepath.Ext(filename))
+		format := "yaml"
+		if ext == ".json" {
+			format = "json"
+		}
+
+		// Generate from CUE schema
+		validator := cueconfig.NewValidator()
+		data, err := validator.GenerateScheduler(format)
+		if err != nil {
+			fmt.Printf("Error generating scheduler config: %v\n", err)
 			os.Exit(1)
 		}
 
-		if err := os.WriteFile(filename, []byte(template), 0o600); err != nil {
+		if err := os.WriteFile(filename, data, 0o600); err != nil {
 			fmt.Printf("Error creating file: %v\n", err)
 			os.Exit(1)
 		}
 
 		fmt.Printf("Created scheduler configuration file: %s\n", filename)
-		fmt.Printf("Template: %s\n", templateType)
+		fmt.Printf("Format: %s\n", format)
 		fmt.Printf("\nEdit this file to configure your scheduling blocks, then use:\n")
 		fmt.Printf("  schedularr generate --scheduler %s\n", filename)
 	},

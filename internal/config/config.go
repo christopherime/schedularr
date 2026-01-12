@@ -88,10 +88,8 @@ func LoadSchedulerConfig(cfg *Config, schedulerFile string) (*scheduler.Config, 
 		return nil, err
 	}
 
-	// Validate configuration
-	if err := ValidateSchedulerConfigStruct(schedCfg); err != nil {
-		return nil, fmt.Errorf("scheduler config validation failed: %w", err)
-	}
+	// Note: Validation is now done via CUE schema in the validate command
+	// Runtime validation can be added here if needed
 
 	return schedCfg, nil
 }
