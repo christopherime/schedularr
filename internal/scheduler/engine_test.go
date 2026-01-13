@@ -1,7 +1,11 @@
 package scheduler
 
 import (
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -838,5 +842,163 @@ func TestFilterByHistory(t *testing.T) {
 		if p.ID == "p1" {
 			t.Error("Expected p1 to be filtered out")
 		}
+	}
+}
+
+func TestGetFiller_Success(t *testing.T) {
+	// Create a test server that returns filler content
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/filler-lists/filler-1/content" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		fillerContent := []tunarr.Program{
+			{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"},  // 5 min
+			{ID: "f2", Title: "Filler 2", Duration: 600000, Type: "track"},  // 10 min
+			{ID: "f3", Title: "Filler 3", Duration: 900000, Type: "track"},  // 15 min
+			{ID: "f4", Title: "Filler 4", Duration: 1200000, Type: "track"}, // 20 min
+		}
+		json.NewEncoder(w).Encode(fillerContent)
+	}))
+	defer server.Close()
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			FillerListID: "filler-1",
+		},
+	}
+
+	// Request 30 minutes of filler (1800000 ms)
+	filler, err := engine.getFiller(block, 1800000)
+	if err != nil {
+		t.Fatalf("getFiller failed: %v", err)
+	}
+
+	if len(filler) == 0 {
+		t.Error("Expected filler programs, got none")
+	}
+
+	totalDuration := int64(0)
+	for _, f := range filler {
+		totalDuration += f.Duration
+	}
+
+	if totalDuration > 1800000 {
+		t.Errorf("Filler duration %d exceeds requested %d", totalDuration, 1800000)
+	}
+}
+
+func TestGetFiller_NoFillerListID(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			FillerListID: "",
+		},
+	}
+
+	_, err := engine.getFiller(block, 1800000)
+	if err == nil {
+		t.Error("Expected error for empty filler list ID, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "no filler list ID") {
+		t.Errorf("Expected error about no filler list ID, got: %v", err)
+	}
+}
+
+func TestGetFiller_EmptyFillerList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return empty array
+		json.NewEncoder(w).Encode([]tunarr.Program{})
+	}))
+	defer server.Close()
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			FillerListID: "empty-filler",
+		},
+	}
+
+	_, err := engine.getFiller(block, 1800000)
+	if err == nil {
+		t.Error("Expected error for empty filler list, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "is empty") {
+		t.Errorf("Expected error about empty filler list, got: %v", err)
+	}
+}
+
+func TestGetFiller_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			FillerListID: "filler-1",
+		},
+	}
+
+	_, err := engine.getFiller(block, 1800000)
+	if err == nil {
+		t.Error("Expected error from API, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "failed to fetch filler") {
+		t.Errorf("Expected API error, got: %v", err)
+	}
+}
+
+func TestGetFiller_MaxFillerTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fillerContent := []tunarr.Program{
+			{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"}, // 5 min
+			{ID: "f2", Title: "Filler 2", Duration: 300000, Type: "track"}, // 5 min
+			{ID: "f3", Title: "Filler 3", Duration: 300000, Type: "track"}, // 5 min
+			{ID: "f4", Title: "Filler 4", Duration: 300000, Type: "track"}, // 5 min
+			{ID: "f5", Title: "Filler 5", Duration: 300000, Type: "track"}, // 5 min
+		}
+		json.NewEncoder(w).Encode(fillerContent)
+	}))
+	defer server.Close()
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			FillerListID:  "filler-1",
+			MaxFillerTime: 10, // 10 minutes max
+		},
+	}
+
+	// Request 30 minutes, but max filler is 10 minutes
+	filler, err := engine.getFiller(block, 1800000)
+	if err != nil {
+		t.Fatalf("getFiller failed: %v", err)
+	}
+
+	totalDuration := int64(0)
+	for _, f := range filler {
+		totalDuration += f.Duration
+	}
+
+	// Should not exceed 10 minutes (600000 ms)
+	if totalDuration > 600000 {
+		t.Errorf("Filler duration %d exceeds max filler time %d", totalDuration, 600000)
 	}
 }
