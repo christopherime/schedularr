@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
+	"github.com/geekxflood/schedularr/internal/jellyfin"
 	"github.com/geekxflood/schedularr/internal/logging"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
@@ -94,15 +95,9 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	client := tunarr.NewClient(cfg.Tunarr)
 
 	// Fetch available content
-	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
-	programs := fetchAllContent(client)
-
-	if len(programs) == 0 {
-		fmt.Println(warnStyle.Render("⚠ No content available - using fallback GetPrograms()"))
-		programs, err = client.GetPrograms(context.Background())
-		if err != nil {
-			return fmt.Errorf("failed to fetch programs: %w", err)
-		}
+	programs, err := fetchAllContent(cfg, client)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Found %d program(s)", len(programs))))
@@ -152,6 +147,14 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 		if err := engine.Commit(); err != nil {
 			return fmt.Errorf("failed to commit state: %w", err)
 		}
+		if cfg.Jellyfin.URL != "" && cfg.Jellyfin.SyncLiveTV {
+			fmt.Println(infoStyle.Render("📺 Refreshing Jellyfin Live TV guide..."))
+			jellyfinClient := jellyfin.NewClient(cfg.Jellyfin)
+			if err := jellyfinClient.RefreshLiveTVGuide(context.Background()); err != nil {
+				return fmt.Errorf("failed to refresh jellyfin live tv guide: %w", err)
+			}
+			fmt.Printf("%s\n", successStyle.Render("✓ Jellyfin Live TV guide refreshed"))
+		}
 		return nil
 	} else if dryRun {
 		displayDryRunSummary(flattenedPlan)
@@ -161,45 +164,6 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	}
 
 	return nil
-}
-
-func fetchAllContent(client *tunarr.Client) []tunarr.Program {
-	var allPrograms []tunarr.Program
-
-	// Try to fetch from libraries
-	libraries, err := client.GetLibraries(context.Background())
-	if err != nil {
-		if verbose {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries: %v", err)))
-		}
-		return allPrograms
-	}
-
-	if verbose {
-		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📚 Found %d librar(y/ies)", len(libraries))))
-	}
-
-	for _, lib := range libraries {
-		if verbose {
-			fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
-		}
-
-		programs, err := client.GetLibraryPrograms(context.Background(), lib.ID)
-		if err != nil {
-			if verbose {
-				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
-			}
-			continue
-		}
-
-		if verbose {
-			fmt.Printf("    ✓ %d programs\n", len(programs))
-		}
-
-		allPrograms = append(allPrograms, programs...)
-	}
-
-	return allPrograms
 }
 
 func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {

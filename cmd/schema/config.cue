@@ -5,6 +5,15 @@ package schema
 	// Tunarr connection configuration
 	tunarr: #TunarrConfig
 
+	// Optional Radarr connection configuration
+	radarr?: #RadarrConfig
+
+	// Optional Sonarr connection configuration
+	sonarr?: #SonarrConfig
+
+	// Optional Jellyfin connection configuration
+	jellyfin?: #JellyfinConfig
+
 	// Logging configuration
 	log: #LogConfig
 
@@ -28,6 +37,39 @@ package schema
 
 	// Request timeout duration
 	timeout?: string | *"10s"
+}
+
+// RadarrConfig defines the Radarr API connection settings
+#RadarrConfig: {
+	// Radarr API base URL
+	url: string
+
+	// Optional API key for authentication
+	api_key?: string
+}
+
+// SonarrConfig defines the Sonarr API connection settings
+#SonarrConfig: {
+	// Sonarr API base URL
+	url: string
+
+	// Optional API key for authentication
+	api_key?: string
+}
+
+// JellyfinConfig defines the Jellyfin API connection settings
+#JellyfinConfig: {
+	// Jellyfin API base URL
+	url: string
+
+	// Optional API key for authentication
+	api_key?: string
+
+	// Optional user ID for user-scoped endpoints
+	user_id?: string
+
+	// Whether to refresh the Live TV guide after schedule apply
+	sync_live_tv?: bool | *false
 }
 
 // LogConfig defines logging settings

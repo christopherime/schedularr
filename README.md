@@ -45,6 +45,8 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 | **🔍 Dry Run Mode**       | Test and preview schedules before applying changes                            |
 | **📊 Priority System**    | Handle overlapping blocks with configurable priorities                        |
 | **🏷️ Tag Support**      | Organize and filter content using custom tags                                 |
+| **🎞️ Radarr/Sonarr Sync** | Filter schedules using Radarr/Sonarr availability                            |
+| **📺 Jellyfin Refresh**   | Optional Live TV guide refresh after schedule updates                          |
 
 ---
 
@@ -134,6 +136,33 @@ tunarr:
   url: "http://localhost:8000"  # Tunarr API endpoint
   api_key: ""                   # Optional API key for authentication
 ```
+
+#### Radarr Connection (Optional)
+
+```yaml
+radarr:
+  url: "http://localhost:7878"  # Radarr API endpoint
+  api_key: ""                   # Optional API key for authentication
+```
+
+#### Sonarr Connection (Optional)
+
+```yaml
+sonarr:
+  url: "http://localhost:8989"  # Sonarr API endpoint
+  api_key: ""                   # Optional API key for authentication
+```
+
+#### Jellyfin Connection (Optional)
+
+```yaml
+jellyfin:
+  url: "http://localhost:8096"  # Jellyfin API endpoint
+  api_key: ""                   # Optional API key for authentication
+  sync_live_tv: false           # Refresh Live TV guide after schedule apply
+```
+
+Radarr and Sonarr are used to filter Tunarr programs by availability; scheduling still applies to Tunarr channel IDs.
 
 #### Logging
 

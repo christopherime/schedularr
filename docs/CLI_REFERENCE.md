@@ -286,6 +286,16 @@ Generated with `schedularr config generate`:
 tunarr:
   url: http://localhost:8000
   api_key: ""  # Optional
+radarr:
+  url: http://localhost:7878
+  api_key: ""  # Optional
+sonarr:
+  url: http://localhost:8989
+  api_key: ""  # Optional
+jellyfin:
+  url: http://localhost:8096
+  api_key: ""        # Optional
+  sync_live_tv: false
 log:
   level: info
   format: text
@@ -335,4 +345,5 @@ settings:
 
 - [Architecture Documentation](ARCHITECTURE.md)
 - [Tunarr API Research](TUNARR_API_RESEARCH.md)
+- [Media API Research](MEDIA_API_RESEARCH.md)
 - [Project TODO](../TODO.md)

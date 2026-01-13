@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/geekxflood/schedularr/internal/jellyfin"
+	"github.com/geekxflood/schedularr/internal/radarr"
 	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/geekxflood/schedularr/internal/sonarr"
 	"github.com/geekxflood/schedularr/internal/tunarr"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -16,6 +19,9 @@ import (
 // Config holds the application configuration
 type Config struct {
 	Tunarr        tunarr.Config    `mapstructure:"tunarr" yaml:"tunarr" json:"tunarr"`
+	Radarr        radarr.Config    `mapstructure:"radarr" yaml:"radarr" json:"radarr,omitempty"`
+	Sonarr        sonarr.Config    `mapstructure:"sonarr" yaml:"sonarr" json:"sonarr,omitempty"`
+	Jellyfin      jellyfin.Config  `mapstructure:"jellyfin" yaml:"jellyfin" json:"jellyfin,omitempty"`
 	Log           LogConfig        `mapstructure:"log" yaml:"log" json:"log"`
 	MetricsPort   int              `mapstructure:"metrics_port" yaml:"metrics_port" json:"metrics_port,omitempty"`       // Port for Prometheus metrics endpoint
 	Database      string           `mapstructure:"database" yaml:"database" json:"database,omitempty"`                   // Path to SQLite database file
@@ -36,6 +42,9 @@ func New() *Config {
 		Tunarr: tunarr.Config{
 			URL: "http://localhost:8000",
 		},
+		Radarr:   radarr.Config{},
+		Sonarr:   sonarr.Config{},
+		Jellyfin: jellyfin.Config{},
 		Log: LogConfig{
 			Level:    "info",
 			Format:   "text",
