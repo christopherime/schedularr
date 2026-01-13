@@ -1002,3 +1002,194 @@ func TestGetFiller_MaxFillerTime(t *testing.T) {
 		t.Errorf("Filler duration %d exceeds max filler time %d", totalDuration, 600000)
 	}
 }
+
+func TestApplyBlockFiller_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fillerContent := []tunarr.Program{
+			{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"}, // 5 min
+			{ID: "f2", Title: "Filler 2", Duration: 300000, Type: "track"}, // 5 min
+		}
+		json.NewEncoder(w).Encode(fillerContent)
+	}))
+	defer server.Close()
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			Enabled:      true,
+			FillerListID: "filler-1",
+			MinGapTime:   5, // 5 minutes minimum gap
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Show 1", Duration: 1800000, Type: "episode"}, // 30 min
+	}
+	currentDuration := int64(1800000)
+	targetDuration := int64(2400000) // 40 minutes target, 10 minute gap
+
+	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
+
+	if len(playlist) <= len(initialPlaylist) {
+		t.Error("Expected filler to be added to playlist")
+	}
+
+	if finalDuration <= currentDuration {
+		t.Error("Expected duration to increase after adding filler")
+	}
+
+	if finalDuration > targetDuration {
+		t.Errorf("Filler exceeded target duration: %d > %d", finalDuration, targetDuration)
+	}
+}
+
+func TestApplyBlockFiller_GapTooSmall(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			Enabled:    true,
+			MinGapTime: 10, // 10 minutes minimum
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Show 1", Duration: 1800000, Type: "episode"}, // 30 min
+	}
+	currentDuration := int64(1800000)
+	targetDuration := int64(2100000) // 35 minutes target, 5 minute gap (less than minimum)
+
+	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
+
+	// Should not add filler because gap is too small
+	if len(playlist) != len(initialPlaylist) {
+		t.Error("Expected no filler to be added (gap too small)")
+	}
+
+	if finalDuration != currentDuration {
+		t.Error("Expected duration to remain unchanged")
+	}
+}
+
+func TestApplyBlockFiller_FillerDisabled(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Filler: FillerConfig{
+			Enabled: false,
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Show 1", Duration: 1800000, Type: "episode"},
+	}
+	currentDuration := int64(1800000)
+	targetDuration := int64(3600000)
+
+	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
+
+	if len(playlist) != len(initialPlaylist) {
+		t.Error("Expected no filler to be added (filler disabled)")
+	}
+
+	if finalDuration != currentDuration {
+		t.Error("Expected duration to remain unchanged")
+	}
+}
+
+func TestApplySeriesFallback_FillerMode(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	availablePrograms := []tunarr.Program{
+		{ID: "f1", Title: "Filler Show", Duration: 600000, Type: "episode", Genres: []string{"Comedy"}},
+		{ID: "f2", Title: "Another Filler", Duration: 600000, Type: "episode", Genres: []string{"Comedy"}},
+	}
+
+	block := Block{
+		Fallback: SeriesFallback{
+			Mode: FallbackModeFiller,
+			FillerFilter: Filter{
+				Genres: []string{"Comedy"},
+			},
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Series Episode", Duration: 1800000, Type: "episode"},
+	}
+	currentDuration := int64(1800000)
+	targetDuration := int64(3000000) // 50 minutes, needs 20 minutes more
+
+	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration)
+
+	if len(playlist) <= len(initialPlaylist) {
+		t.Error("Expected fallback filler to be added")
+	}
+
+	if finalDuration <= currentDuration {
+		t.Error("Expected duration to increase after fallback")
+	}
+}
+
+func TestApplySeriesFallback_NoFallbackNeeded(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Series Episode", Duration: 1800000, Type: "episode"},
+	}
+	currentDuration := int64(1800000)
+	targetDuration := int64(1800000) // Already at target
+
+	playlist, finalDuration := engine.applySeriesFallback(Block{}, []tunarr.Program{}, initialPlaylist, currentDuration, targetDuration)
+
+	if len(playlist) != len(initialPlaylist) {
+		t.Error("Expected no fallback when at target duration")
+	}
+
+	if finalDuration != currentDuration {
+		t.Error("Expected duration to remain unchanged")
+	}
+}
+
+func TestApplySeriesFallback_NotFillerMode(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	availablePrograms := []tunarr.Program{
+		{ID: "f1", Title: "Filler Show", Duration: 600000, Type: "episode"},
+	}
+
+	block := Block{
+		Fallback: SeriesFallback{
+			Mode: "", // Not filler mode
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Series Episode", Duration: 1800000, Type: "episode"},
+	}
+	currentDuration := int64(1800000)
+	targetDuration := int64(3000000)
+
+	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration)
+
+	if len(playlist) != len(initialPlaylist) {
+		t.Error("Expected no fallback when not in filler mode")
+	}
+
+	if finalDuration != currentDuration {
+		t.Error("Expected duration to remain unchanged")
+	}
+}
