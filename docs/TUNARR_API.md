@@ -2,6 +2,14 @@
 
 This document describes how Schedularr integrates with the Tunarr API and provides reference information for developers working on the integration.
 
+## Tunarr Resources
+
+- **Repository**: [github.com/chrisbenincasa/tunarr](https://github.com/chrisbenincasa/tunarr)
+- **Documentation**: [tunarr.com](https://tunarr.com)
+- **API Docs**: [tunarr.com/api-docs.html](https://tunarr.com/api-docs.html) (Scalar-based, requires JavaScript)
+- **Discord**: [discord.gg/svgSBYkEK5](https://discord.gg/svgSBYkEK5)
+- **Technology**: Node.js 22+ (TypeScript), React/Vite, SQLite
+
 ## Overview
 
 Schedularr communicates with Tunarr through its REST API to:
@@ -556,12 +564,6 @@ Error: context deadline exceeded
 2. Check network latency to Tunarr server
 3. Verify Tunarr is not overloaded
 
-## Additional Resources
-
-- [Tunarr Documentation](https://github.com/chrisbenincasa/tunarr)
-- [Tunarr API Source Code](https://github.com/chrisbenincasa/tunarr/tree/main/server/src/api)
-- [Schedularr Tunarr API Research](./TUNARR_API_RESEARCH.md)
-
 ## Version Compatibility
 
 This documentation is current as of:
@@ -570,3 +572,10 @@ This documentation is current as of:
 - **Tunarr:** v0.x (API endpoints may vary)
 
 **Note:** Tunarr API endpoints and response formats may change between versions. Always verify compatibility with your Tunarr installation.
+
+## Additional Resources
+
+- [Tunarr Documentation](https://github.com/chrisbenincasa/tunarr)
+- [Tunarr API Source Code](https://github.com/chrisbenincasa/tunarr/tree/main/server/src/api)
+- [Schedularr Architecture](./ARCHITECTURE.md)
+- [Schedularr Specifications](./SPECIFICATIONS.md)
