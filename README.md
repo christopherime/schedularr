@@ -35,18 +35,18 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 
 ### Core Capabilities
 
-| Feature                    | Description                                                                   |
-| -------------------------- | ----------------------------------------------------------------------------- |
-| **🔌 Tunarr Integration** | Seamless API communication with your Tunarr instance                          |
-| **🎯 Advanced Filtering** | Regex title matching, genre/rating filters, year ranges, duration constraints |
-| **📅 Cron Scheduling**    | Standard cron expressions for flexible recurring programming                  |
-| **🎨 Terminal UI**        | Beautiful interactive interface built with Bubble Tea                         |
-| **⚡ CLI Commands**        | Powerful command-line tools for automation and scripting                      |
-| **🔍 Dry Run Mode**       | Test and preview schedules before applying changes                            |
-| **📊 Priority System**    | Handle overlapping blocks with configurable priorities                        |
-| **🏷️ Tag Support**      | Organize and filter content using custom tags                                 |
-| **🎞️ Radarr/Sonarr Sync** | Filter schedules using Radarr/Sonarr availability                            |
-| **📺 Jellyfin Refresh**   | Optional Live TV guide refresh after schedule updates                          |
+| Feature                      | Description                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| **🔌 Tunarr Integration**   | Seamless API communication with your Tunarr instance                          |
+| **🎯 Advanced Filtering**   | Regex title matching, genre/rating filters, year ranges, duration constraints |
+| **📅 Cron Scheduling**      | Standard cron expressions for flexible recurring programming                  |
+| **🎨 Terminal UI**          | Beautiful interactive interface built with Bubble Tea                         |
+| **⚡ CLI Commands**          | Powerful command-line tools for automation and scripting                      |
+| **🔍 Dry Run Mode**         | Test and preview schedules before applying changes                            |
+| **📊 Priority System**      | Handle overlapping blocks with configurable priorities                        |
+| **🏷️ Tag Support**        | Organize and filter content using custom tags                                 |
+| **🎞️ Radarr/Sonarr Sync** | Filter schedules using Radarr/Sonarr availability                             |
+| **📺 Jellyfin Refresh**     | Optional Live TV guide refresh after schedule updates                         |
 
 ---
 
