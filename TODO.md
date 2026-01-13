@@ -33,6 +33,15 @@
 
 ## Recent Updates (2026-01-13)
 
+### ✅ TUI Enhancements
+
+- **Series Progress Viewer**: Added interactive series progress viewer showing current episode, completion %, and status
+  - Navigate with j/k or arrow keys
+  - Refresh with 'r' key
+  - Color-coded status (Active, Completed, Disabled)
+  - Shows restart count for repeated series
+  - Accessible via 's' key from main menu
+
 ### ✅ Test Coverage Improvements
 
 - **cueconfig Package**: Improved from 78.3% to 85.5% with error path tests
@@ -121,13 +130,11 @@ This TODO is structured to align Schedularr with established architectural patte
 
 **Note**: All Phase 2.4 features are optional enhancements. Current TUI provides full block editing functionality with comprehensive keyboard shortcuts and help system.
 
+- [x] Series Progress Viewer: Display current episode, completion %, status with color coding ✅
 - [ ] Scheduler File Browser: TUI to browse and select scheduler files (optional - low priority)
 - [ ] Visual cron expression builder (optional - low priority)
 - [ ] Series selector with search (optional - low priority)
 - [ ] Filter builder interface (optional - low priority)
-- [ ] Series Progress Viewer: Display current episode for each series (optional requires store integration)
-- [ ] Series Progress Viewer: Show completion percentage (optional - requires store integration)
-- [ ] Series Progress Viewer: Allow manual episode adjustment (optional - requires store integration)
 
 ## Phase 4: Operational Excellence
 
