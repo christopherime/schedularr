@@ -113,24 +113,24 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 4.1 Testing & Quality
 
-#### Current Coverage: 43.6% overall
+#### Current Coverage: ~48% overall (updated 2026-01-14)
 
 - internal/logging: 100.0% ✅
 - internal/config: 94.4% ✅
+- internal/radarr: 81.4% ✅ (improved from 72.1%)
+- internal/sonarr: 81.0% ✅ (improved from 70.7%)
 - internal/cache: 81.0% ✅
-- internal/scheduler: 76.8% ✅
+- internal/scheduler: 79.5% ✅ (improved from 76.8%)
+- internal/cueconfig: 78.3% ✅ (improved from 69.6%)
 - internal/tunarr: 73.2% ✅
 - internal/store: 72.8% ✅
-- internal/radarr: 72.1% ✅
 - internal/jellyfin: 72.0% ✅
-- internal/sonarr: 70.7% ✅
-- internal/cueconfig: 69.6%
 - cmd: 6.1% (CLI commands - hard to test)
 - internal/tui: 0.0% (TUI - hard to test)
 
 #### Tasks
 
-- [ ] Unit test coverage >80% (currently ~45% overall, core packages >70%)
+- [ ] Unit test coverage >80% (currently ~48% overall, core packages >70%)
 - [x] Table-driven tests for all core functions
 - [x] Error path and edge case tests (mostly done)
 - [x] Integration tests: full scheduling workflow
