@@ -301,3 +301,263 @@ func TestStore_ImportSeriesStates_Empty(t *testing.T) {
 		t.Errorf("ImportSeriesStates with nil should not error: %v", err)
 	}
 }
+
+func TestStore_RecordScheduleHistory_Empty(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Recording empty slice should not error
+	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{}); err != nil {
+		t.Errorf("RecordScheduleHistory with empty slice should not error: %v", err)
+	}
+
+	// Recording nil should not error
+	if err := s.RecordScheduleHistory(ctx, nil); err != nil {
+		t.Errorf("RecordScheduleHistory with nil should not error: %v", err)
+	}
+}
+
+func TestStore_WasRecentlyScheduled_InvalidInput(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Empty program ID
+	_, err = s.WasRecentlyScheduled(ctx, "", "channel-1", 24*time.Hour)
+	if err == nil {
+		t.Error("Expected error for empty program ID, got nil")
+	}
+
+	// Empty channel ID
+	_, err = s.WasRecentlyScheduled(ctx, "prog-1", "", 24*time.Hour)
+	if err == nil {
+		t.Error("Expected error for empty channel ID, got nil")
+	}
+
+	// Both empty
+	_, err = s.WasRecentlyScheduled(ctx, "", "", 24*time.Hour)
+	if err == nil {
+		t.Error("Expected error for both empty, got nil")
+	}
+}
+
+func TestStore_WasRecentlyScheduled_NotFound(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Check for program that was never scheduled
+	recent, err := s.WasRecentlyScheduled(ctx, "nonexistent", "channel-1", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("WasRecentlyScheduled failed: %v", err)
+	}
+	if recent {
+		t.Error("Expected program to not be recently scheduled")
+	}
+}
+
+func TestStore_WasRecentlyScheduled_OutsideWindow(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Record an old entry
+	oldEntry := scheduler.ScheduleHistoryEntry{
+		ProgramID:   "old-prog",
+		ChannelID:   "channel-1",
+		BlockName:   "Old Block",
+		ScheduledAt: time.Now().Add(-72 * time.Hour), // 3 days ago
+	}
+
+	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{oldEntry}); err != nil {
+		t.Fatalf("RecordScheduleHistory failed: %v", err)
+	}
+
+	// Check with 24 hour window (should not find it)
+	recent, err := s.WasRecentlyScheduled(ctx, "old-prog", "channel-1", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("WasRecentlyScheduled failed: %v", err)
+	}
+	if recent {
+		t.Error("Expected old program to not be within 24h window")
+	}
+
+	// Check with 96 hour window (should find it)
+	recent96, err := s.WasRecentlyScheduled(ctx, "old-prog", "channel-1", 96*time.Hour)
+	if err != nil {
+		t.Fatalf("WasRecentlyScheduled failed: %v", err)
+	}
+	if !recent96 {
+		t.Error("Expected old program to be within 96h window")
+	}
+}
+
+func TestStore_GetSeriesState_MultipleShows(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Update multiple shows
+	shows := []struct {
+		title   string
+		season  int
+		episode int
+	}{
+		{"Show A", 1, 5},
+		{"Show B", 2, 10},
+		{"Show C", 3, 1},
+	}
+
+	for _, show := range shows {
+		state := &scheduler.SeriesState{
+			ShowTitle:      show.title,
+			CurrentSeason:  show.season,
+			CurrentEpisode: show.episode,
+			Completed:      false,
+			LastAired:      time.Now(),
+		}
+		if err := s.UpdateSeriesState(ctx, state); err != nil {
+			t.Fatalf("UpdateSeriesState failed for %s: %v", show.title, err)
+		}
+	}
+
+	// Verify each show has correct state
+	for _, show := range shows {
+		state, err := s.GetSeriesState(ctx, show.title)
+		if err != nil {
+			t.Fatalf("GetSeriesState failed for %s: %v", show.title, err)
+		}
+		if state.CurrentSeason != show.season || state.CurrentEpisode != show.episode {
+			t.Errorf("State mismatch for %s: expected S%02dE%02d, got S%02dE%02d",
+				show.title, show.season, show.episode, state.CurrentSeason, state.CurrentEpisode)
+		}
+	}
+}
+
+func TestStore_ResetSeriesState_NonExistent(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Reset a show that doesn't exist should not error
+	if err := s.ResetSeriesState(ctx, "NonExistent Show"); err != nil {
+		t.Errorf("ResetSeriesState for non-existent show should not error: %v", err)
+	}
+
+	// Verify the state is now default
+	state, err := s.GetSeriesState(ctx, "NonExistent Show")
+	if err != nil {
+		t.Fatalf("GetSeriesState failed: %v", err)
+	}
+	if state.CurrentSeason != 1 || state.CurrentEpisode != 1 {
+		t.Errorf("Expected default state S01E01, got S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
+	}
+}
+
+func TestStore_CleanupScheduleHistory_EmptyDatabase(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Cleanup on empty database should not error and return 0
+	removed, err := s.CleanupScheduleHistory(ctx, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("CleanupScheduleHistory failed: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("Expected 0 entries removed from empty database, got %d", removed)
+	}
+}
+
+func TestStore_ExportAllSeriesStates_Empty(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Export from empty database should return empty slice
+	states, err := s.ExportAllSeriesStates(ctx)
+	if err != nil {
+		t.Fatalf("ExportAllSeriesStates failed: %v", err)
+	}
+	if len(states) != 0 {
+		t.Errorf("Expected 0 states from empty database, got %d", len(states))
+	}
+}
+
+func TestStore_Backup(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Add some data
+	state := &scheduler.SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  2,
+		CurrentEpisode: 5,
+		Completed:      false,
+		LastAired:      time.Now(),
+	}
+	if err := s.UpdateSeriesState(ctx, state); err != nil {
+		t.Fatalf("UpdateSeriesState failed: %v", err)
+	}
+
+	// Create backup to a temporary file
+	backupPath := t.TempDir() + "/backup.db"
+	if err := s.Backup(ctx, backupPath); err != nil {
+		t.Fatalf("Backup failed: %v", err)
+	}
+
+	// Open the backup and verify data
+	backupStore, err := New(backupPath)
+	if err != nil {
+		t.Fatalf("Failed to open backup: %v", err)
+	}
+	defer backupStore.Close()
+
+	// Verify the data was backed up
+	restoredState, err := backupStore.GetSeriesState(ctx, "Test Show")
+	if err != nil {
+		t.Fatalf("GetSeriesState from backup failed: %v", err)
+	}
+	if restoredState.CurrentSeason != 2 || restoredState.CurrentEpisode != 5 {
+		t.Errorf("Backup data mismatch: expected S02E05, got S%02dE%02d",
+			restoredState.CurrentSeason, restoredState.CurrentEpisode)
+	}
+}

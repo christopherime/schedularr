@@ -569,3 +569,302 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func TestClient_UpdateSchedule_ValidationError(t *testing.T) {
+	channelID := "channel-1"
+	// Schedule with invalid program (missing required fields)
+	schedule := []Program{
+		{ID: "", Title: "Invalid Program", Duration: 0}, // Missing ID and invalid duration
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Should not reach server due to validation error")
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	err := client.UpdateSchedule(context.Background(), channelID, schedule)
+	if err == nil {
+		t.Error("Expected validation error for invalid program, got nil")
+	}
+}
+
+func TestClient_UpdateSchedule_EmptyChannelID(t *testing.T) {
+	schedule := []Program{
+		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Should not reach server due to empty channel ID")
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	err := client.UpdateSchedule(context.Background(), "", schedule)
+	if err == nil {
+		t.Error("Expected error for empty channel ID, got nil")
+	}
+}
+
+func TestClient_GetLibraries_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetLibraries(context.Background())
+	if err == nil {
+		t.Error("Expected error for 500 response, got nil")
+	}
+}
+
+func TestClient_GetLibraryPrograms_EmptyID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Should not reach server due to empty library ID")
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetLibraryPrograms(context.Background(), "")
+	if err == nil {
+		t.Error("Expected error for empty library ID, got nil")
+	}
+}
+
+func TestClient_GetLibraryPrograms_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetLibraryPrograms(context.Background(), "lib-999")
+	if err == nil {
+		t.Error("Expected error for 404 response, got nil")
+	}
+}
+
+func TestClient_GetShows_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetShows(context.Background())
+	if err == nil {
+		t.Error("Expected error for 500 response, got nil")
+	}
+}
+
+func TestClient_GetShowEpisodes_EmptyID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Should not reach server due to empty show ID")
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetShowEpisodes(context.Background(), "", 1)
+	if err == nil {
+		t.Error("Expected error for empty show ID, got nil")
+	}
+}
+
+func TestClient_GetShowEpisodes_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetShowEpisodes(context.Background(), "show-999", 1)
+	if err == nil {
+		t.Error("Expected error for 404 response, got nil")
+	}
+}
+
+func TestClient_SearchPrograms_EmptyQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Should not reach server due to empty query")
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.SearchPrograms(context.Background(), "")
+	if err == nil {
+		t.Error("Expected error for empty query, got nil")
+	}
+}
+
+func TestClient_SearchPrograms_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.SearchPrograms(context.Background(), "test")
+	if err == nil {
+		t.Error("Expected error for 500 response, got nil")
+	}
+}
+
+func TestClient_GetFillerLists_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetFillerLists(context.Background())
+	if err == nil {
+		t.Error("Expected error for 500 response, got nil")
+	}
+}
+
+func TestClient_GetFillerContent_EmptyID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Should not reach server due to empty filler ID")
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetFillerContent(context.Background(), "")
+	if err == nil {
+		t.Error("Expected error for empty filler list ID, got nil")
+	}
+}
+
+func TestClient_GetFillerContent_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetFillerContent(context.Background(), "filler-999")
+	if err == nil {
+		t.Error("Expected error for 404 response, got nil")
+	}
+}
+
+func TestValidateProgram(t *testing.T) {
+	tests := []struct {
+		name    string
+		program Program
+		wantErr bool
+	}{
+		{
+			name: "Valid movie",
+			program: Program{
+				ID:       "prog-1",
+				Title:    "Test Movie",
+				Duration: 7200000,
+				Type:     "movie",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid episode",
+			program: Program{
+				ID:       "prog-2",
+				Title:    "Test Episode",
+				Duration: 1800000,
+				Type:     "episode",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid track",
+			program: Program{
+				ID:       "prog-3",
+				Title:    "Test Track",
+				Duration: 30000,
+				Type:     "track",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Empty type is valid",
+			program: Program{
+				ID:       "prog-4",
+				Title:    "Test Program",
+				Duration: 1800000,
+				Type:     "",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Missing ID",
+			program: Program{
+				ID:       "",
+				Title:    "Test",
+				Duration: 1800000,
+				Type:     "movie",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Missing title",
+			program: Program{
+				ID:       "prog-5",
+				Title:    "",
+				Duration: 1800000,
+				Type:     "movie",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Zero duration",
+			program: Program{
+				ID:       "prog-6",
+				Title:    "Test",
+				Duration: 0,
+				Type:     "movie",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Negative duration",
+			program: Program{
+				ID:       "prog-7",
+				Title:    "Test",
+				Duration: -100,
+				Type:     "movie",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid type",
+			program: Program{
+				ID:       "prog-8",
+				Title:    "Test",
+				Duration: 1800000,
+				Type:     "invalid",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// We need to test the validation indirectly through UpdateSchedule
+			// since validateProgram is not exported
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			client := NewClient(Config{URL: server.URL})
+			err := client.UpdateSchedule(context.Background(), "test-channel", []Program{tt.program})
+
+			if tt.wantErr && err == nil {
+				t.Error("Expected validation error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("Expected no error, got %v", err)
+			}
+		})
+	}
+}
