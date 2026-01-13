@@ -36,6 +36,13 @@ type ScheduledSlot struct {
 	Programs  []tunarr.Program
 }
 
+// EngineOptions contains optional configuration for the scheduling engine.
+type EngineOptions struct {
+	HistoryWindow time.Duration
+	Logger        *slog.Logger
+	Location      *time.Location
+}
+
 // NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
 func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
 	if logger == nil {
@@ -57,25 +64,41 @@ func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *
 	}
 }
 
-// NewEngineWithHistory creates a new scheduling engine with a custom history window
-func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
-	if logger == nil {
-		logger = slog.Default()
+// NewEngineWithOptions creates a new scheduling engine with optional configuration.
+func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStore, opts EngineOptions) *Engine {
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
 	}
-	if loc == nil {
-		loc = time.Local
+	if opts.Location == nil {
+		opts.Location = time.Local
+	}
+	historyWindow := opts.HistoryWindow
+	if historyWindow == 0 {
+		historyWindow = 7 * 24 * time.Hour // Default to 7 days
 	}
 	return &Engine{
 		client:         client,
 		blocks:         blocks,
 		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
-		location:       loc,
+		location:       opts.Location,
 		history:        NewScheduleHistory(historyWindow),
 		store:          store,
 		pendingStates:  make(map[string]*SeriesState),
 		pendingHistory: nil,
-		logger:         logger,
+		logger:         opts.Logger,
 	}
+}
+
+// NewEngineWithHistory creates a new scheduling engine with a custom history window.
+// Deprecated: Use NewEngineWithOptions instead.
+//
+//nolint:revive // Deprecated function kept for backwards compatibility
+func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
+	return NewEngineWithOptions(client, blocks, store, EngineOptions{
+		HistoryWindow: historyWindow,
+		Logger:        logger,
+		Location:      loc,
+	})
 }
 
 // GenerateForTimeRange generates a schedule for the given window with priority-based conflict resolution.
