@@ -53,6 +53,7 @@ func (c *Cache) Get(key string, v interface{}) (bool, error) {
 		return false, nil       // Expired
 	}
 
+	// #nosec G304 -- filePath is constructed from a fixed cache directory and application-controlled keys
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to read cache file %s: %w", filePath, err)
