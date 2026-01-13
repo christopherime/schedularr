@@ -309,11 +309,12 @@ This TODO is structured to align Schedularr with established architectural patte
 
 #### 2.3.2 Persistence Layer
 
-- [ ] **Implement SQLite State Store**: Create database for episode tracking
+- [x] **Implement SQLite State Store**: Create database for episode tracking ✅ COMPLETED
   - [x] Design schema for series state table
   - [x] Design schema for scheduling history
   - [x] Create migration system
   - [x] Add database initialization
+  - [x] Implemented in internal/store/sqlite.go with full CRUD operations
 - [x] **State Management Functions**: CRUD operations for series state
   - [x] Get current episode for series
   - [x] Update episode progress
@@ -527,12 +528,14 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Validate config on reload
   - [x] Add config dump command for debugging
 
-### 4.3 Documentation
+### 4.3 Documentation ✅ COMPLETED
 
-- [ ] **API Documentation**: Document Tunarr integration (Created docs/TUNARR_API.md)
-- [ ] Scheduler File Reference: Complete YAML schema documentation
-- [ ] Series Scheduling Guide: Tutorial for series-based scheduling
-- [ ] Migration Guide: Guide for upgrading from old config format
+- [x] **API Documentation**: Document Tunarr integration ✅ (docs/TUNARR_API.md - 12K)
+- [x] **Scheduler File Reference**: Complete YAML schema documentation ✅ (docs/SPECIFICATIONS.md - 23K)
+- [x] **Series Scheduling Guide**: Tutorial for series-based scheduling ✅ (docs/SERIES_SCHEDULING_GUIDE.md - 14K)
+- [x] **Migration Guide**: Guide for upgrading from old config format ✅ (docs/MIGRATION_GUIDE.md - 12K)
+- [x] **Architecture Documentation**: System architecture and design ✅ (docs/ARCHITECTURE.md - 23K)
+- [x] **CLI Reference**: Command-line interface documentation ✅ (docs/CLI_REFERENCE.md - 6.5K)
 
 ## Phase 5: UX Enhancements
 
