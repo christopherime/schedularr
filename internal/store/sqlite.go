@@ -326,3 +326,14 @@ func (s *Store) ResetSeriesState(ctx context.Context, showTitle string) error {
 
 	return nil
 }
+
+// Backup creates a safe backup of the database to the specified path using VACUUM INTO.
+func (s *Store) Backup(ctx context.Context, destPath string) error {
+	// VACUUM INTO was introduced in SQLite 3.27.0
+	// It creates a transactionally consistent copy of the database
+	_, err := s.db.ExecContext(ctx, "VACUUM INTO ?", destPath)
+	if err != nil {
+		return fmt.Errorf("failed to backup database: %w", err)
+	}
+	return nil
+}

@@ -53,6 +53,8 @@ func init() {
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.schedularr.yaml)")
+
+	rootCmd.AddCommand(healthCmd) // Add health command to root
 }
 
 // initConfig reads in config file and ENV variables if set

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/geekxflood/schedularr/internal/jellyfin"
 	"github.com/geekxflood/schedularr/internal/radarr"
@@ -27,6 +28,7 @@ type Config struct {
 	Database      string           `mapstructure:"database" yaml:"database" json:"database,omitempty"`                   // Path to SQLite database file
 	SchedulerFile string           `mapstructure:"scheduler_file" yaml:"scheduler_file" json:"scheduler_file,omitempty"` // Path to scheduler config file
 	Scheduler     scheduler.Config `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler,omitempty"`                // Inline scheduler config (legacy)
+	Cache         CacheConfig      `mapstructure:"cache" yaml:"cache" json:"cache"`
 }
 
 // LogConfig holds configuration for logging
@@ -36,14 +38,36 @@ type LogConfig struct {
 	Timezone string `mapstructure:"timezone" yaml:"timezone" json:"timezone,omitempty"` // IANA Time Zone name
 }
 
+// CacheConfig holds configuration for content caching
+type CacheConfig struct {
+	CacheDir      string `mapstructure:"cache_dir" yaml:"cache_dir" json:"cache_dir,omitempty"`           // Directory to store cache files
+	CacheDuration string `mapstructure:"cache_duration" yaml:"cache_duration" json:"cache_duration,omitempty"` // How long cache entries are valid (e.g., "1h", "24h")
+}
+
+// GetCacheDuration parses the CacheDuration string into a time.Duration.
+// Returns a default of 1 hour if parsing fails.
+func (c *Config) GetCacheDuration() time.Duration {
+	duration, err := time.ParseDuration(c.Cache.CacheDuration)
+	if err != nil {
+		// Log this error properly once a logger is available
+		fmt.Fprintf(os.Stderr, "Warning: failed to parse cache duration '%s': %v. Using default 1h.\n", c.Cache.CacheDuration, err)
+		return 1 * time.Hour // Default to 1 hour
+	}
+	return duration
+}
+
 // New creates a new Config with default values
 func New() *Config {
 	return &Config{
 		Tunarr: tunarr.Config{
 			URL: "http://localhost:8000",
 		},
-		Radarr:   radarr.Config{},
-		Sonarr:   sonarr.Config{},
+		Radarr: radarr.Config{
+			ExcludeMissingFile: true,
+		},
+		Sonarr: sonarr.Config{
+			ExcludeMissingFile: true,
+		},
 		Jellyfin: jellyfin.Config{},
 		Log: LogConfig{
 			Level:    "info",
@@ -52,6 +76,10 @@ func New() *Config {
 		},
 		MetricsPort:   9090, // Default metrics port
 		SchedulerFile: "",   // Default to inline config or discover scheduler.yaml
+		Cache: CacheConfig{
+			CacheDir:      filepath.Join(os.TempDir(), "schedularr_cache"),
+			CacheDuration: "1h",
+		},
 	}
 }
 

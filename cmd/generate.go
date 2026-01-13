@@ -150,10 +150,11 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 		if cfg.Jellyfin.URL != "" && cfg.Jellyfin.SyncLiveTV {
 			fmt.Println(infoStyle.Render("📺 Refreshing Jellyfin Live TV guide..."))
 			jellyfinClient := jellyfin.NewClient(cfg.Jellyfin)
-			if err := jellyfinClient.RefreshLiveTVGuide(context.Background()); err != nil {
-				return fmt.Errorf("failed to refresh jellyfin live tv guide: %w", err)
+			if err := refreshJellyfinWithRetries(jellyfinClient); err != nil {
+				fmt.Printf("%s %v\n", warnStyle.Render("⚠ Failed to refresh Jellyfin Live TV guide (non-fatal):"), err)
+			} else {
+				fmt.Printf("%s\n", successStyle.Render("✓ Jellyfin Live TV guide refreshed"))
 			}
-			fmt.Printf("%s\n", successStyle.Render("✓ Jellyfin Live TV guide refreshed"))
 		}
 		return nil
 	} else if dryRun {
@@ -164,6 +165,27 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	}
 
 	return nil
+}
+
+func refreshJellyfinWithRetries(client *jellyfin.Client) error {
+	maxRetries := 3
+	baseDelay := 2 * time.Second
+
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		// Use a short timeout for the request itself if possible, but client has 30s timeout.
+		err = client.RefreshLiveTVGuide(context.Background())
+		if err == nil {
+			return nil
+		}
+
+		if i < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<i) // 2s, 4s, 8s
+			fmt.Printf("   %s %v (retrying in %s)...\n", warnStyle.Render("⚠ Refresh failed:"), err, delay)
+			time.Sleep(delay)
+		}
+	}
+	return fmt.Errorf("after %d attempts: %w", maxRetries, err)
 }
 
 func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {

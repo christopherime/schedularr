@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/geekxflood/schedularr/internal/scheduler"
 )
@@ -25,6 +26,49 @@ func TestNew(t *testing.T) {
 
 	if cfg.Log.Format != "text" {
 		t.Errorf("Expected default log format 'text', got '%s'", cfg.Log.Format)
+	}
+
+	if !cfg.Radarr.ExcludeMissingFile {
+		t.Errorf("Expected default Radarr.ExcludeMissingFile to be true, got false")
+	}
+
+	if !cfg.Sonarr.ExcludeMissingFile {
+		t.Errorf("Expected default Sonarr.ExcludeMissingFile to be true, got false")
+	}
+
+	expectedCacheDir := filepath.Join(os.TempDir(), "schedularr_cache")
+	if cfg.Cache.CacheDir != expectedCacheDir {
+		t.Errorf("Expected default Cache.CacheDir '%s', got '%s'", expectedCacheDir, cfg.Cache.CacheDir)
+	}
+
+	if cfg.Cache.CacheDuration != "1h" {
+		t.Errorf("Expected default Cache.CacheDuration '1h', got '%s'", cfg.Cache.CacheDuration)
+	}
+}
+
+func TestConfig_GetCacheDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration string
+		expected time.Duration
+	}{
+		{"valid 1h", "1h", 1 * time.Hour},
+		{"valid 30m", "30m", 30 * time.Minute},
+		{"valid 2h30m", "2h30m", 2*time.Hour + 30*time.Minute},
+		{"invalid format", "abc", 1 * time.Hour}, // Should default to 1h
+		{"empty string", "", 1 * time.Hour},     // Should default to 1h
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := New()
+			cfg.Cache.CacheDuration = tt.duration
+			actual := cfg.GetCacheDuration()
+
+			if actual != tt.expected {
+				t.Errorf("For duration '%s', expected %v, got %v", tt.duration, tt.expected, actual)
+			}
+		})
 	}
 }
 

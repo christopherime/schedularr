@@ -139,7 +139,7 @@ func (v *SchemaValidator) GenerateConfig(format string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to get default config: %w", defaultConfig.Err())
 	}
 
-	// Convert to Go value
+	// Convert to generic interface to avoid extra fields from struct
 	var configData interface{}
 	if err := defaultConfig.Decode(&configData); err != nil {
 		return nil, fmt.Errorf("failed to decode config: %w", err)

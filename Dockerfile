@@ -115,7 +115,7 @@ EXPOSE 9600/tcp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD /usr/local/bin/schedularr --help > /dev/null || exit 1
+  CMD /usr/local/bin/schedularr health --port 9600 > /dev/null || exit 1
 
 # Default command - users should mount their own config
 ENTRYPOINT ["/usr/local/bin/schedularr"]

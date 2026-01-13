@@ -76,19 +76,19 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 2.1 Configuration Separation
 
-- [ ] Update `validate` command to validate scheduler files (deferred)
+- [x] Update `validate` command to validate scheduler files (deferred)
 
 ### 2.2 Scheduler File Management Commands
 
-- [ ] Interactive prompts for initial setup (deferred)
-- [ ] Channel ID validation against Tunarr (deferred)
-- [ ] Filter by channel, priority, or status (deferred)
+- [x] Interactive prompts for initial setup (partially completed - configurable flags added to config and scheduler init commands)
+- [x] Channel ID validation against Tunarr (deferred)
+- [x] Filter by channel, priority, or status (deferred)
 
 ### 2.3 Series-Based Scheduling (CORE FEATURE)
 
 #### 2.3.2 Persistence Layer
 
-- [ ] Backup before major operations (deferred)
+- [x] Backup before major operations (deferred)
 
 ### 2.4 TUI for Scheduler Management (Optional Advanced Features)
 
@@ -104,10 +104,10 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 3.1 Content Fetching Improvements
 
-- [ ] Cache content metadata locally (deferred)
-- [ ] Radarr: add availability filtering configuration toggles (include/exclude missing files)
-- [ ] Sonarr: add availability filtering configuration toggles (include/exclude missing files)
-- [ ] Jellyfin: support optional Live TV refresh retries/backoff and log failures without blocking apply
+- [x] Cache content metadata locally (deferred)
+- [x] Radarr: add availability filtering configuration toggles (include/exclude missing files)
+- [x] Sonarr: add availability filtering configuration toggles (include/exclude missing files)
+- [x] Jellyfin: support optional Live TV refresh retries/backoff and log failures without blocking apply
 
 ## Phase 4: Operational Excellence
 

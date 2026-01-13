@@ -198,6 +198,51 @@ Example:
 	},
 }
 
+var stateBackupCmd = &cobra.Command{
+	Use:   "backup <file>",
+	Short: "Backup the entire database to a file",
+	Long: `Create a safe, transactional backup of the entire SQLite database.
+This includes both series progression states and schedule history.
+
+The backup is performed using SQLite's VACUUM INTO command, ensuring
+consistency even if the database is in use.
+
+Example:
+  schedularr state backup full-backup-2026-01-12.db`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		outputFile := args[0]
+
+		// Load config
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			return fmt.Errorf("failed to parse config: %w", err)
+		}
+
+		// Get database path from config or use default
+		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
+		if cfg.Database != "" {
+			dbPath = cfg.Database
+		}
+
+		// Open store
+		s, err := store.New(dbPath)
+		if err != nil {
+			return fmt.Errorf("failed to open database: %w", err)
+		}
+		defer s.Close()
+
+		// Perform backup
+		ctx := context.Background()
+		if err := s.Backup(ctx, outputFile); err != nil {
+			return fmt.Errorf("failed to backup database: %w", err)
+		}
+
+		fmt.Printf("Database backed up successfully to %s\n", outputFile)
+		return nil
+	},
+}
+
 var stateListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all series states",
@@ -266,5 +311,6 @@ func init() {
 	stateCmd.AddCommand(stateExportCmd)
 	stateCmd.AddCommand(stateImportCmd)
 	stateCmd.AddCommand(stateResetCmd)
+	stateCmd.AddCommand(stateBackupCmd)
 	stateCmd.AddCommand(stateListCmd)
 }

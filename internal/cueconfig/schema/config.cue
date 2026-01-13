@@ -25,6 +25,9 @@ package schema
 
 	// Inline scheduler configuration (legacy support)
 	scheduler?: #SchedulerConfig
+
+	// Optional content caching configuration
+	cache: #CacheConfig
 }
 
 // TunarrConfig defines the Tunarr API connection settings
@@ -39,6 +42,15 @@ package schema
 	timeout?: string | *"10s"
 }
 
+// CacheConfig defines content caching settings
+#CacheConfig: {
+	// Directory to store cached content metadata
+	cache_dir: string | *"/tmp/schedularr_cache" @tag(go, "filepath.Join(os.TempDir(), \"schedularr_cache\")")
+
+	// How long cached entries are considered valid (e.g., "1h", "24h")
+	cache_duration: string | *"1h"
+}
+
 // RadarrConfig defines the Radarr API connection settings
 #RadarrConfig: {
 	// Radarr API base URL
@@ -46,6 +58,9 @@ package schema
 
 	// Optional API key for authentication
 	api_key?: string
+
+	// Exclude movies that are missing files on disk
+	exclude_missing_file?: bool | *true
 }
 
 // SonarrConfig defines the Sonarr API connection settings
@@ -55,6 +70,9 @@ package schema
 
 	// Optional API key for authentication
 	api_key?: string
+
+	// Exclude episodes that are missing files on disk
+	exclude_missing_file?: bool | *true
 }
 
 // JellyfinConfig defines the Jellyfin API connection settings
@@ -187,5 +205,9 @@ config: #Config & {
 	log: {
 		level:  "info"
 		format: "text"
+	}
+	cache: {
+		cache_dir:      "/tmp/schedularr_cache"
+		cache_duration: "1h"
 	}
 }

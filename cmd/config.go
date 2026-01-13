@@ -1,16 +1,27 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/geekxflood/schedularr/internal/config" // Added import
+	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper" // Added import
-	"gopkg.in/yaml.v3"       // Added import
+	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
+)
+
+var (
+	tunarrURL          string
+	tunarrAPIKey       string
+	logLevel           string
+	logFormat          string
+	jellyfinURL        string
+	jellyfinAPIKey     string
+	jellyfinSyncLiveTV bool
 )
 
 var configCmd = &cobra.Command{
@@ -28,10 +39,12 @@ If no filename is provided, creates 'config.yaml' in the current directory.
 The generated file will contain all configuration options with their default values
 extracted from the CUE schema.
 
+You can override default values using flags, e.g., --tunarr-url.
+
 Examples:
   schedularr config generate
-  schedularr config generate my-config.yaml
-  schedularr config generate config.json`,
+  schedularr config generate my-config.yaml --tunarr-url "http://my-tunarr:8000"
+  schedularr config generate config.json --log-level debug --jellyfin-sync-livetv`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(_ *cobra.Command, args []string) {
 		filename := "config.yaml"
@@ -58,6 +71,47 @@ Examples:
 		data, err := validator.GenerateConfig(format)
 		if err != nil {
 			fmt.Printf("%s %v\n", errorStyle.Render("✗ Error generating config:"), err)
+			os.Exit(1)
+		}
+
+		// Unmarshal generated data to apply flag overrides
+		var cfg config.Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			fmt.Printf("%s Failed to unmarshal generated config: %v\n", errorStyle.Render("✗ Error:"), err)
+			os.Exit(1)
+		}
+
+		// Apply flag overrides
+		if tunarrURL != "" {
+			cfg.Tunarr.URL = tunarrURL
+		}
+		if tunarrAPIKey != "" {
+			cfg.Tunarr.APIKey = tunarrAPIKey
+		}
+		if logLevel != "" {
+			cfg.Log.Level = logLevel
+		}
+		if logFormat != "" {
+			cfg.Log.Format = logFormat
+		}
+		if jellyfinURL != "" {
+			cfg.Jellyfin.URL = jellyfinURL
+		}
+		if jellyfinAPIKey != "" {
+			cfg.Jellyfin.APIKey = jellyfinAPIKey
+		}
+		if jellyfinSyncLiveTV { // Only set if flag is explicitly true
+			cfg.Jellyfin.SyncLiveTV = jellyfinSyncLiveTV
+		}
+
+		// Marshal back to YAML/JSON
+		if format == "yaml" {
+			data, err = yaml.Marshal(cfg)
+		} else {
+			data, err = json.MarshalIndent(cfg, "", "  ") // Need to import "encoding/json"
+		}
+		if err != nil {
+			fmt.Printf("%s Failed to re-marshal config with overrides: %v\n", errorStyle.Render("✗ Error:"), err)
 			os.Exit(1)
 		}
 
@@ -101,4 +155,13 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configGenerateCmd)
 	configCmd.AddCommand(configDumpCmd) // Added config dump command
+
+	// Add flags to configGenerateCmd
+	configGenerateCmd.Flags().StringVar(&tunarrURL, "tunarr-url", "", "Override default Tunarr API URL")
+	configGenerateCmd.Flags().StringVar(&tunarrAPIKey, "tunarr-api-key", "", "Override default Tunarr API Key")
+	configGenerateCmd.Flags().StringVar(&logLevel, "log-level", "", "Override default log level (debug, info, warn, error)")
+	configGenerateCmd.Flags().StringVar(&logFormat, "log-format", "", "Override default log format (text, json)")
+	configGenerateCmd.Flags().StringVar(&jellyfinURL, "jellyfin-url", "", "Override default Jellyfin API URL")
+	configGenerateCmd.Flags().StringVar(&jellyfinAPIKey, "jellyfin-api-key", "", "Override default Jellyfin API Key")
+	configGenerateCmd.Flags().BoolVar(&jellyfinSyncLiveTV, "jellyfin-sync-livetv", false, "Override default Jellyfin Live TV sync (set to true)")
 }

@@ -1,14 +1,24 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cueconfig"
+	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/geekxflood/schedularr/internal/tunarr"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
+
+var warningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 
 var validateCmd = &cobra.Command{
 	Use:   "validate [file]",
@@ -70,11 +80,71 @@ func validateFile(filePath string) error {
 		if err := validator.ValidateScheduler(data, format); err != nil {
 			return fmt.Errorf("scheduler validation error: %w", err)
 		}
+
+		// Additional semantic validation
+		if err := validateSchedulerSemantics(data); err != nil {
+			return fmt.Errorf("scheduler semantic validation error: %w", err)
+		}
 	} else {
 		// Validate as application config
 		if err := validator.ValidateConfig(data, format); err != nil {
 			return fmt.Errorf("config validation error: %w", err)
 		}
+	}
+
+	return nil
+}
+
+func validateSchedulerSemantics(data []byte) error {
+	var schedCfg scheduler.Config
+	if err := yaml.Unmarshal(data, &schedCfg); err != nil {
+		return fmt.Errorf("failed to parse scheduler config for semantic validation: %w", err)
+	}
+
+	// Load app config to get Tunarr details
+	// We use the already loaded viper config if available
+	var appCfg config.Config
+	if err := viper.Unmarshal(&appCfg); err != nil {
+		// If we can't load app config, we can't check Tunarr.
+		// This is fine, just skip Tunarr validation.
+		return nil
+	}
+
+	if appCfg.Tunarr.URL == "" {
+		// No Tunarr configured, skip validation
+		return nil
+	}
+
+	// Create client
+	client := tunarr.NewClient(appCfg.Tunarr)
+
+	// Fetch channels
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	channels, err := client.GetChannels(ctx)
+	if err != nil {
+		// If we can't connect, maybe we warn?
+		fmt.Fprintf(os.Stderr, "%s Could not connect to Tunarr for channel validation: %v\n", warningStyle.Render("! Warning:"), err)
+		return nil
+	}
+
+	// Create a map for O(1) lookup
+	channelMap := make(map[string]bool)
+	for _, ch := range channels {
+		channelMap[ch.ID] = true
+	}
+
+	// Check blocks
+	var invalidChannels []string
+	for _, block := range schedCfg.Blocks {
+		if !channelMap[block.ChannelID] {
+			invalidChannels = append(invalidChannels, fmt.Sprintf("Block '%s' references unknown channel '%s'", block.Name, block.ChannelID))
+		}
+	}
+
+	if len(invalidChannels) > 0 {
+		return fmt.Errorf("invalid channels detected:\n  - %s", strings.Join(invalidChannels, "\n  - "))
 	}
 
 	return nil

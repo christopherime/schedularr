@@ -33,14 +33,6 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 
 ## ✨ Features
 
-### New in 2026-01-14
-
-- **CUE Schema Validation**: Configuration validation using CUE language for type safety and defaults
-- **CLI Structure**: Standardized command structure (root, validate, generate, run)
-- **Embedded Schemas**: Runtime schema validation without external files
-- **Radarr/Sonarr Integration**: Filter Tunarr programs by media availability in Radarr/Sonarr
-- **Jellyfin Live TV Refresh**: Optional guide refresh after schedule apply
-
 ### Core Capabilities
 
 | Feature                      | Description                                                                   |

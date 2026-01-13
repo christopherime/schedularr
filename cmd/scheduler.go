@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +20,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var (
+	// Flags for scheduler init command
+	blockName      string
+	blockCron      string
+	blockDuration  int
+	blockChannelID string
+	blockPriority  int
+)
+
 var schedulerCmd = &cobra.Command{
 	Use:   "scheduler",
 	Short: "Manage scheduler configuration files",
@@ -32,7 +42,14 @@ var schedulerInitCmd = &cobra.Command{
 If no filename is provided, creates 'scheduler.yaml' in the current directory.
 
 The generated file will contain example blocks with all default values
-extracted from the CUE schema.`,
+extracted from the CUE schema.
+
+You can override default block values using flags, e.g., --name "My TV Show".
+
+Examples:
+  schedularr scheduler init
+  schedularr scheduler init my-schedule.yaml --name "Morning Cartoons" --channel-id "kids-channel"
+  schedularr scheduler init schedule.json --cron "0 8 * * *" --duration 180`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(_ *cobra.Command, args []string) {
 		filename := "scheduler.yaml"
@@ -58,6 +75,43 @@ extracted from the CUE schema.`,
 		data, err := validator.GenerateScheduler(format)
 		if err != nil {
 			fmt.Printf("Error generating scheduler config: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Unmarshal generated data to apply flag overrides
+		var schedCfg scheduler.Config
+		if err := yaml.Unmarshal(data, &schedCfg); err != nil {
+			fmt.Printf("Error unmarshaling generated scheduler config: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Apply flag overrides to the first block if it exists
+		if len(schedCfg.Blocks) > 0 {
+			if blockName != "" {
+				schedCfg.Blocks[0].Name = blockName
+			}
+			if blockCron != "" {
+				schedCfg.Blocks[0].Cron = blockCron
+			}
+			if blockDuration != 0 {
+				schedCfg.Blocks[0].Duration = blockDuration
+			}
+			if blockChannelID != "" {
+				schedCfg.Blocks[0].ChannelID = blockChannelID
+			}
+			if blockPriority != 0 {
+				schedCfg.Blocks[0].Priority = blockPriority
+			}
+		}
+
+		// Marshal back to YAML/JSON
+		if format == "yaml" {
+			data, err = yaml.Marshal(schedCfg)
+		} else {
+			data, err = json.MarshalIndent(schedCfg, "", "  ")
+		}
+		if err != nil {
+			fmt.Printf("Error re-marshaling scheduler config with overrides: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -155,7 +209,17 @@ var schedulerListCmd = &cobra.Command{
 		_, _ = fmt.Fprintln(w, "NAME\tCRON\tDURATION\tCHANNEL\tPRIORITY\tFILTERS")
 		_, _ = fmt.Fprintln(w, "----\t----\t--------\t-------\t--------\t-------")
 
+		visibleCount := 0
 		for _, block := range schedCfg.Blocks {
+			// Apply filters
+			if filterChannel != "" && block.ChannelID != filterChannel {
+				continue
+			}
+			if filterPriority != -1 && block.Priority != filterPriority {
+				continue
+			}
+
+			visibleCount++
 			filters := buildFilterSummary(&block.Filter)
 			fmt.Fprintf(w, "%s\t%s\t%dm\t%s\t%d\t%s\n",
 				block.Name,
@@ -168,12 +232,19 @@ var schedulerListCmd = &cobra.Command{
 		}
 		_ = w.Flush()
 
-		fmt.Printf("\nTotal blocks: %d\n", len(schedCfg.Blocks))
+		fmt.Printf("\nTotal blocks: %d", len(schedCfg.Blocks))
+		if visibleCount != len(schedCfg.Blocks) {
+			fmt.Printf(" (showing %d)\n", visibleCount)
+		} else {
+			fmt.Println()
+		}
 	},
 }
 
 var templateType string
 var schedulerValidateCheckChannels bool
+var filterChannel string
+var filterPriority int
 
 func init() {
 	rootCmd.AddCommand(schedulerCmd)
@@ -184,6 +255,16 @@ func init() {
 
 	schedulerInitCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "Template type: basic, advanced, or series")
 	schedulerValidateCmd.Flags().BoolVar(&schedulerValidateCheckChannels, "check-channels", false, "validate channel IDs against Tunarr")
+
+	schedulerListCmd.Flags().StringVar(&filterChannel, "channel", "", "Filter by channel ID")
+	schedulerListCmd.Flags().IntVar(&filterPriority, "priority", -1, "Filter by priority (exact match)")
+
+	// Flags for scheduler init command
+	schedulerInitCmd.Flags().StringVar(&blockName, "name", "", "Name for the initial scheduling block")
+	schedulerInitCmd.Flags().StringVar(&blockCron, "cron", "", "Cron expression for the initial scheduling block")
+	schedulerInitCmd.Flags().IntVar(&blockDuration, "duration", 0, "Duration in minutes for the initial scheduling block")
+	schedulerInitCmd.Flags().StringVar(&blockChannelID, "channel-id", "", "Channel ID for the initial scheduling block")
+	schedulerInitCmd.Flags().IntVar(&blockPriority, "priority", 0, "Priority for the initial scheduling block")
 }
 
 // findDefaultSchedulerFile searches for scheduler.yaml in common locations

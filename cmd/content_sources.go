@@ -6,39 +6,69 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/geekxflood/schedularr/internal/cache"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/radarr"
 	"github.com/geekxflood/schedularr/internal/sonarr"
 	"github.com/geekxflood/schedularr/internal/tunarr"
 )
 
-func fetchAllContent(cfg *config.Config, client *tunarr.Client) ([]tunarr.Program, error) {
-	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
-	programs := fetchTunarrContent(client)
+const (
+	tunarrCacheKey  = "tunarr_programs.json"
+	radarrCacheKey  = "radarr_movies.json"
+	sonarrCacheKey  = "sonarr_episodes.json" // Includes series and episodes
+)
+
+func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.Program, error) {
+	fmt.Println(infoStyle.Render("📡 Fetching content..."))
+
+	cacheDuration := cfg.GetCacheDuration()
+	contentCache, err := cache.New(cfg.Cache.CacheDir, cacheDuration)
+	if err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not initialize content cache: %v. Proceeding without cache.", err)))
+		contentCache = nil // Disable caching if initialization failed
+	} else {
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗄️  Using cache in %s (duration %s)", cfg.Cache.CacheDir, cacheDuration)))
+	}
+
+	programs := fetchTunarrContent(tunarrClient, contentCache)
 
 	if len(programs) == 0 {
 		fmt.Println(warnStyle.Render("⚠ No content available - using fallback GetPrograms()"))
 		var err error
-		programs, err = client.GetPrograms(context.Background())
+		programs, err = tunarrClient.GetPrograms(context.Background())
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch programs: %w", err)
 		}
 	}
 
 	if cfg.Radarr.URL != "" {
-		programs = applyRadarrAvailability(cfg, programs)
+		programs = applyRadarrAvailability(cfg, programs, contentCache)
 	}
 
 	if cfg.Sonarr.URL != "" {
-		programs = applySonarrAvailability(cfg, programs)
+		programs = applySonarrAvailability(cfg, programs, contentCache)
 	}
 
 	return programs, nil
 }
 
-func fetchTunarrContent(client *tunarr.Client) []tunarr.Program {
+func fetchTunarrContent(client *tunarr.Client, contentCache *cache.Cache) []tunarr.Program {
 	var allPrograms []tunarr.Program
 
+	if contentCache != nil {
+		found, err := contentCache.Get(tunarrCacheKey, &allPrograms)
+		if err != nil {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Tunarr programs from cache: %v. Refetching.", err)))
+		} else if found {
+			if verbose {
+				fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Tunarr programs from cache"))
+			}
+			return allPrograms
+		}
+	}
+
+	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
 	libraries, err := client.GetLibraries(context.Background())
 	if err != nil {
 		if verbose {
@@ -71,18 +101,48 @@ func fetchTunarrContent(client *tunarr.Client) []tunarr.Program {
 		allPrograms = append(allPrograms, programs...)
 	}
 
+	if contentCache != nil {
+		if err := contentCache.Set(tunarrCacheKey, allPrograms); err != nil {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Tunarr programs to cache: %v", err)))
+		}
+	}
+
 	return allPrograms
 }
 
-func applyRadarrAvailability(cfg *config.Config, programs []tunarr.Program) []tunarr.Program {
-	client := radarr.NewClient(cfg.Radarr)
-	movies, err := client.GetMovies(context.Background())
+func applyRadarrAvailability(cfg *config.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
+	var movies []radarr.Movie
+	var err error
+	radarrClient := radarr.NewClient(cfg.Radarr)
+
+	if contentCache != nil {
+		var found bool
+		found, err = contentCache.Get(radarrCacheKey, &movies)
+		if err != nil {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Radarr movies from cache: %v. Refetching.", err)))
+		} else if found {
+			if verbose {
+				fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Radarr movies from cache"))
+			}
+			goto ProcessRadarr
+		}
+	}
+
+	fmt.Println(infoStyle.Render("🎬 Fetching movies from Radarr..."))
+	movies, err = radarrClient.GetMovies(context.Background())
 	if err != nil {
 		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch Radarr movies: %v", err)))
 		return programs
 	}
 
-	availableTitles := buildRadarrMovieIndex(movies)
+	if contentCache != nil {
+		if err := contentCache.Set(radarrCacheKey, movies); err != nil {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Radarr movies to cache: %v", err)))
+		}
+	}
+
+ProcessRadarr:
+	availableTitles := buildRadarrMovieIndex(movies, cfg.Radarr.ExcludeMissingFile)
 	if len(availableTitles.byTitle) == 0 && len(availableTitles.byTitleYear) == 0 {
 		return programs
 	}
@@ -100,32 +160,69 @@ func applyRadarrAvailability(cfg *config.Config, programs []tunarr.Program) []tu
 	return filtered
 }
 
-func applySonarrAvailability(cfg *config.Config, programs []tunarr.Program) []tunarr.Program {
-	client := sonarr.NewClient(cfg.Sonarr)
-	series, err := client.GetSeries(context.Background())
+func applySonarrAvailability(cfg *config.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
+	var series []sonarr.Series
+	var episodes []sonarr.Episode
+	var err error
+	sonarrClient := sonarr.NewClient(cfg.Sonarr)
+
+	if contentCache != nil {
+		var cachedData struct {
+			Series   []sonarr.Series
+			Episodes []sonarr.Episode
+		}
+		var found bool
+		found, err = contentCache.Get(sonarrCacheKey, &cachedData)
+		if err != nil {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Sonarr data from cache: %v. Refetching.", err)))
+		} else if found {
+			if verbose {
+				fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Sonarr data from cache"))
+			}
+			series = cachedData.Series
+			episodes = cachedData.Episodes
+			goto ProcessSonarr
+		}
+	}
+
+	fmt.Println(infoStyle.Render("📺 Fetching series and episodes from Sonarr..."))
+	series, err = sonarrClient.GetSeries(context.Background())
 	if err != nil {
 		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch Sonarr series: %v", err)))
 		return programs
 	}
 
-	seriesByID := make(map[int]sonarr.Series, len(series))
 	for _, s := range series {
-		seriesByID[s.ID] = s
-	}
-
-	var episodes []sonarr.Episode
-	for _, s := range series {
-		seriesEpisodes, err := client.GetEpisodes(context.Background(), s.ID)
+		var seriesEpisodes []sonarr.Episode
+		seriesEpisodes, err = sonarrClient.GetEpisodes(context.Background(), s.ID)
 		if err != nil {
 			if verbose {
-				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch Sonarr episodes for %s: %v", s.Title, err)))
+				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch Sonarr episodes for %s: %v", s.Title, err)))
 			}
 			continue
 		}
 		episodes = append(episodes, seriesEpisodes...)
 	}
 
-	availableEpisodes := buildSonarrEpisodeIndex(seriesByID, episodes)
+	if contentCache != nil {
+		cachedData := struct {
+			Series   []sonarr.Series
+			Episodes []sonarr.Episode
+		}{
+			Series:   series,
+			Episodes: episodes,
+		}
+		if err = contentCache.Set(sonarrCacheKey, cachedData); err != nil {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Sonarr data to cache: %v", err)))
+		}
+	}
+
+ProcessSonarr:
+	seriesByID := make(map[int]sonarr.Series, len(series))
+	for _, s := range series {
+		seriesByID[s.ID] = s
+	}
+	availableEpisodes := buildSonarrEpisodeIndex(seriesByID, episodes, cfg.Sonarr.ExcludeMissingFile)
 	if len(availableEpisodes) == 0 {
 		return programs
 	}
@@ -148,13 +245,13 @@ type radarrMovieIndex struct {
 	byTitle     map[string]struct{}
 }
 
-func buildRadarrMovieIndex(movies []radarr.Movie) radarrMovieIndex {
+func buildRadarrMovieIndex(movies []radarr.Movie, excludeMissing bool) radarrMovieIndex {
 	index := radarrMovieIndex{
 		byTitleYear: make(map[string]struct{}),
 		byTitle:     make(map[string]struct{}),
 	}
 	for _, movie := range movies {
-		if !movie.HasFile || movie.Title == "" {
+		if (excludeMissing && !movie.HasFile) || movie.Title == "" {
 			continue
 		}
 		titleKey := normalizeTitle(movie.Title)
@@ -198,10 +295,10 @@ func isRadarrMovieAvailable(program tunarr.Program, index radarrMovieIndex) bool
 	return ok
 }
 
-func buildSonarrEpisodeIndex(seriesByID map[int]sonarr.Series, episodes []sonarr.Episode) map[string]struct{} {
+func buildSonarrEpisodeIndex(seriesByID map[int]sonarr.Series, episodes []sonarr.Episode, excludeMissing bool) map[string]struct{} {
 	index := make(map[string]struct{})
 	for _, episode := range episodes {
-		if !episode.HasFile {
+		if excludeMissing && !episode.HasFile {
 			continue
 		}
 		series, ok := seriesByID[episode.SeriesID]
@@ -254,3 +351,4 @@ func episodeKey(showTitle string, season, episode int) string {
 func normalizeTitle(title string) string {
 	return strings.ToLower(strings.TrimSpace(title))
 }
+
