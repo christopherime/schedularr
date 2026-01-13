@@ -1,0 +1,20 @@
+[
+  {
+    "id": "channel-1",
+    "name": "Family Entertainment",
+    "number": 101,
+    "startTime": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "channel-2",
+    "name": "Movie Night",
+    "number": 102,
+    "startTime": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "channel-3",
+    "name": "Series Marathon",
+    "number": 103,
+    "startTime": "2026-01-01T00:00:00Z"
+  }
+]

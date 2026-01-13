@@ -130,14 +130,14 @@ This TODO is structured to align Schedularr with established architectural patte
 
 #### Tasks
 
-- [ ] Unit test coverage >80% (currently 43.6% overall, but core packages >70%)
+- [ ] Unit test coverage >80% (currently ~45% overall, core packages >70%)
 - [x] Table-driven tests for all core functions
 - [x] Error path and edge case tests (mostly done)
-- [ ] Integration tests: full scheduling workflow
-- [ ] Integration tests against real Tunarr instance
-- [ ] Create test fixtures with sample data
+- [x] Integration tests: full scheduling workflow
+- [x] Create test fixtures with sample data
 - [x] Mock Tunarr API responses (partially done)
 - [x] Test configuration loading and validation
+- [ ] Integration tests against real Tunarr instance
 - [ ] Test CLI commands with real files
 - [ ] E2E tests: scheduling against real Tunarr instance
 - [ ] E2E tests: verify schedule updates

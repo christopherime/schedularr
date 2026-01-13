@@ -1,0 +1,47 @@
+[
+  {
+    "id": "movie-1",
+    "title": "The Matrix",
+    "type": "movie",
+    "duration": 8160000,
+    "year": 1999,
+    "rating": "R",
+    "genres": ["Action", "Sci-Fi"]
+  },
+  {
+    "id": "movie-2",
+    "title": "Inception",
+    "type": "movie",
+    "duration": 8880000,
+    "year": 2010,
+    "rating": "PG-13",
+    "genres": ["Action", "Sci-Fi", "Thriller"]
+  },
+  {
+    "id": "movie-3",
+    "title": "The Dark Knight",
+    "type": "movie",
+    "duration": 9120000,
+    "year": 2008,
+    "rating": "PG-13",
+    "genres": ["Action", "Crime", "Drama"]
+  },
+  {
+    "id": "movie-4",
+    "title": "Mad Max: Fury Road",
+    "type": "movie",
+    "duration": 7200000,
+    "year": 2015,
+    "rating": "R",
+    "genres": ["Action", "Adventure", "Sci-Fi"]
+  },
+  {
+    "id": "movie-5",
+    "title": "Spider-Man: Into the Spider-Verse",
+    "type": "movie",
+    "duration": 6960000,
+    "year": 2018,
+    "rating": "PG",
+    "genres": ["Animation", "Action", "Adventure"]
+  }
+]

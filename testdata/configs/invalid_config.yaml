@@ -1,0 +1,6 @@
+tunarr:
+  url: "http://localhost:8000"
+
+log:
+  level: "invalid_level"  # Invalid log level
+  format: "text"

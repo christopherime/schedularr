@@ -1,0 +1,40 @@
+blocks:
+  - name: "Morning Cartoons"
+    type: "filter"
+    cron: "0 6 * * *"
+    duration: 240
+    channel_id: "channel-1"
+    priority: 10
+    filter:
+      genres: ["Animation", "Family"]
+      ratings: ["TV-Y", "TV-G"]
+      max_duration: 30
+      year_from: 2000
+
+  - name: "Evening Sitcoms"
+    type: "filter"
+    cron: "0 19 * * *"
+    duration: 180
+    channel_id: "channel-1"
+    priority: 10
+    filter:
+      genres: ["Comedy"]
+      ratings: ["TV-PG", "TV-14"]
+      min_duration: 20
+      max_duration: 30
+
+  - name: "Friday Night Movies"
+    type: "filter"
+    cron: "0 20 * * 5"
+    duration: 240
+    channel_id: "channel-2"
+    priority: 15
+    filter:
+      genres: ["Action", "Adventure"]
+      ratings: ["PG-13", "R"]
+      min_duration: 90
+
+settings:
+  rotation_window_days: 7
+  min_gap_minutes: 5
+  max_filler_minutes: 30

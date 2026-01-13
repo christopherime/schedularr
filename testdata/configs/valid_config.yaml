@@ -1,0 +1,14 @@
+tunarr:
+  url: "http://localhost:8000"
+  api_key: "test-api-key"
+  timeout: "30s"
+
+log:
+  level: "info"
+  format: "text"
+
+cache:
+  cache_dir: "/tmp/schedularr_test_cache"
+  cache_duration: "1h"
+
+database: "/tmp/schedularr_test.db"

@@ -1,0 +1,21 @@
+blocks:
+  - name: "Daily Series Marathon"
+    type: "series"
+    cron: "0 14 * * *"
+    duration: 120
+    channel_id: "channel-3"
+    priority: 20
+    series:
+      - show_title: "The Office"
+        episodes_per_block: 4
+        start_season: 1
+        start_episode: 1
+      - show_title: "Parks and Recreation"
+        episodes_per_block: 4
+        start_season: 1
+        start_episode: 1
+    fallback:
+      mode: "filler"
+      filler_filter:
+        genres: ["Comedy"]
+        max_duration: 30
