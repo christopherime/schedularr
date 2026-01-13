@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/jellyfin"
-	"github.com/geekxflood/schedularr/internal/logging"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/geekxflood/schedularr/internal/tunarr"
@@ -134,7 +133,7 @@ func fetchAndValidateContent(cfg *config.Config, client *tunarr.Client) ([]tunar
 }
 
 func createEngine(cfg *config.Config, client *tunarr.Client, blocks []scheduler.Block, st *store.Store) (*scheduler.Engine, error) {
-	logger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
+	logger := newLogger(cfg.Log.Level, cfg.Log.Format)
 
 	loc, err := time.LoadLocation(cfg.Log.Timezone)
 	if err != nil {

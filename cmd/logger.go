@@ -1,5 +1,4 @@
-// Package logging provides structured logging configuration for Schedularr.
-package logging
+package cmd
 
 import (
 	"log/slog"
@@ -7,10 +6,9 @@ import (
 	"strings"
 )
 
-// NewLogger creates a new slog.Logger based on the provided configuration.
+// newLogger creates a new slog.Logger based on the provided configuration.
 // Format can be "json" or "text", level can be "debug", "info", "warn", or "error".
-func NewLogger(level, format string) *slog.Logger {
-	// Parse log level
+func newLogger(level, format string) *slog.Logger {
 	var logLevel slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -25,12 +23,10 @@ func NewLogger(level, format string) *slog.Logger {
 		logLevel = slog.LevelInfo
 	}
 
-	// Create handler options
 	opts := &slog.HandlerOptions{
 		Level: logLevel,
 	}
 
-	// Create handler based on format
 	var handler slog.Handler
 	if strings.ToLower(format) == "json" {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
@@ -39,9 +35,4 @@ func NewLogger(level, format string) *slog.Logger {
 	}
 
 	return slog.New(handler)
-}
-
-// SetDefault sets the default logger for the application.
-func SetDefault(logger *slog.Logger) {
-	slog.SetDefault(logger)
 }

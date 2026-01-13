@@ -151,17 +151,17 @@ This TODO is structured to align Schedularr with established architectural patte
 
 #### Current Coverage: ~56% overall (updated 2026-01-13)
 
-- internal/logging: 100.0% ✅
-- internal/jellyfin: 96.0% ✅ (improved from 72.0%)
+- internal/jellyfin: 100.0% ✅
 - internal/config: 94.4% ✅
-- internal/scheduler: 92.0% ✅ (improved from 79.5%)
-- internal/cueconfig: 85.5% ✅ (improved from 78.3%)
-- internal/tunarr: 84.4% ✅ (improved from 73.2%)
-- internal/radarr: 81.4% ✅ (improved from 72.1%)
-- internal/sonarr: 81.0% ✅ (improved from 70.7%)
+- internal/radarr: 92.9% ✅
+- internal/tunarr: 90.8% ✅
+- internal/httpclient: 89.3% ✅
+- internal/scheduler: 87.2% ✅
+- internal/sonarr: 86.2% ✅
+- internal/cueconfig: 85.5% ✅
 - internal/cache: 81.0% ✅
-- internal/store: 77.6% ✅ (improved from 72.8%)
-- cmd: 5.9% (CLI commands - hard to test)
+- internal/store: 77.6% ✅
+- cmd: 5.8% (CLI commands - hard to test)
 - internal/tui: 0.0% (TUI - hard to test)
 
 #### Tasks
@@ -414,7 +414,7 @@ type Program struct {
 
 **Actual Impact**: ~20 lines removed from tunarr client, validation now uses struct tags
 
-### 7.2 Remove Logging Wrapper (~47 lines saved)
+### 7.2 Remove Logging Wrapper (~47 lines saved) ✅
 
 **Problem**: `internal/logging/logger.go` (47 lines) is a thin wrapper around `log/slog` that adds minimal value.
 
@@ -428,12 +428,12 @@ type Program struct {
 
 **Tasks**:
 
-- [ ] Evaluate if logging wrapper provides any unique value
-- [ ] If not: inline `Setup()` logic into `cmd/root.go`
-- [ ] Update all imports from `internal/logging` to `log/slog`
-- [ ] Remove `internal/logging/` package
+- [x] Evaluate if logging wrapper provides any unique value ✅
+- [x] Create local `newLogger()` function in `cmd/logger.go` ✅
+- [x] Update all imports from `internal/logging` to local function ✅
+- [x] Remove `internal/logging/` package ✅
 
-**Estimated Impact**: ~47 lines removed, simpler imports, use stdlib directly
+**Actual Impact**: ~47 lines removed (logging package deleted), simpler imports, use stdlib directly
 
 ### 7.3 SQLite with Gorm ORM (optional, ~150 lines saved)
 

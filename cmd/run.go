@@ -12,7 +12,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cueconfig"
-	"github.com/geekxflood/schedularr/internal/logging"
 	"github.com/geekxflood/schedularr/internal/metrics"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
@@ -42,7 +41,7 @@ func init() {
 
 func runDaemon() {
 	cfg := loadDaemonConfig()
-	appLogger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
+	appLogger := newLogger(cfg.Log.Level, cfg.Log.Format)
 
 	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🚀 Starting Schedularr daemon (Interval: %v)", runInterval)))
 
@@ -166,7 +165,7 @@ func runDaemonLoop(cfg *config.Config) {
 		return
 	}
 
-	appLogger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
+	appLogger := newLogger(cfg.Log.Level, cfg.Log.Format)
 	for {
 		select {
 		case <-ticker.C:
@@ -189,7 +188,7 @@ func handleSignal(sig os.Signal, appLogger *slog.Logger) {
 }
 
 func runJob(cfg *config.Config) {
-	appLogger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
+	appLogger := newLogger(cfg.Log.Level, cfg.Log.Format)
 	appLogger.Info("Running schedule update...")
 	// Always apply in daemon mode
 	if err := ProcessSchedule(cfg, schedulerFile, true, false); err != nil {
