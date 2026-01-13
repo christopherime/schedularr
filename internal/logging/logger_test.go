@@ -147,4 +147,3 @@ func TestSetDefault(t *testing.T) {
 		t.Error("Default logger is nil after SetDefault")
 	}
 }
-

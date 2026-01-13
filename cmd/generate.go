@@ -35,9 +35,9 @@ var (
 	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 
 	// Program type colors
-	movieStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))   // Magenta
-	episodeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))   // Blue
-	trackStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))   // Cyan
+	movieStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))            // Magenta
+	episodeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))            // Blue
+	trackStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))            // Cyan
 	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Bold(true) // White/Bold
 	channelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true) // Green/Bold
 )
@@ -409,7 +409,6 @@ func fmtDuration(ms int64) string {
 	}
 	return fmt.Sprintf("%ds", seconds)
 }
-
 
 func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) error {
 	fmt.Println()

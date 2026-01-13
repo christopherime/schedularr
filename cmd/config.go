@@ -10,7 +10,7 @@ import (
 	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper" // Added import
-	"gopkg.in/yaml.v3" // Added import
+	"gopkg.in/yaml.v3"       // Added import
 )
 
 var configCmd = &cobra.Command{

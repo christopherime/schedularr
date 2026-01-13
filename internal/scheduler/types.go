@@ -56,11 +56,11 @@ const (
 type SeriesConfig struct {
 	ShowTitle        string           `mapstructure:"show_title" yaml:"show_title" json:"show_title"`
 	EpisodesPerBlock int              `mapstructure:"episodes_per_block" yaml:"episodes_per_block" json:"episodes_per_block"`
-	StartSeason      int              `mapstructure:"start_season" yaml:"start_season" json:"start_season,omitempty"`       // Optional: override start point
-	StartEpisode     int              `mapstructure:"start_episode" yaml:"start_episode" json:"start_episode,omitempty"`    // Optional: override start point
-	OnComplete       CompletionAction `mapstructure:"on_complete" yaml:"on_complete" json:"on_complete,omitempty"`         // Action when series completes (default: continue)
-	SkipEpisodes     []string         `mapstructure:"skip_episodes" yaml:"skip_episodes" json:"skip_episodes,omitempty"`   // Episodes to skip (format: "S01E05", "S02E10")
-	MaxRuns          int              `mapstructure:"max_runs" yaml:"max_runs" json:"max_runs,omitempty"`                  // Max times to run through series (0 = unlimited)
+	StartSeason      int              `mapstructure:"start_season" yaml:"start_season" json:"start_season,omitempty"`    // Optional: override start point
+	StartEpisode     int              `mapstructure:"start_episode" yaml:"start_episode" json:"start_episode,omitempty"` // Optional: override start point
+	OnComplete       CompletionAction `mapstructure:"on_complete" yaml:"on_complete" json:"on_complete,omitempty"`       // Action when series completes (default: continue)
+	SkipEpisodes     []string         `mapstructure:"skip_episodes" yaml:"skip_episodes" json:"skip_episodes,omitempty"` // Episodes to skip (format: "S01E05", "S02E10")
+	MaxRuns          int              `mapstructure:"max_runs" yaml:"max_runs" json:"max_runs,omitempty"`                // Max times to run through series (0 = unlimited)
 }
 
 // SeriesFallback defines fallback behavior when series content runs out or doesn't fill duration
@@ -71,17 +71,17 @@ type SeriesFallback struct {
 
 // Block defines a scheduled programming block
 type Block struct {
-	Type      BlockType      `mapstructure:"type" yaml:"type" json:"type"` // "filter" or "series", default "filter"
-	Name      string         `mapstructure:"name" yaml:"name" json:"name"`
-	Cron      string         `mapstructure:"cron" yaml:"cron" json:"cron"`             // Cron expression for start time
-	Duration  int            `mapstructure:"duration" yaml:"duration" json:"duration"` // Duration in minutes
-	Filter    Filter         `mapstructure:"filter" yaml:"filter" json:"filter,omitempty"`
-	ChannelID string         `mapstructure:"channel_id" yaml:"channel_id" json:"channel_id"`
-	Priority    int            `mapstructure:"priority" yaml:"priority" json:"priority"`               // Higher priority overrides overlapping blocks
-	MaxDurationOverflowMinutes int `mapstructure:"max_duration_overflow_minutes" yaml:"max_duration_overflow_minutes" json:"max_duration_overflow_minutes,omitempty"` // Max minutes a block's actual duration can exceed its planned duration
-	Filler      FillerConfig   `mapstructure:"filler" yaml:"filler" json:"filler,omitempty"`         // Filler content configuration
-	Series    []SeriesConfig `mapstructure:"series" yaml:"series" json:"series,omitempty"`       // For BlockTypeSeries
-	Fallback  SeriesFallback `mapstructure:"fallback" yaml:"fallback" json:"fallback,omitempty"` // For BlockTypeSeries
+	Type                       BlockType      `mapstructure:"type" yaml:"type" json:"type"` // "filter" or "series", default "filter"
+	Name                       string         `mapstructure:"name" yaml:"name" json:"name"`
+	Cron                       string         `mapstructure:"cron" yaml:"cron" json:"cron"`             // Cron expression for start time
+	Duration                   int            `mapstructure:"duration" yaml:"duration" json:"duration"` // Duration in minutes
+	Filter                     Filter         `mapstructure:"filter" yaml:"filter" json:"filter,omitempty"`
+	ChannelID                  string         `mapstructure:"channel_id" yaml:"channel_id" json:"channel_id"`
+	Priority                   int            `mapstructure:"priority" yaml:"priority" json:"priority"`                                                                          // Higher priority overrides overlapping blocks
+	MaxDurationOverflowMinutes int            `mapstructure:"max_duration_overflow_minutes" yaml:"max_duration_overflow_minutes" json:"max_duration_overflow_minutes,omitempty"` // Max minutes a block's actual duration can exceed its planned duration
+	Filler                     FillerConfig   `mapstructure:"filler" yaml:"filler" json:"filler,omitempty"`                                                                      // Filler content configuration
+	Series                     []SeriesConfig `mapstructure:"series" yaml:"series" json:"series,omitempty"`                                                                      // For BlockTypeSeries
+	Fallback                   SeriesFallback `mapstructure:"fallback" yaml:"fallback" json:"fallback,omitempty"`                                                                // For BlockTypeSeries
 }
 
 // Config holds the scheduling configuration
