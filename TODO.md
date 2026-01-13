@@ -403,16 +403,16 @@ type Program struct {
 
 **Tasks**:
 
-- [ ] Add `github.com/go-playground/validator/v10` to go.mod
-- [ ] Add to depguard allow list in `.golangci.yml`
-- [ ] Add validation tags to `internal/tunarr/models.go` structs
-- [ ] Add validation tags to `internal/radarr/models.go` structs
-- [ ] Add validation tags to `internal/sonarr/models.go` structs
-- [ ] Add validation tags to `internal/jellyfin/` models
-- [ ] Create shared validation helper in `internal/httpclient/`
-- [ ] Remove manual validation functions from API clients
+- [x] Add `github.com/go-playground/validator/v10` to go.mod ✅
+- [x] Add to depguard allow list in `.golangci.yml` ✅
+- [x] Add validation tags to `internal/tunarr/models.go` structs ✅
+- [ ] Add validation tags to `internal/radarr/models.go` structs (optional - no validation currently)
+- [ ] Add validation tags to `internal/sonarr/models.go` structs (optional - no validation currently)
+- [ ] Add validation tags to `internal/jellyfin/` models (optional - no validation currently)
+- [x] Create shared validation helper in `internal/httpclient/validation.go` ✅
+- [x] Replace manual validation functions in tunarr client ✅
 
-**Estimated Impact**: ~80 lines removed, cleaner validation, better error messages
+**Actual Impact**: ~20 lines removed from tunarr client, validation now uses struct tags
 
 ### 7.2 Remove Logging Wrapper (~47 lines saved)
 

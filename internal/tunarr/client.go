@@ -30,32 +30,14 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
-// validateChannel validates a Channel struct for required fields.
+// validateChannel validates a Channel struct using struct tags.
 func validateChannel(ch *Channel) error {
-	if ch.ID == "" {
-		return errors.New("channel missing required field: id")
-	}
-	if ch.Name == "" {
-		return fmt.Errorf("channel %s missing required field: name", ch.ID)
-	}
-	return nil
+	return httpclient.Validate(ch)
 }
 
-// validateProgram validates a Program struct for required fields.
+// validateProgram validates a Program struct using struct tags.
 func validateProgram(p *Program) error {
-	if p.ID == "" {
-		return errors.New("program missing required field: id")
-	}
-	if p.Title == "" {
-		return fmt.Errorf("program %s missing required field: title", p.ID)
-	}
-	if p.Duration <= 0 {
-		return fmt.Errorf("program %s has invalid duration: %d", p.ID, p.Duration)
-	}
-	if p.Type != "movie" && p.Type != "episode" && p.Type != "track" && p.Type != "" {
-		return fmt.Errorf("program %s has invalid type: %s", p.ID, p.Type)
-	}
-	return nil
+	return httpclient.Validate(p)
 }
 
 // GetChannels retrieves all channels from the Tunarr instance.
