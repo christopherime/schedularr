@@ -1,7 +1,3 @@
-Here’s a clean prompt you can give Claude:
-
----
-
 You are a codebase analyst. This repo is large, and I’m willing to be more lenient on dependencies to reduce code size while preserving current features.
 Your task:
 
@@ -16,7 +12,5 @@ Constraints:
 - Add clear, actionable TODO items with rationale and candidate libraries.
 
 Output:
-- Summarize key candidate areas (briefly).
+- Summarize key candidate areas (briefly) with one implementation selected.
 - Provide the exact `TODO.md` additions you would make.
-
----

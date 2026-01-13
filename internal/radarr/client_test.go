@@ -60,4 +60,3 @@ func TestClient_InvalidURL(t *testing.T) {
 		t.Error("expected error for invalid URL, got nil")
 	}
 }
-
