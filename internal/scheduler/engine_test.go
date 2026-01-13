@@ -6,11 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSlotsOverlap(t *testing.T) {
@@ -61,9 +62,7 @@ func TestSlotsOverlap(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := slotsOverlap(tt.slot1, tt.slot2)
-			if result != tt.expected {
-				t.Errorf("slotsOverlap() = %v, expected %v", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result, "slotsOverlap result mismatch")
 		})
 	}
 }
@@ -121,15 +120,11 @@ func TestResolveConflicts(t *testing.T) {
 			// Create a minimal engine to call the method
 			engine := &Engine{logger: slog.Default()}
 			resolved := engine.resolveConflicts(tt.slots)
-			if len(resolved) != tt.expected {
-				t.Errorf("resolveConflicts() returned %d slots, expected %d", len(resolved), tt.expected)
-			}
+			assert.Len(t, resolved, tt.expected, "resolveConflicts returned wrong number of slots")
 
 			// If there were conflicts, verify high priority won
 			if tt.name == "two overlapping slots - high priority wins" && len(resolved) > 0 {
-				if resolved[0].Block.Priority != 20 {
-					t.Errorf("Expected high priority block to win, got priority %d", resolved[0].Block.Priority)
-				}
+				assert.Equal(t, 20, resolved[0].Block.Priority, "Expected high priority block to win")
 			}
 		})
 	}
@@ -165,13 +160,8 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
-
-	if len(playlist) != 2 {
-		t.Errorf("Expected 2 programs in playlist, got %d", len(playlist))
-	}
+	require.NoError(t, err, "PlanBlock returned error")
+	require.Len(t, playlist, 2, "Expected 2 programs in playlist")
 
 	// Check total duration
 	var totalDuration int64
@@ -180,9 +170,7 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 	}
 
 	// Should be 60 minutes (3600000 ms)
-	if totalDuration != 3600000 {
-		t.Errorf("Expected total duration 3600000 ms, got %d ms", totalDuration)
-	}
+	assert.Equal(t, int64(3600000), totalDuration, "Expected total duration 3600000 ms")
 }
 
 func TestPlanBlock_NoMatchingContent(t *testing.T) {
@@ -208,9 +196,7 @@ func TestPlanBlock_NoMatchingContent(t *testing.T) {
 	}
 
 	_, err := engine.PlanBlock(block, availablePrograms)
-	if err == nil {
-		t.Error("Expected error when no content matches filter, got nil")
-	}
+	assert.Error(t, err, "Expected error when no content matches filter")
 }
 
 func TestPlanBlock_UsesStoreHistory(t *testing.T) {
@@ -239,16 +225,9 @@ func TestPlanBlock_UsesStoreHistory(t *testing.T) {
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
-
-	if len(playlist) != 1 {
-		t.Fatalf("Expected 1 program, got %d", len(playlist))
-	}
-	if playlist[0].ID != "prog-2" {
-		t.Errorf("Expected prog-2 after filtering, got %s", playlist[0].ID)
-	}
+	require.NoError(t, err, "PlanBlock returned error")
+	require.Len(t, playlist, 1, "Expected 1 program")
+	assert.Equal(t, "prog-2", playlist[0].ID, "Expected prog-2 after filtering")
 }
 
 func TestCommit_CleansUpScheduleHistory(t *testing.T) {
@@ -271,16 +250,9 @@ func TestCommit_CleansUpScheduleHistory(t *testing.T) {
 
 	engine := NewEngineWithHistory(client, []Block{}, 24*time.Hour, store, slog.Default(), time.UTC)
 
-	if err := engine.Commit(); err != nil {
-		t.Fatalf("Commit returned error: %v", err)
-	}
-
-	if len(store.History) != 1 {
-		t.Fatalf("expected 1 history entry after cleanup, got %d", len(store.History))
-	}
-	if store.History[0].ProgramID != "new-prog" {
-		t.Errorf("expected new-prog to remain, got %s", store.History[0].ProgramID)
-	}
+	require.NoError(t, engine.Commit(), "Commit returned error")
+	require.Len(t, store.History, 1, "Expected 1 history entry after cleanup")
+	assert.Equal(t, "new-prog", store.History[0].ProgramID, "Expected new-prog to remain")
 }
 
 func TestPlanBlock_Series(t *testing.T) {
@@ -310,26 +282,15 @@ func TestPlanBlock_Series(t *testing.T) {
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
-
-	if len(playlist) != 2 {
-		t.Errorf("Expected 2 episodes, got %d", len(playlist))
-	}
-
-	if playlist[0].Episode != 1 || playlist[1].Episode != 2 {
-		t.Errorf("Expected Ep 1 and Ep 2, got %v", playlist)
-	}
+	require.NoError(t, err, "PlanBlock returned error")
+	require.Len(t, playlist, 2, "Expected 2 episodes")
+	assert.Equal(t, 1, playlist[0].Episode, "Expected Ep 1")
+	assert.Equal(t, 2, playlist[1].Episode, "Expected Ep 2")
 
 	// Verify pending state
 	state, ok := engine.pendingStates["Show A"]
-	if !ok {
-		t.Fatal("Expected pending state for Show A")
-	}
-	if state.CurrentEpisode != 3 {
-		t.Errorf("Expected next episode to be 3, got %d", state.CurrentEpisode)
-	}
+	require.True(t, ok, "Expected pending state for Show A")
+	assert.Equal(t, 3, state.CurrentEpisode, "Expected next episode to be 3")
 }
 
 func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
@@ -354,20 +315,12 @@ func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
-	if len(playlist) != 0 {
-		t.Fatalf("Expected empty playlist, got %d items", len(playlist))
-	}
+	require.NoError(t, err, "PlanBlock returned error")
+	require.Empty(t, playlist, "Expected empty playlist")
 
 	state, ok := engine.pendingStates["Missing Show"]
-	if !ok {
-		t.Fatal("Expected pending state for Missing Show")
-	}
-	if !state.Completed {
-		t.Error("Expected series to be marked completed")
-	}
+	require.True(t, ok, "Expected pending state for Missing Show")
+	assert.True(t, state.Completed, "Expected series to be marked completed")
 }
 
 func TestSeriesCompletion_Restart(t *testing.T) {
@@ -403,27 +356,15 @@ func TestSeriesCompletion_Restart(t *testing.T) {
 	}
 
 	_, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
+	require.NoError(t, err, "PlanBlock returned error")
 
 	state, ok := engine.pendingStates["Test Show"]
-	if !ok {
-		t.Fatal("Expected pending state for Test Show")
-	}
+	require.True(t, ok, "Expected pending state for Test Show")
 
-	if state.Completed {
-		t.Error("Expected series to be restarted, not marked completed")
-	}
-	if state.CurrentSeason != 1 {
-		t.Errorf("Expected season to be reset to 1, got %d", state.CurrentSeason)
-	}
-	if state.CurrentEpisode != 1 {
-		t.Errorf("Expected episode to be reset to 1, got %d", state.CurrentEpisode)
-	}
-	if state.RunCount != 1 {
-		t.Errorf("Expected run count to be 1, got %d", state.RunCount)
-	}
+	assert.False(t, state.Completed, "Expected series to be restarted, not marked completed")
+	assert.Equal(t, 1, state.CurrentSeason, "Expected season to be reset to 1")
+	assert.Equal(t, 1, state.CurrentEpisode, "Expected episode to be reset to 1")
+	assert.Equal(t, 1, state.RunCount, "Expected run count to be 1")
 }
 
 func TestSeriesCompletion_Disable(t *testing.T) {
@@ -454,21 +395,13 @@ func TestSeriesCompletion_Disable(t *testing.T) {
 	availablePrograms := []tunarr.Program{}
 
 	_, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
+	require.NoError(t, err, "PlanBlock returned error")
 
 	state, ok := engine.pendingStates["Test Show"]
-	if !ok {
-		t.Fatal("Expected pending state for Test Show")
-	}
+	require.True(t, ok, "Expected pending state for Test Show")
 
-	if !state.Completed {
-		t.Error("Expected series to be marked completed")
-	}
-	if !state.Disabled {
-		t.Error("Expected series to be disabled")
-	}
+	assert.True(t, state.Completed, "Expected series to be marked completed")
+	assert.True(t, state.Disabled, "Expected series to be disabled")
 }
 
 func TestSeriesCompletion_MaxRuns(t *testing.T) {
@@ -502,21 +435,13 @@ func TestSeriesCompletion_MaxRuns(t *testing.T) {
 	availablePrograms := []tunarr.Program{}
 
 	_, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
+	require.NoError(t, err, "PlanBlock returned error")
 
 	state, ok := engine.pendingStates["Test Show"]
-	if !ok {
-		t.Fatal("Expected pending state for Test Show")
-	}
+	require.True(t, ok, "Expected pending state for Test Show")
 
-	if state.RunCount != 3 {
-		t.Errorf("Expected run count to be 3, got %d", state.RunCount)
-	}
-	if !state.Disabled {
-		t.Error("Expected series to be disabled after reaching max runs")
-	}
+	assert.Equal(t, 3, state.RunCount, "Expected run count to be 3")
+	assert.True(t, state.Disabled, "Expected series to be disabled after reaching max runs")
 }
 
 func TestSeriesEpisodeSkipping(t *testing.T) {
@@ -553,34 +478,20 @@ func TestSeriesEpisodeSkipping(t *testing.T) {
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
+	require.NoError(t, err, "PlanBlock returned error")
 
 	// Should get E01, skip E02, get E03, get E05 (skipping E02 and E04)
-	if len(playlist) != 3 {
-		t.Fatalf("Expected 3 episodes (E01, E03, E05 - skipping E02 and E04), got %d", len(playlist))
-	}
+	require.Len(t, playlist, 3, "Expected 3 episodes (E01, E03, E05 - skipping E02 and E04)")
 
-	if playlist[0].Episode != 1 {
-		t.Errorf("Expected first episode to be E01, got E%02d", playlist[0].Episode)
-	}
-	if playlist[1].Episode != 3 {
-		t.Errorf("Expected second episode to be E03 (skipped E02), got E%02d", playlist[1].Episode)
-	}
-	if playlist[2].Episode != 5 {
-		t.Errorf("Expected third episode to be E05 (skipped E04), got E%02d", playlist[2].Episode)
-	}
+	assert.Equal(t, 1, playlist[0].Episode, "Expected first episode to be E01")
+	assert.Equal(t, 3, playlist[1].Episode, "Expected second episode to be E03 (skipped E02)")
+	assert.Equal(t, 5, playlist[2].Episode, "Expected third episode to be E05 (skipped E04)")
 
 	state, ok := engine.pendingStates["Test Show"]
-	if !ok {
-		t.Fatal("Expected pending state for Test Show")
-	}
+	require.True(t, ok, "Expected pending state for Test Show")
 
 	// Should be at E06 (next episode after E05)
-	if state.CurrentEpisode != 6 {
-		t.Errorf("Expected current episode to be 6, got %d", state.CurrentEpisode)
-	}
+	assert.Equal(t, 6, state.CurrentEpisode, "Expected current episode to be 6")
 }
 
 func TestSeriesSkipDisabled(t *testing.T) {
@@ -613,14 +524,10 @@ func TestSeriesSkipDisabled(t *testing.T) {
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
-	if err != nil {
-		t.Fatalf("PlanBlock returned error: %v", err)
-	}
+	require.NoError(t, err, "PlanBlock returned error")
 
 	// Should get empty playlist because series is disabled
-	if len(playlist) != 0 {
-		t.Errorf("Expected empty playlist for disabled series, got %d items", len(playlist))
-	}
+	assert.Empty(t, playlist, "Expected empty playlist for disabled series")
 }
 
 func TestGenerateForTimeRange(t *testing.T) {
@@ -664,20 +571,14 @@ func TestGenerateForTimeRange(t *testing.T) {
 	end := start.Add(24 * time.Hour)
 
 	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
-	if err != nil {
-		t.Fatalf("GenerateForTimeRange returned error: %v", err)
-	}
+	require.NoError(t, err, "GenerateForTimeRange returned error")
 
 	// Should have schedule for channel-1
 	programs, ok := schedule["channel-1"]
-	if !ok {
-		t.Fatal("Expected schedule for channel-1")
-	}
+	require.True(t, ok, "Expected schedule for channel-1")
 
 	// Should have programs from both blocks (morning and evening)
-	if len(programs) == 0 {
-		t.Error("Expected programs in schedule")
-	}
+	assert.NotEmpty(t, programs, "Expected programs in schedule")
 }
 
 func TestGenerateForTimeRange_InvalidCron(t *testing.T) {
@@ -701,9 +602,7 @@ func TestGenerateForTimeRange_InvalidCron(t *testing.T) {
 	end := start.Add(24 * time.Hour)
 
 	_, err := engine.GenerateForTimeRange(start, end, []tunarr.Program{})
-	if err == nil {
-		t.Error("Expected error for invalid cron expression")
-	}
+	assert.Error(t, err, "Expected error for invalid cron expression")
 }
 
 func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
@@ -746,19 +645,13 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 	end := start.Add(24 * time.Hour)
 
 	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
-	if err != nil {
-		t.Fatalf("GenerateForTimeRange returned error: %v", err)
-	}
+	require.NoError(t, err, "GenerateForTimeRange returned error")
 
 	programs, ok := schedule["channel-1"]
-	if !ok {
-		t.Fatal("Expected schedule for channel-1")
-	}
+	require.True(t, ok, "Expected schedule for channel-1")
 
 	// Should have programs from both blocks, with high priority winning conflicts
-	if len(programs) == 0 {
-		t.Error("Expected programs in schedule")
-	}
+	assert.NotEmpty(t, programs, "Expected programs in schedule")
 }
 
 func TestCommit(t *testing.T) {
@@ -778,27 +671,17 @@ func TestCommit(t *testing.T) {
 		CurrentEpisode: 3,
 	}
 
-	err := engine.Commit()
-	if err != nil {
-		t.Fatalf("Commit returned error: %v", err)
-	}
+	require.NoError(t, engine.Commit(), "Commit returned error")
 
 	// Verify states were saved to store
-	if len(store.States) != 2 {
-		t.Errorf("Expected 2 states in store, got %d", len(store.States))
-	}
+	require.Len(t, store.States, 2, "Expected 2 states in store")
 
 	state1, ok := store.States["Show1"]
-	if !ok {
-		t.Error("Expected Show1 in store")
-	} else if state1.CurrentEpisode != 5 {
-		t.Errorf("Expected Show1 episode 5, got %d", state1.CurrentEpisode)
-	}
+	require.True(t, ok, "Expected Show1 in store")
+	assert.Equal(t, 5, state1.CurrentEpisode, "Expected Show1 episode 5")
 
 	// Verify pending states were cleared
-	if len(engine.pendingStates) != 0 {
-		t.Errorf("Expected pending states to be cleared, got %d", len(engine.pendingStates))
-	}
+	assert.Empty(t, engine.pendingStates, "Expected pending states to be cleared")
 }
 
 func TestFilterByHistory(t *testing.T) {
@@ -834,31 +717,26 @@ func TestFilterByHistory(t *testing.T) {
 	// p1 should be filtered out (aired 3 days ago, within 7 day window)
 	// p2 should be included (aired 10 days ago, outside 7 day window)
 	// p3 should be included (never aired)
-	if len(filtered) != 2 {
-		t.Errorf("Expected 2 programs after filtering, got %d", len(filtered))
-	}
+	assert.Len(t, filtered, 2, "Expected 2 programs after filtering")
 
 	// Verify p1 was filtered out
 	for _, p := range filtered {
-		if p.ID == "p1" {
-			t.Error("Expected p1 to be filtered out")
-		}
+		assert.NotEqual(t, "p1", p.ID, "Expected p1 to be filtered out")
 	}
 }
 
 func TestGetFiller_Success(t *testing.T) {
 	// Create a test server that returns filler content
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/filler-lists/filler-1/content" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
+		assert.Equal(t, "/api/filler-lists/filler-1/content", r.URL.Path, "unexpected path")
 		fillerContent := []tunarr.Program{
 			{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"},  // 5 min
 			{ID: "f2", Title: "Filler 2", Duration: 600000, Type: "track"},  // 10 min
 			{ID: "f3", Title: "Filler 3", Duration: 900000, Type: "track"},  // 15 min
 			{ID: "f4", Title: "Filler 4", Duration: 1200000, Type: "track"}, // 20 min
 		}
-		json.NewEncoder(w).Encode(fillerContent)
+		err := json.NewEncoder(w).Encode(fillerContent)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -874,22 +752,15 @@ func TestGetFiller_Success(t *testing.T) {
 
 	// Request 30 minutes of filler (1800000 ms)
 	filler, err := engine.getFiller(block, 1800000)
-	if err != nil {
-		t.Fatalf("getFiller failed: %v", err)
-	}
-
-	if len(filler) == 0 {
-		t.Error("Expected filler programs, got none")
-	}
+	require.NoError(t, err, "getFiller failed")
+	assert.NotEmpty(t, filler, "Expected filler programs")
 
 	totalDuration := int64(0)
 	for _, f := range filler {
 		totalDuration += f.Duration
 	}
 
-	if totalDuration > 1800000 {
-		t.Errorf("Filler duration %d exceeds requested %d", totalDuration, 1800000)
-	}
+	assert.LessOrEqual(t, totalDuration, int64(1800000), "Filler duration exceeds requested")
 }
 
 func TestGetFiller_NoFillerListID(t *testing.T) {
@@ -904,18 +775,15 @@ func TestGetFiller_NoFillerListID(t *testing.T) {
 	}
 
 	_, err := engine.getFiller(block, 1800000)
-	if err == nil {
-		t.Error("Expected error for empty filler list ID, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "no filler list ID") {
-		t.Errorf("Expected error about no filler list ID, got: %v", err)
-	}
+	require.Error(t, err, "Expected error for empty filler list ID")
+	assert.Contains(t, err.Error(), "no filler list ID")
 }
 
 func TestGetFiller_EmptyFillerList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return empty array
-		json.NewEncoder(w).Encode([]tunarr.Program{})
+		err := json.NewEncoder(w).Encode([]tunarr.Program{})
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -930,12 +798,8 @@ func TestGetFiller_EmptyFillerList(t *testing.T) {
 	}
 
 	_, err := engine.getFiller(block, 1800000)
-	if err == nil {
-		t.Error("Expected error for empty filler list, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "is empty") {
-		t.Errorf("Expected error about empty filler list, got: %v", err)
-	}
+	require.Error(t, err, "Expected error for empty filler list")
+	assert.Contains(t, err.Error(), "is empty")
 }
 
 func TestGetFiller_APIError(t *testing.T) {
@@ -955,12 +819,8 @@ func TestGetFiller_APIError(t *testing.T) {
 	}
 
 	_, err := engine.getFiller(block, 1800000)
-	if err == nil {
-		t.Error("Expected error from API, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "failed to fetch filler") {
-		t.Errorf("Expected API error, got: %v", err)
-	}
+	require.Error(t, err, "Expected error from API")
+	assert.Contains(t, err.Error(), "failed to fetch filler")
 }
 
 func TestGetFiller_MaxFillerTime(t *testing.T) {
@@ -972,7 +832,8 @@ func TestGetFiller_MaxFillerTime(t *testing.T) {
 			{ID: "f4", Title: "Filler 4", Duration: 300000, Type: "track"}, // 5 min
 			{ID: "f5", Title: "Filler 5", Duration: 300000, Type: "track"}, // 5 min
 		}
-		json.NewEncoder(w).Encode(fillerContent)
+		err := json.NewEncoder(w).Encode(fillerContent)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -989,9 +850,7 @@ func TestGetFiller_MaxFillerTime(t *testing.T) {
 
 	// Request 30 minutes, but max filler is 10 minutes
 	filler, err := engine.getFiller(block, 1800000)
-	if err != nil {
-		t.Fatalf("getFiller failed: %v", err)
-	}
+	require.NoError(t, err, "getFiller failed")
 
 	totalDuration := int64(0)
 	for _, f := range filler {
@@ -999,9 +858,7 @@ func TestGetFiller_MaxFillerTime(t *testing.T) {
 	}
 
 	// Should not exceed 10 minutes (600000 ms)
-	if totalDuration > 600000 {
-		t.Errorf("Filler duration %d exceeds max filler time %d", totalDuration, 600000)
-	}
+	assert.LessOrEqual(t, totalDuration, int64(600000), "Filler duration exceeds max filler time")
 }
 
 func TestApplyBlockFiller_Success(t *testing.T) {
@@ -1010,7 +867,8 @@ func TestApplyBlockFiller_Success(t *testing.T) {
 			{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"}, // 5 min
 			{ID: "f2", Title: "Filler 2", Duration: 300000, Type: "track"}, // 5 min
 		}
-		json.NewEncoder(w).Encode(fillerContent)
+		err := json.NewEncoder(w).Encode(fillerContent)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -1034,17 +892,9 @@ func TestApplyBlockFiller_Success(t *testing.T) {
 
 	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
 
-	if len(playlist) <= len(initialPlaylist) {
-		t.Error("Expected filler to be added to playlist")
-	}
-
-	if finalDuration <= currentDuration {
-		t.Error("Expected duration to increase after adding filler")
-	}
-
-	if finalDuration > targetDuration {
-		t.Errorf("Filler exceeded target duration: %d > %d", finalDuration, targetDuration)
-	}
+	assert.Greater(t, len(playlist), len(initialPlaylist), "Expected filler to be added to playlist")
+	assert.Greater(t, finalDuration, currentDuration, "Expected duration to increase after adding filler")
+	assert.LessOrEqual(t, finalDuration, targetDuration, "Filler exceeded target duration")
 }
 
 func TestApplyBlockFiller_GapTooSmall(t *testing.T) {
@@ -1068,13 +918,8 @@ func TestApplyBlockFiller_GapTooSmall(t *testing.T) {
 	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
 
 	// Should not add filler because gap is too small
-	if len(playlist) != len(initialPlaylist) {
-		t.Error("Expected no filler to be added (gap too small)")
-	}
-
-	if finalDuration != currentDuration {
-		t.Error("Expected duration to remain unchanged")
-	}
+	assert.Len(t, playlist, len(initialPlaylist), "Expected no filler to be added (gap too small)")
+	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
 }
 
 func TestApplyBlockFiller_FillerDisabled(t *testing.T) {
@@ -1096,13 +941,8 @@ func TestApplyBlockFiller_FillerDisabled(t *testing.T) {
 
 	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
 
-	if len(playlist) != len(initialPlaylist) {
-		t.Error("Expected no filler to be added (filler disabled)")
-	}
-
-	if finalDuration != currentDuration {
-		t.Error("Expected duration to remain unchanged")
-	}
+	assert.Len(t, playlist, len(initialPlaylist), "Expected no filler to be added (filler disabled)")
+	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
 }
 
 func TestApplySeriesFallback_FillerMode(t *testing.T) {
@@ -1132,13 +972,8 @@ func TestApplySeriesFallback_FillerMode(t *testing.T) {
 
 	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration)
 
-	if len(playlist) <= len(initialPlaylist) {
-		t.Error("Expected fallback filler to be added")
-	}
-
-	if finalDuration <= currentDuration {
-		t.Error("Expected duration to increase after fallback")
-	}
+	assert.Greater(t, len(playlist), len(initialPlaylist), "Expected fallback filler to be added")
+	assert.Greater(t, finalDuration, currentDuration, "Expected duration to increase after fallback")
 }
 
 func TestApplySeriesFallback_NoFallbackNeeded(t *testing.T) {
@@ -1154,13 +989,8 @@ func TestApplySeriesFallback_NoFallbackNeeded(t *testing.T) {
 
 	playlist, finalDuration := engine.applySeriesFallback(Block{}, []tunarr.Program{}, initialPlaylist, currentDuration, targetDuration)
 
-	if len(playlist) != len(initialPlaylist) {
-		t.Error("Expected no fallback when at target duration")
-	}
-
-	if finalDuration != currentDuration {
-		t.Error("Expected duration to remain unchanged")
-	}
+	assert.Len(t, playlist, len(initialPlaylist), "Expected no fallback when at target duration")
+	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
 }
 
 func TestApplySeriesFallback_NotFillerMode(t *testing.T) {
@@ -1186,13 +1016,8 @@ func TestApplySeriesFallback_NotFillerMode(t *testing.T) {
 
 	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration)
 
-	if len(playlist) != len(initialPlaylist) {
-		t.Error("Expected no fallback when not in filler mode")
-	}
-
-	if finalDuration != currentDuration {
-		t.Error("Expected duration to remain unchanged")
-	}
+	assert.Len(t, playlist, len(initialPlaylist), "Expected no fallback when not in filler mode")
+	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
 }
 
 func TestInitializeSeriesState_NewStateWithStartSeasonAndEpisode(t *testing.T) {
@@ -1215,13 +1040,8 @@ func TestInitializeSeriesState_NewStateWithStartSeasonAndEpisode(t *testing.T) {
 
 	engine.initializeSeriesState(state, config)
 
-	if state.CurrentSeason != 3 {
-		t.Errorf("Expected CurrentSeason to be 3, got %d", state.CurrentSeason)
-	}
-
-	if state.CurrentEpisode != 5 {
-		t.Errorf("Expected CurrentEpisode to be 5, got %d", state.CurrentEpisode)
-	}
+	assert.Equal(t, 3, state.CurrentSeason, "Expected CurrentSeason to be 3")
+	assert.Equal(t, 5, state.CurrentEpisode, "Expected CurrentEpisode to be 5")
 }
 
 func TestInitializeSeriesState_ExistingStateNotModified(t *testing.T) {
@@ -1245,13 +1065,8 @@ func TestInitializeSeriesState_ExistingStateNotModified(t *testing.T) {
 	engine.initializeSeriesState(state, config)
 
 	// State should not be modified when LastAired is not zero
-	if state.CurrentSeason != 2 {
-		t.Errorf("Expected CurrentSeason to remain 2, got %d", state.CurrentSeason)
-	}
-
-	if state.CurrentEpisode != 7 {
-		t.Errorf("Expected CurrentEpisode to remain 7, got %d", state.CurrentEpisode)
-	}
+	assert.Equal(t, 2, state.CurrentSeason, "Expected CurrentSeason to remain 2")
+	assert.Equal(t, 7, state.CurrentEpisode, "Expected CurrentEpisode to remain 7")
 }
 
 func TestInitializeSeriesState_StartSeasonOnly(t *testing.T) {
@@ -1274,13 +1089,8 @@ func TestInitializeSeriesState_StartSeasonOnly(t *testing.T) {
 
 	engine.initializeSeriesState(state, config)
 
-	if state.CurrentSeason != 4 {
-		t.Errorf("Expected CurrentSeason to be 4, got %d", state.CurrentSeason)
-	}
-
-	if state.CurrentEpisode != 1 {
-		t.Errorf("Expected CurrentEpisode to remain 1, got %d", state.CurrentEpisode)
-	}
+	assert.Equal(t, 4, state.CurrentSeason, "Expected CurrentSeason to be 4")
+	assert.Equal(t, 1, state.CurrentEpisode, "Expected CurrentEpisode to remain 1")
 }
 
 func TestInitializeSeriesState_StartEpisodeOnly(t *testing.T) {
@@ -1303,13 +1113,8 @@ func TestInitializeSeriesState_StartEpisodeOnly(t *testing.T) {
 
 	engine.initializeSeriesState(state, config)
 
-	if state.CurrentSeason != 1 {
-		t.Errorf("Expected CurrentSeason to remain 1, got %d", state.CurrentSeason)
-	}
-
-	if state.CurrentEpisode != 10 {
-		t.Errorf("Expected CurrentEpisode to be 10, got %d", state.CurrentEpisode)
-	}
+	assert.Equal(t, 1, state.CurrentSeason, "Expected CurrentSeason to remain 1")
+	assert.Equal(t, 10, state.CurrentEpisode, "Expected CurrentEpisode to be 10")
 }
 
 func TestInitializeSeriesState_NoStartConfig(t *testing.T) {
@@ -1332,13 +1137,8 @@ func TestInitializeSeriesState_NoStartConfig(t *testing.T) {
 	engine.initializeSeriesState(state, config)
 
 	// State should remain unchanged when no start config is provided
-	if state.CurrentSeason != 1 {
-		t.Errorf("Expected CurrentSeason to remain 1, got %d", state.CurrentSeason)
-	}
-
-	if state.CurrentEpisode != 1 {
-		t.Errorf("Expected CurrentEpisode to remain 1, got %d", state.CurrentEpisode)
-	}
+	assert.Equal(t, 1, state.CurrentSeason, "Expected CurrentSeason to remain 1")
+	assert.Equal(t, 1, state.CurrentEpisode, "Expected CurrentEpisode to remain 1")
 }
 
 func TestNewEngineWithOptions_AllOptionsProvided(t *testing.T) {
@@ -1356,17 +1156,9 @@ func TestNewEngineWithOptions_AllOptionsProvided(t *testing.T) {
 
 	engine := NewEngineWithOptions(client, []Block{}, store, opts)
 
-	if engine.logger != logger {
-		t.Error("Expected custom logger to be used")
-	}
-
-	if engine.location != loc {
-		t.Error("Expected custom location to be used")
-	}
-
-	if engine.history.Window() != historyWindow {
-		t.Errorf("Expected history window to be %v, got %v", historyWindow, engine.history.Window())
-	}
+	assert.Equal(t, logger, engine.logger, "Expected custom logger to be used")
+	assert.Equal(t, loc, engine.location, "Expected custom location to be used")
+	assert.Equal(t, historyWindow, engine.history.Window(), "Expected custom history window")
 }
 
 func TestNewEngineWithOptions_DefaultLogger(t *testing.T) {
@@ -1379,9 +1171,7 @@ func TestNewEngineWithOptions_DefaultLogger(t *testing.T) {
 
 	engine := NewEngineWithOptions(client, []Block{}, store, opts)
 
-	if engine.logger == nil {
-		t.Error("Expected logger to be set to default")
-	}
+	assert.NotNil(t, engine.logger, "Expected logger to be set to default")
 }
 
 func TestNewEngineWithOptions_DefaultLocation(t *testing.T) {
@@ -1394,9 +1184,7 @@ func TestNewEngineWithOptions_DefaultLocation(t *testing.T) {
 
 	engine := NewEngineWithOptions(client, []Block{}, store, opts)
 
-	if engine.location != time.Local {
-		t.Error("Expected location to be set to time.Local")
-	}
+	assert.Equal(t, time.Local, engine.location, "Expected location to be set to time.Local")
 }
 
 func TestNewEngineWithOptions_DefaultHistoryWindow(t *testing.T) {
@@ -1410,9 +1198,7 @@ func TestNewEngineWithOptions_DefaultHistoryWindow(t *testing.T) {
 	engine := NewEngineWithOptions(client, []Block{}, store, opts)
 
 	expectedWindow := 7 * 24 * time.Hour
-	if engine.history.Window() != expectedWindow {
-		t.Errorf("Expected history window to be %v, got %v", expectedWindow, engine.history.Window())
-	}
+	assert.Equal(t, expectedWindow, engine.history.Window(), "Expected history window to be 7 days")
 }
 
 func TestFindNextSeriesEpisode_FindsCurrent(t *testing.T) {
@@ -1438,13 +1224,8 @@ func TestFindNextSeriesEpisode_FindsCurrent(t *testing.T) {
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
 
-	if ep == nil {
-		t.Fatal("Expected to find episode")
-	}
-
-	if ep.ID != "e2" {
-		t.Errorf("Expected episode e2, got %s", ep.ID)
-	}
+	require.NotNil(t, ep, "Expected to find episode")
+	assert.Equal(t, "e2", ep.ID, "Expected episode e2")
 }
 
 func TestFindNextSeriesEpisode_SkipsEpisodes(t *testing.T) {
@@ -1472,17 +1253,9 @@ func TestFindNextSeriesEpisode_SkipsEpisodes(t *testing.T) {
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
 
-	if ep == nil {
-		t.Fatal("Expected to find episode")
-	}
-
-	if ep.ID != "e4" {
-		t.Errorf("Expected episode e4 after skipping e2 and e3, got %s", ep.ID)
-	}
-
-	if state.CurrentEpisode != 4 {
-		t.Errorf("Expected CurrentEpisode to be 4 after skipping, got %d", state.CurrentEpisode)
-	}
+	require.NotNil(t, ep, "Expected to find episode")
+	assert.Equal(t, "e4", ep.ID, "Expected episode e4 after skipping e2 and e3")
+	assert.Equal(t, 4, state.CurrentEpisode, "Expected CurrentEpisode to be 4 after skipping")
 }
 
 func TestFindNextSeriesEpisode_AdvancesToNextSeason(t *testing.T) {
@@ -1508,21 +1281,10 @@ func TestFindNextSeriesEpisode_AdvancesToNextSeason(t *testing.T) {
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
 
-	if ep == nil {
-		t.Fatal("Expected to find next season episode")
-	}
-
-	if ep.ID != "s2e1" {
-		t.Errorf("Expected season 2 episode 1, got %s", ep.ID)
-	}
-
-	if state.CurrentSeason != 2 {
-		t.Errorf("Expected CurrentSeason to be 2, got %d", state.CurrentSeason)
-	}
-
-	if state.CurrentEpisode != 1 {
-		t.Errorf("Expected CurrentEpisode to be 1 for new season, got %d", state.CurrentEpisode)
-	}
+	require.NotNil(t, ep, "Expected to find next season episode")
+	assert.Equal(t, "s2e1", ep.ID, "Expected season 2 episode 1")
+	assert.Equal(t, 2, state.CurrentSeason, "Expected CurrentSeason to be 2")
+	assert.Equal(t, 1, state.CurrentEpisode, "Expected CurrentEpisode to be 1 for new season")
 }
 
 func TestFindNextSeriesEpisode_MarksCompleteWhenNoneFound(t *testing.T) {
@@ -1548,13 +1310,8 @@ func TestFindNextSeriesEpisode_MarksCompleteWhenNoneFound(t *testing.T) {
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
 
-	if ep != nil {
-		t.Error("Expected nil when no episodes found")
-	}
-
-	if !state.Completed {
-		t.Error("Expected series to be marked as completed")
-	}
+	assert.Nil(t, ep, "Expected nil when no episodes found")
+	assert.True(t, state.Completed, "Expected series to be marked as completed")
 }
 
 func TestFindNextSeriesEpisode_SkipsFirstEpisodeOfNewSeason(t *testing.T) {
@@ -1581,17 +1338,10 @@ func TestFindNextSeriesEpisode_SkipsFirstEpisodeOfNewSeason(t *testing.T) {
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
 
-	if ep == nil {
-		t.Fatal("Expected to find episode after skipping S02E01")
-	}
-
-	if ep.ID != "s2e2" {
-		t.Errorf("Expected S02E02, got %s", ep.ID)
-	}
-
-	if state.CurrentSeason != 2 || state.CurrentEpisode != 2 {
-		t.Errorf("Expected S02E02 state, got S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
-	}
+	require.NotNil(t, ep, "Expected to find episode after skipping S02E01")
+	assert.Equal(t, "s2e2", ep.ID, "Expected S02E02")
+	assert.Equal(t, 2, state.CurrentSeason, "Expected season 2")
+	assert.Equal(t, 2, state.CurrentEpisode, "Expected episode 2")
 }
 
 func TestGetSeriesState_FromPendingStates(t *testing.T) {
@@ -1609,13 +1359,8 @@ func TestGetSeriesState_FromPendingStates(t *testing.T) {
 
 	state, err := engine.getSeriesState("Test Show")
 
-	if err != nil {
-		t.Fatalf("Expected no error, got %v", err)
-	}
-
-	if state != expectedState {
-		t.Error("Expected to get pending state")
-	}
+	require.NoError(t, err, "Expected no error")
+	assert.Equal(t, expectedState, state, "Expected to get pending state")
 }
 
 func TestGetSeriesState_FromStore(t *testing.T) {
@@ -1633,15 +1378,8 @@ func TestGetSeriesState_FromStore(t *testing.T) {
 
 	state, err := engine.getSeriesState("Stored Show")
 
-	if err != nil {
-		t.Fatalf("Expected no error, got %v", err)
-	}
-
-	if state.ShowTitle != "Stored Show" {
-		t.Error("Expected to get state from store")
-	}
-
-	if state.CurrentSeason != 1 || state.CurrentEpisode != 3 {
-		t.Errorf("Expected S01E03, got S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
-	}
+	require.NoError(t, err, "Expected no error")
+	assert.Equal(t, "Stored Show", state.ShowTitle, "Expected to get state from store")
+	assert.Equal(t, 1, state.CurrentSeason, "Expected season 1")
+	assert.Equal(t, 3, state.CurrentEpisode, "Expected episode 3")
 }

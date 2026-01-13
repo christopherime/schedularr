@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFilterPrograms(t *testing.T) {
@@ -18,14 +20,7 @@ func TestFilterPrograms(t *testing.T) {
 	}
 
 	filtered, err := FilterPrograms(programs, f)
-	if err != nil {
-		t.Fatalf("FilterPrograms returned error: %v", err)
-	}
-
-	if len(filtered) != 1 {
-		t.Errorf("Expected 1 program, got %d", len(filtered))
-	}
-	if filtered[0].Title != "Movie A" {
-		t.Errorf("Expected Movie A, got %s", filtered[0].Title)
-	}
+	require.NoError(t, err, "FilterPrograms returned error")
+	require.Len(t, filtered, 1, "Expected 1 program")
+	assert.Equal(t, "Movie A", filtered[0].Title)
 }

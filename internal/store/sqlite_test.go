@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStore_SeriesState(t *testing.T) {
 	// Use in-memory database for testing
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -21,15 +21,10 @@ func TestStore_SeriesState(t *testing.T) {
 
 	// 1. Get initial state (should be default)
 	state, err := s.GetSeriesState(ctx, showTitle)
-	if err != nil {
-		t.Fatalf("GetSeriesState failed: %v", err)
-	}
-	if state.CurrentSeason != 1 || state.CurrentEpisode != 1 {
-		t.Errorf("Expected default state S01E01, got S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
-	}
-	if state.Completed {
-		t.Error("Expected not completed")
-	}
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.Equal(t, 1, state.CurrentSeason, "Expected default season 1")
+	assert.Equal(t, 1, state.CurrentEpisode, "Expected default episode 1")
+	assert.False(t, state.Completed, "Expected not completed")
 
 	// 2. Update state
 	newState := &scheduler.SeriesState{
@@ -39,44 +34,27 @@ func TestStore_SeriesState(t *testing.T) {
 		Completed:      false,
 		LastAired:      time.Now(),
 	}
-	if err := s.UpdateSeriesState(ctx, newState); err != nil {
-		t.Fatalf("UpdateSeriesState failed: %v", err)
-	}
+	require.NoError(t, s.UpdateSeriesState(ctx, newState), "UpdateSeriesState failed")
 
 	// 3. Verify update
 	updatedState, err := s.GetSeriesState(ctx, showTitle)
-	if err != nil {
-		t.Fatalf("GetSeriesState failed: %v", err)
-	}
-	if updatedState.CurrentSeason != 2 || updatedState.CurrentEpisode != 5 {
-		t.Errorf("Expected S02E05, got S%02dE%02d", updatedState.CurrentSeason, updatedState.CurrentEpisode)
-	}
-	// Check time is close enough (sqlite stores time, but might lose some precision depending on format,
-	// though go-sqlite3 usually handles it well. Let's just check it's not zero).
-	if updatedState.LastAired.IsZero() {
-		t.Error("Expected LastAired to be set")
-	}
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.Equal(t, 2, updatedState.CurrentSeason)
+	assert.Equal(t, 5, updatedState.CurrentEpisode)
+	assert.False(t, updatedState.LastAired.IsZero(), "Expected LastAired to be set")
 
 	// 4. Mark completed
 	newState.Completed = true
-	if err := s.UpdateSeriesState(ctx, newState); err != nil {
-		t.Fatalf("UpdateSeriesState failed: %v", err)
-	}
+	require.NoError(t, s.UpdateSeriesState(ctx, newState), "UpdateSeriesState failed")
 
 	finalState, err := s.GetSeriesState(ctx, showTitle)
-	if err != nil {
-		t.Fatalf("GetSeriesState failed: %v", err)
-	}
-	if !finalState.Completed {
-		t.Error("Expected completed to be true")
-	}
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.True(t, finalState.Completed, "Expected completed to be true")
 }
 
 func TestStore_ScheduleHistory(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -88,24 +66,16 @@ func TestStore_ScheduleHistory(t *testing.T) {
 		ScheduledAt: now,
 	}
 
-	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{entry}); err != nil {
-		t.Fatalf("RecordScheduleHistory failed: %v", err)
-	}
+	require.NoError(t, s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{entry}), "RecordScheduleHistory failed")
 
 	recent, err := s.WasRecentlyScheduled(ctx, "prog-1", "channel-1", 24*time.Hour)
-	if err != nil {
-		t.Fatalf("WasRecentlyScheduled failed: %v", err)
-	}
-	if !recent {
-		t.Error("Expected program to be recently scheduled")
-	}
+	require.NoError(t, err, "WasRecentlyScheduled failed")
+	assert.True(t, recent, "Expected program to be recently scheduled")
 }
 
 func TestStore_ScheduleHistoryCleanup(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -122,40 +92,24 @@ func TestStore_ScheduleHistoryCleanup(t *testing.T) {
 		ScheduledAt: time.Now(),
 	}
 
-	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{oldEntry, newEntry}); err != nil {
-		t.Fatalf("RecordScheduleHistory failed: %v", err)
-	}
+	require.NoError(t, s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{oldEntry, newEntry}), "RecordScheduleHistory failed")
 
 	removed, err := s.CleanupScheduleHistory(ctx, 24*time.Hour)
-	if err != nil {
-		t.Fatalf("CleanupScheduleHistory failed: %v", err)
-	}
-	if removed != 1 {
-		t.Fatalf("Expected 1 entry removed, got %d", removed)
-	}
+	require.NoError(t, err, "CleanupScheduleHistory failed")
+	require.Equal(t, int64(1), removed, "Expected 1 entry removed")
 
 	oldRecent, err := s.WasRecentlyScheduled(ctx, "old-prog", "channel-1", 24*time.Hour)
-	if err != nil {
-		t.Fatalf("WasRecentlyScheduled failed: %v", err)
-	}
-	if oldRecent {
-		t.Error("Expected old entry to be removed")
-	}
+	require.NoError(t, err, "WasRecentlyScheduled failed")
+	assert.False(t, oldRecent, "Expected old entry to be removed")
 
 	newRecent, err := s.WasRecentlyScheduled(ctx, "new-prog", "channel-1", 24*time.Hour)
-	if err != nil {
-		t.Fatalf("WasRecentlyScheduled failed: %v", err)
-	}
-	if !newRecent {
-		t.Error("Expected new entry to remain")
-	}
+	require.NoError(t, err, "WasRecentlyScheduled failed")
+	assert.True(t, newRecent, "Expected new entry to remain")
 }
 
 func TestStore_ExportImportSeriesStates(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -186,27 +140,17 @@ func TestStore_ExportImportSeriesStates(t *testing.T) {
 	}
 
 	// Import states
-	if err := s.ImportSeriesStates(ctx, states); err != nil {
-		t.Fatalf("ImportSeriesStates failed: %v", err)
-	}
+	require.NoError(t, s.ImportSeriesStates(ctx, states), "ImportSeriesStates failed")
 
 	// Export states
 	exported, err := s.ExportAllSeriesStates(ctx)
-	if err != nil {
-		t.Fatalf("ExportAllSeriesStates failed: %v", err)
-	}
-
-	// Verify count
-	if len(exported) != len(states) {
-		t.Fatalf("Expected %d states, got %d", len(states), len(exported))
-	}
+	require.NoError(t, err, "ExportAllSeriesStates failed")
+	require.Len(t, exported, len(states), "Expected %d states", len(states))
 
 	// Verify each state (order should be by show_title due to ORDER BY)
 	expectedOrder := []string{"Show A", "Show B", "Show C"}
 	for i, expected := range expectedOrder {
-		if exported[i].ShowTitle != expected {
-			t.Errorf("Expected state %d to be %s, got %s", i, expected, exported[i].ShowTitle)
-		}
+		assert.Equal(t, expected, exported[i].ShowTitle, "State %d should be %s", i, expected)
 	}
 
 	// Verify specific state details
@@ -218,28 +162,16 @@ func TestStore_ExportImportSeriesStates(t *testing.T) {
 				break
 			}
 		}
-		if original == nil {
-			t.Errorf("Exported state %s not found in original states", state.ShowTitle)
-			continue
-		}
-
-		if state.CurrentSeason != original.CurrentSeason {
-			t.Errorf("Season mismatch for %s: expected %d, got %d", state.ShowTitle, original.CurrentSeason, state.CurrentSeason)
-		}
-		if state.CurrentEpisode != original.CurrentEpisode {
-			t.Errorf("Episode mismatch for %s: expected %d, got %d", state.ShowTitle, original.CurrentEpisode, state.CurrentEpisode)
-		}
-		if state.Completed != original.Completed {
-			t.Errorf("Completed mismatch for %s: expected %v, got %v", state.ShowTitle, original.Completed, state.Completed)
-		}
+		require.NotNil(t, original, "Exported state %s not found in original states", state.ShowTitle)
+		assert.Equal(t, original.CurrentSeason, state.CurrentSeason, "Season mismatch for %s", state.ShowTitle)
+		assert.Equal(t, original.CurrentEpisode, state.CurrentEpisode, "Episode mismatch for %s", state.ShowTitle)
+		assert.Equal(t, original.Completed, state.Completed, "Completed mismatch for %s", state.ShowTitle)
 	}
 }
 
 func TestStore_ResetSeriesState(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -253,127 +185,85 @@ func TestStore_ResetSeriesState(t *testing.T) {
 		Completed:      true,
 		LastAired:      time.Now(),
 	}
-	if err := s.UpdateSeriesState(ctx, state); err != nil {
-		t.Fatalf("UpdateSeriesState failed: %v", err)
-	}
+	require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed")
 
 	// Reset the state
-	if err := s.ResetSeriesState(ctx, showTitle); err != nil {
-		t.Fatalf("ResetSeriesState failed: %v", err)
-	}
+	require.NoError(t, s.ResetSeriesState(ctx, showTitle), "ResetSeriesState failed")
 
 	// Verify reset
 	resetState, err := s.GetSeriesState(ctx, showTitle)
-	if err != nil {
-		t.Fatalf("GetSeriesState failed: %v", err)
-	}
+	require.NoError(t, err, "GetSeriesState failed")
 
-	if resetState.CurrentSeason != 1 {
-		t.Errorf("Expected season 1 after reset, got %d", resetState.CurrentSeason)
-	}
-	if resetState.CurrentEpisode != 1 {
-		t.Errorf("Expected episode 1 after reset, got %d", resetState.CurrentEpisode)
-	}
-	if resetState.Completed {
-		t.Error("Expected completed to be false after reset")
-	}
-	if !resetState.LastAired.IsZero() {
-		t.Error("Expected LastAired to be zero after reset")
-	}
+	assert.Equal(t, 1, resetState.CurrentSeason, "Expected season 1 after reset")
+	assert.Equal(t, 1, resetState.CurrentEpisode, "Expected episode 1 after reset")
+	assert.False(t, resetState.Completed, "Expected completed to be false after reset")
+	assert.True(t, resetState.LastAired.IsZero(), "Expected LastAired to be zero after reset")
 }
 
 func TestStore_ImportSeriesStates_Empty(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
 
 	// Import empty slice should not error
-	if err := s.ImportSeriesStates(ctx, []scheduler.SeriesState{}); err != nil {
-		t.Errorf("ImportSeriesStates with empty slice should not error: %v", err)
-	}
+	assert.NoError(t, s.ImportSeriesStates(ctx, []scheduler.SeriesState{}), "ImportSeriesStates with empty slice should not error")
 
 	// Import nil should not error
-	if err := s.ImportSeriesStates(ctx, nil); err != nil {
-		t.Errorf("ImportSeriesStates with nil should not error: %v", err)
-	}
+	assert.NoError(t, s.ImportSeriesStates(ctx, nil), "ImportSeriesStates with nil should not error")
 }
 
 func TestStore_RecordScheduleHistory_Empty(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
 
 	// Recording empty slice should not error
-	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{}); err != nil {
-		t.Errorf("RecordScheduleHistory with empty slice should not error: %v", err)
-	}
+	assert.NoError(t, s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{}), "RecordScheduleHistory with empty slice should not error")
 
 	// Recording nil should not error
-	if err := s.RecordScheduleHistory(ctx, nil); err != nil {
-		t.Errorf("RecordScheduleHistory with nil should not error: %v", err)
-	}
+	assert.NoError(t, s.RecordScheduleHistory(ctx, nil), "RecordScheduleHistory with nil should not error")
 }
 
 func TestStore_WasRecentlyScheduled_InvalidInput(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
 
 	// Empty program ID
 	_, err = s.WasRecentlyScheduled(ctx, "", "channel-1", 24*time.Hour)
-	if err == nil {
-		t.Error("Expected error for empty program ID, got nil")
-	}
+	assert.Error(t, err, "Expected error for empty program ID")
 
 	// Empty channel ID
 	_, err = s.WasRecentlyScheduled(ctx, "prog-1", "", 24*time.Hour)
-	if err == nil {
-		t.Error("Expected error for empty channel ID, got nil")
-	}
+	assert.Error(t, err, "Expected error for empty channel ID")
 
 	// Both empty
 	_, err = s.WasRecentlyScheduled(ctx, "", "", 24*time.Hour)
-	if err == nil {
-		t.Error("Expected error for both empty, got nil")
-	}
+	assert.Error(t, err, "Expected error for both empty")
 }
 
 func TestStore_WasRecentlyScheduled_NotFound(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
 
 	// Check for program that was never scheduled
 	recent, err := s.WasRecentlyScheduled(ctx, "nonexistent", "channel-1", 24*time.Hour)
-	if err != nil {
-		t.Fatalf("WasRecentlyScheduled failed: %v", err)
-	}
-	if recent {
-		t.Error("Expected program to not be recently scheduled")
-	}
+	require.NoError(t, err, "WasRecentlyScheduled failed")
+	assert.False(t, recent, "Expected program to not be recently scheduled")
 }
 
 func TestStore_WasRecentlyScheduled_OutsideWindow(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -386,34 +276,22 @@ func TestStore_WasRecentlyScheduled_OutsideWindow(t *testing.T) {
 		ScheduledAt: time.Now().Add(-72 * time.Hour), // 3 days ago
 	}
 
-	if err := s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{oldEntry}); err != nil {
-		t.Fatalf("RecordScheduleHistory failed: %v", err)
-	}
+	require.NoError(t, s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{oldEntry}), "RecordScheduleHistory failed")
 
 	// Check with 24 hour window (should not find it)
 	recent, err := s.WasRecentlyScheduled(ctx, "old-prog", "channel-1", 24*time.Hour)
-	if err != nil {
-		t.Fatalf("WasRecentlyScheduled failed: %v", err)
-	}
-	if recent {
-		t.Error("Expected old program to not be within 24h window")
-	}
+	require.NoError(t, err, "WasRecentlyScheduled failed")
+	assert.False(t, recent, "Expected old program to not be within 24h window")
 
 	// Check with 96 hour window (should find it)
 	recent96, err := s.WasRecentlyScheduled(ctx, "old-prog", "channel-1", 96*time.Hour)
-	if err != nil {
-		t.Fatalf("WasRecentlyScheduled failed: %v", err)
-	}
-	if !recent96 {
-		t.Error("Expected old program to be within 96h window")
-	}
+	require.NoError(t, err, "WasRecentlyScheduled failed")
+	assert.True(t, recent96, "Expected old program to be within 96h window")
 }
 
 func TestStore_GetSeriesState_MultipleShows(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -437,91 +315,64 @@ func TestStore_GetSeriesState_MultipleShows(t *testing.T) {
 			Completed:      false,
 			LastAired:      time.Now(),
 		}
-		if err := s.UpdateSeriesState(ctx, state); err != nil {
-			t.Fatalf("UpdateSeriesState failed for %s: %v", show.title, err)
-		}
+		require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed for %s", show.title)
 	}
 
 	// Verify each show has correct state
 	for _, show := range shows {
 		state, err := s.GetSeriesState(ctx, show.title)
-		if err != nil {
-			t.Fatalf("GetSeriesState failed for %s: %v", show.title, err)
-		}
-		if state.CurrentSeason != show.season || state.CurrentEpisode != show.episode {
-			t.Errorf("State mismatch for %s: expected S%02dE%02d, got S%02dE%02d",
-				show.title, show.season, show.episode, state.CurrentSeason, state.CurrentEpisode)
-		}
+		require.NoError(t, err, "GetSeriesState failed for %s", show.title)
+		assert.Equal(t, show.season, state.CurrentSeason, "Season mismatch for %s", show.title)
+		assert.Equal(t, show.episode, state.CurrentEpisode, "Episode mismatch for %s", show.title)
 	}
 }
 
 func TestStore_ResetSeriesState_NonExistent(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
 
 	// Reset a show that doesn't exist should not error
-	if err := s.ResetSeriesState(ctx, "NonExistent Show"); err != nil {
-		t.Errorf("ResetSeriesState for non-existent show should not error: %v", err)
-	}
+	assert.NoError(t, s.ResetSeriesState(ctx, "NonExistent Show"), "ResetSeriesState for non-existent show should not error")
 
 	// Verify the state is now default
 	state, err := s.GetSeriesState(ctx, "NonExistent Show")
-	if err != nil {
-		t.Fatalf("GetSeriesState failed: %v", err)
-	}
-	if state.CurrentSeason != 1 || state.CurrentEpisode != 1 {
-		t.Errorf("Expected default state S01E01, got S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
-	}
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.Equal(t, 1, state.CurrentSeason, "Expected default season 1")
+	assert.Equal(t, 1, state.CurrentEpisode, "Expected default episode 1")
 }
 
 func TestStore_CleanupScheduleHistory_EmptyDatabase(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
 
 	// Cleanup on empty database should not error and return 0
 	removed, err := s.CleanupScheduleHistory(ctx, 24*time.Hour)
-	if err != nil {
-		t.Fatalf("CleanupScheduleHistory failed: %v", err)
-	}
-	if removed != 0 {
-		t.Errorf("Expected 0 entries removed from empty database, got %d", removed)
-	}
+	require.NoError(t, err, "CleanupScheduleHistory failed")
+	assert.Equal(t, int64(0), removed, "Expected 0 entries removed from empty database")
 }
 
 func TestStore_ExportAllSeriesStates_Empty(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
 
 	// Export from empty database should return empty slice
 	states, err := s.ExportAllSeriesStates(ctx)
-	if err != nil {
-		t.Fatalf("ExportAllSeriesStates failed: %v", err)
-	}
-	if len(states) != 0 {
-		t.Errorf("Expected 0 states from empty database, got %d", len(states))
-	}
+	require.NoError(t, err, "ExportAllSeriesStates failed")
+	assert.Empty(t, states, "Expected 0 states from empty database")
 }
 
 func TestStore_Backup(t *testing.T) {
 	s, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create store")
 	defer s.Close()
 
 	ctx := context.Background()
@@ -534,30 +385,20 @@ func TestStore_Backup(t *testing.T) {
 		Completed:      false,
 		LastAired:      time.Now(),
 	}
-	if err := s.UpdateSeriesState(ctx, state); err != nil {
-		t.Fatalf("UpdateSeriesState failed: %v", err)
-	}
+	require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed")
 
 	// Create backup to a temporary file
 	backupPath := t.TempDir() + "/backup.db"
-	if err := s.Backup(ctx, backupPath); err != nil {
-		t.Fatalf("Backup failed: %v", err)
-	}
+	require.NoError(t, s.Backup(ctx, backupPath), "Backup failed")
 
 	// Open the backup and verify data
 	backupStore, err := New(backupPath)
-	if err != nil {
-		t.Fatalf("Failed to open backup: %v", err)
-	}
+	require.NoError(t, err, "Failed to open backup")
 	defer backupStore.Close()
 
 	// Verify the data was backed up
 	restoredState, err := backupStore.GetSeriesState(ctx, "Test Show")
-	if err != nil {
-		t.Fatalf("GetSeriesState from backup failed: %v", err)
-	}
-	if restoredState.CurrentSeason != 2 || restoredState.CurrentEpisode != 5 {
-		t.Errorf("Backup data mismatch: expected S02E05, got S%02dE%02d",
-			restoredState.CurrentSeason, restoredState.CurrentEpisode)
-	}
+	require.NoError(t, err, "GetSeriesState from backup failed")
+	assert.Equal(t, 2, restoredState.CurrentSeason, "Backup data mismatch: season")
+	assert.Equal(t, 5, restoredState.CurrentEpisode, "Backup data mismatch: episode")
 }
