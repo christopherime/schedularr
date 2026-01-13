@@ -305,3 +305,85 @@ func TestGenerateConfig_UnsupportedFormat(t *testing.T) {
 		t.Errorf("Expected 'unsupported format' error, got: %v", err)
 	}
 }
+
+func TestValidateConfigStruct(t *testing.T) {
+	v := NewValidator()
+
+	// Test with a valid struct
+	type TestConfig struct {
+		Tunarr struct {
+			URL string `yaml:"url"`
+		} `yaml:"tunarr"`
+		Log struct {
+			Level  string `yaml:"level"`
+			Format string `yaml:"format"`
+		} `yaml:"log"`
+	}
+
+	validConfig := TestConfig{}
+	validConfig.Tunarr.URL = "http://localhost:8000"
+	validConfig.Log.Level = "info"
+	validConfig.Log.Format = "text"
+
+	err := v.ValidateConfigStruct(validConfig)
+	if err != nil {
+		t.Errorf("ValidateConfigStruct failed for valid config: %v", err)
+	}
+
+	// Test with invalid struct (invalid log level)
+	invalidConfig := TestConfig{}
+	invalidConfig.Tunarr.URL = "http://localhost:8000"
+	invalidConfig.Log.Level = "invalid"
+	invalidConfig.Log.Format = "text"
+
+	err = v.ValidateConfigStruct(invalidConfig)
+	if err == nil {
+		t.Error("Expected validation error for invalid log level, got nil")
+	}
+}
+
+func TestValidateSchedulerStruct(t *testing.T) {
+	v := NewValidator()
+
+	// Test with a valid struct
+	type TestScheduler struct {
+		Blocks []map[string]interface{} `yaml:"blocks"`
+	}
+
+	validScheduler := TestScheduler{
+		Blocks: []map[string]interface{}{
+			{
+				"name":       "Test Block",
+				"type":       "filter",
+				"cron":       "0 9 * * *",
+				"duration":   120,
+				"channel_id": "channel-1",
+				"priority":   10,
+			},
+		},
+	}
+
+	err := v.ValidateSchedulerStruct(validScheduler)
+	if err != nil {
+		t.Errorf("ValidateSchedulerStruct failed for valid scheduler: %v", err)
+	}
+
+	// Test with invalid struct (negative duration)
+	invalidScheduler := TestScheduler{
+		Blocks: []map[string]interface{}{
+			{
+				"name":       "Test Block",
+				"type":       "filter",
+				"cron":       "0 9 * * *",
+				"duration":   -10,
+				"channel_id": "channel-1",
+				"priority":   10,
+			},
+		},
+	}
+
+	err = v.ValidateSchedulerStruct(invalidScheduler)
+	if err == nil {
+		t.Error("Expected validation error for negative duration, got nil")
+	}
+}
