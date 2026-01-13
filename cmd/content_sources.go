@@ -56,58 +56,85 @@ func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.
 func fetchTunarrContent(client *tunarr.Client, contentCache *cache.Cache) []tunarr.Program {
 	var allPrograms []tunarr.Program
 
-	if contentCache != nil {
-		found, err := contentCache.Get(tunarrCacheKey, &allPrograms)
-		if err != nil {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Tunarr programs from cache: %v. Refetching.", err)))
-		} else if found {
-			if verbose {
-				fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Tunarr programs from cache"))
-			}
-			return allPrograms
-		}
+	if tryLoadFromCache(contentCache, tunarrCacheKey, &allPrograms) {
+		return allPrograms
 	}
 
+	allPrograms = fetchLibraryPrograms(client)
+	saveTunarrCache(contentCache, allPrograms)
+
+	return allPrograms
+}
+
+func tryLoadFromCache(contentCache *cache.Cache, key string, target interface{}) bool {
+	if contentCache == nil {
+		return false
+	}
+
+	found, err := contentCache.Get(key, target)
+	if err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Tunarr programs from cache: %v. Refetching.", err)))
+		return false
+	}
+
+	if found && verbose {
+		fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Tunarr programs from cache"))
+	}
+
+	return found
+}
+
+func fetchLibraryPrograms(client *tunarr.Client) []tunarr.Program {
 	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
 	libraries, err := client.GetLibraries(context.Background())
 	if err != nil {
 		if verbose {
 			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries: %v", err)))
 		}
-		return allPrograms
+		return nil
 	}
 
 	if verbose {
 		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📚 Found %d librar(y/ies)", len(libraries))))
 	}
 
+	var allPrograms []tunarr.Program
 	for _, lib := range libraries {
-		if verbose {
-			fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
-		}
-
-		programs, err := client.GetLibraryPrograms(context.Background(), lib.ID)
-		if err != nil {
-			if verbose {
-				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
-			}
-			continue
-		}
-
-		if verbose {
-			fmt.Printf("    ✓ %d programs\n", len(programs))
-		}
-
+		programs := fetchSingleLibrary(client, lib)
 		allPrograms = append(allPrograms, programs...)
 	}
 
-	if contentCache != nil {
-		if err := contentCache.Set(tunarrCacheKey, allPrograms); err != nil {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Tunarr programs to cache: %v", err)))
-		}
+	return allPrograms
+}
+
+func fetchSingleLibrary(client *tunarr.Client, lib tunarr.Library) []tunarr.Program {
+	if verbose {
+		fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
 	}
 
-	return allPrograms
+	programs, err := client.GetLibraryPrograms(context.Background(), lib.ID)
+	if err != nil {
+		if verbose {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
+		}
+		return nil
+	}
+
+	if verbose {
+		fmt.Printf("    ✓ %d programs\n", len(programs))
+	}
+
+	return programs
+}
+
+func saveTunarrCache(contentCache *cache.Cache, allPrograms []tunarr.Program) {
+	if contentCache == nil {
+		return
+	}
+
+	if err := contentCache.Set(tunarrCacheKey, allPrograms); err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Tunarr programs to cache: %v", err)))
+	}
 }
 
 func applyRadarrAvailability(cfg *config.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
@@ -161,72 +188,101 @@ ProcessRadarr:
 }
 
 func applySonarrAvailability(cfg *config.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
-	var series []sonarr.Series
-	var episodes []sonarr.Episode
-	var err error
 	sonarrClient := sonarr.NewClient(cfg.Sonarr)
+	series, episodes := loadSonarrData(sonarrClient, contentCache)
 
-	if contentCache != nil {
-		var cachedData struct {
-			Series   []sonarr.Series
-			Episodes []sonarr.Episode
-		}
-		var found bool
-		found, err = contentCache.Get(sonarrCacheKey, &cachedData)
-		if err != nil {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Sonarr data from cache: %v. Refetching.", err)))
-		} else if found {
-			if verbose {
-				fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Sonarr data from cache"))
-			}
-			series = cachedData.Series
-			episodes = cachedData.Episodes
-			goto ProcessSonarr
-		}
-	}
-
-	fmt.Println(infoStyle.Render("📺 Fetching series and episodes from Sonarr..."))
-	series, err = sonarrClient.GetSeries(context.Background())
-	if err != nil {
-		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch Sonarr series: %v", err)))
-		return programs
-	}
-
-	for _, s := range series {
-		var seriesEpisodes []sonarr.Episode
-		seriesEpisodes, err = sonarrClient.GetEpisodes(context.Background(), s.ID)
-		if err != nil {
-			if verbose {
-				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch Sonarr episodes for %s: %v", s.Title, err)))
-			}
-			continue
-		}
-		episodes = append(episodes, seriesEpisodes...)
-	}
-
-	if contentCache != nil {
-		cachedData := struct {
-			Series   []sonarr.Series
-			Episodes []sonarr.Episode
-		}{
-			Series:   series,
-			Episodes: episodes,
-		}
-		if err = contentCache.Set(sonarrCacheKey, cachedData); err != nil {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Sonarr data to cache: %v", err)))
-		}
-	}
-
-ProcessSonarr:
-	seriesByID := make(map[int]sonarr.Series, len(series))
-	for _, s := range series {
-		seriesByID[s.ID] = s
-	}
-	availableEpisodes := buildSonarrEpisodeIndex(seriesByID, episodes, cfg.Sonarr.ExcludeMissingFile)
+	availableEpisodes := buildSonarrEpisodeIndex(buildSeriesMap(series), episodes, cfg.Sonarr.ExcludeMissingFile)
 	if len(availableEpisodes) == 0 {
 		return programs
 	}
 
+	return applyEpisodeFilter(programs, availableEpisodes)
+}
+
+type sonarrData struct {
+	Series   []sonarr.Series
+	Episodes []sonarr.Episode
+}
+
+func loadSonarrData(client *sonarr.Client, contentCache *cache.Cache) ([]sonarr.Series, []sonarr.Episode) {
+	if contentCache != nil {
+		if series, episodes, ok := tryLoadSonarrCache(contentCache); ok {
+			return series, episodes
+		}
+	}
+
+	series, episodes := fetchSonarrData(client)
+	saveSonarrCache(contentCache, series, episodes)
+
+	return series, episodes
+}
+
+func tryLoadSonarrCache(contentCache *cache.Cache) ([]sonarr.Series, []sonarr.Episode, bool) {
+	var cachedData sonarrData
+	found, err := contentCache.Get(sonarrCacheKey, &cachedData)
+	if err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Sonarr data from cache: %v. Refetching.", err)))
+		return nil, nil, false
+	}
+
+	if found && verbose {
+		fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Sonarr data from cache"))
+	}
+
+	return cachedData.Series, cachedData.Episodes, found
+}
+
+func fetchSonarrData(client *sonarr.Client) ([]sonarr.Series, []sonarr.Episode) {
+	fmt.Println(infoStyle.Render("📺 Fetching series and episodes from Sonarr..."))
+	series, err := client.GetSeries(context.Background())
+	if err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch Sonarr series: %v", err)))
+		return nil, nil
+	}
+
+	var allEpisodes []sonarr.Episode
+	for _, s := range series {
+		episodes := fetchSeriesEpisodes(client, s)
+		allEpisodes = append(allEpisodes, episodes...)
+	}
+
+	return series, allEpisodes
+}
+
+func fetchSeriesEpisodes(client *sonarr.Client, s sonarr.Series) []sonarr.Episode {
+	episodes, err := client.GetEpisodes(context.Background(), s.ID)
+	if err != nil {
+		if verbose {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch Sonarr episodes for %s: %v", s.Title, err)))
+		}
+		return nil
+	}
+	return episodes
+}
+
+func saveSonarrCache(contentCache *cache.Cache, series []sonarr.Series, episodes []sonarr.Episode) {
+	if contentCache == nil {
+		return
+	}
+
+	cachedData := sonarrData{
+		Series:   series,
+		Episodes: episodes,
+	}
+	if err := contentCache.Set(sonarrCacheKey, cachedData); err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Sonarr data to cache: %v", err)))
+	}
+}
+
+func buildSeriesMap(series []sonarr.Series) map[int]sonarr.Series {
+	seriesByID := make(map[int]sonarr.Series, len(series))
+	for _, s := range series {
+		seriesByID[s.ID] = s
+	}
+	return seriesByID
+}
+
+func applyEpisodeFilter(programs []tunarr.Program, availableEpisodes map[string]struct{}) []tunarr.Program {
 	filtered, originalCount, filteredCount := filterEpisodePrograms(programs, availableEpisodes)
 	if originalCount > 0 && filteredCount == 0 {
 		fmt.Printf("%s\n", warnStyle.Render("⚠ Sonarr filtering removed all episode programs; keeping original list"))
