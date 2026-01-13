@@ -5,24 +5,19 @@ import (
 	"strings"
 
 	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/samber/lo"
 )
 
 // FilterPrograms filters a list of programs based on the provided filter criteria.
 func FilterPrograms(programs []tunarr.Program, f Filter) ([]tunarr.Program, error) {
-	filtered := make([]tunarr.Program, 0, len(programs))
-
 	titleRegex, err := compileTitlePattern(f.TitlePattern)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, p := range programs {
-		if !matchesFilter(p, f, titleRegex) {
-			continue
-		}
-		filtered = append(filtered, p)
-	}
-	return filtered, nil
+	return lo.Filter(programs, func(p tunarr.Program, _ int) bool {
+		return matchesFilter(p, f, titleRegex)
+	}), nil
 }
 
 func compileTitlePattern(pattern string) (*regexp.Regexp, error) {
@@ -37,11 +32,11 @@ func matchesFilter(p tunarr.Program, f Filter, titleRegex *regexp.Regexp) bool {
 		return false
 	}
 
-	if len(f.Genres) > 0 && !containsAny(p.Genres, f.Genres) {
+	if len(f.Genres) > 0 && !containsAnyIgnoreCase(p.Genres, f.Genres) {
 		return false
 	}
 
-	if len(f.Ratings) > 0 && !contains(f.Ratings, p.Rating) {
+	if len(f.Ratings) > 0 && !containsIgnoreCase(f.Ratings, p.Rating) {
 		return false
 	}
 
@@ -73,20 +68,16 @@ func matchesDurationRange(duration, minDuration, maxDuration int) bool {
 	return true
 }
 
-func contains(slice []string, val string) bool {
-	for _, item := range slice {
-		if strings.EqualFold(item, val) {
-			return true
-		}
-	}
-	return false
+// containsIgnoreCase checks if slice contains val (case-insensitive).
+func containsIgnoreCase(slice []string, val string) bool {
+	return lo.ContainsBy(slice, func(item string) bool {
+		return strings.EqualFold(item, val)
+	})
 }
 
-func containsAny(source []string, targets []string) bool {
-	for _, t := range targets {
-		if contains(source, t) {
-			return true
-		}
-	}
-	return false
+// containsAnyIgnoreCase checks if any of the targets are in source (case-insensitive).
+func containsAnyIgnoreCase(source []string, targets []string) bool {
+	return lo.SomeBy(targets, func(t string) bool {
+		return containsIgnoreCase(source, t)
+	})
 }

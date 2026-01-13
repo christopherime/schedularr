@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -40,7 +41,7 @@ func TestClient_RefreshLiveTVGuide_Error(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for 500 response, got nil")
 	}
-	if err != nil && !contains(err.Error(), "500") {
+	if err != nil && !strings.Contains(err.Error(), "500") {
 		t.Errorf("Expected error to mention status 500, got: %v", err)
 	}
 }
@@ -65,7 +66,7 @@ func TestClient_RefreshLiveTVGuide_EmptyURL(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for empty URL, got nil")
 	}
-	if err != nil && !contains(err.Error(), "empty") {
+	if err != nil && !strings.Contains(err.Error(), "empty") {
 		t.Errorf("Expected error about empty URL, got: %v", err)
 	}
 }
@@ -137,18 +138,4 @@ func TestClient_RefreshLiveTVGuide_URLTrimming(t *testing.T) {
 	if err := client.RefreshLiveTVGuide(context.Background()); err != nil {
 		t.Fatalf("RefreshLiveTVGuide failed: %v", err)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

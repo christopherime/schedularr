@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -428,7 +429,7 @@ func TestClient_ErrorHandling(t *testing.T) {
 			if err == nil {
 				t.Error("Expected error, got nil")
 			}
-			if err != nil && !contains(err.Error(), tt.expectedErrMsg) {
+			if err != nil && !strings.Contains(err.Error(), tt.expectedErrMsg) {
 				t.Errorf("Expected error to contain %q, got %q", tt.expectedErrMsg, err.Error())
 			}
 		})
@@ -485,20 +486,6 @@ func TestClient_ContextCancellation(t *testing.T) {
 
 // Note: APIError tests have been moved to internal/httpclient/client_test.go
 // as APIError is now part of the shared httpclient package.
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
 
 func TestClient_UpdateSchedule_ValidationError(t *testing.T) {
 	channelID := "channel-1"

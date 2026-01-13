@@ -199,6 +199,7 @@ This TODO is structured to align Schedularr with established architectural patte
 **Goal**: Reduce codebase size while maintaining existing functionality by leveraging well-maintained external libraries.
 
 **Constraints**:
+
 - Libraries must be actively maintained (commits within last 6 months)
 - No known security vulnerabilities
 - Widely adopted in Go ecosystem
@@ -206,6 +207,7 @@ This TODO is structured to align Schedularr with established architectural patte
 ### 6.1 HTTP Client Consolidation (~400 lines saved)
 
 **Problem**: Four nearly identical HTTP client implementations in `internal/tunarr/`, `internal/radarr/`, `internal/sonarr/`, `internal/jellyfin/` with duplicated:
+
 - Request creation and JSON encoding
 - Response handling and error wrapping
 - Retry logic with exponential backoff (tunarr only)
@@ -213,14 +215,15 @@ This TODO is structured to align Schedularr with established architectural patte
 
 **Candidate Libraries**:
 
-| Library | Stars | Last Commit | Notes |
-|---------|-------|-------------|-------|
-| `github.com/go-resty/resty/v2` | 10k+ | Active | Full-featured, chainable API, built-in retry |
-| `github.com/hashicorp/go-retryablehttp` | 2k+ | Active | HashiCorp maintained, simple API |
+| Library                                 | Stars | Last Commit | Notes                                        |
+| --------------------------------------- | ----- | ----------- | -------------------------------------------- |
+| `github.com/go-resty/resty/v2`          | 10k+  | Active      | Full-featured, chainable API, built-in retry |
+| `github.com/hashicorp/go-retryablehttp` | 2k+   | Active      | HashiCorp maintained, simple API             |
 
 **Recommended**: `go-resty/resty/v2` - Provides retry, JSON marshaling, error handling, and context support out of the box.
 
 **Tasks**:
+
 - [x] Create shared `internal/httpclient/` package using resty ✅
 - [x] Refactor tunarr client to use shared http client (~248 lines saved) ✅
 - [x] Refactor radarr client to use shared http client (~61 lines saved) ✅
@@ -236,15 +239,16 @@ This TODO is structured to align Schedularr with established architectural patte
 
 **Candidate Libraries**:
 
-| Library | Stars | Last Commit | Notes |
-|---------|-------|-------------|-------|
-| `github.com/patrickmn/go-cache` | 8k+ | Stable | In-memory with expiration, simple API |
-| `github.com/allegro/bigcache` | 7k+ | Active | High-performance, no GC overhead |
-| `github.com/dgraph-io/ristretto` | 5k+ | Active | High-performance with admission policy |
+| Library                          | Stars | Last Commit | Notes                                  |
+| -------------------------------- | ----- | ----------- | -------------------------------------- |
+| `github.com/patrickmn/go-cache`  | 8k+   | Stable      | In-memory with expiration, simple API  |
+| `github.com/allegro/bigcache`    | 7k+   | Active      | High-performance, no GC overhead       |
+| `github.com/dgraph-io/ristretto` | 5k+   | Active      | High-performance with admission policy |
 
 **Recommended**: `github.com/patrickmn/go-cache` - Simple, proven, matches current functionality (in-memory with TTL). If file persistence is required, keep current implementation but simplify.
 
 **Tasks**:
+
 - [ ] Evaluate if file-based persistence is required (currently used for content caching)
 - [ ] If in-memory is acceptable: replace with go-cache (~80 lines saved)
 - [ ] If file persistence required: consider hybrid approach or keep current
@@ -257,24 +261,26 @@ This TODO is structured to align Schedularr with established architectural patte
 
 **Candidate Libraries**:
 
-| Library | Stars | Last Commit | Notes |
-|---------|-------|-------------|-------|
-| `github.com/samber/lo` | 18k+ | Active | Lodash-style, generic, comprehensive |
-| `golang.org/x/exp/slices` | stdlib | Active | Standard library experimental |
+| Library                   | Stars  | Last Commit | Notes                                |
+| ------------------------- | ------ | ----------- | ------------------------------------ |
+| `github.com/samber/lo`    | 18k+   | Active      | Lodash-style, generic, comprehensive |
+| `golang.org/x/exp/slices` | stdlib | Active      | Standard library experimental        |
 
 **Recommended**: `github.com/samber/lo` - Provides `lo.Contains`, `lo.ContainsBy`, `lo.Filter`, `lo.Map` and many more utilities that could simplify filter logic.
 
 **Tasks**:
-- [ ] Replace custom `contains()` with `lo.ContainsBy` (case-insensitive)
-- [ ] Replace custom `containsAny()` with `lo.Some` or `lo.Intersect`
-- [ ] Consider using `lo.Filter` in `FilterPrograms` function
-- [ ] Remove duplicate `contains` helper in test files
 
-**Estimated Impact**: ~30 lines removed, more expressive filter code
+- [x] Replace custom `contains()` with `lo.ContainsBy` (case-insensitive) ✅
+- [x] Replace custom `containsAny()` with `lo.SomeBy` ✅
+- [x] Use `lo.Filter` in `FilterPrograms` function ✅
+- [x] Remove duplicate `contains` helper in test files ✅
+
+**Actual Impact**: ~30 lines removed, more expressive filter code using samber/lo
 
 ### 6.4 Test Assertions Standardization (~500 lines simplified)
 
 **Problem**: Test files use verbose manual assertion patterns:
+
 ```go
 if len(result) != expected {
     t.Errorf("expected %d, got %d", expected, len(result))
@@ -283,14 +289,15 @@ if len(result) != expected {
 
 **Candidate Libraries**:
 
-| Library | Stars | Last Commit | Notes |
-|---------|-------|-------------|-------|
-| `github.com/stretchr/testify` | 23k+ | Active | Industry standard, assert/require/mock |
-| `github.com/matryer/is` | 2k+ | Active | Minimalist, less verbose |
+| Library                       | Stars | Last Commit | Notes                                  |
+| ----------------------------- | ----- | ----------- | -------------------------------------- |
+| `github.com/stretchr/testify` | 23k+  | Active      | Industry standard, assert/require/mock |
+| `github.com/matryer/is`       | 2k+   | Active      | Minimalist, less verbose               |
 
 **Recommended**: `github.com/stretchr/testify/assert` and `github.com/stretchr/testify/require` - Industry standard, excellent error messages, reduces test verbosity by ~40%.
 
 **Tasks**:
+
 - [ ] Add testify to go.mod
 - [ ] Refactor `internal/tunarr/client_test.go` (~870 lines)
 - [ ] Refactor `internal/scheduler/engine_test.go`
@@ -307,14 +314,15 @@ if len(result) != expected {
 
 **Candidate Libraries**:
 
-| Library | Stars | Last Commit | Notes |
-|---------|-------|-------------|-------|
-| `github.com/jarcoal/httpmock` | 2k+ | Active | Transport-level mocking |
-| `github.com/h2non/gock` | 2k+ | Active | Expressive HTTP mocking |
+| Library                       | Stars | Last Commit | Notes                   |
+| ----------------------------- | ----- | ----------- | ----------------------- |
+| `github.com/jarcoal/httpmock` | 2k+   | Active      | Transport-level mocking |
+| `github.com/h2non/gock`       | 2k+   | Active      | Expressive HTTP mocking |
 
 **Recommended**: `github.com/jarcoal/httpmock` - Cleaner test setup, removes need for manual server management.
 
 **Tasks**:
+
 - [ ] Evaluate if migration effort is worth the simplification
 - [ ] If yes, refactor API client tests to use httpmock
 
