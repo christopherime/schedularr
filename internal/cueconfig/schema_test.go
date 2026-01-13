@@ -387,3 +387,98 @@ func TestValidateSchedulerStruct(t *testing.T) {
 		t.Error("Expected validation error for negative duration, got nil")
 	}
 }
+
+func TestValidateConfig_MalformedYAML(t *testing.T) {
+	v := NewValidator()
+
+	malformedYAML := `
+tunarr:
+  url: "http://localhost:8000"
+log:
+  level: info
+  format: [this is invalid yaml
+`
+
+	err := v.ValidateConfig([]byte(malformedYAML), "yaml")
+	if err == nil {
+		t.Error("Expected error for malformed YAML, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "failed to parse YAML") {
+		t.Errorf("Expected 'failed to parse YAML' error, got: %v", err)
+	}
+}
+
+func TestValidateConfig_MalformedJSON(t *testing.T) {
+	v := NewValidator()
+
+	malformedJSON := `{
+  "tunarr": {
+    "url": "http://localhost:8000"
+  },
+  "log": {
+    "level": "info"
+  ` // Missing closing braces
+
+	err := v.ValidateConfig([]byte(malformedJSON), "json")
+	if err == nil {
+		t.Error("Expected error for malformed JSON, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "failed to parse data") {
+		t.Errorf("Expected 'failed to parse data' error, got: %v", err)
+	}
+}
+
+func TestValidateScheduler_MalformedYAML(t *testing.T) {
+	v := NewValidator()
+
+	malformedYAML := `
+blocks:
+  - name: "Test Block"
+    type: filter
+    cron: [this is invalid yaml
+`
+
+	err := v.ValidateScheduler([]byte(malformedYAML), "yaml")
+	if err == nil {
+		t.Error("Expected error for malformed YAML, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "failed to parse YAML") {
+		t.Errorf("Expected 'failed to parse YAML' error, got: %v", err)
+	}
+}
+
+func TestValidateScheduler_MalformedJSON(t *testing.T) {
+	v := NewValidator()
+
+	malformedJSON := `{
+  "blocks": [
+    {
+      "name": "Test Block",
+      "type": "filter"
+  ` // Missing closing braces
+
+	err := v.ValidateScheduler([]byte(malformedJSON), "json")
+	if err == nil {
+		t.Error("Expected error for malformed JSON, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "failed to parse data") {
+		t.Errorf("Expected 'failed to parse data' error, got: %v", err)
+	}
+}
+
+func TestValidateScheduler_UnsupportedFormat(t *testing.T) {
+	v := NewValidator()
+
+	err := v.ValidateScheduler([]byte("test"), "xml")
+	if err == nil {
+		t.Error("Expected error for unsupported format, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "unsupported format") {
+		t.Errorf("Expected 'unsupported format' error, got: %v", err)
+	}
+}
