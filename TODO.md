@@ -42,6 +42,15 @@
   - Shows restart count for repeated series
   - Accessible via 's' key from main menu
 
+- **Visual Cron Expression Builder**: Added interactive cron builder for easy schedule configuration
+  - Navigate between 5 cron fields with tab/arrow keys/h/l
+  - Cycle through preset values with up/down or j/k
+  - Direct numeric input for custom values
+  - Wildcard (*) support
+  - Real-time preview with human-readable description
+  - Common preset examples displayed
+  - Accessible via ctrl+b when on cron field in block editor
+
 ### ✅ Test Coverage Improvements
 
 - **cueconfig Package**: Improved from 78.3% to 85.5% with error path tests
@@ -131,10 +140,10 @@ This TODO is structured to align Schedularr with established architectural patte
 **Note**: All Phase 2.4 features are optional enhancements. Current TUI provides full block editing functionality with comprehensive keyboard shortcuts and help system.
 
 - [x] Series Progress Viewer: Display current episode, completion %, status with color coding ✅
-- [ ] Scheduler File Browser: TUI to browse and select scheduler files (optional - low priority)
-- [ ] Visual cron expression builder (optional - low priority)
+- [x] Visual cron expression builder: Interactive cron builder with presets and real-time preview ✅
 - [ ] Series selector with search (optional - low priority)
 - [ ] Filter builder interface (optional - low priority)
+- [ ] Scheduler File Browser: TUI to browse and select scheduler files (optional - low priority)
 
 ## Phase 4: Operational Excellence
 
