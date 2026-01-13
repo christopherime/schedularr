@@ -130,7 +130,7 @@ This TODO is structured to align Schedularr with established architectural patte
 
 #### Tasks
 
-- [ ] Unit test coverage >80% (currently ~54% overall, core packages >75%)
+- [ ] Unit test coverage >80% (currently ~55% overall, core packages >80%)
 - [x] Table-driven tests for all core functions
 - [x] Error path and edge case tests (mostly done)
 - [x] Integration tests: full scheduling workflow
