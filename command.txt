@@ -20,9 +20,11 @@ Continue developing the Schedularr project by implementing the tasks listed in T
    - `golangci-lint run` (using the existing .golangci.yml configuration)
    - `gosec ./...` for security vulnerability scanning
    - `govulncheck ./...` for known vulnerability detection
-   - Ensure no dead code remains in the codebase
+   - `deadcode ./...` for detecting unused code
 
 3. Maintain test coverage for new functionality and ensure all tests pass with `go test ./...`
+
+4. Do not keep legacy code.
 
 **Git Workflow:**
 
