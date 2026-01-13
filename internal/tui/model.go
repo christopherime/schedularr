@@ -4,6 +4,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +30,9 @@ const (
 	stateHelp
 	stateSeriesProgress
 	stateCronBuilder
+	stateSeriesSelector
+	stateFilterBuilder
+	stateFileBrowser
 )
 
 type item struct {
@@ -58,6 +64,25 @@ type Model struct {
 	cronMonth      string
 	cronDayOfWeek  string
 	cronFieldIndex int
+	// Series Selector state
+	seriesSearchInput textinput.Model
+	seriesSearchList  []string // List of all available series
+	seriesFiltered    []string // Filtered series based on search
+	seriesSelectIdx   int      // Currently selected series in list
+	// Filter Builder state
+	filterFieldIndex int      // Currently focused filter field
+	filterGenres     []string // Available genres for selection
+	filterRatings    []string // Available ratings for selection
+	filterYearFrom   string
+	filterYearTo     string
+	filterMinDur     string
+	filterMaxDur     string
+	filterTitlePat   string
+	// File Browser state
+	schedulerFiles     []string // List of scheduler files found
+	fileBrowserIdx     int      // Currently selected file
+	fileBrowserDir     string   // Current directory being browsed
+	fileBrowserMessage string   // Status message for file browser
 }
 
 // NewModel creates a new TUI model with the given configuration and optional store.
@@ -149,6 +174,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateSeriesProgress(msg)
 	case stateCronBuilder:
 		return m.updateCronBuilder(msg)
+	case stateSeriesSelector:
+		return m.updateSeriesSelector(msg)
+	case stateFilterBuilder:
+		return m.updateFilterBuilder(msg)
+	case stateFileBrowser:
+		return m.updateFileBrowser(msg)
 	default:
 		return m, nil
 	}
@@ -180,6 +211,17 @@ func (m Model) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = stateSeriesProgress
 		}
 		return m, nil
+	case "S":
+		// Series selector with search
+		m.loadSeriesStates()
+		m.initSeriesSelector()
+		m.state = stateSeriesSelector
+		return m, nil
+	case "f":
+		// File browser
+		m.initFileBrowser()
+		m.state = stateFileBrowser
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -198,6 +240,11 @@ func (m Model) updateEditBlock(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.initCronBuilder()
 			m.state = stateCronBuilder
 		}
+		return m, nil
+	case "ctrl+f":
+		// Open filter builder
+		m.initFilterBuilder()
+		m.state = stateFilterBuilder
 		return m, nil
 	case "tab", "shift+tab", "enter", "up", "down":
 		return m.handleEditNavigation(msg.String())
@@ -521,77 +568,86 @@ func (m Model) updateSeriesProgress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // View renders the TUI.
 func (m Model) View() string {
-	if m.state == stateListView {
-		helpText := "\n\nPress 'n' to create new block, 'd' to delete, 'enter' to edit, '?' for help, 'q' to quit"
-		if m.store != nil {
-			helpText = "\n\nPress 'n' to create, 'd' to delete, 'enter' to edit, 's' for series progress, '?' for help, 'q' to quit"
-		}
-		help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(helpText)
-		return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View() + help)
-	}
-
-	if m.state == stateEditBlock {
-		var builder strings.Builder
-		builder.WriteString("Edit Block\n\n")
-
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-
-		for i := range m.inputs {
-			builder.WriteString(m.inputs[i].View())
-			builder.WriteString("\n")
-
-			// Display validation error if present
-			if m.validationErrs[i] != "" {
-				builder.WriteString(errorStyle.Render("  ⚠ " + m.validationErrs[i]))
-				builder.WriteString("\n")
-			}
-		}
-
-		button := "[ Save ]"
-		if m.focusIndex == len(m.inputs) {
-			button = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("[ Save ]")
-		}
-		builder.WriteString("\n")
-		builder.WriteString(button)
-		builder.WriteString("\n\n(esc to cancel, ? for help)")
-
-		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
-	}
-
-	if m.state == stateConfirmDelete {
-		var builder strings.Builder
-
-		warningStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
-			Bold(true)
-
-		blockName := ""
-		if m.selected >= 0 && m.selected < len(m.cfg.Scheduler.Blocks) {
-			blockName = m.cfg.Scheduler.Blocks[m.selected].Name
-		}
-
-		builder.WriteString(warningStyle.Render("⚠ Delete Block\n\n"))
-		builder.WriteString(fmt.Sprintf("Are you sure you want to delete the block '%s'?\n\n", blockName))
-		builder.WriteString("This action cannot be undone.\n\n")
-		builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("[Y]es") + " / ")
-		builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("[N]o"))
-
-		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
-	}
-
-	if m.state == stateSeriesProgress {
+	switch m.state {
+	case stateListView:
+		return m.renderListView()
+	case stateEditBlock:
+		return m.renderEditBlock()
+	case stateConfirmDelete:
+		return m.renderConfirmDelete()
+	case stateSeriesProgress:
 		return m.renderSeriesProgress()
-	}
-
-	if m.state == stateCronBuilder {
+	case stateCronBuilder:
 		return m.renderCronBuilder()
-	}
-
-	if m.state == stateHelp {
+	case stateSeriesSelector:
+		return m.renderSeriesSelector()
+	case stateFilterBuilder:
+		return m.renderFilterBuilder()
+	case stateFileBrowser:
+		return m.renderFileBrowser()
+	case stateHelp:
 		return m.renderHelp()
+	default:
+		return "Unknown state"
+	}
+}
+
+func (m Model) renderListView() string {
+	helpText := "\n\n'n' new | 'd' delete | enter edit | 'f' files | 'S' series search | '?' help | 'q' quit"
+	if m.store != nil {
+		helpText = "\n\n'n' new | 'd' delete | enter edit | 's' series | 'S' search | 'f' files | '?' help | 'q' quit"
+	}
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(helpText)
+	return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View() + help)
+}
+
+func (m Model) renderEditBlock() string {
+	var builder strings.Builder
+	builder.WriteString("Edit Block\n\n")
+
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+
+	for i := range m.inputs {
+		builder.WriteString(m.inputs[i].View())
+		builder.WriteString("\n")
+
+		// Display validation error if present
+		if m.validationErrs[i] != "" {
+			builder.WriteString(errorStyle.Render("  ⚠ " + m.validationErrs[i]))
+			builder.WriteString("\n")
+		}
 	}
 
-	return "Unknown state"
+	button := "[ Save ]"
+	if m.focusIndex == len(m.inputs) {
+		button = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("[ Save ]")
+	}
+	builder.WriteString("\n")
+	builder.WriteString(button)
+	builder.WriteString("\n\n(esc cancel | ctrl+b cron builder | ctrl+f filter builder | ? help)")
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+func (m Model) renderConfirmDelete() string {
+	var builder strings.Builder
+
+	warningStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("196")).
+		Bold(true)
+
+	blockName := ""
+	if m.selected >= 0 && m.selected < len(m.cfg.Scheduler.Blocks) {
+		blockName = m.cfg.Scheduler.Blocks[m.selected].Name
+	}
+
+	builder.WriteString(warningStyle.Render("⚠ Delete Block\n\n"))
+	builder.WriteString(fmt.Sprintf("Are you sure you want to delete the block '%s'?\n\n", blockName))
+	builder.WriteString("This action cannot be undone.\n\n")
+	builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("[Y]es") + " / ")
+	builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("[N]o"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 }
 
 func (m Model) renderSeriesProgress() string {
@@ -1078,6 +1134,8 @@ func (m Model) renderHelp() string {
 		if m.store != nil {
 			builder.WriteString(keyStyle.Render("  s") + descStyle.Render("          View series progress\n"))
 		}
+		builder.WriteString(keyStyle.Render("  S") + descStyle.Render("          Search series (series selector)\n"))
+		builder.WriteString(keyStyle.Render("  f") + descStyle.Render("          Browse scheduler files\n"))
 		builder.WriteString(keyStyle.Render("  q, ctrl+c") + descStyle.Render("  Quit application\n"))
 
 	case stateEditBlock:
@@ -1086,6 +1144,7 @@ func (m Model) renderHelp() string {
 		builder.WriteString(keyStyle.Render("  shift+tab") + descStyle.Render("   Move to previous field\n"))
 		builder.WriteString(keyStyle.Render("  ↑/↓") + descStyle.Render("         Navigate between fields\n"))
 		builder.WriteString(keyStyle.Render("  ctrl+b") + descStyle.Render("      Open visual cron builder (on cron field)\n"))
+		builder.WriteString(keyStyle.Render("  ctrl+f") + descStyle.Render("      Open filter builder\n"))
 		builder.WriteString(keyStyle.Render("  enter") + descStyle.Render("       Save block (when on Save button)\n"))
 		builder.WriteString(keyStyle.Render("  esc") + descStyle.Render("         Cancel and return to list\n\n"))
 		builder.WriteString(descStyle.Render("Fields are validated in real-time:\n"))
@@ -1135,6 +1194,46 @@ func (m Model) renderHelp() string {
 		builder.WriteString(descStyle.Render("  • X-Y: Range (e.g., 1-5 = Monday through Friday)\n"))
 		builder.WriteString(descStyle.Render("  • *: Wildcard matching any value\n"))
 
+	case stateSeriesSelector:
+		builder.WriteString(titleStyle.Render("Series Selector") + "\n\n")
+		builder.WriteString(keyStyle.Render("  type") + descStyle.Render("        Search for series by name\n"))
+		builder.WriteString(keyStyle.Render("  ↑/↓, j/k") + descStyle.Render("  Navigate through results\n"))
+		builder.WriteString(keyStyle.Render("  enter") + descStyle.Render("       Select highlighted series\n"))
+		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Cancel and return to list\n\n"))
+		builder.WriteString(descStyle.Render("Series List:\n"))
+		builder.WriteString(descStyle.Render("  • Shows series from your scheduling blocks\n"))
+		builder.WriteString(descStyle.Render("  • Includes series from schedule history\n"))
+		builder.WriteString(descStyle.Render("  • Type to filter results in real-time\n"))
+
+	case stateFilterBuilder:
+		builder.WriteString(titleStyle.Render("Filter Builder") + "\n\n")
+		builder.WriteString(keyStyle.Render("  ↑/↓, j/k") + descStyle.Render("  Navigate between fields\n"))
+		builder.WriteString(keyStyle.Render("  tab") + descStyle.Render("         Move to next field\n"))
+		builder.WriteString(keyStyle.Render("  space") + descStyle.Render("       Add genre/rating (cycles through options)\n"))
+		builder.WriteString(keyStyle.Render("  backspace") + descStyle.Render("   Remove last item or character\n"))
+		builder.WriteString(keyStyle.Render("  0-9") + descStyle.Render("         Enter year/duration values\n"))
+		builder.WriteString(keyStyle.Render("  enter") + descStyle.Render("       Apply filter (when on Apply button)\n"))
+		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Cancel and return to editor\n\n"))
+		builder.WriteString(descStyle.Render("Filter Fields:\n"))
+		builder.WriteString(descStyle.Render("  • Title Pattern: Regex to match content titles\n"))
+		builder.WriteString(descStyle.Render("  • Genres: Filter by genre categories\n"))
+		builder.WriteString(descStyle.Render("  • Ratings: Filter by content ratings\n"))
+		builder.WriteString(descStyle.Render("  • Year From/To: Release year range\n"))
+		builder.WriteString(descStyle.Render("  • Min Duration: Minimum content length (minutes)\n"))
+
+	case stateFileBrowser:
+		builder.WriteString(titleStyle.Render("Scheduler File Browser") + "\n\n")
+		builder.WriteString(keyStyle.Render("  ↑/↓, j/k") + descStyle.Render("  Navigate through files\n"))
+		builder.WriteString(keyStyle.Render("  enter") + descStyle.Render("       Select file\n"))
+		builder.WriteString(keyStyle.Render("  r") + descStyle.Render("           Refresh file list\n"))
+		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Cancel and return to list\n\n"))
+		builder.WriteString(descStyle.Render("Search Locations:\n"))
+		builder.WriteString(descStyle.Render("  • Current working directory\n"))
+		builder.WriteString(descStyle.Render("  • Home directory\n"))
+		builder.WriteString(descStyle.Render("  • ~/.config/schedularr/\n"))
+		builder.WriteString(descStyle.Render("  • /etc/schedularr/\n\n"))
+		builder.WriteString(descStyle.Render("File Patterns: scheduler.yaml, scheduler.yml, *.scheduler.yaml\n"))
+
 	default:
 		builder.WriteString(titleStyle.Render("General Commands") + "\n\n")
 		builder.WriteString(keyStyle.Render("  ?") + descStyle.Render("  Show this help\n"))
@@ -1151,6 +1250,639 @@ func (m Model) renderHelp() string {
 
 	builder.WriteString("\n")
 	builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Press ?, q, or esc to close help"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+// ============================================================================
+// Series Selector with Search
+// ============================================================================
+
+// initSeriesSelector initializes the series selector state
+func (m *Model) initSeriesSelector() {
+	// Initialize search input
+	ti := textinput.New()
+	ti.Placeholder = "Search series..."
+	ti.Focus()
+	ti.CharLimit = 100
+	ti.Width = 40
+	m.seriesSearchInput = ti
+
+	// Collect all unique series from series states and block configurations
+	seriesSet := make(map[string]struct{})
+
+	// From series states in the store
+	for _, state := range m.seriesStates {
+		if state.ShowTitle != "" {
+			seriesSet[state.ShowTitle] = struct{}{}
+		}
+	}
+
+	// From existing block configurations
+	for _, block := range m.cfg.Scheduler.Blocks {
+		for _, s := range block.Series {
+			if s.ShowTitle != "" {
+				seriesSet[s.ShowTitle] = struct{}{}
+			}
+		}
+	}
+
+	// Convert to sorted slice
+	m.seriesSearchList = make([]string, 0, len(seriesSet))
+	for title := range seriesSet {
+		m.seriesSearchList = append(m.seriesSearchList, title)
+	}
+	sort.Strings(m.seriesSearchList)
+
+	m.seriesFiltered = m.seriesSearchList
+	m.seriesSelectIdx = 0
+}
+
+// updateSeriesSelector handles key events in the series selector state
+func (m Model) updateSeriesSelector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.state = stateListView
+		return m, nil
+	case "enter":
+		// Select the current series and return to list view
+		// Could be extended to add series to a block or view details
+		m.state = stateListView
+		return m, nil
+	case "up", "k":
+		if m.seriesSelectIdx > 0 {
+			m.seriesSelectIdx--
+		}
+		return m, nil
+	case "down", "j":
+		if m.seriesSelectIdx < len(m.seriesFiltered)-1 {
+			m.seriesSelectIdx++
+		}
+		return m, nil
+	default:
+		// Update search input
+		var cmd tea.Cmd
+		m.seriesSearchInput, cmd = m.seriesSearchInput.Update(msg)
+		// Filter series based on search
+		m.filterSeriesList()
+		return m, cmd
+	}
+}
+
+// filterSeriesList filters the series list based on search input
+func (m *Model) filterSeriesList() {
+	query := strings.ToLower(m.seriesSearchInput.Value())
+	if query == "" {
+		m.seriesFiltered = m.seriesSearchList
+		m.seriesSelectIdx = 0
+		return
+	}
+
+	m.seriesFiltered = make([]string, 0)
+	for _, title := range m.seriesSearchList {
+		if strings.Contains(strings.ToLower(title), query) {
+			m.seriesFiltered = append(m.seriesFiltered, title)
+		}
+	}
+
+	// Reset selection if out of bounds
+	if m.seriesSelectIdx >= len(m.seriesFiltered) {
+		m.seriesSelectIdx = 0
+	}
+}
+
+// renderSeriesList renders the series list with scrolling
+func (m Model) renderSeriesList(builder *strings.Builder, normalStyle, highlightStyle lipgloss.Style) {
+	if len(m.seriesSearchList) == 0 {
+		builder.WriteString(normalStyle.Render("No series found.\n"))
+		builder.WriteString(normalStyle.Render("Series are added when you configure series-based scheduling blocks.\n"))
+		return
+	}
+
+	if len(m.seriesFiltered) == 0 {
+		builder.WriteString(normalStyle.Render("No series match your search.\n"))
+		return
+	}
+
+	// Show filtered series with scrolling
+	start, end := calculateScrollWindow(m.seriesSelectIdx, len(m.seriesFiltered), 10, 20)
+
+	for i := start; i < end; i++ {
+		prefix := "  "
+		style := normalStyle
+		if i == m.seriesSelectIdx {
+			prefix = "▸ "
+			style = highlightStyle
+		}
+		builder.WriteString(style.Render(prefix+m.seriesFiltered[i]) + "\n")
+	}
+
+	builder.WriteString("\n")
+	builder.WriteString(normalStyle.Render(fmt.Sprintf("Showing %d of %d series", len(m.seriesFiltered), len(m.seriesSearchList))))
+}
+
+// calculateScrollWindow calculates start and end indices for scrolling lists
+func calculateScrollWindow(selectedIdx, listLen, scrollOffset, windowSize int) (start, end int) {
+	start = 0
+	if selectedIdx > scrollOffset {
+		start = selectedIdx - scrollOffset
+	}
+	end = start + windowSize
+	if end > listLen {
+		end = listLen
+	}
+	return start, end
+}
+
+// renderFileList renders the file browser list with scrolling
+func (m Model) renderFileList(builder *strings.Builder, normalStyle, highlightStyle, helpStyle lipgloss.Style) {
+	if len(m.schedulerFiles) == 0 {
+		builder.WriteString(normalStyle.Render("No scheduler files found.\n\n"))
+		builder.WriteString(normalStyle.Render("Searched locations:\n"))
+		builder.WriteString(helpStyle.Render("  • Current directory\n"))
+		builder.WriteString(helpStyle.Render("  • Home directory\n"))
+		builder.WriteString(helpStyle.Render("  • ~/.config/schedularr/\n"))
+		builder.WriteString(helpStyle.Render("  • /etc/schedularr/\n\n"))
+		builder.WriteString(normalStyle.Render("Expected file names:\n"))
+		builder.WriteString(helpStyle.Render("  • scheduler.yaml\n"))
+		builder.WriteString(helpStyle.Render("  • scheduler.yml\n"))
+		builder.WriteString(helpStyle.Render("  • *.scheduler.yaml\n"))
+		return
+	}
+
+	builder.WriteString(normalStyle.Render("Found scheduler files:\n\n"))
+
+	start, end := calculateScrollWindow(m.fileBrowserIdx, len(m.schedulerFiles), 8, 15)
+
+	for i := start; i < end; i++ {
+		prefix := "  "
+		style := normalStyle
+		if i == m.fileBrowserIdx {
+			prefix = "▸ "
+			style = highlightStyle
+		}
+
+		// Show relative path if possible, otherwise full path
+		displayPath := m.schedulerFiles[i]
+		if rel, err := filepath.Rel(m.fileBrowserDir, displayPath); err == nil && !strings.HasPrefix(rel, "..") {
+			displayPath = "./" + rel
+		}
+
+		builder.WriteString(style.Render(prefix+displayPath) + "\n")
+	}
+
+	builder.WriteString("\n")
+	builder.WriteString(normalStyle.Render(fmt.Sprintf("Showing %d-%d of %d files\n", start+1, end, len(m.schedulerFiles))))
+}
+
+// renderSeriesSelector renders the series selector view
+func (m Model) renderSeriesSelector() string {
+	var builder strings.Builder
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	highlightStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Background(lipgloss.Color("236")).
+		Bold(true)
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	builder.WriteString(titleStyle.Render("Series Selector") + "\n\n")
+	builder.WriteString(normalStyle.Render("Search: "))
+	builder.WriteString(m.seriesSearchInput.View())
+	builder.WriteString("\n\n")
+
+	m.renderSeriesList(&builder, normalStyle, highlightStyle)
+
+	builder.WriteString("\n\n")
+	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | enter: Select | esc/q: Cancel | ?: Help"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+// ============================================================================
+// Filter Builder Interface
+// ============================================================================
+
+// Common genre options
+var commonGenres = []string{
+	"Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
+	"Drama", "Family", "Fantasy", "History", "Horror", "Music", "Mystery",
+	"Romance", "Science Fiction", "Thriller", "War", "Western",
+}
+
+// Common rating options
+var commonRatings = []string{
+	"G", "PG", "PG-13", "R", "NC-17", "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA",
+}
+
+// initFilterBuilder initializes the filter builder state
+func (m *Model) initFilterBuilder() {
+	m.filterFieldIndex = 0
+
+	// Clear all filter fields first
+	m.filterTitlePat = ""
+	m.filterGenres = nil
+	m.filterRatings = nil
+	m.filterYearFrom = ""
+	m.filterYearTo = ""
+	m.filterMinDur = ""
+	m.filterMaxDur = ""
+
+	// Load from current block's filter if editing existing block
+	if m.selected < 0 || m.selected >= len(m.cfg.Scheduler.Blocks) {
+		return
+	}
+
+	filter := m.cfg.Scheduler.Blocks[m.selected].Filter
+	m.filterTitlePat = filter.TitlePattern
+	m.filterGenres = filter.Genres
+	m.filterRatings = filter.Ratings
+	m.filterYearFrom = intToStringOrEmpty(filter.YearFrom)
+	m.filterYearTo = intToStringOrEmpty(filter.YearTo)
+	m.filterMinDur = intToStringOrEmpty(filter.MinDuration)
+	m.filterMaxDur = intToStringOrEmpty(filter.MaxDuration)
+}
+
+// intToStringOrEmpty converts an int to string, returning empty string for zero
+func intToStringOrEmpty(n int) string {
+	if n > 0 {
+		return strconv.Itoa(n)
+	}
+	return ""
+}
+
+// updateFilterBuilder handles key events in the filter builder state
+func (m Model) updateFilterBuilder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.state = stateEditBlock
+		return m, nil
+	case "enter":
+		if m.filterFieldIndex == 6 { // Save button
+			m.applyFilter()
+			m.state = stateEditBlock
+		}
+		return m, nil
+	case "tab", "down", "j":
+		m.filterFieldIndex = (m.filterFieldIndex + 1) % 7
+		return m, nil
+	case "shift+tab", "up", "k":
+		m.filterFieldIndex = (m.filterFieldIndex - 1 + 7) % 7
+		return m, nil
+	case " ":
+		// Toggle genre/rating selection
+		m.toggleFilterSelection()
+		return m, nil
+	case "backspace":
+		m.handleFilterBackspace()
+		return m, nil
+	default:
+		// Handle numeric/text input for appropriate fields
+		m.handleFilterInput(msg.String())
+		return m, nil
+	}
+}
+
+// toggleFilterSelection toggles genre/rating selection
+func (m *Model) toggleFilterSelection() {
+	switch m.filterFieldIndex {
+	case 1: // Genres - cycle through common genres
+		m.filterGenres = toggleSliceItem(m.filterGenres, commonGenres)
+	case 2: // Ratings
+		m.filterRatings = toggleSliceItem(m.filterRatings, commonRatings)
+	}
+}
+
+// toggleSliceItem adds the next item from options to items, or removes it if already present
+func toggleSliceItem(items []string, options []string) []string {
+	if len(items) >= len(options) {
+		return items
+	}
+	nextItem := options[len(items)%len(options)]
+
+	// Check if already present and remove
+	for i, item := range items {
+		if item == nextItem {
+			return append(items[:i], items[i+1:]...)
+		}
+	}
+
+	// Not present, add it
+	return append(items, nextItem)
+}
+
+// handleFilterBackspace handles backspace in filter fields
+func (m *Model) handleFilterBackspace() {
+	switch m.filterFieldIndex {
+	case 0: // Title pattern
+		if len(m.filterTitlePat) > 0 {
+			m.filterTitlePat = m.filterTitlePat[:len(m.filterTitlePat)-1]
+		}
+	case 1: // Genres - remove last genre
+		if len(m.filterGenres) > 0 {
+			m.filterGenres = m.filterGenres[:len(m.filterGenres)-1]
+		}
+	case 2: // Ratings - remove last rating
+		if len(m.filterRatings) > 0 {
+			m.filterRatings = m.filterRatings[:len(m.filterRatings)-1]
+		}
+	case 3: // Year from
+		if len(m.filterYearFrom) > 0 {
+			m.filterYearFrom = m.filterYearFrom[:len(m.filterYearFrom)-1]
+		}
+	case 4: // Year to
+		if len(m.filterYearTo) > 0 {
+			m.filterYearTo = m.filterYearTo[:len(m.filterYearTo)-1]
+		}
+	case 5: // Min duration
+		if len(m.filterMinDur) > 0 {
+			m.filterMinDur = m.filterMinDur[:len(m.filterMinDur)-1]
+		}
+	}
+}
+
+// handleFilterInput handles text input in filter fields
+func (m *Model) handleFilterInput(input string) {
+	// Only accept single printable characters
+	if len(input) != 1 {
+		return
+	}
+
+	switch m.filterFieldIndex {
+	case 0: // Title pattern - accept any character
+		m.filterTitlePat += input
+	case 3: // Year from - only digits
+		if input >= "0" && input <= "9" && len(m.filterYearFrom) < 4 {
+			m.filterYearFrom += input
+		}
+	case 4: // Year to - only digits
+		if input >= "0" && input <= "9" && len(m.filterYearTo) < 4 {
+			m.filterYearTo += input
+		}
+	case 5: // Min duration - only digits
+		if input >= "0" && input <= "9" && len(m.filterMinDur) < 4 {
+			m.filterMinDur += input
+		}
+	}
+}
+
+// applyFilter saves the filter to the current block
+func (m *Model) applyFilter() {
+	if m.selected < 0 || m.selected >= len(m.cfg.Scheduler.Blocks) {
+		return
+	}
+
+	filter := scheduler.Filter{
+		TitlePattern: m.filterTitlePat,
+		Genres:       m.filterGenres,
+		Ratings:      m.filterRatings,
+	}
+
+	if m.filterYearFrom != "" {
+		if year, err := strconv.Atoi(m.filterYearFrom); err == nil {
+			filter.YearFrom = year
+		}
+	}
+	if m.filterYearTo != "" {
+		if year, err := strconv.Atoi(m.filterYearTo); err == nil {
+			filter.YearTo = year
+		}
+	}
+	if m.filterMinDur != "" {
+		if dur, err := strconv.Atoi(m.filterMinDur); err == nil {
+			filter.MinDuration = dur
+		}
+	}
+	if m.filterMaxDur != "" {
+		if dur, err := strconv.Atoi(m.filterMaxDur); err == nil {
+			filter.MaxDuration = dur
+		}
+	}
+
+	m.cfg.Scheduler.Blocks[m.selected].Filter = filter
+}
+
+// renderFilterBuilder renders the filter builder view
+func (m Model) renderFilterBuilder() string {
+	var builder strings.Builder
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	activeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Background(lipgloss.Color("236")).
+		Bold(true)
+
+	inactiveStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("86"))
+
+	builder.WriteString(titleStyle.Render("Filter Builder") + "\n\n")
+	builder.WriteString(labelStyle.Render("Build filter criteria for content selection.\n"))
+	builder.WriteString(labelStyle.Render("All criteria use AND logic (all must match).\n\n"))
+
+	// Field definitions
+	fields := []struct {
+		label string
+		value string
+		hint  string
+	}{
+		{"Title Pattern", m.filterTitlePat, "Regex pattern to match titles"},
+		{"Genres", strings.Join(m.filterGenres, ", "), "Press space to add, backspace to remove"},
+		{"Ratings", strings.Join(m.filterRatings, ", "), "Press space to add, backspace to remove"},
+		{"Year From", m.filterYearFrom, "Minimum release year"},
+		{"Year To", m.filterYearTo, "Maximum release year"},
+		{"Min Duration", m.filterMinDur, "Minimum duration in minutes"},
+		{"[ Apply Filter ]", "", ""},
+	}
+
+	for i, field := range fields {
+		var style lipgloss.Style
+		if i == m.filterFieldIndex {
+			style = activeStyle
+		} else {
+			style = inactiveStyle
+		}
+
+		if i == 6 { // Save button
+			builder.WriteString("\n")
+			builder.WriteString(style.Render(field.label))
+			builder.WriteString("\n")
+		} else {
+			builder.WriteString(style.Render(fmt.Sprintf("%-15s", field.label)))
+			builder.WriteString(" ")
+			displayValue := field.value
+			if displayValue == "" {
+				displayValue = "(not set)"
+			}
+			builder.WriteString(valueStyle.Render(displayValue))
+			builder.WriteString("\n")
+			if i == m.filterFieldIndex && field.hint != "" {
+				builder.WriteString(helpStyle.Render("  " + field.hint))
+				builder.WriteString("\n")
+			}
+		}
+	}
+
+	builder.WriteString("\n")
+	builder.WriteString(helpStyle.Render("Available genres: " + strings.Join(commonGenres[:6], ", ") + "...\n"))
+	builder.WriteString(helpStyle.Render("Available ratings: " + strings.Join(commonRatings[:6], ", ") + "...\n\n"))
+	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | space: Toggle | enter: Apply | esc/q: Cancel | ?: Help"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+// ============================================================================
+// Scheduler File Browser
+// ============================================================================
+
+// initFileBrowser initializes the file browser state
+func (m *Model) initFileBrowser() {
+	m.fileBrowserIdx = 0
+	m.fileBrowserMessage = ""
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		m.fileBrowserDir = "."
+	} else {
+		m.fileBrowserDir = cwd
+	}
+
+	m.scanForSchedulerFiles()
+}
+
+// scanForSchedulerFiles scans common locations for scheduler files
+func (m *Model) scanForSchedulerFiles() {
+	m.schedulerFiles = make([]string, 0)
+	searchPaths := []string{
+		m.fileBrowserDir,
+	}
+
+	// Add home directory
+	if home, err := os.UserHomeDir(); err == nil {
+		searchPaths = append(searchPaths, home)
+		searchPaths = append(searchPaths, filepath.Join(home, ".config", "schedularr"))
+	}
+
+	// Add common config locations
+	searchPaths = append(searchPaths, "/etc/schedularr")
+
+	patterns := []string{"scheduler.yaml", "scheduler.yml", "*.scheduler.yaml", "*.scheduler.yml"}
+
+	seen := make(map[string]struct{})
+	for _, dir := range searchPaths {
+		for _, pattern := range patterns {
+			matches, err := filepath.Glob(filepath.Join(dir, pattern))
+			if err != nil {
+				continue
+			}
+			for _, match := range matches {
+				absPath, err := filepath.Abs(match)
+				if err != nil {
+					absPath = match
+				}
+				if _, exists := seen[absPath]; !exists {
+					seen[absPath] = struct{}{}
+					m.schedulerFiles = append(m.schedulerFiles, absPath)
+				}
+			}
+		}
+	}
+
+	sort.Strings(m.schedulerFiles)
+}
+
+// updateFileBrowser handles key events in the file browser state
+func (m Model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.state = stateListView
+		return m, nil
+	case "enter":
+		if len(m.schedulerFiles) > 0 && m.fileBrowserIdx < len(m.schedulerFiles) {
+			selectedFile := m.schedulerFiles[m.fileBrowserIdx]
+			m.fileBrowserMessage = "Selected: " + selectedFile
+			// In a full implementation, this would load the scheduler file
+			// For now, just show a confirmation message
+		}
+		return m, nil
+	case "up", "k":
+		if m.fileBrowserIdx > 0 {
+			m.fileBrowserIdx--
+		}
+		return m, nil
+	case "down", "j":
+		if m.fileBrowserIdx < len(m.schedulerFiles)-1 {
+			m.fileBrowserIdx++
+		}
+		return m, nil
+	case "r":
+		// Refresh file list
+		m.scanForSchedulerFiles()
+		m.fileBrowserMessage = "File list refreshed"
+		return m, nil
+	}
+	return m, nil
+}
+
+// renderFileBrowser renders the file browser view
+func (m Model) renderFileBrowser() string {
+	var builder strings.Builder
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	highlightStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Background(lipgloss.Color("236")).
+		Bold(true)
+
+	pathStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("86"))
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	messageStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("34"))
+
+	builder.WriteString(titleStyle.Render("Scheduler File Browser") + "\n\n")
+	builder.WriteString(normalStyle.Render("Current directory: "))
+	builder.WriteString(pathStyle.Render(m.fileBrowserDir) + "\n\n")
+
+	m.renderFileList(&builder, normalStyle, highlightStyle, helpStyle)
+
+	if m.fileBrowserMessage != "" {
+		builder.WriteString("\n")
+		builder.WriteString(messageStyle.Render(m.fileBrowserMessage))
+		builder.WriteString("\n")
+	}
+
+	builder.WriteString("\n")
+	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | enter: Select | r: Refresh | esc/q: Cancel | ?: Help"))
 
 	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 }

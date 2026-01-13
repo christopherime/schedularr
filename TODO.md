@@ -31,6 +31,32 @@
 
 ---
 
+## Recent Updates (2026-01-13) - Phase 2.4 TUI Complete
+
+### ✅ TUI Advanced Features (Phase 2.4)
+
+- **Series Selector with Search**: Interactive series browser with real-time search filtering
+  - Browse all series tracked in scheduler state
+  - Real-time search filtering as you type
+  - Scrolling list for large series collections
+  - Accessible via 'S' key from main menu
+
+- **Filter Builder Interface**: Visual filter editor for content filtering
+  - Configure genres, ratings, year range, duration limits
+  - Toggle selections with space/enter
+  - Direct text input for title patterns
+  - Apply filters to current block
+  - Accessible via ctrl+f from block editor
+
+- **Scheduler File Browser**: Browse and select scheduler configuration files
+  - Scans current directory, home, ~/.config/schedularr/, /etc/schedularr/
+  - Shows relative paths when possible
+  - Displays file selection with scrolling
+  - Refresh with 'r' key
+  - Accessible via 'f' key from main menu
+
+---
+
 ## Recent Updates (2026-01-13) - Code Cleanup
 
 ### ✅ Test Fixes & Code Cleanup
@@ -153,15 +179,15 @@ This TODO is structured to align Schedularr with established architectural patte
 
 - [x] Backup before major operations (deferred)
 
-### 2.4 TUI for Scheduler Management (Optional Advanced Features)
+### 2.4 TUI for Scheduler Management ✅ COMPLETE
 
-**Note**: All Phase 2.4 features are optional enhancements. Current TUI provides full block editing functionality with comprehensive keyboard shortcuts and help system.
+**Note**: All Phase 2.4 features have been implemented.
 
 - [x] Series Progress Viewer: Display current episode, completion %, status with color coding ✅
 - [x] Visual cron expression builder: Interactive cron builder with presets and real-time preview ✅
-- [ ] Series selector with search (optional - low priority)
-- [ ] Filter builder interface (optional - low priority)
-- [ ] Scheduler File Browser: TUI to browse and select scheduler files (optional - low priority)
+- [x] Series selector with search: Interactive series browser with real-time search filtering ✅
+- [x] Filter builder interface: Visual filter editor for genres, ratings, year, duration ✅
+- [x] Scheduler File Browser: TUI to browse and select scheduler files ✅
 
 ## Phase 4: Operational Excellence
 
