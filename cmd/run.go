@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,30 +41,35 @@ func init() {
 }
 
 func runDaemon() {
-	// Parse config
+	cfg := loadDaemonConfig()
+	appLogger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
+
+	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🚀 Starting Schedularr daemon (Interval: %v)", runInterval)))
+
+	metrics.RegisterMetrics()
+	startMetricsServer(&cfg, appLogger)
+	setupConfigWatcher(&cfg, appLogger)
+
+	runDaemonLoop(&cfg)
+}
+
+func loadDaemonConfig() config.Config {
 	var cfg config.Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error parsing config:"), err)
 		os.Exit(1)
 	}
+	return cfg
+}
 
-	// Initialize structured logger
-	appLogger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
-
-	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🚀 Starting Schedularr daemon (Interval: %v)", runInterval)))
-
-	// Register Prometheus metrics
-	metrics.RegisterMetrics()
-
-	// Start Prometheus metrics server in a goroutine
+func startMetricsServer(cfg *config.Config, appLogger *slog.Logger) {
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok"))
-		})
+		http.HandleFunc("/healthz", healthCheckHandler)
+
 		listenAddr := fmt.Sprintf(":%d", cfg.MetricsPort)
 		appLogger.Info("Prometheus metrics and health check exposed", "address", listenAddr)
+
 		server := &http.Server{
 			Addr:              listenAddr,
 			ReadHeaderTimeout: 5 * time.Second,
@@ -71,86 +77,115 @@ func runDaemon() {
 			WriteTimeout:      10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		err := server.ListenAndServe()
-		if err != nil {
+
+		if err := server.ListenAndServe(); err != nil {
 			appLogger.Error("Failed to start metrics server", "error", err)
-			os.Exit(1) // Exit if metrics server fails to start
+			os.Exit(1)
 		}
 	}()
+}
 
-	// Setup Viper to watch for config changes
+func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func setupConfigWatcher(cfg *config.Config, appLogger *slog.Logger) {
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		appLogger.Info("Config file changed, reloading...", "file", e.Name)
-		// Re-unmarshal the config
-		var newCfg config.Config // Create a temporary config to unmarshal into for validation
-		if err := viper.Unmarshal(&newCfg); err != nil {
-			appLogger.Error("Failed to re-unmarshal config", "error", err)
-			return
-		}
-
-		validator := cueconfig.NewValidator()
-		// Validate main app config
-		if err := validator.ValidateConfigStruct(&newCfg); err != nil {
-			appLogger.Error("New application config is invalid, keeping old config", "error", err)
-			return
-		}
-		// Validate scheduler config (if a scheduler file is specified)
-		if newCfg.SchedulerFile != "" {
-			// Load and validate the scheduler file
-			schedCfg, err := config.LoadSchedulerConfig(&newCfg, newCfg.SchedulerFile)
-			if err != nil {
-				appLogger.Error("New scheduler config file is invalid, keeping old config", "error", err)
-				return
-			}
-			if err := validator.ValidateSchedulerStruct(schedCfg); err != nil {
-				appLogger.Error("New scheduler config is invalid, keeping old config", "error", err)
-				return
-			}
-			newCfg.Scheduler = *schedCfg // Assign the validated scheduler config
-		} else {
-			// If inline scheduler config is used
-			if err := validator.ValidateSchedulerStruct(&newCfg.Scheduler); err != nil {
-				appLogger.Error("New inline scheduler config is invalid, keeping old config", "error", err)
-				return
-			}
-		}
-
-		// If all validations pass, update the main config
-		cfg = newCfg
-		appLogger.Info("Configuration reloaded and validated successfully")
+		handleConfigChange(cfg, appLogger, e)
 	})
+}
 
-	// Setup signal handling for graceful shutdown and SIGHUP for reload
+func handleConfigChange(cfg *config.Config, appLogger *slog.Logger, e fsnotify.Event) {
+	appLogger.Info("Config file changed, reloading...", "file", e.Name)
+
+	var newCfg config.Config
+	if err := viper.Unmarshal(&newCfg); err != nil {
+		appLogger.Error("Failed to re-unmarshal config", "error", err)
+		return
+	}
+
+	if err := validateNewConfig(&newCfg, appLogger); err != nil {
+		return
+	}
+
+	*cfg = newCfg
+	appLogger.Info("Configuration reloaded and validated successfully")
+}
+
+func validateNewConfig(newCfg *config.Config, appLogger *slog.Logger) error {
+	validator := cueconfig.NewValidator()
+
+	if err := validator.ValidateConfigStruct(newCfg); err != nil {
+		appLogger.Error("New application config is invalid, keeping old config", "error", err)
+		return err
+	}
+
+	if newCfg.SchedulerFile != "" {
+		return validateSchedulerFile(newCfg, validator, appLogger)
+	}
+
+	return validateInlineScheduler(newCfg, validator, appLogger)
+}
+
+func validateSchedulerFile(newCfg *config.Config, validator *cueconfig.SchemaValidator, appLogger *slog.Logger) error {
+	schedCfg, err := config.LoadSchedulerConfig(newCfg, newCfg.SchedulerFile)
+	if err != nil {
+		appLogger.Error("New scheduler config file is invalid, keeping old config", "error", err)
+		return err
+	}
+
+	if err := validator.ValidateSchedulerStruct(schedCfg); err != nil {
+		appLogger.Error("New scheduler config is invalid, keeping old config", "error", err)
+		return err
+	}
+
+	newCfg.Scheduler = *schedCfg
+	return nil
+}
+
+func validateInlineScheduler(newCfg *config.Config, validator *cueconfig.SchemaValidator, appLogger *slog.Logger) error {
+	if err := validator.ValidateSchedulerStruct(&newCfg.Scheduler); err != nil {
+		appLogger.Error("New inline scheduler config is invalid, keeping old config", "error", err)
+		return err
+	}
+	return nil
+}
+
+func runDaemonLoop(cfg *config.Config) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
-	// Run loop
 	ticker := time.NewTicker(runInterval)
 	defer ticker.Stop()
 
-	// Run immediately first
-	runJob(&cfg)
+	runJob(cfg)
 
 	if runOnce {
 		return
 	}
 
+	appLogger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
 	for {
 		select {
 		case <-ticker.C:
-			runJob(&cfg)
+			runJob(cfg)
 		case sig := <-sigChan:
-			if sig == syscall.SIGHUP {
-				appLogger.Info("Received SIGHUP, triggering config reload (Viper.OnConfigChange should handle it)")
-				// Viper's OnConfigChange is async, so we just log and let it handle the reload.
-				// No need to call viper.ReadInConfig() here, as WatchConfig handles it.
-				continue
+			handleSignal(sig, appLogger)
+			if sig != syscall.SIGHUP {
+				return
 			}
-			appLogger.Info("Received signal, shutting down...", "signal", sig)
-			return
 		}
 	}
+}
+
+func handleSignal(sig os.Signal, appLogger *slog.Logger) {
+	if sig == syscall.SIGHUP {
+		appLogger.Info("Received SIGHUP, triggering config reload (Viper.OnConfigChange should handle it)")
+		return
+	}
+	appLogger.Info("Received signal, shutting down...", "signal", sig)
 }
 
 func runJob(cfg *config.Config) {
