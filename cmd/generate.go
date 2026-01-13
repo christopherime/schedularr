@@ -188,6 +188,102 @@ func refreshJellyfinWithRetries(client *jellyfin.Client) error {
 	return fmt.Errorf("after %d attempts: %w", maxRetries, err)
 }
 
+type channelStats struct {
+	programCount int
+	totalDuration int64
+	movies int
+	episodes int
+	tracks int
+}
+
+func (cs *channelStats) incrementType(programType string) lipgloss.Style {
+	switch programType {
+	case "movie":
+		cs.movies++
+		return movieStyle
+	case "episode":
+		cs.episodes++
+		return episodeStyle
+	case "track":
+		cs.tracks++
+		return trackStyle
+	default:
+		return infoStyle
+	}
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen-3] + "..."
+	}
+	return s
+}
+
+func formatProgramRow(w *tabwriter.Writer, currentTime time.Time, program tunarr.Program, blockName string, typeStyle lipgloss.Style) time.Time {
+	programEndTime := currentTime.Add(time.Duration(program.Duration) * time.Millisecond)
+
+	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n",
+		infoStyle.Render(currentTime.Format("15:04")),
+		infoStyle.Render(programEndTime.Format("15:04")),
+		blockName,
+		truncateString(program.Title, 30),
+		fmtDuration(program.Duration),
+		typeStyle.Render(program.Type),
+		truncateString(program.ShowTitle, 20),
+		program.Season,
+		program.Episode,
+	)
+
+	return programEndTime
+}
+
+func displayChannelSchedule(channelID string, slots []scheduler.ScheduledSlot) channelStats {
+	stats := channelStats{}
+
+	var output strings.Builder
+	output.WriteString("\n" + channelStyle.Render("📺 Channel "+channelID) + "\n")
+
+	w := tabwriter.NewWriter(&output, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprint(w, headerStyle.Render("START\tEND\tBLOCK\tPROGRAM\tDURATION\tTYPE\tSHOW\tS\tE\n"))
+	_, _ = fmt.Fprint(w, headerStyle.Render(strings.Repeat("─", 90)+"\n"))
+
+	for _, slot := range slots {
+		currentTime := slot.StartTime
+		for _, program := range slot.Programs {
+			typeStyle := stats.incrementType(program.Type)
+			currentTime = formatProgramRow(w, currentTime, program, slot.Block.Name, typeStyle)
+			stats.totalDuration += program.Duration
+			stats.programCount++
+		}
+	}
+
+	_ = w.Flush()
+	fmt.Print(output.String())
+	displayChannelSummary(stats)
+
+	return stats
+}
+
+func displayChannelSummary(stats channelStats) {
+	summary := fmt.Sprintf("   Total: %d programs (%s)", stats.programCount, fmtDuration(stats.totalDuration))
+	breakdown := formatTypeBreakdown(stats.movies, stats.episodes, stats.tracks)
+	fmt.Println(infoStyle.Render(summary) + breakdown)
+}
+
+func formatTypeBreakdown(movies, episodes, tracks int) string {
+	var parts []string
+	if movies > 0 {
+		parts = append(parts, movieStyle.Render(fmt.Sprintf(" • %d movies", movies)))
+	}
+	if episodes > 0 {
+		parts = append(parts, episodeStyle.Render(fmt.Sprintf(" • %d episodes", episodes)))
+	}
+	if tracks > 0 {
+		parts = append(parts, trackStyle.Render(fmt.Sprintf(" • %d tracks", tracks)))
+	}
+	return strings.Join(parts, "")
+}
+
 func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 	if len(plan) == 0 {
 		fmt.Println(warnStyle.Render("\n⚠ No schedule generated"))
@@ -198,103 +294,13 @@ func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 	fmt.Println(successStyle.Render("✓ Schedule Generated"))
 	fmt.Println(headerStyle.Render(strings.Repeat("═", 100)))
 
-	totalProgramsScheduled := 0
-	totalMovies := 0
-	totalEpisodes := 0
-	totalTracks := 0
-
+	totalStats := channelStats{}
 	for channelID, slots := range plan {
-		channelTotalDuration := int64(0)
-		channelProgramCount := 0
-		channelMovies := 0
-		channelEpisodes := 0
-		channelTracks := 0
-
-		var output strings.Builder
-		output.WriteString("\n" + channelStyle.Render("📺 Channel "+channelID) + "\n")
-
-		w := tabwriter.NewWriter(&output, 0, 0, 2, ' ', 0)
-		header := headerStyle.Render("START\tEND\tBLOCK\tPROGRAM\tDURATION\tTYPE\tSHOW\tS\tE\n")
-		separator := headerStyle.Render(strings.Repeat("─", 90) + "\n")
-		_, _ = fmt.Fprint(w, header+separator)
-
-		for _, slot := range slots {
-			slotStartTime := slot.StartTime
-			blockName := slot.Block.Name
-
-			currentProgramTime := slotStartTime
-			for _, p := range slot.Programs {
-				programEndTime := currentProgramTime.Add(time.Duration(p.Duration) * time.Millisecond)
-
-				// Apply color based on program type
-				var typeStyle lipgloss.Style
-				switch p.Type {
-				case "movie":
-					typeStyle = movieStyle
-					channelMovies++
-				case "episode":
-					typeStyle = episodeStyle
-					channelEpisodes++
-				case "track":
-					typeStyle = trackStyle
-					channelTracks++
-				default:
-					typeStyle = infoStyle
-				}
-
-				// Format the row with colors
-				timeStr := infoStyle.Render(currentProgramTime.Format("15:04"))
-				endTimeStr := infoStyle.Render(programEndTime.Format("15:04"))
-				typeStr := typeStyle.Render(p.Type)
-
-				// Truncate long titles
-				title := p.Title
-				if len(title) > 30 {
-					title = title[:27] + "..."
-				}
-
-				showStr := p.ShowTitle
-				if len(showStr) > 20 {
-					showStr = showStr[:17] + "..."
-				}
-
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n",
-					timeStr,
-					endTimeStr,
-					blockName,
-					title,
-					fmtDuration(p.Duration),
-					typeStr,
-					showStr,
-					p.Season,
-					p.Episode,
-				)
-				currentProgramTime = programEndTime
-				channelTotalDuration += p.Duration
-				channelProgramCount++
-			}
-		}
-		_ = w.Flush()
-		fmt.Print(output.String())
-
-		// Channel summary with type breakdown
-		summary := fmt.Sprintf("   Total: %d programs (%s)", channelProgramCount, fmtDuration(channelTotalDuration))
-		breakdown := ""
-		if channelMovies > 0 {
-			breakdown += movieStyle.Render(fmt.Sprintf(" • %d movies", channelMovies))
-		}
-		if channelEpisodes > 0 {
-			breakdown += episodeStyle.Render(fmt.Sprintf(" • %d episodes", channelEpisodes))
-		}
-		if channelTracks > 0 {
-			breakdown += trackStyle.Render(fmt.Sprintf(" • %d tracks", channelTracks))
-		}
-		fmt.Println(infoStyle.Render(summary) + breakdown)
-
-		totalProgramsScheduled += channelProgramCount
-		totalMovies += channelMovies
-		totalEpisodes += channelEpisodes
-		totalTracks += channelTracks
+		channelStats := displayChannelSchedule(channelID, slots)
+		totalStats.programCount += channelStats.programCount
+		totalStats.movies += channelStats.movies
+		totalStats.episodes += channelStats.episodes
+		totalStats.tracks += channelStats.tracks
 	}
 
 	// Overall summary
@@ -302,21 +308,12 @@ func displaySchedule(plan map[string][]scheduler.ScheduledSlot, _ bool) {
 	fmt.Println(headerStyle.Render(strings.Repeat("═", 100)))
 	fmt.Printf("📊 %s: %d programs across %d channel(s)\n",
 		successStyle.Render("Total"),
-		totalProgramsScheduled, len(plan))
+		totalStats.programCount, len(plan))
 
 	// Type breakdown
-	typeBreakdown := ""
-	if totalMovies > 0 {
-		typeBreakdown += movieStyle.Render(fmt.Sprintf("   • %d movies", totalMovies))
-	}
-	if totalEpisodes > 0 {
-		typeBreakdown += episodeStyle.Render(fmt.Sprintf("   • %d episodes", totalEpisodes))
-	}
-	if totalTracks > 0 {
-		typeBreakdown += trackStyle.Render(fmt.Sprintf("   • %d tracks", totalTracks))
-	}
+	typeBreakdown := formatTypeBreakdown(totalStats.movies, totalStats.episodes, totalStats.tracks)
 	if typeBreakdown != "" {
-		fmt.Println(typeBreakdown)
+		fmt.Println("   " + typeBreakdown)
 	}
 	fmt.Println()
 }
