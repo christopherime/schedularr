@@ -72,50 +72,78 @@ Use --verbose for detailed output including filtering and history.`,
 
 // ProcessSchedule generates and optionally applies the schedule.
 func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bool) error {
-	// Load scheduler configuration
-	schedCfg, err := config.LoadSchedulerConfig(cfg, schedFile)
+	schedCfg, st, err := initializeScheduler(cfg, schedFile)
 	if err != nil {
-		return fmt.Errorf("failed to load scheduler config: %w", err)
-	}
-
-	if len(schedCfg.Blocks) == 0 {
-		return errors.New("no scheduling blocks configured")
-	}
-
-	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(schedCfg.Blocks))))
-
-	// Initialize Store
-	st, err := store.New("schedularr.db")
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
+		return err
 	}
 	defer st.Close()
 
-	// Create Tunarr client
 	client := tunarr.NewClient(cfg.Tunarr)
-
-	// Fetch available content
-	programs, err := fetchAllContent(cfg, client)
+	programs, err := fetchAndValidateContent(cfg, client)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Found %d program(s)", len(programs))))
+	engine, err := createEngine(cfg, client, schedCfg.Blocks, st)
+	if err != nil {
+		return err
+	}
 
-	// Create logger
+	plan, err := generateSchedulePlan(cfg, engine, programs)
+	if err != nil {
+		return err
+	}
+
+	displaySchedule(plan, verbose)
+	flattenedPlan := flattenSchedule(plan)
+
+	return handleScheduleOutput(cfg, client, engine, flattenedPlan, apply, dryRun)
+}
+
+func initializeScheduler(cfg *config.Config, schedFile string) (*scheduler.Config, *store.Store, error) {
+	schedCfg, err := config.LoadSchedulerConfig(cfg, schedFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load scheduler config: %w", err)
+	}
+
+	if len(schedCfg.Blocks) == 0 {
+		return nil, nil, errors.New("no scheduling blocks configured")
+	}
+
+	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(schedCfg.Blocks))))
+
+	st, err := store.New("schedularr.db")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	return schedCfg, st, nil
+}
+
+func fetchAndValidateContent(cfg *config.Config, client *tunarr.Client) ([]tunarr.Program, error) {
+	programs, err := fetchAllContent(cfg, client)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Found %d program(s)", len(programs))))
+	return programs, nil
+}
+
+func createEngine(cfg *config.Config, client *tunarr.Client, blocks []scheduler.Block, st *store.Store) (*scheduler.Engine, error) {
 	logger := logging.NewLogger(cfg.Log.Level, cfg.Log.Format)
 
 	loc, err := time.LoadLocation(cfg.Log.Timezone)
 	if err != nil {
-		return fmt.Errorf("invalid timezone '%s' in app config: %w", cfg.Log.Timezone, err)
+		return nil, fmt.Errorf("invalid timezone '%s' in app config: %w", cfg.Log.Timezone, err)
 	}
 
-	// Create scheduling engine
-	engine := scheduler.NewEngine(client, schedCfg.Blocks, st, logger, loc)
+	return scheduler.NewEngine(client, blocks, st, logger, loc), nil
+}
 
-	// Generate schedule
+func generateSchedulePlan(cfg *config.Config, engine *scheduler.Engine, programs []tunarr.Program) (map[string][]scheduler.ScheduledSlot, error) {
 	start := time.Now()
-	end := start.Add(24 * time.Hour) // Plan for next 24h
+	end := start.Add(24 * time.Hour)
 
 	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗓️  Generating schedule from %s to %s in %s",
 		start.Format("2006-01-02 15:04"),
@@ -124,40 +152,28 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 
 	plan, err := engine.GenerateForTimeRange(start, end, programs)
 	if err != nil {
-		return fmt.Errorf("failed to generate schedule: %w", err)
+		return nil, fmt.Errorf("failed to generate schedule: %w", err)
 	}
 
-	// Display results
-	displaySchedule(plan, verbose)
+	return plan, nil
+}
 
-	// Flatten the schedule plan for applySchedule
+func flattenSchedule(plan map[string][]scheduler.ScheduledSlot) map[string][]tunarr.Program {
 	flattenedPlan := make(map[string][]tunarr.Program)
 	for channelID, slots := range plan {
 		for _, slot := range slots {
 			flattenedPlan[channelID] = append(flattenedPlan[channelID], slot.Programs...)
 		}
 	}
+	return flattenedPlan
+}
 
-	// Apply to Tunarr if requested
+func handleScheduleOutput(cfg *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program, apply bool, dryRun bool) error {
 	if apply && !dryRun {
-		if err := applySchedule(client, flattenedPlan); err != nil {
-			return err
-		}
-		// Commit state changes to DB
-		if err := engine.Commit(); err != nil {
-			return fmt.Errorf("failed to commit state: %w", err)
-		}
-		if cfg.Jellyfin.URL != "" && cfg.Jellyfin.SyncLiveTV {
-			fmt.Println(infoStyle.Render("📺 Refreshing Jellyfin Live TV guide..."))
-			jellyfinClient := jellyfin.NewClient(cfg.Jellyfin)
-			if err := refreshJellyfinWithRetries(jellyfinClient); err != nil {
-				fmt.Printf("%s %v\n", warnStyle.Render("⚠ Failed to refresh Jellyfin Live TV guide (non-fatal):"), err)
-			} else {
-				fmt.Printf("%s\n", successStyle.Render("✓ Jellyfin Live TV guide refreshed"))
-			}
-		}
-		return nil
-	} else if dryRun {
+		return applyScheduleAndSync(cfg, client, engine, flattenedPlan)
+	}
+
+	if dryRun {
 		displayDryRunSummary(flattenedPlan)
 	} else {
 		fmt.Println(infoStyle.Render("\n💡 Use --apply to push schedule to Tunarr"))
@@ -165,6 +181,32 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	}
 
 	return nil
+}
+
+func applyScheduleAndSync(cfg *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program) error {
+	if err := applySchedule(client, flattenedPlan); err != nil {
+		return err
+	}
+
+	if err := engine.Commit(); err != nil {
+		return fmt.Errorf("failed to commit state: %w", err)
+	}
+
+	if cfg.Jellyfin.URL != "" && cfg.Jellyfin.SyncLiveTV {
+		syncJellyfinLiveTV(cfg)
+	}
+
+	return nil
+}
+
+func syncJellyfinLiveTV(cfg *config.Config) {
+	fmt.Println(infoStyle.Render("📺 Refreshing Jellyfin Live TV guide..."))
+	jellyfinClient := jellyfin.NewClient(cfg.Jellyfin)
+	if err := refreshJellyfinWithRetries(jellyfinClient); err != nil {
+		fmt.Printf("%s %v\n", warnStyle.Render("⚠ Failed to refresh Jellyfin Live TV guide (non-fatal):"), err)
+	} else {
+		fmt.Printf("%s\n", successStyle.Render("✓ Jellyfin Live TV guide refreshed"))
+	}
 }
 
 func refreshJellyfinWithRetries(client *jellyfin.Client) error {
