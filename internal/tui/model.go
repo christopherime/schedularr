@@ -21,6 +21,7 @@ const (
 	stateListView sessionState = iota
 	stateEditBlock
 	stateConfirmDelete
+	stateHelp
 )
 
 type item struct {
@@ -41,7 +42,8 @@ type Model struct {
 	validationErrs []string // validation errors for each input field
 	focusIndex     int
 	state          sessionState
-	selected       int // index of block being edited
+	prevState      sessionState // previous state before help
+	selected       int          // index of block being edited
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -112,6 +114,13 @@ func (m *Model) updateWindowSize(msg tea.WindowSizeMsg) {
 }
 
 func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Global help key
+	if msg.String() == "?" && m.state != stateHelp {
+		m.prevState = m.state
+		m.state = stateHelp
+		return m, nil
+	}
+
 	switch m.state {
 	case stateListView:
 		return m.updateListView(msg)
@@ -119,6 +128,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateEditBlock(msg)
 	case stateConfirmDelete:
 		return m.updateConfirmDelete(msg)
+	case stateHelp:
+		return m.updateHelp(msg)
 	default:
 		return m, nil
 	}
@@ -392,6 +403,16 @@ func (m Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "?":
+		// Return to previous state
+		m.state = m.prevState
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m *Model) saveBlock() {
 	// Validate all inputs before saving
 	if !m.validateInputs() {
@@ -427,7 +448,7 @@ func (m *Model) saveBlock() {
 func (m Model) View() string {
 	if m.state == stateListView {
 		help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
-			"\n\nPress 'n' to create new block, 'd' to delete, 'enter' to edit, 'q' to quit",
+			"\n\nPress 'n' to create new block, 'd' to delete, 'enter' to edit, '?' for help, 'q' to quit",
 		)
 		return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View() + help)
 	}
@@ -455,7 +476,7 @@ func (m Model) View() string {
 		}
 		builder.WriteString("\n")
 		builder.WriteString(button)
-		builder.WriteString("\n\n(esc to cancel)")
+		builder.WriteString("\n\n(esc to cancel, ? for help)")
 
 		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 	}
@@ -481,5 +502,74 @@ func (m Model) View() string {
 		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 	}
 
+	if m.state == stateHelp {
+		return m.renderHelp()
+	}
+
 	return "Unknown state"
+}
+
+func (m Model) renderHelp() string {
+	var builder strings.Builder
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	keyStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205"))
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	builder.WriteString(titleStyle.Render("Schedularr TUI - Help") + "\n\n")
+
+	// Context-sensitive help based on previous state
+	switch m.prevState {
+	case stateListView:
+		builder.WriteString(titleStyle.Render("Block List View") + "\n\n")
+		builder.WriteString(keyStyle.Render("  ↑/↓, j/k") + descStyle.Render("  Navigate through blocks\n"))
+		builder.WriteString(keyStyle.Render("  enter") + descStyle.Render("      Edit selected block\n"))
+		builder.WriteString(keyStyle.Render("  n") + descStyle.Render("          Create new block\n"))
+		builder.WriteString(keyStyle.Render("  d, delete") + descStyle.Render("  Delete selected block\n"))
+		builder.WriteString(keyStyle.Render("  /") + descStyle.Render("          Search/filter blocks\n"))
+		builder.WriteString(keyStyle.Render("  q, ctrl+c") + descStyle.Render("  Quit application\n"))
+
+	case stateEditBlock:
+		builder.WriteString(titleStyle.Render("Block Editor") + "\n\n")
+		builder.WriteString(keyStyle.Render("  tab") + descStyle.Render("         Move to next field\n"))
+		builder.WriteString(keyStyle.Render("  shift+tab") + descStyle.Render("   Move to previous field\n"))
+		builder.WriteString(keyStyle.Render("  ↑/↓") + descStyle.Render("         Navigate between fields\n"))
+		builder.WriteString(keyStyle.Render("  enter") + descStyle.Render("       Save block (when on Save button)\n"))
+		builder.WriteString(keyStyle.Render("  esc") + descStyle.Render("         Cancel and return to list\n\n"))
+		builder.WriteString(descStyle.Render("Fields are validated in real-time:\n"))
+		builder.WriteString(descStyle.Render("  • Name: Required, non-empty\n"))
+		builder.WriteString(descStyle.Render("  • Cron: Valid cron expression (e.g., '0 20 * * *')\n"))
+		builder.WriteString(descStyle.Render("  • Duration: Positive number (minutes)\n"))
+		builder.WriteString(descStyle.Render("  • Channel ID: Required, non-empty\n"))
+
+	case stateConfirmDelete:
+		builder.WriteString(titleStyle.Render("Delete Confirmation") + "\n\n")
+		builder.WriteString(keyStyle.Render("  y, Y") + descStyle.Render("  Confirm deletion\n"))
+		builder.WriteString(keyStyle.Render("  n, N") + descStyle.Render("  Cancel deletion\n"))
+		builder.WriteString(keyStyle.Render("  esc") + descStyle.Render("    Cancel deletion\n"))
+
+	default:
+		builder.WriteString(titleStyle.Render("General Commands") + "\n\n")
+		builder.WriteString(keyStyle.Render("  ?") + descStyle.Render("  Show this help\n"))
+		builder.WriteString(keyStyle.Render("  q") + descStyle.Render("  Quit application\n"))
+	}
+
+	builder.WriteString("\n")
+	builder.WriteString(titleStyle.Render("Cron Expression Examples:") + "\n\n")
+	builder.WriteString(descStyle.Render("  0 20 * * *     Every day at 8:00 PM\n"))
+	builder.WriteString(descStyle.Render("  0 6 * * 1-5    Weekdays at 6:00 AM\n"))
+	builder.WriteString(descStyle.Render("  0 0 * * 0      Sundays at midnight\n"))
+	builder.WriteString(descStyle.Render("  */30 * * * *   Every 30 minutes\n"))
+	builder.WriteString(descStyle.Render("  0 9-17 * * *   Every hour from 9 AM to 5 PM\n"))
+
+	builder.WriteString("\n")
+	builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Press ?, q, or esc to close help"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 }

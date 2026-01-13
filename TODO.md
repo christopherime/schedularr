@@ -559,9 +559,15 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Press 'd' or 'delete' to delete a block
   - [x] Y/N confirmation before deletion
   - [x] Visual warning with block name display
+- [x] **Help System**: Context-sensitive help ✅ COMPLETED (2026-01-13)
+  - [x] Added global help screen accessible with '?' key
+  - [x] Context-sensitive help based on current view (list, edit, delete)
+  - [x] Comprehensive keyboard shortcut documentation
+  - [x] Cron expression examples with descriptions
+  - [x] Field validation documentation
+  - [x] Styled help screen with colored sections
 - [ ] **Filter Editor**: Visual filter rule builder
-- [ ] **Help System**: Context-sensitive help
-- [ ] **Keyboard Shortcuts**: Document and improve shortcuts
+- [ ] **Keyboard Shortcuts**: Document and improve shortcuts (partially done - documented in help)
 
 ## Completed
 
