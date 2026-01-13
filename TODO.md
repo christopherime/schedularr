@@ -31,6 +31,24 @@
 
 ---
 
+## Recent Updates (2026-01-13) - Code Cleanup
+
+### ✅ Test Fixes & Code Cleanup
+
+- **Fixed Failing Tests**: Added missing Content-Type headers to mock HTTP server responses in scheduler tests
+  - TestGetFiller_Success
+  - TestGetFiller_MaxFillerTime
+  - TestApplyBlockFiller_Success
+
+- **Removed Dead Code**: Removed unused mapper functions that were designed for a different architecture
+  - `internal/radarr/mapper.go` (MoviesToPrograms)
+  - `internal/sonarr/mapper.go` (EpisodesToPrograms)
+  - Associated tests
+
+- **Coverage Improvements**: scheduler package improved to 91.9%
+
+---
+
 ## Recent Updates (2026-01-13)
 
 ### ✅ TUI Enhancements
@@ -149,15 +167,15 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 4.1 Testing & Quality
 
-#### Current Coverage: ~56% overall (updated 2026-01-13)
+#### Current Coverage: ~58% overall (updated 2026-01-13)
 
 - internal/jellyfin: 100.0% ✅
 - internal/config: 94.4% ✅
-- internal/radarr: 92.9% ✅
+- internal/scheduler: 91.9% ✅
 - internal/tunarr: 90.8% ✅
 - internal/httpclient: 89.3% ✅
-- internal/scheduler: 87.2% ✅
-- internal/sonarr: 86.2% ✅
+- internal/radarr: 87.5% ✅
+- internal/sonarr: 86.7% ✅
 - internal/cueconfig: 85.5% ✅
 - internal/cache: 81.0% ✅
 - internal/store: 77.6% ✅
