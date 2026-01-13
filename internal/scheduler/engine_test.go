@@ -1193,3 +1193,149 @@ func TestApplySeriesFallback_NotFillerMode(t *testing.T) {
 		t.Error("Expected duration to remain unchanged")
 	}
 }
+
+func TestInitializeSeriesState_NewStateWithStartSeasonAndEpisode(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 1,
+		LastAired:      time.Time{}, // Zero time, indicating new state
+	}
+
+	config := SeriesConfig{
+		ShowTitle:    "Test Show",
+		StartSeason:  3,
+		StartEpisode: 5,
+	}
+
+	engine.initializeSeriesState(state, config)
+
+	if state.CurrentSeason != 3 {
+		t.Errorf("Expected CurrentSeason to be 3, got %d", state.CurrentSeason)
+	}
+
+	if state.CurrentEpisode != 5 {
+		t.Errorf("Expected CurrentEpisode to be 5, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestInitializeSeriesState_ExistingStateNotModified(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  2,
+		CurrentEpisode: 7,
+		LastAired:      time.Now(), // Non-zero time, indicating existing state
+	}
+
+	config := SeriesConfig{
+		ShowTitle:    "Test Show",
+		StartSeason:  3,
+		StartEpisode: 5,
+	}
+
+	engine.initializeSeriesState(state, config)
+
+	// State should not be modified when LastAired is not zero
+	if state.CurrentSeason != 2 {
+		t.Errorf("Expected CurrentSeason to remain 2, got %d", state.CurrentSeason)
+	}
+
+	if state.CurrentEpisode != 7 {
+		t.Errorf("Expected CurrentEpisode to remain 7, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestInitializeSeriesState_StartSeasonOnly(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 1,
+		LastAired:      time.Time{},
+	}
+
+	config := SeriesConfig{
+		ShowTitle:   "Test Show",
+		StartSeason: 4,
+		// StartEpisode not specified (0)
+	}
+
+	engine.initializeSeriesState(state, config)
+
+	if state.CurrentSeason != 4 {
+		t.Errorf("Expected CurrentSeason to be 4, got %d", state.CurrentSeason)
+	}
+
+	if state.CurrentEpisode != 1 {
+		t.Errorf("Expected CurrentEpisode to remain 1, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestInitializeSeriesState_StartEpisodeOnly(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 1,
+		LastAired:      time.Time{},
+	}
+
+	config := SeriesConfig{
+		ShowTitle:    "Test Show",
+		StartEpisode: 10,
+		// StartSeason not specified (0)
+	}
+
+	engine.initializeSeriesState(state, config)
+
+	if state.CurrentSeason != 1 {
+		t.Errorf("Expected CurrentSeason to remain 1, got %d", state.CurrentSeason)
+	}
+
+	if state.CurrentEpisode != 10 {
+		t.Errorf("Expected CurrentEpisode to be 10, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestInitializeSeriesState_NoStartConfig(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 1,
+		LastAired:      time.Time{},
+	}
+
+	config := SeriesConfig{
+		ShowTitle: "Test Show",
+		// No StartSeason or StartEpisode
+	}
+
+	engine.initializeSeriesState(state, config)
+
+	// State should remain unchanged when no start config is provided
+	if state.CurrentSeason != 1 {
+		t.Errorf("Expected CurrentSeason to remain 1, got %d", state.CurrentSeason)
+	}
+
+	if state.CurrentEpisode != 1 {
+		t.Errorf("Expected CurrentEpisode to remain 1, got %d", state.CurrentEpisode)
+	}
+}
