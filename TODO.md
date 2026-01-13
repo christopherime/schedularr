@@ -113,14 +113,31 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 4.1 Testing & Quality
 
-- [ ] Unit test coverage >80%
+#### Current Coverage: 43.6% overall
+
+- internal/logging: 100.0% ✅
+- internal/config: 94.4% ✅
+- internal/cache: 81.0% ✅
+- internal/scheduler: 76.8% ✅
+- internal/tunarr: 73.2% ✅
+- internal/store: 72.8% ✅
+- internal/radarr: 72.1% ✅
+- internal/jellyfin: 72.0% ✅
+- internal/sonarr: 70.7% ✅
+- internal/cueconfig: 69.6%
+- cmd: 6.1% (CLI commands - hard to test)
+- internal/tui: 0.0% (TUI - hard to test)
+
+#### Tasks
+
+- [ ] Unit test coverage >80% (currently 43.6% overall, but core packages >70%)
+- [x] Table-driven tests for all core functions
+- [x] Error path and edge case tests (mostly done)
 - [ ] Integration tests: full scheduling workflow
-- [ ] Table-driven tests for all core functions
-- [ ] Error path and edge case tests
 - [ ] Integration tests against real Tunarr instance
 - [ ] Create test fixtures with sample data
-- [ ] Mock Tunarr API responses
-- [ ] Test configuration loading and validation
+- [x] Mock Tunarr API responses (partially done)
+- [x] Test configuration loading and validation
 - [ ] Test CLI commands with real files
 - [ ] E2E tests: scheduling against real Tunarr instance
 - [ ] E2E tests: verify schedule updates
@@ -129,8 +146,8 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 4.2 Deployment & Operations
 
-- [ ] Dockerization: health check endpoint
-- [ ] Observability: migrate remaining logging to slog (if any)
+- [x] Dockerization: health check endpoint (cmd/health.go implemented)
+- [x] Observability: migrate remaining logging to slog (complete)
 
 ## Phase 5: UX Enhancements
 
