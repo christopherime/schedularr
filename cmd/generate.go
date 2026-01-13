@@ -97,7 +97,10 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	displaySchedule(plan, verbose)
 	flattenedPlan := flattenSchedule(plan)
 
-	return handleScheduleOutput(cfg, client, engine, flattenedPlan, apply, dryRun)
+	return handleScheduleOutput(cfg, client, engine, flattenedPlan, scheduleOutputOptions{
+		apply:  apply,
+		dryRun: dryRun,
+	})
 }
 
 func initializeScheduler(cfg *config.Config, schedFile string) (*scheduler.Config, *store.Store, error) {
@@ -168,12 +171,17 @@ func flattenSchedule(plan map[string][]scheduler.ScheduledSlot) map[string][]tun
 	return flattenedPlan
 }
 
-func handleScheduleOutput(cfg *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program, apply bool, dryRun bool) error {
-	if apply && !dryRun {
+type scheduleOutputOptions struct {
+	apply  bool
+	dryRun bool
+}
+
+func handleScheduleOutput(cfg *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program, opts scheduleOutputOptions) error {
+	if opts.apply && !opts.dryRun {
 		return applyScheduleAndSync(cfg, client, engine, flattenedPlan)
 	}
 
-	if dryRun {
+	if opts.dryRun {
 		displayDryRunSummary(flattenedPlan)
 	} else {
 		fmt.Println(infoStyle.Render("\n💡 Use --apply to push schedule to Tunarr"))
