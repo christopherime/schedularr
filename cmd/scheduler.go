@@ -44,10 +44,8 @@ If no filename is provided, creates 'scheduler.yaml' in the current directory.
 The generated file will contain example blocks with all default values
 extracted from the CUE schema.
 
-You can override default block values using flags, e.g., --name "My TV Show".
-
-Examples:
-  schedularr scheduler init
+You can override default block values using flags, e.g., --name "My TV Show"`,
+	Example: `schedularr scheduler init
   schedularr scheduler init my-schedule.yaml --name "Morning Cartoons" --channel-id "kids-channel"
   schedularr scheduler init schedule.json --cron "0 8 * * *" --duration 180`,
 	Args: cobra.MaximumNArgs(1),

@@ -22,10 +22,9 @@ Features:
   • Priority-based block scheduling
   • CUE schema validation for configurations
   • Interactive TUI for block editing
-  • Series-based sequential episode progression (planned)
+  • Series-based sequential episode progression`,
 
-Examples:
-  # Generate a new scheduler configuration
+	Example: `# Generate a new scheduler configuration
   schedularr scheduler init my-schedule.yaml
 
   # Validate configuration files

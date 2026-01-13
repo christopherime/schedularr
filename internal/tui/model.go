@@ -2,9 +2,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -12,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/robfig/cron/v3"
 )
 
@@ -22,6 +25,7 @@ const (
 	stateEditBlock
 	stateConfirmDelete
 	stateHelp
+	stateSeriesProgress
 )
 
 type item struct {
@@ -37,17 +41,20 @@ func (i item) FilterValue() string { return i.block.Name }
 // Model is the Bubble Tea model for the TUI.
 type Model struct {
 	cfg            *config.Config
+	store          *store.Store
 	list           list.Model
 	inputs         []textinput.Model
 	validationErrs []string // validation errors for each input field
 	focusIndex     int
 	state          sessionState
 	prevState      sessionState // previous state before help
-	selected       int          // index of block being edited
+	selected     int          // index of block being edited
+	seriesStates []scheduler.SeriesState
+	seriesScroll int
 }
 
-// NewModel creates a new TUI model with the given configuration.
-func NewModel(cfg *config.Config) Model {
+// NewModel creates a new TUI model with the given configuration and optional store.
+func NewModel(cfg *config.Config, st *store.Store) Model {
 	items := make([]list.Item, len(cfg.Scheduler.Blocks))
 	for i, b := range cfg.Scheduler.Blocks {
 		items[i] = item{block: b}
@@ -83,6 +90,7 @@ func NewModel(cfg *config.Config) Model {
 
 	return Model{
 		cfg:            cfg,
+		store:          st,
 		list:           l,
 		inputs:         inputs,
 		validationErrs: make([]string, 4),
@@ -130,6 +138,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateConfirmDelete(msg)
 	case stateHelp:
 		return m.updateHelp(msg)
+	case stateSeriesProgress:
+		return m.updateSeriesProgress(msg)
 	default:
 		return m, nil
 	}
@@ -154,6 +164,12 @@ func (m Model) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.selected = m.list.Index()
 		m.state = stateConfirmDelete
+		return m, nil
+	case "s":
+		if m.store != nil {
+			m.loadSeriesStates()
+			m.state = stateSeriesProgress
+		}
 		return m, nil
 	}
 
@@ -444,12 +460,57 @@ func (m *Model) saveBlock() {
 	}
 }
 
+func (m *Model) loadSeriesStates() {
+	if m.store == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	states, err := m.store.ExportAllSeriesStates(ctx)
+	if err != nil {
+		m.seriesStates = nil
+		return
+	}
+
+	m.seriesStates = states
+	m.seriesScroll = 0
+}
+
+func (m Model) updateSeriesProgress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		m.state = stateListView
+		return m, nil
+	case "up", "k":
+		if m.seriesScroll > 0 {
+			m.seriesScroll--
+		}
+		return m, nil
+	case "down", "j":
+		if m.seriesScroll < len(m.seriesStates)-1 {
+			m.seriesScroll++
+		}
+		return m, nil
+	case "e":
+		// Edit series state - future feature
+		return m, nil
+	case "r":
+		m.loadSeriesStates()
+		return m, nil
+	}
+	return m, nil
+}
+
 // View renders the TUI.
 func (m Model) View() string {
 	if m.state == stateListView {
-		help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
-			"\n\nPress 'n' to create new block, 'd' to delete, 'enter' to edit, '?' for help, 'q' to quit",
-		)
+		helpText := "\n\nPress 'n' to create new block, 'd' to delete, 'enter' to edit, '?' for help, 'q' to quit"
+		if m.store != nil {
+			helpText = "\n\nPress 'n' to create, 'd' to delete, 'enter' to edit, 's' for series progress, '?' for help, 'q' to quit"
+		}
+		help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(helpText)
 		return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View() + help)
 	}
 
@@ -502,11 +563,127 @@ func (m Model) View() string {
 		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 	}
 
+	if m.state == stateSeriesProgress {
+		return m.renderSeriesProgress()
+	}
+
 	if m.state == stateHelp {
 		return m.renderHelp()
 	}
 
 	return "Unknown state"
+}
+
+func (m Model) renderSeriesProgress() string {
+	var builder strings.Builder
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Bold(true)
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	highlightStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	disabledStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	completedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("34"))
+
+	builder.WriteString(titleStyle.Render("Series Progress Viewer") + "\n\n")
+
+	if len(m.seriesStates) == 0 {
+		builder.WriteString(normalStyle.Render("No series states found.\n\n"))
+		builder.WriteString(normalStyle.Render("Series states are created when series-based scheduling blocks run.\n"))
+		builder.WriteString(normalStyle.Render("Press 'esc' or 'q' to return to the main menu."))
+		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+	}
+
+	// Header
+	builder.WriteString(headerStyle.Render(fmt.Sprintf("%-40s %-12s %-12s %-10s\n",
+		"Series Title", "Episode", "Last Aired", "Status")))
+	builder.WriteString(strings.Repeat("─", 80) + "\n")
+
+	// Show series with scrolling
+	start := m.seriesScroll
+	end := start + 15
+	if end > len(m.seriesStates) {
+		end = len(m.seriesStates)
+	}
+
+	for i := start; i < end; i++ {
+		state := m.seriesStates[i]
+
+		// Determine style based on state
+		style := normalStyle
+		if i == m.seriesScroll {
+			style = highlightStyle
+		} else if state.Disabled {
+			style = disabledStyle
+		} else if state.Completed {
+			style = completedStyle
+		}
+
+		// Format episode info
+		episodeInfo := fmt.Sprintf("S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
+		if state.RunCount > 0 {
+			episodeInfo = fmt.Sprintf("%s (R%d)", episodeInfo, state.RunCount)
+		}
+
+		// Format last aired
+		lastAired := "Never"
+		if !state.LastAired.IsZero() {
+			lastAired = state.LastAired.Format("2006-01-02")
+		}
+
+		// Status
+		status := "Active"
+		if state.Disabled {
+			status = "Disabled"
+		} else if state.Completed {
+			status = "Completed"
+		}
+
+		// Calculate completion percentage (approximate based on current episode)
+		totalEps := state.CurrentSeason*20 + state.CurrentEpisode // rough estimate
+		percentage := 0
+		if totalEps > 0 {
+			percentage = int(float64(totalEps) / float64(totalEps+10) * 100)
+		}
+
+		line := fmt.Sprintf("%-40s %-12s %-12s %-10s %3d%%",
+			truncate(state.ShowTitle, 40),
+			episodeInfo,
+			lastAired,
+			status,
+			percentage)
+
+		builder.WriteString(style.Render(line) + "\n")
+	}
+
+	builder.WriteString("\n")
+	builder.WriteString(normalStyle.Render(fmt.Sprintf("Showing %d-%d of %d series\n\n", start+1, end, len(m.seriesStates))))
+
+	// Help text
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | e: Edit (future) | r: Refresh | esc/q: Back | ?: Help"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 func (m Model) renderHelp() string {
@@ -533,6 +710,9 @@ func (m Model) renderHelp() string {
 		builder.WriteString(keyStyle.Render("  n") + descStyle.Render("          Create new block\n"))
 		builder.WriteString(keyStyle.Render("  d, delete") + descStyle.Render("  Delete selected block\n"))
 		builder.WriteString(keyStyle.Render("  /") + descStyle.Render("          Search/filter blocks\n"))
+		if m.store != nil {
+			builder.WriteString(keyStyle.Render("  s") + descStyle.Render("          View series progress\n"))
+		}
 		builder.WriteString(keyStyle.Render("  q, ctrl+c") + descStyle.Render("  Quit application\n"))
 
 	case stateEditBlock:
@@ -553,6 +733,19 @@ func (m Model) renderHelp() string {
 		builder.WriteString(keyStyle.Render("  y, Y") + descStyle.Render("  Confirm deletion\n"))
 		builder.WriteString(keyStyle.Render("  n, N") + descStyle.Render("  Cancel deletion\n"))
 		builder.WriteString(keyStyle.Render("  esc") + descStyle.Render("    Cancel deletion\n"))
+
+	case stateSeriesProgress:
+		builder.WriteString(titleStyle.Render("Series Progress Viewer") + "\n\n")
+		builder.WriteString(keyStyle.Render("  ↑/↓, j/k") + descStyle.Render("  Navigate through series\n"))
+		builder.WriteString(keyStyle.Render("  r") + descStyle.Render("          Refresh series states from database\n"))
+		builder.WriteString(keyStyle.Render("  e") + descStyle.Render("          Edit series state (future feature)\n"))
+		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Return to block list\n\n"))
+		builder.WriteString(descStyle.Render("Series Display:\n"))
+		builder.WriteString(descStyle.Render("  • Shows current episode (S##E##) for each series\n"))
+		builder.WriteString(descStyle.Render("  • (R#) indicates restart count when series completes\n"))
+		builder.WriteString(descStyle.Render("  • Last aired date shows when episode was scheduled\n"))
+		builder.WriteString(descStyle.Render("  • Status: Active, Completed, or Disabled\n"))
+		builder.WriteString(descStyle.Render("  • Percentage shows approximate progress\n"))
 
 	default:
 		builder.WriteString(titleStyle.Render("General Commands") + "\n\n")

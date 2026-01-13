@@ -239,11 +239,11 @@ func refreshJellyfinWithRetries(client *jellyfin.Client) error {
 }
 
 type channelStats struct {
-	programCount int
+	programCount  int
 	totalDuration int64
-	movies int
-	episodes int
-	tracks int
+	movies        int
+	episodes      int
+	tracks        int
 }
 
 func (cs *channelStats) incrementType(programType string) lipgloss.Style {

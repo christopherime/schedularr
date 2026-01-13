@@ -125,18 +125,9 @@ This TODO is structured to align Schedularr with established architectural patte
 - [ ] Visual cron expression builder (optional - low priority)
 - [ ] Series selector with search (optional - low priority)
 - [ ] Filter builder interface (optional - low priority)
-- [ ] Series Progress Viewer: Display current episode for each series (optional - requires store integration)
+- [ ] Series Progress Viewer: Display current episode for each series (optional requires store integration)
 - [ ] Series Progress Viewer: Show completion percentage (optional - requires store integration)
 - [ ] Series Progress Viewer: Allow manual episode adjustment (optional - requires store integration)
-
-## Phase 3: Enhanced Scheduling Engine
-
-### 3.1 Content Fetching Improvements
-
-- [x] Cache content metadata locally (deferred)
-- [x] Radarr: add availability filtering configuration toggles (include/exclude missing files)
-- [x] Sonarr: add availability filtering configuration toggles (include/exclude missing files)
-- [x] Jellyfin: support optional Live TV refresh retries/backoff and log failures without blocking apply
 
 ## Phase 4: Operational Excellence
 

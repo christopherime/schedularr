@@ -48,11 +48,10 @@ The exported file contains all series states including:
   • Show title
   • Current season and episode
   • Completion status
-  • Last aired timestamp
+  • Last aired timestamp`,
 
-Example:
-  schedularr state export backup-2026-01-12.json`,
-	Args: cobra.ExactArgs(1),
+	Example: "schedularr state export backup-2026-01-12.json",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		outputFile := args[0]
 

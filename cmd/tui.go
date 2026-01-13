@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/geekxflood/schedularr/internal/config"
+	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/geekxflood/schedularr/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -29,7 +30,16 @@ var tuiCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		m := tui.NewModel(&cfg)
+		// Try to open the store (optional - if it fails, TUI works without series progress feature)
+		var st *store.Store
+		if cfg.Database != "" {
+			st, _ = store.New(cfg.Database)
+			if st != nil {
+				defer st.Close()
+			}
+		}
+
+		m := tui.NewModel(&cfg, st)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
