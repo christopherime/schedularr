@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -1337,5 +1338,310 @@ func TestInitializeSeriesState_NoStartConfig(t *testing.T) {
 
 	if state.CurrentEpisode != 1 {
 		t.Errorf("Expected CurrentEpisode to remain 1, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestNewEngineWithOptions_AllOptionsProvided(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	logger := slog.Default()
+	loc := time.FixedZone("Test", 3600)
+	historyWindow := 5 * 24 * time.Hour
+
+	opts := EngineOptions{
+		Logger:        logger,
+		Location:      loc,
+		HistoryWindow: historyWindow,
+	}
+
+	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+
+	if engine.logger != logger {
+		t.Error("Expected custom logger to be used")
+	}
+
+	if engine.location != loc {
+		t.Error("Expected custom location to be used")
+	}
+
+	if engine.history.Window() != historyWindow {
+		t.Errorf("Expected history window to be %v, got %v", historyWindow, engine.history.Window())
+	}
+}
+
+func TestNewEngineWithOptions_DefaultLogger(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+
+	opts := EngineOptions{
+		Logger: nil, // Should use slog.Default()
+	}
+
+	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+
+	if engine.logger == nil {
+		t.Error("Expected logger to be set to default")
+	}
+}
+
+func TestNewEngineWithOptions_DefaultLocation(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+
+	opts := EngineOptions{
+		Location: nil, // Should use time.Local
+	}
+
+	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+
+	if engine.location != time.Local {
+		t.Error("Expected location to be set to time.Local")
+	}
+}
+
+func TestNewEngineWithOptions_DefaultHistoryWindow(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+
+	opts := EngineOptions{
+		HistoryWindow: 0, // Should use 7 days default
+	}
+
+	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+
+	expectedWindow := 7 * 24 * time.Hour
+	if engine.history.Window() != expectedWindow {
+		t.Errorf("Expected history window to be %v, got %v", expectedWindow, engine.history.Window())
+	}
+}
+
+func TestFindNextSeriesEpisode_FindsCurrent(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 2,
+	}
+
+	config := SeriesConfig{
+		ShowTitle: "Test Show",
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
+		{ID: "e2", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 2, Duration: 1800000},
+		{ID: "e3", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 3, Duration: 1800000},
+	}
+
+	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+
+	if ep == nil {
+		t.Fatal("Expected to find episode")
+	}
+
+	if ep.ID != "e2" {
+		t.Errorf("Expected episode e2, got %s", ep.ID)
+	}
+}
+
+func TestFindNextSeriesEpisode_SkipsEpisodes(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 2,
+	}
+
+	config := SeriesConfig{
+		ShowTitle:    "Test Show",
+		SkipEpisodes: []string{"S01E02", "S01E03"},
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
+		{ID: "e2", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 2, Duration: 1800000},
+		{ID: "e3", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 3, Duration: 1800000},
+		{ID: "e4", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 4, Duration: 1800000},
+	}
+
+	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+
+	if ep == nil {
+		t.Fatal("Expected to find episode")
+	}
+
+	if ep.ID != "e4" {
+		t.Errorf("Expected episode e4 after skipping e2 and e3, got %s", ep.ID)
+	}
+
+	if state.CurrentEpisode != 4 {
+		t.Errorf("Expected CurrentEpisode to be 4 after skipping, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestFindNextSeriesEpisode_AdvancesToNextSeason(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 5,
+	}
+
+	config := SeriesConfig{
+		ShowTitle: "Test Show",
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
+		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 1, Duration: 1800000},
+		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 2, Duration: 1800000},
+	}
+
+	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+
+	if ep == nil {
+		t.Fatal("Expected to find next season episode")
+	}
+
+	if ep.ID != "s2e1" {
+		t.Errorf("Expected season 2 episode 1, got %s", ep.ID)
+	}
+
+	if state.CurrentSeason != 2 {
+		t.Errorf("Expected CurrentSeason to be 2, got %d", state.CurrentSeason)
+	}
+
+	if state.CurrentEpisode != 1 {
+		t.Errorf("Expected CurrentEpisode to be 1 for new season, got %d", state.CurrentEpisode)
+	}
+}
+
+func TestFindNextSeriesEpisode_MarksCompleteWhenNoneFound(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  3,
+		CurrentEpisode: 1,
+		Completed:      false,
+	}
+
+	config := SeriesConfig{
+		ShowTitle: "Test Show",
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
+		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 1, Duration: 1800000},
+	}
+
+	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+
+	if ep != nil {
+		t.Error("Expected nil when no episodes found")
+	}
+
+	if !state.Completed {
+		t.Error("Expected series to be marked as completed")
+	}
+}
+
+func TestFindNextSeriesEpisode_SkipsFirstEpisodeOfNewSeason(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	state := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 3,
+	}
+
+	config := SeriesConfig{
+		ShowTitle:    "Test Show",
+		SkipEpisodes: []string{"S02E01"}, // Skip first episode of season 2
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "s1e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
+		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 1, Duration: 1800000},
+		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 2, Duration: 1800000},
+	}
+
+	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+
+	if ep == nil {
+		t.Fatal("Expected to find episode after skipping S02E01")
+	}
+
+	if ep.ID != "s2e2" {
+		t.Errorf("Expected S02E02, got %s", ep.ID)
+	}
+
+	if state.CurrentSeason != 2 || state.CurrentEpisode != 2 {
+		t.Errorf("Expected S02E02 state, got S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
+	}
+}
+
+func TestGetSeriesState_FromPendingStates(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	expectedState := &SeriesState{
+		ShowTitle:      "Test Show",
+		CurrentSeason:  2,
+		CurrentEpisode: 5,
+	}
+
+	engine.pendingStates["Test Show"] = expectedState
+
+	state, err := engine.getSeriesState("Test Show")
+
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if state != expectedState {
+		t.Error("Expected to get pending state")
+	}
+}
+
+func TestGetSeriesState_FromStore(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	// Add state to store
+	storeState := &SeriesState{
+		ShowTitle:      "Stored Show",
+		CurrentSeason:  1,
+		CurrentEpisode: 3,
+	}
+	_ = store.UpdateSeriesState(context.Background(), storeState)
+
+	state, err := engine.getSeriesState("Stored Show")
+
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if state.ShowTitle != "Stored Show" {
+		t.Error("Expected to get state from store")
+	}
+
+	if state.CurrentSeason != 1 || state.CurrentEpisode != 3 {
+		t.Errorf("Expected S01E03, got S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
 	}
 }
