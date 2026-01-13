@@ -735,6 +735,7 @@ func TestGetFiller_Success(t *testing.T) {
 			{ID: "f3", Title: "Filler 3", Duration: 900000, Type: "track"},  // 15 min
 			{ID: "f4", Title: "Filler 4", Duration: 1200000, Type: "track"}, // 20 min
 		}
+		w.Header().Set("Content-Type", "application/json")
 		err := json.NewEncoder(w).Encode(fillerContent)
 		require.NoError(t, err)
 	}))
@@ -832,6 +833,7 @@ func TestGetFiller_MaxFillerTime(t *testing.T) {
 			{ID: "f4", Title: "Filler 4", Duration: 300000, Type: "track"}, // 5 min
 			{ID: "f5", Title: "Filler 5", Duration: 300000, Type: "track"}, // 5 min
 		}
+		w.Header().Set("Content-Type", "application/json")
 		err := json.NewEncoder(w).Encode(fillerContent)
 		require.NoError(t, err)
 	}))
@@ -867,6 +869,7 @@ func TestApplyBlockFiller_Success(t *testing.T) {
 			{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"}, // 5 min
 			{ID: "f2", Title: "Filler 2", Duration: 300000, Type: "track"}, // 5 min
 		}
+		w.Header().Set("Content-Type", "application/json")
 		err := json.NewEncoder(w).Encode(fillerContent)
 		require.NoError(t, err)
 	}))
