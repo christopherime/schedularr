@@ -483,78 +483,8 @@ func TestClient_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestAPIError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		apiErr   *APIError
-		contains []string
-	}{
-		{
-			name: "Error with body",
-			apiErr: &APIError{
-				Method:     "GET",
-				URL:        "/api/channels",
-				StatusCode: 404,
-				Body:       `{"error": "not found"}`,
-			},
-			contains: []string{"404", "GET", "/api/channels"},
-		},
-		{
-			name: "Error with wrapped error",
-			apiErr: &APIError{
-				Method: "POST",
-				URL:    "/api/schedule",
-				Err:    http.ErrServerClosed,
-			},
-			contains: []string{"POST", "/api/schedule", "failed"},
-		},
-		{
-			name: "Error with status code only",
-			apiErr: &APIError{
-				Method:     "DELETE",
-				URL:        "/api/programs",
-				StatusCode: 500,
-			},
-			contains: []string{"500", "DELETE"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errMsg := tt.apiErr.Error()
-			for _, substr := range tt.contains {
-				if !contains(errMsg, substr) {
-					t.Errorf("Expected error message to contain %q, got %q", substr, errMsg)
-				}
-			}
-		})
-	}
-}
-
-func TestAPIError_Unwrap(t *testing.T) {
-	wrappedErr := http.ErrServerClosed
-	apiErr := &APIError{
-		Method:     "GET",
-		URL:        "/api/test",
-		StatusCode: 500,
-		Err:        wrappedErr,
-	}
-
-	// Unwrap should return the wrapped error
-	if apiErr.Unwrap() != wrappedErr {
-		t.Errorf("Expected Unwrap to return %v, got %v", wrappedErr, apiErr.Unwrap())
-	}
-
-	// Test with no wrapped error
-	apiErr2 := &APIError{
-		Method:     "GET",
-		URL:        "/api/test",
-		StatusCode: 404,
-	}
-	if apiErr2.Unwrap() != nil {
-		t.Error("Expected Unwrap to return nil when no error is wrapped")
-	}
-}
+// Note: APIError tests have been moved to internal/httpclient/client_test.go
+// as APIError is now part of the shared httpclient package.
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||

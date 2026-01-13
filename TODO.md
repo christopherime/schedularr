@@ -191,3 +191,156 @@ This TODO is structured to align Schedularr with established architectural patte
 
 - [ ] Filter editor: visual filter rule builder (optional)
 - [x] Keyboard shortcuts: comprehensive help screen with context-sensitive shortcuts (lines 512-574 in model.go)
+
+---
+
+## Phase 6: Code Reduction via External Dependencies
+
+**Goal**: Reduce codebase size while maintaining existing functionality by leveraging well-maintained external libraries.
+
+**Constraints**:
+- Libraries must be actively maintained (commits within last 6 months)
+- No known security vulnerabilities
+- Widely adopted in Go ecosystem
+
+### 6.1 HTTP Client Consolidation (~400 lines saved)
+
+**Problem**: Four nearly identical HTTP client implementations in `internal/tunarr/`, `internal/radarr/`, `internal/sonarr/`, `internal/jellyfin/` with duplicated:
+- Request creation and JSON encoding
+- Response handling and error wrapping
+- Retry logic with exponential backoff (tunarr only)
+- Context handling
+
+**Candidate Libraries**:
+
+| Library | Stars | Last Commit | Notes |
+|---------|-------|-------------|-------|
+| `github.com/go-resty/resty/v2` | 10k+ | Active | Full-featured, chainable API, built-in retry |
+| `github.com/hashicorp/go-retryablehttp` | 2k+ | Active | HashiCorp maintained, simple API |
+
+**Recommended**: `go-resty/resty/v2` - Provides retry, JSON marshaling, error handling, and context support out of the box.
+
+**Tasks**:
+- [x] Create shared `internal/httpclient/` package using resty ✅
+- [x] Refactor tunarr client to use shared http client (~248 lines saved) ✅
+- [x] Refactor radarr client to use shared http client (~61 lines saved) ✅
+- [x] Refactor sonarr client to use shared http client (~61 lines saved) ✅
+- [x] Refactor jellyfin client to use shared http client (~39 lines saved) ✅
+- [x] Remove duplicated `newRequest`, `do`, error handling code ✅
+
+**Actual Impact**: ~409 lines removed, unified error handling, consistent retry behavior across all API clients
+
+### 6.2 Cache Implementation Replacement (~80 lines saved)
+
+**Problem**: Custom file-based cache in `internal/cache/cache.go` (~112 lines) implementing basic Get/Set/Clear with TTL.
+
+**Candidate Libraries**:
+
+| Library | Stars | Last Commit | Notes |
+|---------|-------|-------------|-------|
+| `github.com/patrickmn/go-cache` | 8k+ | Stable | In-memory with expiration, simple API |
+| `github.com/allegro/bigcache` | 7k+ | Active | High-performance, no GC overhead |
+| `github.com/dgraph-io/ristretto` | 5k+ | Active | High-performance with admission policy |
+
+**Recommended**: `github.com/patrickmn/go-cache` - Simple, proven, matches current functionality (in-memory with TTL). If file persistence is required, keep current implementation but simplify.
+
+**Tasks**:
+- [ ] Evaluate if file-based persistence is required (currently used for content caching)
+- [ ] If in-memory is acceptable: replace with go-cache (~80 lines saved)
+- [ ] If file persistence required: consider hybrid approach or keep current
+
+**Estimated Impact**: ~80 lines removed if switching to in-memory cache
+
+### 6.3 Functional Slice Utilities (~30 lines saved)
+
+**Problem**: Custom `contains` and `containsAny` functions in `internal/scheduler/filter.go` and duplicate `contains` in test files.
+
+**Candidate Libraries**:
+
+| Library | Stars | Last Commit | Notes |
+|---------|-------|-------------|-------|
+| `github.com/samber/lo` | 18k+ | Active | Lodash-style, generic, comprehensive |
+| `golang.org/x/exp/slices` | stdlib | Active | Standard library experimental |
+
+**Recommended**: `github.com/samber/lo` - Provides `lo.Contains`, `lo.ContainsBy`, `lo.Filter`, `lo.Map` and many more utilities that could simplify filter logic.
+
+**Tasks**:
+- [ ] Replace custom `contains()` with `lo.ContainsBy` (case-insensitive)
+- [ ] Replace custom `containsAny()` with `lo.Some` or `lo.Intersect`
+- [ ] Consider using `lo.Filter` in `FilterPrograms` function
+- [ ] Remove duplicate `contains` helper in test files
+
+**Estimated Impact**: ~30 lines removed, more expressive filter code
+
+### 6.4 Test Assertions Standardization (~500 lines simplified)
+
+**Problem**: Test files use verbose manual assertion patterns:
+```go
+if len(result) != expected {
+    t.Errorf("expected %d, got %d", expected, len(result))
+}
+```
+
+**Candidate Libraries**:
+
+| Library | Stars | Last Commit | Notes |
+|---------|-------|-------------|-------|
+| `github.com/stretchr/testify` | 23k+ | Active | Industry standard, assert/require/mock |
+| `github.com/matryer/is` | 2k+ | Active | Minimalist, less verbose |
+
+**Recommended**: `github.com/stretchr/testify/assert` and `github.com/stretchr/testify/require` - Industry standard, excellent error messages, reduces test verbosity by ~40%.
+
+**Tasks**:
+- [ ] Add testify to go.mod
+- [ ] Refactor `internal/tunarr/client_test.go` (~870 lines)
+- [ ] Refactor `internal/scheduler/engine_test.go`
+- [ ] Refactor `internal/scheduler/filter_test.go`
+- [ ] Refactor `internal/store/sqlite_test.go`
+- [ ] Refactor remaining test files
+- [ ] Remove custom `contains` and `findSubstring` test helpers
+
+**Estimated Impact**: Test code becomes ~40% more concise, better error messages
+
+### 6.5 HTTP Test Server Simplification (optional)
+
+**Problem**: Manual httptest.Server setup repeated across test files.
+
+**Candidate Libraries**:
+
+| Library | Stars | Last Commit | Notes |
+|---------|-------|-------------|-------|
+| `github.com/jarcoal/httpmock` | 2k+ | Active | Transport-level mocking |
+| `github.com/h2non/gock` | 2k+ | Active | Expressive HTTP mocking |
+
+**Recommended**: `github.com/jarcoal/httpmock` - Cleaner test setup, removes need for manual server management.
+
+**Tasks**:
+- [ ] Evaluate if migration effort is worth the simplification
+- [ ] If yes, refactor API client tests to use httpmock
+
+**Estimated Impact**: Cleaner tests, less boilerplate, but significant migration effort
+
+---
+
+### Refactoring Priority Order
+
+1. **High Priority** - HTTP Client Consolidation (6.1)
+   - Biggest code reduction (~400 lines)
+   - Eliminates four sources of duplicated logic
+   - Adds consistent retry behavior across all clients
+
+2. **Medium Priority** - Test Assertions (6.4)
+   - Large simplification in tests (~500 lines more concise)
+   - Better error messages
+   - Industry standard
+
+3. **Low Priority** - Slice Utilities (6.3)
+   - Small code reduction (~30 lines)
+   - Nice-to-have expressiveness
+
+4. **Evaluate** - Cache Replacement (6.2)
+   - Depends on whether file persistence is needed
+   - ~80 lines if applicable
+
+5. **Optional** - HTTP Test Mocking (6.5)
+   - Only if test maintenance becomes painful
