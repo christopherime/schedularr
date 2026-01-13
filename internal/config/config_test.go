@@ -56,7 +56,7 @@ func TestConfig_GetCacheDuration(t *testing.T) {
 		{"valid 30m", "30m", 30 * time.Minute},
 		{"valid 2h30m", "2h30m", 2*time.Hour + 30*time.Minute},
 		{"invalid format", "abc", 1 * time.Hour}, // Should default to 1h
-		{"empty string", "", 1 * time.Hour},     // Should default to 1h
+		{"empty string", "", 1 * time.Hour},      // Should default to 1h
 	}
 
 	for _, tt := range tests {

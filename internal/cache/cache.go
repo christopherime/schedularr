@@ -30,10 +30,10 @@ func New(cacheDir string, cacheDuration time.Duration) (*Cache, error) {
 	}
 
 	return &Cache{
-		cacheDir:      cacheDir,
-		cacheDuration: cacheDuration,
-	},
-	nil
+			cacheDir:      cacheDir,
+			cacheDuration: cacheDuration,
+		},
+		nil
 }
 
 // Get retrieves data from the cache. Returns (data, true, nil) if found and valid,

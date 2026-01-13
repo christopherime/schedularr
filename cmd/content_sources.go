@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	tunarrCacheKey  = "tunarr_programs.json"
-	radarrCacheKey  = "radarr_movies.json"
-	sonarrCacheKey  = "sonarr_episodes.json" // Includes series and episodes
+	tunarrCacheKey = "tunarr_programs.json"
+	radarrCacheKey = "radarr_movies.json"
+	sonarrCacheKey = "sonarr_episodes.json" // Includes series and episodes
 )
 
 func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.Program, error) {
@@ -351,4 +351,3 @@ func episodeKey(showTitle string, season, episode int) string {
 func normalizeTitle(title string) string {
 	return strings.ToLower(strings.TrimSpace(title))
 }
-

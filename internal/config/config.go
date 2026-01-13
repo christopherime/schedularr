@@ -40,7 +40,7 @@ type LogConfig struct {
 
 // CacheConfig holds configuration for content caching
 type CacheConfig struct {
-	CacheDir      string `mapstructure:"cache_dir" yaml:"cache_dir" json:"cache_dir,omitempty"`           // Directory to store cache files
+	CacheDir      string `mapstructure:"cache_dir" yaml:"cache_dir" json:"cache_dir,omitempty"`                // Directory to store cache files
 	CacheDuration string `mapstructure:"cache_duration" yaml:"cache_duration" json:"cache_duration,omitempty"` // How long cache entries are valid (e.g., "1h", "24h")
 }
 
