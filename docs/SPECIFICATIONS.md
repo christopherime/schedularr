@@ -390,39 +390,39 @@ CREATE TABLE series_state (
 
 ### Progression Logic
 
-1.  **Initial State**:
-    *   If a series is new, it starts at `current_season: 1`, `current_episode: 1`.
-    *   This can be overridden by `start_season` and `start_episode` in the `SeriesConfig`.
-2.  **Episode Selection**:
-    *   For each block occurrence, the scheduler attempts to fetch the next `episodes_per_block` episodes for each configured series.
-    *   Episodes specified in `skip_episodes` will be skipped over.
-3.  **State Update**:
-    *   After successfully scheduling an episode, the `current_episode` counter is incremented.
-    *   The `last_aired` timestamp is updated.
-4.  **Season Transition**:
-    *   When the last episode of a season is reached, the scheduler attempts to find episodes in the next season.
-    *   If found, `current_season` is incremented, and `current_episode` is reset to 1.
-5.  **Series Completion (`on_complete`)**:
-    *   When no more episodes are found for a series (after checking all seasons):
-        *   The series is marked as `completed`.
-        *   The `run_count` is incremented.
-    *   The `on_complete` action determines further behavior:
-        *   `continue` (default): The series is marked complete, but remains active. Subsequent scheduling attempts will fall through to the block's `fallback` logic.
-        *   `restart`: The series state is reset to `current_season: 1`, `current_episode: 1`. If `max_runs` is specified and exceeded, the series is `disabled`.
-        *   `disable`: The series is marked `disabled`, and will no longer be considered for scheduling in its block.
+1. **Initial State**:
+    - If a series is new, it starts at `current_season: 1`, `current_episode: 1`.
+    - This can be overridden by `start_season` and `start_episode` in the `SeriesConfig`.
+2. **Episode Selection**:
+    - For each block occurrence, the scheduler attempts to fetch the next `episodes_per_block` episodes for each configured series.
+    - Episodes specified in `skip_episodes` will be skipped over.
+3. **State Update**:
+    - After successfully scheduling an episode, the `current_episode` counter is incremented.
+    - The `last_aired` timestamp is updated.
+4. **Season Transition**:
+    - When the last episode of a season is reached, the scheduler attempts to find episodes in the next season.
+    - If found, `current_season` is incremented, and `current_episode` is reset to 1.
+5. **Series Completion (`on_complete`)**:
+    - When no more episodes are found for a series (after checking all seasons):
+        - The series is marked as `completed`.
+        - The `run_count` is incremented.
+    - The `on_complete` action determines further behavior:
+        - `continue` (default): The series is marked complete, but remains active. Subsequent scheduling attempts will fall through to the block's `fallback` logic.
+        - `restart`: The series state is reset to `current_season: 1`, `current_episode: 1`. If `max_runs` is specified and exceeded, the series is `disabled`.
+        - `disable`: The series is marked `disabled`, and will no longer be considered for scheduling in its block.
 
 ### Fallback Logic for Series Blocks
 
 When a series block cannot fill its `duration` with series content (e.g., a series completes, or there aren't enough episodes to fill the desired `episodes_per_block`), the `fallback` configuration is used:
 
--   `mode: "redistribute"`: (Default) The remaining time is implicitly available for other active series within the same block. If there are no other active series, the block will end earlier.
--   `mode: "filler"`: The remaining time will be filled with content matching the `fallback.filler_filter`. This allows for specific types of content to be used as a "catch-all" when series content is exhausted.
+- `mode: "redistribute"`: (Default) The remaining time is implicitly available for other active series within the same block. If there are no other active series, the block will end earlier.
+- `mode: "filler"`: The remaining time will be filled with content matching the `fallback.filler_filter`. This allows for specific types of content to be used as a "catch-all" when series content is exhausted.
 
 ### Transaction Handling
 
--   Series state changes are **pending** in memory until the schedule is successfully applied to Tunarr.
--   **Commit**: Saves pending state changes to SQLite after a successful Tunarr update.
--   **Rollback**: Pending state changes are discarded if the Tunarr update fails (or if the application exits without committing).
+- Series state changes are **pending** in memory until the schedule is successfully applied to Tunarr.
+- **Commit**: Saves pending state changes to SQLite after a successful Tunarr update.
+- **Rollback**: Pending state changes are discarded if the Tunarr update fails (or if the application exits without committing).
 
 ### Example State Progression
 

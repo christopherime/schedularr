@@ -4,32 +4,35 @@ This guide assists users in upgrading their Schedularr configuration files from 
 
 ## Table of Contents
 
-1.  [Introduction](#introduction)
-2.  [Key Configuration Changes](#key-configuration-changes)
-    *   [Application Configuration (`config.yaml`)](#application-configuration-configyaml)
-    *   [Scheduler Configuration (`scheduler.yaml`)](#scheduler-configuration-scheduleryaml)
-3.  [Migration Steps](#migration-steps)
-    *   [Step 1: Backup Existing Configuration](#step-1-backup-existing-configuration)
-    *   [Step 2: Generate New Configuration Templates](#step-2-generate-new-configuration-templates)
-    *   [Step 3: Transfer Settings from Old Config](#step-3-transfer-settings-from-old-config)
-    *   [Step 4: Validate New Configuration](#step-4-validate-new-configuration)
-    *   [Step 5: Review and Adjust Scheduler Blocks](#step-5-review-and-adjust-scheduler-blocks)
-4.  [Example Migration](#example-migration)
-    *   [Old `config.yaml`](#old-configyaml)
-    *   [New `config.yaml`](#new-configyaml)
-    *   [Old `scheduler.yaml` (or inline config)](#old-scheduleryaml-or-inline-config)
-    *   [New `scheduler.yaml`](#new-scheduleryaml)
-5.  [Troubleshooting Common Migration Issues](#troubleshooting-common-migration-issues)
+- [Schedularr Migration Guide](#schedularr-migration-guide)
+  - [Table of Contents](#table-of-contents)
+  - [1. Introduction](#1-introduction)
+  - [2. Key Configuration Changes](#2-key-configuration-changes)
+    - [Application Configuration (`config.yaml`)](#application-configuration-configyaml)
+    - [Scheduler Configuration (`scheduler.yaml`)](#scheduler-configuration-scheduleryaml)
+  - [3. Migration Steps](#3-migration-steps)
+    - [Step 1: Backup Existing Configuration](#step-1-backup-existing-configuration)
+    - [Step 2: Generate New Configuration Templates](#step-2-generate-new-configuration-templates)
+    - [Step 3: Transfer Settings from Old Config](#step-3-transfer-settings-from-old-config)
+    - [Step 4: Validate New Configuration](#step-4-validate-new-configuration)
+    - [Step 5: Review and Adjust Scheduler Blocks](#step-5-review-and-adjust-scheduler-blocks)
+  - [4. Example Migration](#4-example-migration)
+    - [Old `config.yaml`](#old-configyaml)
+    - [New `config.yaml`](#new-configyaml)
+    - [Old `scheduler.yaml` (or inline config)](#old-scheduleryaml-or-inline-config)
+    - [New `scheduler.yaml`](#new-scheduleryaml)
+  - [5. Troubleshooting Common Migration Issues](#5-troubleshooting-common-migration-issues)
 
 ## 1. Introduction
 
 With the integration of CUE schemas, Schedularr's configuration has become more robust, type-safe, and flexible. This also means some breaking changes or restructuring might be necessary if you are upgrading from an older version. This guide will walk you through the process of migrating your existing configurations to align with the new schema.
 
 The primary change involves:
--   **Separation of Concerns**: Application-level settings (like Tunarr connection and logging) are now distinct from scheduler-specific block definitions.
--   **Enhanced Block Definitions**: Introduction of Series-based blocks, flexible duration overflow, and more granular control over filler and fallback content.
--   **Timezone Support**: Cron expressions are now parsed with explicit timezone awareness.
--   **Metrics Exposure**: New configuration for exposing Prometheus metrics.
+
+- **Separation of Concerns**: Application-level settings (like Tunarr connection and logging) are now distinct from scheduler-specific block definitions.
+- **Enhanced Block Definitions**: Introduction of Series-based blocks, flexible duration overflow, and more granular control over filler and fallback content.
+- **Timezone Support**: Cron expressions are now parsed with explicit timezone awareness.
+- **Metrics Exposure**: New configuration for exposing Prometheus metrics.
 
 ## 2. Key Configuration Changes
 
@@ -62,10 +65,11 @@ scheduler_file: string # New: Path to your separate scheduler.yaml file
 ```
 
 **Notable Additions/Changes:**
--   `log.timezone`: Explicitly set the timezone for cron parsing. Defaults to `Local` (system's local time).
--   `metrics_port`: Defines the port where Prometheus metrics (`/metrics`) and health checks (`/healthz`) are exposed.
--   `database`: Path to the SQLite database for state persistence (series progression, history).
--   `scheduler_file`: Preferred way to specify your scheduling rules, pointing to a separate `scheduler.yaml`. The `scheduler` inline section is still supported for backward compatibility but less recommended.
+
+- `log.timezone`: Explicitly set the timezone for cron parsing. Defaults to `Local` (system's local time).
+- `metrics_port`: Defines the port where Prometheus metrics (`/metrics`) and health checks (`/healthz`) are exposed.
+- `database`: Path to the SQLite database for state persistence (series progression, history).
+- `scheduler_file`: Preferred way to specify your scheduling rules, pointing to a separate `scheduler.yaml`. The `scheduler` inline section is still supported for backward compatibility but less recommended.
 
 ### Scheduler Configuration (`scheduler.yaml`)
 
@@ -112,12 +116,13 @@ blocks:
 ```
 
 **Notable Additions/Changes:**
--   `type`: Blocks now explicitly declare their type (`filter` or `series`).
--   `max_duration_overflow_minutes`: Allows for flexible block durations to prioritize content completeness.
--   `title_pattern`: The `filter.title` field has been renamed to `filter.title_pattern` for better clarity that it expects a regex pattern.
--   `series` block has been greatly expanded to support multiple series configurations within a single block, with fields like `start_season`, `start_episode`, `on_complete`, `skip_episodes`, and `max_runs`.
--   `fallback`: A new section for series blocks to define what happens when series content is exhausted.
--   `filler.min_gap_time`: Minimum gap duration required before filler content is inserted.
+
+- `type`: Blocks now explicitly declare their type (`filter` or `series`).
+- `max_duration_overflow_minutes`: Allows for flexible block durations to prioritize content completeness.
+- `title_pattern`: The `filter.title` field has been renamed to `filter.title_pattern` for better clarity that it expects a regex pattern.
+- `series` block has been greatly expanded to support multiple series configurations within a single block, with fields like `start_season`, `start_episode`, `on_complete`, `skip_episodes`, and `max_runs`.
+- `fallback`: A new section for series blocks to define what happens when series content is exhausted.
+- `filler.min_gap_time`: Minimum gap duration required before filler content is inserted.
 
 ## 3. Migration Steps
 
@@ -156,24 +161,25 @@ Once you've transferred your settings, validate the new files using the Schedula
 ./schedularr validate new-config.yaml
 ./schedularr validate new-scheduler.yaml
 ```
+
 Address any errors reported by the validator.
 
 ### Step 5: Review and Adjust Scheduler Blocks
 
 Open your `scheduler.yaml.bak` (or the scheduler blocks from your old `config.yaml`) and `new-scheduler.yaml` side-by-side.
 
--   For **filter-based blocks**:
-    *   Ensure `type: "filter"` is explicitly set.
-    *   If you used `filter.title`, rename it to `filter.title_pattern`.
-    *   Consider adding `max_duration_overflow_minutes` if you need flexibility in block duration.
-    *   Review `filler` settings, especially `min_gap_time`.
+- For **filter-based blocks**:
+  - Ensure `type: "filter"` is explicitly set.
+  - If you used `filter.title`, rename it to `filter.title_pattern`.
+  - Consider adding `max_duration_overflow_minutes` if you need flexibility in block duration.
+  - Review `filler` settings, especially `min_gap_time`.
 
--   For **series-based blocks**:
-    *   These are significantly changed. You will need to redefine your series blocks using the new `series` list structure.
-    *   Map your old `show_id` and `episodes_per_block` to the new `series` list.
-    *   Decide on `start_season`, `start_episode`, `on_complete`, `skip_episodes`, and `max_runs` for each series.
-    *   Configure `fallback` logic (either `redistribute` or `filler` with a `filler_filter`).
-    *   Consider `max_duration_overflow_minutes` for these blocks.
+- For **series-based blocks**:
+  - These are significantly changed. You will need to redefine your series blocks using the new `series` list structure.
+  - Map your old `show_id` and `episodes_per_block` to the new `series` list.
+  - Decide on `start_season`, `start_episode`, `on_complete`, `skip_episodes`, and `max_runs` for each series.
+  - Configure `fallback` logic (either `redistribute` or `filler` with a `filler_filter`).
+  - Consider `max_duration_overflow_minutes` for these blocks.
 
 ## 4. Example Migration
 
@@ -272,11 +278,11 @@ blocks:
 
 ## 5. Troubleshooting Common Migration Issues
 
--   **`Error: blocks[X]: missing required field "type"`**: You need to explicitly set `type: "filter"` or `type: "series"` for each block.
--   **`Error: log.timezone: invalid value "EST"`**: Ensure you are using a valid IANA Time Zone name (e.g., "America/New_York", "Europe/London"), not abbreviations.
--   **`Error: blocks[X].filter.title: field not found`**: The `filter.title` field was renamed to `filter.title_pattern`. Update your configuration accordingly.
--   **`Error: blocks[X].filler.min_gap_time: value ...`**: Ensure `min_gap_time` is a valid integer.
--   **`Error: blocks[X].series: expected a list of objects`**: The `series` field now expects a list of `SeriesConfig` objects, not a single `show_id`.
--   **Scheduler fails to start with `schedularr.db` error**: Ensure the `database` path in `config.yaml` is accessible and writable.
+- **`Error: blocks[X]: missing required field "type"`**: You need to explicitly set `type: "filter"` or `type: "series"` for each block.
+- **`Error: log.timezone: invalid value "EST"`**: Ensure you are using a valid IANA Time Zone name (e.g., "America/New_York", "Europe/London"), not abbreviations.
+- **`Error: blocks[X].filter.title: field not found`**: The `filter.title` field was renamed to `filter.title_pattern`. Update your configuration accordingly.
+- **`Error: blocks[X].filler.min_gap_time: value ...`**: Ensure `min_gap_time` is a valid integer.
+- **`Error: blocks[X].series: expected a list of objects`**: The `series` field now expects a list of `SeriesConfig` objects, not a single `show_id`.
+- **Scheduler fails to start with `schedularr.db` error**: Ensure the `database` path in `config.yaml` is accessible and writable.
 
 If you encounter persistent issues, refer to the [SPECIFICATIONS.md](SPECIFICATIONS.md) for the latest schema details or consult the project's issue tracker.

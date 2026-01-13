@@ -4,24 +4,26 @@ This guide provides a comprehensive tutorial on how to use Schedularr's series-b
 
 ## Table of Contents
 
-1.  [Introduction](#introduction)
-2.  [Series Block Configuration](#series-block-configuration)
-    *   [Multiple Series per Block](#multiple-series-per-block)
-    *   [Initial Progression (`start_season`, `start_episode`)](#initial-progression-start_season-start_episode)
-    *   [Completion Actions (`on_complete`)](#completion-actions-on_complete)
-    *   [Maximum Runs (`max_runs`)](#maximum-runs-max_runs)
-    *   [Skipping Episodes (`skip_episodes`)](#skipping-episodes-skip_episodes)
-    *   [Flexible Duration (`max_duration_overflow_minutes`)](#flexible-duration-max_duration_overflow_minutes)
-3.  [Fallback Strategies](#fallback-strategies)
-    *   [Redistribute Mode](#redistribute-mode)
-    *   [Filler Mode](#filler-mode)
-4.  [Filler Content for Gaps](#filler-content-for-gaps)
-5.  [State Management](#state-management)
-6.  [Examples](#examples)
-    *   [Basic Series Marathon](#basic-series-marathon)
-    *   [Daily Series Continuation with Filler](#daily-series-continuation-with-filler)
-    *   [Thematic Block with Multiple Series](#thematic-block-with-multiple-series)
-7.  [Best Practices](#best-practices)
+- [Schedularr Series Scheduling Guide](#schedularr-series-scheduling-guide)
+  - [Table of Contents](#table-of-contents)
+  - [1. Introduction](#1-introduction)
+  - [2. Series Block Configuration](#2-series-block-configuration)
+    - [Multiple Series per Block](#multiple-series-per-block)
+    - [Initial Progression (`start_season`, `start_episode`)](#initial-progression-start_season-start_episode)
+    - [Completion Actions (`on_complete`)](#completion-actions-on_complete)
+    - [Maximum Runs (`max_runs`)](#maximum-runs-max_runs)
+    - [Skipping Episodes (`skip_episodes`)](#skipping-episodes-skip_episodes)
+    - [Flexible Duration (`max_duration_overflow_minutes`)](#flexible-duration-max_duration_overflow_minutes)
+  - [3. Fallback Strategies](#3-fallback-strategies)
+    - [Redistribute Mode (`mode: "redistribute"`)](#redistribute-mode-mode-redistribute)
+    - [Filler Mode (`mode: "filler"`)](#filler-mode-mode-filler)
+  - [4. Filler Content for Gaps](#4-filler-content-for-gaps)
+  - [5. State Management](#5-state-management)
+  - [6. Examples](#6-examples)
+    - [Basic Series Marathon](#basic-series-marathon)
+    - [Daily Series Continuation with Filler](#daily-series-continuation-with-filler)
+    - [Thematic Block with Multiple Series](#thematic-block-with-multiple-series)
+  - [7. Best Practices](#7-best-practices)
 
 ## 1. Introduction
 
@@ -80,6 +82,7 @@ You can configure multiple `series` within a single series block. Schedularr wil
       - show_title: "Series C"
         episodes_per_block: 2
 ```
+
 In this example, Schedularr will first try to schedule 2 episodes of "Series A", then 1 episode of "Series B", then 2 episodes of "Series C", and so on, cyclically, until the block is filled.
 
 ### Initial Progression (`start_season`, `start_episode`)
@@ -99,9 +102,9 @@ By default, a new series will start from Season 1, Episode 1. You can override t
 
 When a series runs out of episodes (i.e., all seasons and episodes have been scheduled), the `on_complete` action determines what Schedularr does next for that series:
 
--   **`continue` (default)**: The series is marked as `completed`, but the series entry remains active in the block. Future scheduling attempts for this series within the block will immediately fall through to the block's `fallback` logic.
--   **`restart`**: The series state is reset to `start_season`/`start_episode` (or S01E01 if not specified), and `completed` status is cleared. The `run_count` is incremented. The series becomes active again.
--   **`disable`**: The series is marked `disabled`. It will no longer be considered for scheduling within this block. The block will use its `fallback` logic if no other series can fill the time.
+- **`continue` (default)**: The series is marked as `completed`, but the series entry remains active in the block. Future scheduling attempts for this series within the block will immediately fall through to the block's `fallback` logic.
+- **`restart`**: The series state is reset to `start_season`/`start_episode` (or S01E01 if not specified), and `completed` status is cleared. The `run_count` is incremented. The series becomes active again.
+- **`disable`**: The series is marked `disabled`. It will no longer be considered for scheduling within this block. The block will use its `fallback` logic if no other series can fill the time.
 
 ### Maximum Runs (`max_runs`)
 
@@ -137,9 +140,10 @@ You can specify a list of individual episodes to skip using the `skip_episodes` 
 The `max_duration_overflow_minutes` field defined at the block level allows the block's actual scheduled duration to exceed its `duration` by a specified number of minutes. This is crucial for series scheduling, where episode lengths can vary, and cutting an episode short is undesirable.
 
 **Behavior:**
--   The scheduler prioritizes fitting entire programs/episodes.
--   If adding a program would push the total block duration beyond the `duration` but still within `duration + max_duration_overflow_minutes`, the program is included.
--   Once a program causes the block to go into this "overflow" state, no further programs will be added from the series list (though `fallback` and `filler` might still be considered for any remaining time within the `duration` before the overflow item).
+
+- The scheduler prioritizes fitting entire programs/episodes.
+- If adding a program would push the total block duration beyond the `duration` but still within `duration + max_duration_overflow_minutes`, the program is included.
+- Once a program causes the block to go into this "overflow" state, no further programs will be added from the series list (though `fallback` and `filler` might still be considered for any remaining time within the `duration` before the overflow item).
 
 **Example:**
 
@@ -151,6 +155,7 @@ The `max_duration_overflow_minutes` field defined at the block level allows the 
       - show_title: "Shorts"
         episodes_per_block: 2
 ```
+
 If two "Shorts" episodes are 35 minutes each, the block would run for 70 minutes, which is within the 10-minute overflow.
 
 ## 3. Fallback Strategies
@@ -185,6 +190,7 @@ If `mode` is set to `"filler"`, Schedularr will use the `fallback.filler_filter`
         min_duration: 10
         max_duration: 30
 ```
+
 In this example, if the series content finishes early, the remaining time will be filled with documentaries between 10 and 30 minutes long.
 
 ## 4. Filler Content for Gaps
@@ -197,8 +203,8 @@ See the [Filler Content](#filler-content) section in the main `SPECIFICATIONS.md
 
 Schedularr persists the progress of each series (`current_season`, `current_episode`, `run_count`, `completed`, `disabled` status) in an SQLite database (`schedularr.db`).
 
--   **Atomic Updates**: Series state changes are only committed to the database after a successful update to the Tunarr API. If the API update fails, the state changes are rolled back.
--   **Resilience**: This ensures that Schedularr can restart without losing track of series progress.
+- **Atomic Updates**: Series state changes are only committed to the database after a successful update to the Tunarr API. If the API update fails, the state changes are rolled back.
+- **Resilience**: This ensures that Schedularr can restart without losing track of series progress.
 
 ## 6. Examples
 
@@ -281,12 +287,12 @@ blocks:
 
 ## 7. Best Practices
 
--   **Start Small**: Begin with simple series blocks and gradually add complexity.
--   **Monitor Logs**: Pay attention to logs for series progression, completion, and fallback events.
--   **Validate Configuration**: Always run `./schedularr validate scheduler.yaml` after making changes to catch errors early.
--   **Balance `duration` and `episodes_per_block`**: Ensure your planned block duration is reasonable for the number and typical length of episodes you're trying to schedule.
--   **Use `max_duration_overflow_minutes` wisely**: Set a reasonable overflow to avoid excessively long blocks, but enough to prevent cutting media.
--   **Define `on_complete`**: Explicitly decide whether a series should `restart`, `disable`, or `continue` (default, leading to fallback) upon completion.
--   **Leverage `fallback`**: Use `fallback.mode: "filler"` with a specific `filler_filter` for targeted content when series run out, or let it `redistribute` to other series in the block.
--   **Utilize general `filler`**: For small gaps, use the block-level `filler` configuration with short bumps or promos.
--   **Review `max_runs`**: Prevent infinite restarts if unintended.
+- **Start Small**: Begin with simple series blocks and gradually add complexity.
+- **Monitor Logs**: Pay attention to logs for series progression, completion, and fallback events.
+- **Validate Configuration**: Always run `./schedularr validate scheduler.yaml` after making changes to catch errors early.
+- **Balance `duration` and `episodes_per_block`**: Ensure your planned block duration is reasonable for the number and typical length of episodes you're trying to schedule.
+- **Use `max_duration_overflow_minutes` wisely**: Set a reasonable overflow to avoid excessively long blocks, but enough to prevent cutting media.
+- **Define `on_complete`**: Explicitly decide whether a series should `restart`, `disable`, or `continue` (default, leading to fallback) upon completion.
+- **Leverage `fallback`**: Use `fallback.mode: "filler"` with a specific `filler_filter` for targeted content when series run out, or let it `redistribute` to other series in the block.
+- **Utilize general `filler`**: For small gaps, use the block-level `filler` configuration with short bumps or promos.
+- **Review `max_runs`**: Prevent infinite restarts if unintended.

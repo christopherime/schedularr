@@ -5,6 +5,7 @@ This document describes how Schedularr integrates with the Tunarr API and provid
 ## Overview
 
 Schedularr communicates with Tunarr through its REST API to:
+
 - Fetch channel information
 - Retrieve available media content (programs, shows, episodes)
 - Update channel programming schedules
@@ -45,6 +46,7 @@ client := tunarr.NewClient(cfg, logger)
 ### Client Configuration
 
 The client includes:
+
 - **Retry Logic**: Automatic retry with exponential backoff (3 retries, 1s initial backoff)
 - **Timeout**: 30-second timeout for all requests
 - **Metrics**: Prometheus metrics for all API calls
@@ -66,6 +68,7 @@ channels, err := client.GetChannels(ctx)
 **Response:** Array of `Channel` objects
 
 **Channel Fields:**
+
 - `ID` (string): Unique channel identifier
 - `Name` (string): Channel display name
 - `Number` (int): Channel number
@@ -86,6 +89,7 @@ programs, err := client.GetPrograms(ctx)
 **Response:** Array of `Program` objects
 
 **Program Fields:**
+
 - `ID` (string): Unique program identifier
 - `Title` (string): Program title
 - `Duration` (int64): Duration in milliseconds
@@ -114,6 +118,7 @@ libraries, err := client.GetLibraries(ctx)
 **Response:** Array of `Library` objects
 
 **Library Fields:**
+
 - `ID` (string): Unique library identifier
 - `Name` (string): Library display name
 - `Type` (string): Library type (e.g., "plex", "jellyfin")
@@ -129,6 +134,7 @@ programs, err := client.GetLibraryPrograms(ctx, libraryID)
 **Endpoint:** `GET /api/libraries/{libraryID}/programs`
 
 **Parameters:**
+
 - `libraryID` (string): ID of the library to query
 
 **Response:** Array of `Program` objects
@@ -148,6 +154,7 @@ shows, err := client.GetShows(ctx)
 **Response:** Array of `Show` objects
 
 **Show Fields:**
+
 - `ID` (string): Unique show identifier
 - `Title` (string): Show title
 - `Summary` (string): Show description
@@ -168,6 +175,7 @@ episodes, err := client.GetShowEpisodes(ctx, showID, 2)
 **Endpoint:** `GET /api/shows/{showID}/episodes`
 
 **Query Parameters:**
+
 - `season` (int, optional): Filter by season number (0 = all seasons)
 
 **Response:** Array of `Program` objects with `Type="episode"`
@@ -185,6 +193,7 @@ results, err := client.SearchPrograms(ctx, "Star Trek")
 **Endpoint:** `GET /api/programs/search`
 
 **Query Parameters:**
+
 - `q` (string, required): Search query
 
 **Response:** Array of `Program` objects matching the query
@@ -204,6 +213,7 @@ fillerLists, err := client.GetFillerLists(ctx)
 **Response:** Array of `FillerList` objects
 
 **FillerList Fields:**
+
 - `ID` (string): Unique filler list identifier
 - `Name` (string): Filler list display name
 - `Count` (int): Number of items in the list
@@ -219,6 +229,7 @@ programs, err := client.GetFillerContent(ctx, fillerListID)
 **Endpoint:** `GET /api/filler-lists/{fillerListID}/content`
 
 **Parameters:**
+
 - `fillerListID` (string): ID of the filler list
 
 **Response:** Array of `Program` objects
@@ -239,6 +250,7 @@ err := client.UpdateSchedule(ctx, channelID, schedule)
 **Endpoint:** `POST /api/channels/{channelID}/schedule`
 
 **Parameters:**
+
 - `channelID` (string): ID of the channel to update
 
 **Request Body:** JSON array of `Program` objects
@@ -269,11 +281,13 @@ fmt.Errorf("failed to fetch library %s: %w", libID, err)
 ### Retry Behavior
 
 The client automatically retries failed requests with exponential backoff:
+
 - **Initial Backoff:** 1 second
 - **Max Retries:** 3 attempts
 - **Backoff Multiplier:** 2x per retry
 
 Retries occur for:
+
 - Network errors
 - Temporary server errors (5xx status codes)
 - Timeout errors
@@ -285,16 +299,19 @@ All API calls are instrumented with Prometheus metrics:
 ### Counters
 
 **schedularr_tunarr_api_calls_total**
+
 - Total number of API calls
 - Labels: `endpoint`, `method`
 
 **schedularr_tunarr_api_errors_total**
+
 - Total number of API errors
 - Labels: `endpoint`, `method`, `error_type`
 
 ### Histograms
 
 **schedularr_tunarr_api_call_duration_seconds**
+
 - Duration of API calls in seconds
 - Labels: `endpoint`, `method`
 - Buckets: Default Prometheus buckets
@@ -522,6 +539,7 @@ Got 0 programs from Tunarr
 ```
 
 **Solutions:**
+
 1. Verify Tunarr has media sources configured
 2. Check that media libraries are scanned and have content
 3. Verify the endpoint is correct for your Tunarr version
@@ -533,6 +551,7 @@ Error: context deadline exceeded
 ```
 
 **Solutions:**
+
 1. Increase the timeout in the client configuration
 2. Check network latency to Tunarr server
 3. Verify Tunarr is not overloaded
@@ -546,6 +565,7 @@ Error: context deadline exceeded
 ## Version Compatibility
 
 This documentation is current as of:
+
 - **Schedularr:** v0.1.0+
 - **Tunarr:** v0.x (API endpoints may vary)
 

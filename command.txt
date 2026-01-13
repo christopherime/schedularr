@@ -29,5 +29,3 @@ Continue developing the Schedularr project by implementing the tasks listed in T
 - Commit messages should be descriptive and reference TODO items when applicable
 - Push to the main branch regularly (every few commits or at logical stopping points)
 - Keep commits atomic - each commit should represent one logical change
-
-Focus on implementing the core API endpoints verification and content source integration first, as these are foundational to the scheduling engine functionality.
