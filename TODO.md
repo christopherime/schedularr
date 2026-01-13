@@ -354,3 +354,165 @@ if len(result) != expected {
 
 5. **Optional** - HTTP Test Mocking (6.5)
    - Only if test maintenance becomes painful
+
+---
+
+## Phase 7: Additional Code Reduction Opportunities
+
+**Goal**: Further reduce codebase size through strategic library adoption and internal refactoring.
+
+**Analysis Date**: 2026-01-13
+
+### 7.1 Struct Validation with go-playground/validator (~80 lines saved)
+
+**Problem**: Manual validation functions duplicated across API clients (`internal/tunarr/client.go`, `internal/radarr/`, `internal/sonarr/`, `internal/jellyfin/`).
+
+**Current Implementation**:
+
+- `validateChannel()`, `validateProgram()` functions with manual field checks
+- Duplicated validation patterns across 4 API clients
+- ~80 lines of repetitive validation code
+
+**Candidate Library**:
+
+| Library                              | Stars | Last Commit | Notes                               |
+| ------------------------------------ | ----- | ----------- | ----------------------------------- |
+| `github.com/go-playground/validator` | 16k+  | Active      | Struct tag-based, custom validators |
+
+**Recommended**: `github.com/go-playground/validator` - Industry standard, struct tags eliminate boilerplate.
+
+**Example Transformation**:
+
+```go
+// Before: ~10 lines per validation function
+func validateProgram(p *Program) error {
+    if p.ID == "" { return errors.New("program ID required") }
+    if p.Title == "" { return errors.New("title required") }
+    if p.Duration <= 0 { return errors.New("invalid duration") }
+    // ...
+}
+
+// After: struct tags + 1 validate call
+type Program struct {
+    ID       string `validate:"required"`
+    Title    string `validate:"required"`
+    Duration int64  `validate:"gt=0"`
+    Type     string `validate:"omitempty,oneof=movie episode track"`
+}
+```
+
+**Tasks**:
+
+- [ ] Add `github.com/go-playground/validator/v10` to go.mod
+- [ ] Add to depguard allow list in `.golangci.yml`
+- [ ] Add validation tags to `internal/tunarr/models.go` structs
+- [ ] Add validation tags to `internal/radarr/models.go` structs
+- [ ] Add validation tags to `internal/sonarr/models.go` structs
+- [ ] Add validation tags to `internal/jellyfin/` models
+- [ ] Create shared validation helper in `internal/httpclient/`
+- [ ] Remove manual validation functions from API clients
+
+**Estimated Impact**: ~80 lines removed, cleaner validation, better error messages
+
+### 7.2 Remove Logging Wrapper (~47 lines saved)
+
+**Problem**: `internal/logging/logger.go` (47 lines) is a thin wrapper around `log/slog` that adds minimal value.
+
+**Current Implementation**:
+
+- `Setup()` function to parse log level and format
+- Uses standard library `log/slog` internally
+- Wrapper adds indirection without significant benefit
+
+**Recommendation**: Remove wrapper, use `slog` directly throughout codebase.
+
+**Tasks**:
+
+- [ ] Evaluate if logging wrapper provides any unique value
+- [ ] If not: inline `Setup()` logic into `cmd/root.go`
+- [ ] Update all imports from `internal/logging` to `log/slog`
+- [ ] Remove `internal/logging/` package
+
+**Estimated Impact**: ~47 lines removed, simpler imports, use stdlib directly
+
+### 7.3 SQLite with Gorm ORM (optional, ~150 lines saved)
+
+**Problem**: `internal/store/sqlite.go` (339 lines) uses raw `database/sql` with manual query building.
+
+**Current Implementation**:
+
+- Manual prepared statements
+- Custom batch operations
+- Raw SQL strings
+- Works well but verbose
+
+**Candidate Libraries**:
+
+| Library                   | Stars | Last Commit | Notes                          |
+| ------------------------- | ----- | ----------- | ------------------------------ |
+| `gorm.io/gorm`            | 37k+  | Active      | Full-featured ORM, migrations  |
+| `github.com/jmoiron/sqlx` | 16k+  | Active      | Lightweight SQL extensions     |
+| `sqlc.dev`                | 14k+  | Active      | Type-safe code generation      |
+
+**Recommended**: `github.com/jmoiron/sqlx` - Lightweight extension to database/sql, minimal overhead.
+
+**Tasks**:
+
+- [ ] Evaluate if ORM overhead is worth the code reduction
+- [ ] If sqlx: refactor to use `NamedExec`, `Select`, `Get` helpers
+- [ ] If gorm: migrate schema to Gorm models with auto-migration
+
+**Estimated Impact**: ~100-150 lines with sqlx, ~200 lines with Gorm (but adds complexity)
+
+**Decision**: LOW PRIORITY - Current implementation is clean and efficient for simple CRUD operations.
+
+### 7.4 LRU Cache for History Tracker (optional, ~50 lines saved)
+
+**Problem**: `internal/scheduler/history.go` (168 lines) implements custom in-memory cache with TTL.
+
+**Current Implementation**:
+
+- Custom map with sync.RWMutex
+- Manual TTL cleanup
+- Per-program, per-channel tracking
+
+**Candidate Library**:
+
+| Library                           | Stars | Last Commit | Notes                   |
+| --------------------------------- | ----- | ----------- | ----------------------- |
+| `github.com/hashicorp/golang-lru` | 5k+   | Active      | Proven LRU, thread-safe |
+
+**Analysis**: Current implementation is domain-specific (per-program, per-channel). Generic LRU would need wrapping, reducing savings.
+
+**Tasks**:
+
+- [ ] Evaluate if generic LRU fits domain requirements
+- [ ] If yes: replace internal map with golang-lru/v2
+
+**Estimated Impact**: ~50 lines if applicable, but may lose domain-specific features
+
+**Decision**: LOW PRIORITY - Custom implementation fits domain needs well.
+
+---
+
+### Phase 7 Priority Summary
+
+1. **High Priority** - Struct Validation (7.1)
+   - ~80 lines saved
+   - Eliminates duplication across 4 API clients
+   - Cleaner, more maintainable code
+
+2. **Medium Priority** - Remove Logging Wrapper (7.2)
+   - ~47 lines saved
+   - Simplifies imports
+   - Uses stdlib directly
+
+3. **Low Priority** - SQLite with sqlx/Gorm (7.3)
+   - ~100-150 lines saved
+   - Adds ORM dependency
+   - Current implementation is adequate
+
+4. **Low Priority** - LRU Cache (7.4)
+   - ~50 lines saved
+   - May lose domain-specific features
+   - Current implementation fits well
