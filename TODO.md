@@ -118,7 +118,7 @@ This TODO is structured to align Schedularr with established architectural patte
 - internal/logging: 100.0% ✅
 - internal/jellyfin: 96.0% ✅ (improved from 72.0%)
 - internal/config: 94.4% ✅
-- internal/scheduler: 89.1% ✅ (improved from 79.5%)
+- internal/scheduler: 89.8% ✅ (improved from 79.5%)
 - internal/tunarr: 84.4% ✅ (improved from 73.2%)
 - internal/radarr: 81.4% ✅ (improved from 72.1%)
 - internal/sonarr: 81.0% ✅ (improved from 70.7%)
