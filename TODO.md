@@ -153,5 +153,5 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 5.2 TUI Enhancements
 
-- [ ] Filter editor: visual filter rule builder
-- [ ] Keyboard shortcuts: document and improve shortcuts
+- [ ] Filter editor: visual filter rule builder (optional)
+- [x] Keyboard shortcuts: comprehensive help screen with context-sensitive shortcuts (lines 512-574 in model.go)
