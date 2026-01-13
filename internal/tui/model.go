@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/robfig/cron/v3"
 )
 
 type sessionState int
@@ -19,6 +20,7 @@ type sessionState int
 const (
 	stateListView sessionState = iota
 	stateEditBlock
+	stateConfirmDelete
 )
 
 type item struct {
@@ -33,12 +35,13 @@ func (i item) FilterValue() string { return i.block.Name }
 
 // Model is the Bubble Tea model for the TUI.
 type Model struct {
-	cfg        *config.Config
-	list       list.Model
-	inputs     []textinput.Model
-	focusIndex int
-	state      sessionState
-	selected   int // index of block being edited
+	cfg            *config.Config
+	list           list.Model
+	inputs         []textinput.Model
+	validationErrs []string // validation errors for each input field
+	focusIndex     int
+	state          sessionState
+	selected       int // index of block being edited
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -77,10 +80,11 @@ func NewModel(cfg *config.Config) Model {
 	}
 
 	return Model{
-		cfg:    cfg,
-		list:   l,
-		inputs: inputs,
-		state:  stateListView,
+		cfg:            cfg,
+		list:           l,
+		inputs:         inputs,
+		validationErrs: make([]string, 4),
+		state:          stateListView,
 	}
 }
 
@@ -113,6 +117,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateListView(msg)
 	case stateEditBlock:
 		return m.updateEditBlock(msg)
+	case stateConfirmDelete:
+		return m.updateConfirmDelete(msg)
 	default:
 		return m, nil
 	}
@@ -130,6 +136,13 @@ func (m Model) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "n":
 		m.startEditBlock(-1)
+		return m, nil
+	case "d", "delete":
+		if len(m.cfg.Scheduler.Blocks) == 0 {
+			return m, nil
+		}
+		m.selected = m.list.Index()
+		m.state = stateConfirmDelete
 		return m, nil
 	}
 
@@ -215,9 +228,76 @@ func (m Model) updateFocusedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.focusIndex < len(m.inputs) {
 		var cmd tea.Cmd
 		m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+		// Perform real-time validation on the focused field
+		m.validateField(m.focusIndex)
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (m *Model) validateField(index int) {
+	if index >= len(m.inputs) {
+		return
+	}
+
+	switch index {
+	case 0:
+		m.validateName()
+	case 1:
+		m.validateCron()
+	case 2:
+		m.validateDuration()
+	case 3:
+		m.validateChannelID()
+	}
+}
+
+func (m *Model) validateName() {
+	name := strings.TrimSpace(m.inputs[0].Value())
+	if name == "" {
+		m.validationErrs[0] = "Name is required"
+	} else {
+		m.validationErrs[0] = ""
+	}
+}
+
+func (m *Model) validateCron() {
+	cronExp := strings.TrimSpace(m.inputs[1].Value())
+	if cronExp == "" {
+		m.validationErrs[1] = "Cron expression is required"
+		return
+	}
+
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	if _, err := parser.Parse(cronExp); err != nil {
+		m.validationErrs[1] = fmt.Sprintf("Invalid cron: %v", err)
+	} else {
+		m.validationErrs[1] = ""
+	}
+}
+
+func (m *Model) validateDuration() {
+	durationStr := strings.TrimSpace(m.inputs[2].Value())
+	if durationStr == "" {
+		m.validationErrs[2] = "Duration is required"
+		return
+	}
+
+	duration, err := strconv.Atoi(durationStr)
+	if err != nil || duration <= 0 {
+		m.validationErrs[2] = "Duration must be a positive number"
+	} else {
+		m.validationErrs[2] = ""
+	}
+}
+
+func (m *Model) validateChannelID() {
+	channelID := strings.TrimSpace(m.inputs[3].Value())
+	if channelID == "" {
+		m.validationErrs[3] = "Channel ID is required"
+	} else {
+		m.validationErrs[3] = ""
+	}
 }
 
 func (m *Model) resetInputs() {
@@ -235,11 +315,93 @@ func (m *Model) resetInputs() {
 	}
 }
 
+func (m *Model) validateInputs() bool {
+	valid := true
+
+	// Validate name (required, non-empty)
+	name := strings.TrimSpace(m.inputs[0].Value())
+	if name == "" {
+		m.validationErrs[0] = "Name is required"
+		valid = false
+	} else {
+		m.validationErrs[0] = ""
+	}
+
+	// Validate cron expression
+	cronExp := strings.TrimSpace(m.inputs[1].Value())
+	if cronExp == "" {
+		m.validationErrs[1] = "Cron expression is required"
+		valid = false
+	} else {
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		if _, err := parser.Parse(cronExp); err != nil {
+			m.validationErrs[1] = fmt.Sprintf("Invalid cron: %v", err)
+			valid = false
+		} else {
+			m.validationErrs[1] = ""
+		}
+	}
+
+	// Validate duration (positive integer)
+	durationStr := strings.TrimSpace(m.inputs[2].Value())
+	if durationStr == "" {
+		m.validationErrs[2] = "Duration is required"
+		valid = false
+	} else {
+		duration, err := strconv.Atoi(durationStr)
+		if err != nil || duration <= 0 {
+			m.validationErrs[2] = "Duration must be a positive number"
+			valid = false
+		} else {
+			m.validationErrs[2] = ""
+		}
+	}
+
+	// Validate channel ID (required, non-empty)
+	channelID := strings.TrimSpace(m.inputs[3].Value())
+	if channelID == "" {
+		m.validationErrs[3] = "Channel ID is required"
+		valid = false
+	} else {
+		m.validationErrs[3] = ""
+	}
+
+	return valid
+}
+
+func (m Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		// Confirm deletion
+		if m.selected >= 0 && m.selected < len(m.cfg.Scheduler.Blocks) {
+			// Remove from config
+			m.cfg.Scheduler.Blocks = append(
+				m.cfg.Scheduler.Blocks[:m.selected],
+				m.cfg.Scheduler.Blocks[m.selected+1:]...,
+			)
+			// Remove from list
+			m.list.RemoveItem(m.selected)
+		}
+		m.state = stateListView
+		return m, nil
+	case "n", "N", "esc":
+		// Cancel deletion
+		m.state = stateListView
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m *Model) saveBlock() {
-	name := m.inputs[0].Value()
-	cronExp := m.inputs[1].Value()
-	duration, _ := strconv.Atoi(m.inputs[2].Value())
-	channelID := m.inputs[3].Value()
+	// Validate all inputs before saving
+	if !m.validateInputs() {
+		return
+	}
+
+	name := strings.TrimSpace(m.inputs[0].Value())
+	cronExp := strings.TrimSpace(m.inputs[1].Value())
+	duration, _ := strconv.Atoi(strings.TrimSpace(m.inputs[2].Value()))
+	channelID := strings.TrimSpace(m.inputs[3].Value())
 
 	newBlock := scheduler.Block{
 		Name:      name,
@@ -264,16 +426,27 @@ func (m *Model) saveBlock() {
 // View renders the TUI.
 func (m Model) View() string {
 	if m.state == stateListView {
-		return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View())
+		help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+			"\n\nPress 'n' to create new block, 'd' to delete, 'enter' to edit, 'q' to quit",
+		)
+		return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View() + help)
 	}
 
 	if m.state == stateEditBlock {
 		var builder strings.Builder
 		builder.WriteString("Edit Block\n\n")
 
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+
 		for i := range m.inputs {
 			builder.WriteString(m.inputs[i].View())
 			builder.WriteString("\n")
+
+			// Display validation error if present
+			if m.validationErrs[i] != "" {
+				builder.WriteString(errorStyle.Render("  ⚠ " + m.validationErrs[i]))
+				builder.WriteString("\n")
+			}
 		}
 
 		button := "[ Save ]"
@@ -283,6 +456,27 @@ func (m Model) View() string {
 		builder.WriteString("\n")
 		builder.WriteString(button)
 		builder.WriteString("\n\n(esc to cancel)")
+
+		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+	}
+
+	if m.state == stateConfirmDelete {
+		var builder strings.Builder
+
+		warningStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true)
+
+		blockName := ""
+		if m.selected >= 0 && m.selected < len(m.cfg.Scheduler.Blocks) {
+			blockName = m.cfg.Scheduler.Blocks[m.selected].Name
+		}
+
+		builder.WriteString(warningStyle.Render("⚠ Delete Block\n\n"))
+		builder.WriteString(fmt.Sprintf("Are you sure you want to delete the block '%s'?\n\n", blockName))
+		builder.WriteString("This action cannot be undone.\n\n")
+		builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("[Y]es") + " / ")
+		builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("[N]o"))
 
 		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 	}

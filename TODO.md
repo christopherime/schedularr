@@ -263,7 +263,6 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ## Phase 2: Scheduler File Architecture
 
-**Status:** ✅ Completed
 **Goal:** Separate scheduler configuration from app configuration
 
 ### 2.1 Configuration Separation
@@ -399,7 +398,6 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ## Phase 3: Enhanced Scheduling Engine
 
-**Status:** ✅ Completed
 **Goal:** Advanced scheduling features and content management
 
 ### 3.1 Content Fetching Improvements
@@ -529,12 +527,12 @@ This TODO is structured to align Schedularr with established architectural patte
   - [x] Validate config on reload
   - [x] Add config dump command for debugging
 
-### 4.3 Documentation ✅ COMPLETED (2026-01-12)
+### 4.3 Documentation
 
-- [x] **API Documentation**: Document Tunarr integration (Created docs/TUNARR_API.md)
-- [x] Scheduler File Reference: Complete YAML schema documentation
-- [x] Series Scheduling Guide: Tutorial for series-based scheduling
-- [x] Migration Guide: Guide for upgrading from old config format
+- [ ] **API Documentation**: Document Tunarr integration (Created docs/TUNARR_API.md)
+- [ ] Scheduler File Reference: Complete YAML schema documentation
+- [ ] Series Scheduling Guide: Tutorial for series-based scheduling
+- [ ] Migration Guide: Guide for upgrading from old config format
 
 ## Phase 5: UX Enhancements
 
@@ -551,9 +549,17 @@ This TODO is structured to align Schedularr with established architectural patte
 
 ### 5.2 TUI Enhancements
 
-- [ ] **Field Validation**: Real-time validation in TUI
+- [x] **Field Validation**: Real-time validation in TUI ✅ COMPLETED (2026-01-13)
+  - [x] Added validation for name, cron expression, duration, and channel ID
+  - [x] Real-time validation as user types
+  - [x] Visual error display with warning symbols and colored text
+  - [x] Refactored validation logic to reduce cognitive complexity
+- [x] **Confirmation Dialogs**: Confirm destructive actions ✅ COMPLETED (2026-01-13)
+  - [x] Added delete confirmation dialog for blocks
+  - [x] Press 'd' or 'delete' to delete a block
+  - [x] Y/N confirmation before deletion
+  - [x] Visual warning with block name display
 - [ ] **Filter Editor**: Visual filter rule builder
-- [ ] **Confirmation Dialogs**: Confirm destructive actions
 - [ ] **Help System**: Context-sensitive help
 - [ ] **Keyboard Shortcuts**: Document and improve shortcuts
 

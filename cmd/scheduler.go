@@ -246,7 +246,7 @@ func validateSchedulerConfig(cfg *scheduler.Config) []error {
 func validateBlock(block scheduler.Block, index int, parser cron.Parser) []error {
 	blockPrefix := fmt.Sprintf("Block %d (%s)", index+1, block.Name)
 
-	var errs []error
+	errs := make([]error, 0, 10) // Preallocate with reasonable capacity
 	errs = append(errs, validateBlockRequiredFields(block, blockPrefix, parser)...)
 	errs = append(errs, validateBlockFilter(block.Filter, blockPrefix)...)
 
