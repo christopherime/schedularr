@@ -641,6 +641,7 @@ migrations/
 - [ ] Add migration CLI commands (optional: `schedularr db migrate`) - deferred, not needed for basic usage
 
 **Implementation Notes**:
+
 - Used Go's embed.FS to embed migrations in the binary (no external files needed)
 - Single migration file with complete schema (since columns already exist in current schema)
 - Migrations are automatically applied on Store initialization
