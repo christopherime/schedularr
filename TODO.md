@@ -16,26 +16,28 @@
 
 **Problem**: `internal/tui/model.go` has manual form handling code including validation, focus management, and styling.
 
-**Analysis**: The current TUI has complex state management with:
+**Solution**: Replaced manual textinput-based form handling with `charmbracelet/huh`:
 
-- Multiple view states (list, edit, cron builder, filter builder, series selector, file browser)
-- Custom key bindings (ctrl+b for cron builder, ctrl+f for filter builder)
-- Deep integration between form fields and other TUI components
+- Replaced 4 textinput fields with a single `huh.Form`
+- Removed manual focus management (`focusIndex`, `moveFocus`, etc.)
+- Removed manual validation functions (`validateInputs`, `validateName`, etc.)
+- Huh handles validation inline with visual feedback
+- Special key bindings (ctrl+b, ctrl+f) preserved for cron/filter builders
 
-**Evaluation**: While `charmbracelet/huh` provides excellent form handling, integrating it would require:
+**Tasks**:
 
-- Significant architectural changes to the multi-state TUI
-- Custom workarounds for special key bindings (ctrl+b, ctrl+f)
-- Potential loss of fine-grained control over form behavior
+- [x] Add `github.com/charmbracelet/huh` to go.mod and depguard allowlist ✅
+- [x] Replace textinput fields with huh form in Model struct ✅
+- [x] Create `createBlockForm()` with inline validators ✅
+- [x] Update `startEditBlock()` to populate form values ✅
+- [x] Update `updateEditBlock()` to use huh form update/state handling ✅
+- [x] Update `renderEditBlock()` to use `blockForm.View()` ✅
+- [x] Update cron builder integration to use form values ✅
+- [x] Remove old validation and focus management code ✅
 
-**Decision**: DEFERRED - The current form handling is functional and well-tested. The complexity of integration outweighs the line savings. The existing code uses standard bubbles/textinput which is maintained by the same Charmbracelet team.
+**Actual Impact**: ~100 lines removed, cleaner declarative form definition
 
-**Alternative Improvements** (completed separately):
-
-- [x] Extract color constants to reduce magic numbers (can be done incrementally)
-- [x] Cron builder extracted to reusable package (Task 8.5)
-
-**Status**: DEFERRED - Risk/reward ratio unfavorable for current architecture
+**Status**: ✅ COMPLETE
 
 ---
 
@@ -248,14 +250,14 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 
 | Priority | Task                        | Lines Saved | Effort | Status      |
 | -------- | --------------------------- | ----------- | ------ | ----------- |
-| High     | 8.1 TUI Form Handling (huh) | ~150        | Medium | Deferred    |
+| High     | 8.1 TUI Form Handling (huh) | ~100        | Medium | ✅ Complete |
 | High     | 8.3 Database Layer (sqlx)   | ~60         | Medium | ✅ Complete |
 | Medium   | 8.2 In-Memory Cache         | 0           | N/A    | Deferred    |
 | Medium   | 8.5 Cron Builder Extraction | ~170        | Medium | ✅ Complete |
 | Low      | 8.4 History Tracker         | ~50         | Low    | Deferred    |
 | Low      | 8.6 HTTP Client Middleware  | ~10         | Low    | ✅ Complete |
 
-**Total Achieved Savings**: ~240 lines (8.3, 8.5, 8.6)
+**Total Achieved Savings**: ~340 lines (8.1, 8.3, 8.5, 8.6)
 **Remaining Potential**: 0 lines (all pending tasks deferred after evaluation)
 
 ---
