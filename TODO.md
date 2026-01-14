@@ -308,11 +308,19 @@ These were previously implemented and should not be revisited:
 
 **Problem**: `CleanupScheduleHistory()` exists but is not automatically scheduled.
 
-**Solution**: Implemented a `Cleaner` component in `internal/store/cleaner.go` that:
-- Runs as a background goroutine with configurable interval
-- Uses Prometheus metrics to track cleanup operations
-- Supports graceful shutdown via Stop() or context cancellation
-- Can be tested via RunOnce() method
+**Solution**: Two-pronged implementation:
+
+1. **Direct cleanup in generate command** (`cmd/generate.go`):
+   - Runs cleanup after `--apply` when `maintenance.cleanup_enabled` is true
+   - Uses `history_retention` config to determine what to keep
+   - Non-fatal - doesn't interrupt schedule application on failure
+
+2. **Background Cleaner component** (`internal/store/cleaner.go`):
+   - Designed for daemon/serve mode (future enhancement)
+   - Runs as background goroutine with configurable interval
+   - Uses Prometheus metrics to track cleanup operations
+   - Supports graceful shutdown via Stop() or context cancellation
+   - Can be tested via RunOnce() method
 
 **Tasks**:
 - [x] Create a background goroutine for periodic cleanup ✅
@@ -320,6 +328,7 @@ These were previously implemented and should not be revisited:
 - [x] Add graceful shutdown handling ✅
 - [x] Add metrics for cleanup operations ✅
 - [x] Add tests for cleanup scheduling ✅
+- [x] Integrate cleanup into generate --apply command ✅
 
 **Configuration** (in `.schedularr.yaml`):
 ```yaml
@@ -329,11 +338,13 @@ maintenance:
   history_retention: "168h"  # 7 days
 ```
 
-**Metrics**:
+**Metrics** (for background Cleaner):
 - `schedularr_cleanup_runs_total` - Total cleanup runs executed
 - `schedularr_cleanup_entries_removed_total` - Entries removed by cleanup
 - `schedularr_cleanup_duration_seconds` - Cleanup operation duration
 - `schedularr_cleanup_errors_total` - Cleanup errors
+
+**Future Enhancement**: The background `Cleaner` struct is available for use in a future daemon/serve mode.
 
 **Status**: ✅ COMPLETE
 
@@ -459,3 +470,36 @@ Use `--verbose` for detailed filtering and history output.
 - `internal/tui/model.go` - Added series edit view (stateSeriesEdit)
 
 **Status**: ✅ COMPLETE
+
+---
+
+## Code Quality Notes
+
+### Unused Code Analysis (via deadcode)
+
+The following code is reported as "unreachable" by deadcode but is intentionally kept:
+
+**Public API Methods** (designed for consumers or future use):
+- `internal/cache/cache.go`: `SetWithExpiration`, `Clear`, `ClearAll`, `ItemCount`
+- `internal/config/config.go`: `New`, `GetSchedulerConfig`
+- `internal/external/tunarr/client.go`: `GetShows`, `GetShowEpisodes`, `SearchPrograms`, `GetFillerLists`
+- `internal/httpclient/client.go`: `Put`, `Delete`, `SetBaseURL`, `ValidateRequired`
+
+**Engine Variants** (constructor options):
+- `internal/scheduler/engine.go`: `NewEngineWithOptions`, `NewEngineWithHistory`
+
+**In-Memory History** (complete API surface, tested):
+- `internal/scheduler/history.go`: `GetLastScheduled`, `CleanupOldEntries`, `GetStats`, `FilterByHistory`
+- Note: Core methods `Window()`, `RecordPrograms()`, `WasRecentlyScheduled()` ARE used
+
+**Test Helpers**:
+- `internal/scheduler/mock_store.go`: All methods (used in tests)
+
+**Future Features**:
+- `internal/store/cleaner.go`: Background `Cleaner` struct for daemon mode
+
+**Rationale for keeping**:
+1. Public API completeness for external consumers
+2. Well-tested code that may be used in future features
+3. Standard patterns (HTTP methods, constructors with options)
+4. No runtime overhead when unused
