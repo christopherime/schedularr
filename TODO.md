@@ -224,33 +224,34 @@ type HistoryTracker struct {
 
 ---
 
-### 8.5 Cron Builder Extraction (~100 lines saved via data-driven approach)
+### 8.5 Cron Builder Extraction (~170 lines saved via data-driven approach)
 
-**Problem**: `internal/tui/model.go` lines 765-1018 (~250 lines) contain a custom cron expression builder:
+**Problem**: `internal/tui/model.go` lines 765-1018 (~250 lines) contained a custom cron expression builder:
 
 - Manual field cycling through preset values
 - Hardcoded preset arrays
 - String parsing and rebuilding
 - Human-readable description generation
 
-**Current Implementation**:
+**Solution**: Extracted to `internal/cronbuilder/` package with:
 
-```go
-var minutePresets = []string{"*", "0", "15", "30", "45", "0,30"}
-var hourPresets = []string{"*", "0", "6", "8", "12", "18", "20", "22"}
-// ... repeated for each field
-```
-
-**Approach**: Extract to a reusable package with data-driven configuration.
+- `Expression` struct with all 5 cron fields
+- `FieldPresets` map for preset cycling
+- `Describe()` method for human-readable descriptions
+- `CommonPresets()` for common cron patterns
+- `Fields()` for UI rendering metadata
 
 **Tasks**:
 
-- [ ] Extract cron builder to `internal/cronbuilder/` package
-- [ ] Use struct-based presets instead of parallel arrays
-- [ ] Consider using `github.com/robfig/cron/v3` descriptor utilities
-- [ ] Make presets configurable via YAML
+- [x] Extract cron builder to `internal/cronbuilder/` package ✅
+- [x] Use struct-based presets instead of parallel arrays ✅
+- [x] Add human-readable description generation ✅
+- [ ] Consider using `github.com/robfig/cron/v3` descriptor utilities (deferred - current approach works well)
+- [ ] Make presets configurable via YAML (future enhancement)
 
-**Estimated Impact**: ~100 lines saved through consolidation, reusable outside TUI
+**Actual Impact**: ~170 lines removed from TUI model, reusable package created
+
+**Status**: ✅ COMPLETE
 
 ---
 
@@ -290,16 +291,17 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 
 ## Priority Summary
 
-| Priority | Task                             | Lines Saved | Effort |
-| -------- | -------------------------------- | ----------- | ------ |
-| High     | 8.1 TUI Form Handling (huh)      | ~150        | Medium |
-| High     | 8.3 Database Layer (sqlx) ✅     | ~60         | Medium |
-| Medium   | 8.2 In-Memory Cache (deferred)   | 0           | N/A    |
-| Medium   | 8.5 Cron Builder Extraction      | ~100        | Medium |
-| Low      | 8.4 History Tracker              | ~50         | Low    |
-| Low      | 8.6 HTTP Client Middleware ✅    | ~10         | Low    |
+| Priority | Task                        | Lines Saved | Effort | Status      |
+| -------- | --------------------------- | ----------- | ------ | ----------- |
+| High     | 8.1 TUI Form Handling (huh) | ~150        | Medium | Pending     |
+| High     | 8.3 Database Layer (sqlx)   | ~60         | Medium | ✅ Complete |
+| Medium   | 8.2 In-Memory Cache         | 0           | N/A    | Deferred    |
+| Medium   | 8.5 Cron Builder Extraction | ~170        | Medium | ✅ Complete |
+| Low      | 8.4 History Tracker         | ~50         | Low    | Pending     |
+| Low      | 8.6 HTTP Client Middleware  | ~10         | Low    | ✅ Complete |
 
-**Total Potential Savings**: ~510 lines
+**Total Achieved Savings**: ~240 lines (8.3, 8.5, 8.6)
+**Remaining Potential**: ~200 lines (8.1, 8.4)
 
 ---
 
