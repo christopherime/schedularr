@@ -44,18 +44,21 @@ type item struct {
 
 func (i item) Title() string { return i.block.Name }
 func (i item) Description() string {
-	return fmt.Sprintf("%s | %d min | %s", i.block.Cron, i.block.Duration, i.block.ChannelID)
+	return fmt.Sprintf("%s | %d min | %s | pri:%d", i.block.Cron, i.block.Duration, i.block.ChannelID, i.block.Priority)
 }
 func (i item) FilterValue() string { return i.block.Name }
 
 // Model is the Bubble Tea model for the TUI.
 type Model struct {
-	cfg       *config.Config
-	store     *store.Store
-	list      list.Model
-	state     sessionState
-	prevState sessionState // previous state before help
-	selected  int          // index of block being edited
+	cfg            *config.Config
+	store          *store.Store
+	list           list.Model
+	state          sessionState
+	prevState      sessionState // previous state before help
+	selected       int          // index of block being edited
+	schedulerFile  string       // path to scheduler file for saving
+	statusMessage  string       // status message to display
+	hasUnsavedChanges bool      // track if there are unsaved changes
 	// Block edit form (huh)
 	blockForm     *huh.Form
 	formName      string
@@ -90,7 +93,8 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model with the given configuration and optional store.
-func NewModel(cfg *config.Config, st *store.Store) Model {
+// The schedulerFile parameter is the path to save scheduler config changes.
+func NewModel(cfg *config.Config, st *store.Store, schedulerFile string) Model {
 	items := make([]list.Item, len(cfg.Scheduler.Blocks))
 	for i, b := range cfg.Scheduler.Blocks {
 		items[i] = item{block: b}
@@ -101,10 +105,11 @@ func NewModel(cfg *config.Config, st *store.Store) Model {
 	l.Title = "Scheduling Blocks"
 
 	return Model{
-		cfg:   cfg,
-		store: st,
-		list:  l,
-		state: stateListView,
+		cfg:           cfg,
+		store:         st,
+		list:          l,
+		state:         stateListView,
+		schedulerFile: schedulerFile,
 	}
 }
 
@@ -224,47 +229,85 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle block operations
+	if handled, model, cmd := m.handleBlockOperations(msg); handled {
+		return model, cmd
+	}
+
+	// Handle navigation and view switching
+	if handled, model := m.handleViewSwitch(msg); handled {
+		return model, nil
+	}
+
+	// Clear status message on any other key
+	m.statusMessage = ""
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+// handleBlockOperations handles block CRUD operations in list view.
+func (m Model) handleBlockOperations(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
-		return m, tea.Quit
+		if m.hasUnsavedChanges {
+			m.statusMessage = "Warning: Unsaved changes will be lost"
+		}
+		return true, m, tea.Quit
 	case "enter":
 		if len(m.cfg.Scheduler.Blocks) == 0 {
-			return m, nil
+			return true, m, nil
 		}
 		m.startEditBlock(m.list.Index())
-		return m, nil
+		return true, m, nil
 	case "n":
 		m.startEditBlock(-1)
-		return m, nil
+		return true, m, nil
 	case "d", "delete":
 		if len(m.cfg.Scheduler.Blocks) == 0 {
-			return m, nil
+			return true, m, nil
 		}
 		m.selected = m.list.Index()
 		m.state = stateConfirmDelete
-		return m, nil
+		return true, m, nil
+	case "D":
+		m.duplicateBlock()
+		return true, m, nil
+	case "ctrl+s":
+		m.saveConfigToDisk()
+		return true, m, nil
+	case "+", "=":
+		m.adjustPriority(1)
+		return true, m, nil
+	case "-", "_":
+		m.adjustPriority(-1)
+		return true, m, nil
+	}
+	return false, m, nil
+}
+
+// handleViewSwitch handles switching between different views.
+// Returns (handled, model) - cmd is always nil for view switches.
+func (m Model) handleViewSwitch(msg tea.KeyMsg) (bool, tea.Model) {
+	switch msg.String() {
 	case "s":
 		if m.store != nil {
 			m.loadSeriesStates()
 			m.state = stateSeriesProgress
 		}
-		return m, nil
+		return true, m
 	case "S":
-		// Series selector with search
 		m.loadSeriesStates()
 		m.initSeriesSelector()
 		m.state = stateSeriesSelector
-		return m, nil
+		return true, m
 	case "f":
-		// File browser
 		m.initFileBrowser()
 		m.state = stateFileBrowser
-		return m, nil
+		return true, m
 	}
-
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	return false, m
 }
 
 func (m Model) updateEditBlock(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -375,12 +418,101 @@ func (m *Model) saveBlock() {
 		m.cfg.Scheduler.Blocks = append(m.cfg.Scheduler.Blocks, newBlock)
 		m.list.InsertItem(len(m.list.Items()), item{block: newBlock})
 	} else {
-		// Preserve existing filter
-		newBlock.Filter = m.cfg.Scheduler.Blocks[m.selected].Filter
+		// Preserve existing filter, series config, and other fields
+		existingBlock := m.cfg.Scheduler.Blocks[m.selected]
+		newBlock.Type = existingBlock.Type
+		newBlock.Filter = existingBlock.Filter
+		newBlock.Priority = existingBlock.Priority
+		newBlock.Series = existingBlock.Series
+		newBlock.Fallback = existingBlock.Fallback
+		newBlock.Filler = existingBlock.Filler
+		newBlock.MaxDurationOverflowMinutes = existingBlock.MaxDurationOverflowMinutes
 		m.cfg.Scheduler.Blocks[m.selected] = newBlock
 		// Update list item
 		m.list.SetItem(m.selected, item{block: newBlock})
 	}
+	m.hasUnsavedChanges = true
+}
+
+// duplicateBlock creates a copy of the currently selected block.
+func (m *Model) duplicateBlock() {
+	if len(m.cfg.Scheduler.Blocks) == 0 {
+		return
+	}
+
+	idx := m.list.Index()
+	if idx < 0 || idx >= len(m.cfg.Scheduler.Blocks) {
+		return
+	}
+
+	// Create a deep copy of the block
+	original := m.cfg.Scheduler.Blocks[idx]
+	duplicate := scheduler.Block{
+		Type:                       original.Type,
+		Name:                       original.Name + " (copy)",
+		Cron:                       original.Cron,
+		Duration:                   original.Duration,
+		ChannelID:                  original.ChannelID,
+		Priority:                   original.Priority,
+		MaxDurationOverflowMinutes: original.MaxDurationOverflowMinutes,
+		Filter:                     original.Filter,
+		Filler:                     original.Filler,
+		Fallback:                   original.Fallback,
+	}
+
+	// Deep copy series config
+	if len(original.Series) > 0 {
+		duplicate.Series = make([]scheduler.SeriesConfig, len(original.Series))
+		copy(duplicate.Series, original.Series)
+	}
+
+	// Insert after the current block
+	insertIdx := idx + 1
+	m.cfg.Scheduler.Blocks = append(m.cfg.Scheduler.Blocks[:insertIdx],
+		append([]scheduler.Block{duplicate}, m.cfg.Scheduler.Blocks[insertIdx:]...)...)
+	m.list.InsertItem(insertIdx, item{block: duplicate})
+
+	m.hasUnsavedChanges = true
+	m.statusMessage = fmt.Sprintf("Duplicated '%s'", original.Name)
+}
+
+// saveConfigToDisk saves the current configuration to the scheduler file.
+func (m *Model) saveConfigToDisk() {
+	if err := config.SaveSchedulerConfig(&m.cfg.Scheduler, m.schedulerFile); err != nil {
+		m.statusMessage = fmt.Sprintf("Error saving: %v", err)
+		return
+	}
+
+	m.hasUnsavedChanges = false
+	path := m.schedulerFile
+	if path == "" {
+		path = "scheduler.yaml"
+	}
+	m.statusMessage = "Saved to " + path
+}
+
+// adjustPriority changes the priority of the currently selected block.
+func (m *Model) adjustPriority(delta int) {
+	if len(m.cfg.Scheduler.Blocks) == 0 {
+		return
+	}
+
+	idx := m.list.Index()
+	if idx < 0 || idx >= len(m.cfg.Scheduler.Blocks) {
+		return
+	}
+
+	// Adjust priority (minimum 0)
+	newPriority := m.cfg.Scheduler.Blocks[idx].Priority + delta
+	if newPriority < 0 {
+		newPriority = 0
+	}
+
+	m.cfg.Scheduler.Blocks[idx].Priority = newPriority
+	m.list.SetItem(idx, item{block: m.cfg.Scheduler.Blocks[idx]})
+
+	m.hasUnsavedChanges = true
+	m.statusMessage = fmt.Sprintf("Priority set to %d", newPriority)
 }
 
 func (m *Model) loadSeriesStates() {
@@ -453,12 +585,31 @@ func (m Model) View() string {
 }
 
 func (m Model) renderListView() string {
-	helpText := "\n\n'n' new | 'd' delete | enter edit | 'f' files | 'S' series search | '?' help | 'q' quit"
+	var builder strings.Builder
+	builder.WriteString(m.list.View())
+
+	// Show status message if any
+	if m.statusMessage != "" {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+		builder.WriteString("\n\n")
+		builder.WriteString(statusStyle.Render(m.statusMessage))
+	}
+
+	// Show unsaved changes indicator
+	if m.hasUnsavedChanges {
+		unsavedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+		builder.WriteString("\n")
+		builder.WriteString(unsavedStyle.Render("[unsaved changes - ctrl+s to save]"))
+	}
+
+	helpText := "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | ctrl+s save | '?' help | 'q' quit"
 	if m.store != nil {
-		helpText = "\n\n'n' new | 'd' delete | enter edit | 's' series | 'S' search | 'f' files | '?' help | 'q' quit"
+		helpText = "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 's' series | ctrl+s save | '?' help | 'q' quit"
 	}
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(helpText)
-	return lipgloss.NewStyle().Margin(1, 2).Render(m.list.View() + help)
+	builder.WriteString(help)
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 }
 
 func (m Model) renderEditBlock() string {

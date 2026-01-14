@@ -359,6 +359,88 @@ func TestNew_MaintenanceDefaults(t *testing.T) {
 	}
 }
 
+func TestSaveSchedulerConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	schedCfg := &scheduler.Config{
+		Blocks: []scheduler.Block{
+			{
+				Name:      "Test Block",
+				Type:      "filter",
+				Cron:      "0 20 * * *",
+				Duration:  120,
+				ChannelID: "channel-1",
+				Priority:  10,
+			},
+		},
+	}
+
+	// Test saving to a file
+	path := tmpDir + "/test-scheduler.yaml"
+	err := SaveSchedulerConfig(schedCfg, path)
+	if err != nil {
+		t.Fatalf("SaveSchedulerConfig failed: %v", err)
+	}
+
+	// Verify the file was created and can be loaded
+	loadedCfg, err := LoadSchedulerConfig(&Config{}, path)
+	if err != nil {
+		t.Fatalf("Failed to load saved config: %v", err)
+	}
+
+	if len(loadedCfg.Blocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(loadedCfg.Blocks))
+	}
+
+	if loadedCfg.Blocks[0].Name != "Test Block" {
+		t.Errorf("Expected block name 'Test Block', got '%s'", loadedCfg.Blocks[0].Name)
+	}
+}
+
+func TestSaveSchedulerConfig_DefaultPath(t *testing.T) {
+	// Save the current working directory
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+
+	// Change to a temp directory
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	schedCfg := &scheduler.Config{
+		Blocks: []scheduler.Block{
+			{Name: "Default Path Block", Cron: "0 6 * * *", Duration: 60, ChannelID: "ch-1"},
+		},
+	}
+
+	// Test saving with empty path (should use default scheduler.yaml)
+	err = SaveSchedulerConfig(schedCfg, "")
+	if err != nil {
+		t.Fatalf("SaveSchedulerConfig with default path failed: %v", err)
+	}
+
+	// Verify scheduler.yaml was created
+	if _, err := os.Stat("scheduler.yaml"); os.IsNotExist(err) {
+		t.Error("scheduler.yaml was not created")
+	}
+}
+
+func TestSaveSchedulerConfig_InvalidPath(t *testing.T) {
+	schedCfg := &scheduler.Config{
+		Blocks: []scheduler.Block{},
+	}
+
+	// Test saving to an invalid path
+	err := SaveSchedulerConfig(schedCfg, "/nonexistent/directory/file.yaml")
+	if err == nil {
+		t.Error("Expected error for invalid path, got nil")
+	}
+}
+
 func TestLoadSchedulerConfig_PriorityOrder(t *testing.T) {
 	// Test that explicit file parameter takes priority over config field
 	tmpDir := t.TempDir()

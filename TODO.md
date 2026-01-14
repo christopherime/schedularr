@@ -373,14 +373,29 @@ maintenance:
 
 **Problem**: TUI has basic scaffolding but incomplete CRUD operations.
 
-**Tasks**:
-- [ ] Complete block creation flow with validation
-- [ ] Implement block deletion with confirmation
-- [ ] Add block duplication feature
-- [ ] Implement block reordering by priority
-- [ ] Add undo/redo support for changes
+**Solution**: Implemented full CRUD operations with persistence:
 
-**Status**: 🔲 PENDING
+**Tasks**:
+- [x] Complete block creation flow with validation ✅ (huh forms with validators)
+- [x] Implement block deletion with confirmation ✅
+- [x] Add block duplication feature ✅ (`D` key)
+- [x] Implement block priority adjustment ✅ (`+`/`-` keys)
+- [x] Add save to disk functionality ✅ (`ctrl+s`)
+- [ ] Add undo/redo support for changes (deferred - lower priority)
+
+**New Features**:
+- `D` - Duplicate selected block
+- `+`/`-` - Adjust block priority
+- `ctrl+s` - Save configuration to scheduler.yaml
+- Unsaved changes indicator in status bar
+- Priority displayed in block list
+
+**Files Modified**:
+- `internal/tui/model.go` - CRUD operations, priority adjustment, save functionality
+- `internal/config/config.go` - Added `SaveSchedulerConfig()` function
+- `cmd/tui.go` - Updated to pass scheduler file path
+
+**Status**: ✅ COMPLETE (undo/redo deferred)
 
 ---
 

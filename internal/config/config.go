@@ -194,3 +194,23 @@ func GetSchedulerConfig(schedulerFile string) (*scheduler.Config, error) {
 
 	return LoadSchedulerConfig(&cfg, schedulerFile)
 }
+
+// SaveSchedulerConfig saves the scheduler configuration to a YAML file.
+// If path is empty, it saves to the default scheduler.yaml in the current directory.
+func SaveSchedulerConfig(schedCfg *scheduler.Config, path string) error {
+	if path == "" {
+		path = "scheduler.yaml"
+	}
+
+	data, err := yaml.Marshal(schedCfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal scheduler config: %w", err)
+	}
+
+	// #nosec G306 - Config file should be readable by owner
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("failed to write scheduler file %s: %w", path, err)
+	}
+
+	return nil
+}

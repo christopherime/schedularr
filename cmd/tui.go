@@ -10,12 +10,15 @@ import (
 	"github.com/geekxflood/schedularr/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Interactive terminal interface for managing schedule",
+	Long: `Interactive terminal interface for managing scheduling blocks.
+
+Use ctrl+s to save changes to the scheduler configuration file.
+Changes are only persisted when explicitly saved.`,
 	Run: func(_ *cobra.Command, _ []string) {
 		var cfg config.Config
 		if err := viper.Unmarshal(&cfg); err != nil {
@@ -23,11 +26,13 @@ var tuiCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Initial check to ensure we have a config file to write back to
-		configFile := viper.ConfigFileUsed()
-		if configFile == "" {
-			fmt.Println("No config file found. Please create one first (e.g. config.yaml.example -> .schedularr.yaml)")
-			os.Exit(1)
+		// Determine the scheduler file path for saving
+		schedulerFile := cfg.SchedulerFile
+		if schedulerFile == "" {
+			// Check if scheduler.yaml exists, otherwise use default
+			if _, err := os.Stat("scheduler.yaml"); err == nil {
+				schedulerFile = "scheduler.yaml"
+			}
 		}
 
 		// Try to open the store (optional - if it fails, TUI works without series progress feature)
@@ -39,7 +44,7 @@ var tuiCmd = &cobra.Command{
 			}
 		}
 
-		m := tui.NewModel(&cfg, st)
+		m := tui.NewModel(&cfg, st, schedulerFile)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
@@ -47,20 +52,8 @@ var tuiCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Save config back
-		// Note: This overrides comments in the YAML file
-		data, err := yaml.Marshal(&cfg)
-		if err != nil {
-			fmt.Printf("Error marshaling config: %v\n", err)
-			os.Exit(1)
-		}
-
-		if err := os.WriteFile(configFile, data, 0600); err != nil {
-			fmt.Printf("Error saving config to %s: %v\n", configFile, err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("Configuration saved to %s\n", configFile)
+		// Note: Saving is now handled by ctrl+s in the TUI
+		// Changes are only persisted when the user explicitly saves
 	},
 }
 
