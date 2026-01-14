@@ -255,7 +255,7 @@ These were previously implemented and should not be revisited:
 | Package | Coverage | Target |
 |---------|----------|--------|
 | cache | 100% | ✅ |
-| config | 95.8% | ✅ |
+| config | 94.6% | ✅ |
 | cronbuilder | 98.8% | ✅ |
 | cueconfig | 85.5% | ✅ |
 | external/jellyfin | 100% | ✅ |
@@ -264,7 +264,7 @@ These were previously implemented and should not be revisited:
 | external/tunarr | 90.8% | ✅ |
 | httpclient | 89.7% | ✅ |
 | scheduler | 91.9% | ✅ |
-| store | 92.7% | ✅ |
+| store | 93.0% | ✅ |
 
 **Note**: TUI package has 0% coverage as interactive UI code is harder to unit test.
 
