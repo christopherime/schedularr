@@ -57,6 +57,12 @@ func DefaultConfig(baseURL, apiKey string, authType AuthType) Config {
 
 // New creates a new HTTP client with the given configuration.
 func New(cfg Config) *Client {
+	c := &Client{
+		baseURL:  cfg.BaseURL,
+		authType: cfg.AuthType,
+		apiKey:   cfg.APIKey,
+	}
+
 	r := resty.New().
 		SetTimeout(cfg.Timeout).
 		SetRetryCount(cfg.MaxRetries).
@@ -68,16 +74,26 @@ func New(cfg Config) *Client {
 				return true
 			}
 			return isRetryableStatus(r.StatusCode())
-		})
+		}).
+		OnBeforeRequest(c.addAuthHeader)
 
-	c := &Client{
-		resty:    r,
-		baseURL:  cfg.BaseURL,
-		authType: cfg.AuthType,
-		apiKey:   cfg.APIKey,
+	c.resty = r
+	return c
+}
+
+// addAuthHeader is a middleware that adds authentication headers to requests.
+func (c *Client) addAuthHeader(_ *resty.Client, req *resty.Request) error {
+	if c.apiKey == "" {
+		return nil
 	}
 
-	return c
+	switch c.authType {
+	case AuthXAPIKey:
+		req.SetHeader("X-API-Key", c.apiKey)
+	case AuthXEmbyToken:
+		req.SetHeader("X-Emby-Token", c.apiKey)
+	}
+	return nil
 }
 
 // isRetryableStatus determines if an HTTP status code should trigger a retry.
@@ -112,20 +128,10 @@ func (e *APIError) Unwrap() error {
 	return e.Err
 }
 
-// newRequest creates a new resty request with authentication headers.
+// newRequest creates a new resty request with context.
+// Authentication headers are added automatically via middleware.
 func (c *Client) newRequest(ctx context.Context) *resty.Request {
-	req := c.resty.R().SetContext(ctx)
-
-	if c.apiKey != "" {
-		switch c.authType {
-		case AuthXAPIKey:
-			req.SetHeader("X-API-Key", c.apiKey)
-		case AuthXEmbyToken:
-			req.SetHeader("X-Emby-Token", c.apiKey)
-		}
-	}
-
-	return req
+	return c.resty.R().SetContext(ctx)
 }
 
 // Get performs a GET request and unmarshals the response into result.

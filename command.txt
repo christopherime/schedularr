@@ -1,4 +1,4 @@
-Continue developing the Schedularr project by implementing the tasks listed in TODO.md, prioritizing them in logical order. Follow these specific requirements:
+Continue developing the project by implementing the tasks listed in TODO.md, prioritizing them in logical order. Follow these specific requirements:
 
 **Development Process:**
 
@@ -32,4 +32,4 @@ Continue developing the Schedularr project by implementing the tasks listed in T
 - Push to the main branch regularly (every few commits or at logical stopping points)
 - Keep commits atomic - each commit should represent one logical change
 
-Focus must be on completing the TODO.md tasks in a logical order, ensuring the project architecture aligns with the athena project patterns. The test coverage should not prevent progress, but should be maintained and improved over time.
+Focus must be on completing the TODO.md tasks in a logical order, ensuring the project architecture aligns with the project patterns.
