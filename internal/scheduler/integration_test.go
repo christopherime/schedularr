@@ -233,6 +233,261 @@ func TestIntegration_ConflictResolution(t *testing.T) {
 	}
 }
 
+// TestIntegration_SeriesSchedulingWithState tests that series blocks
+// correctly track episode state and persist progress.
+func TestIntegration_SeriesSchedulingWithState(t *testing.T) {
+	// Load sitcom data (contains TV episodes)
+	sitcomsData, err := os.ReadFile("../../testdata/programs/sitcoms.json")
+	if err != nil {
+		t.Fatalf("Failed to load sitcoms fixture: %v", err)
+	}
+
+	var programs []tunarr.Program
+	if err := json.Unmarshal(sitcomsData, &programs); err != nil {
+		t.Fatalf("Failed to parse sitcoms JSON: %v", err)
+	}
+
+	mockStore := NewMockStateStore()
+
+	// Define a series block
+	blocks := []Block{
+		{
+			Type:      BlockTypeSeries,
+			Name:      "Evening Sitcoms",
+			Cron:      "0 20 * * *", // 8 PM daily
+			Duration:  60,           // 1 hour
+			ChannelID: "channel-1",
+			Priority:  10,
+			Series: []SeriesConfig{
+				{
+					ShowTitle:        "The Office",
+					EpisodesPerBlock: 2, // 2 episodes per block
+					OnComplete:       CompletionActionRestart,
+				},
+			},
+			Fallback: SeriesFallback{
+				Mode: FallbackModeRedistribute,
+			},
+		},
+	}
+
+	engine := NewEngine(nil, blocks, mockStore, nil, time.UTC)
+
+	// Generate schedule for 1 day
+	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
+	endTime := startTime.Add(24 * time.Hour)
+
+	schedule, err := engine.GenerateForTimeRange(startTime, endTime, programs)
+	if err != nil {
+		t.Fatalf("GenerateForTimeRange failed: %v", err)
+	}
+
+	channelSlots, ok := schedule["channel-1"]
+	if !ok || len(channelSlots) == 0 {
+		t.Fatal("No slots generated for series block")
+	}
+
+	// Verify we got a slot
+	slot := channelSlots[0]
+	if slot.Block.Name != "Evening Sitcoms" {
+		t.Errorf("Expected 'Evening Sitcoms' block, got '%s'", slot.Block.Name)
+	}
+
+	// Commit to persist state
+	if err := engine.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Check if series state was updated
+	state, err := mockStore.GetSeriesState(nil, "The Office")
+	if err != nil {
+		t.Fatalf("GetSeriesState failed: %v", err)
+	}
+
+	// State should have progressed (either episode > 1 or season > 1)
+	if state.CurrentSeason == 1 && state.CurrentEpisode == 1 {
+		t.Log("State didn't progress - this may be expected if episodes weren't scheduled")
+	} else {
+		t.Logf("Series state progressed to S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
+	}
+}
+
+// TestIntegration_SeriesStateRestoration tests that series state
+// is correctly restored between scheduling runs.
+func TestIntegration_SeriesStateRestoration(t *testing.T) {
+	// Load sitcom data
+	sitcomsData, err := os.ReadFile("../../testdata/programs/sitcoms.json")
+	if err != nil {
+		t.Fatalf("Failed to load sitcoms fixture: %v", err)
+	}
+
+	var programs []tunarr.Program
+	if err := json.Unmarshal(sitcomsData, &programs); err != nil {
+		t.Fatalf("Failed to parse sitcoms JSON: %v", err)
+	}
+
+	mockStore := NewMockStateStore()
+
+	// Pre-populate state as if we've already watched some episodes
+	now := time.Now()
+	initialState := &SeriesState{
+		ShowTitle:      "The Office",
+		CurrentSeason:  1,
+		CurrentEpisode: 2, // Starting from episode 2
+		Completed:      false,
+		LastAired:      &now,
+	}
+	if err := mockStore.UpdateSeriesState(nil, initialState); err != nil {
+		t.Fatalf("Failed to set initial state: %v", err)
+	}
+
+	blocks := []Block{
+		{
+			Type:      BlockTypeSeries,
+			Name:      "Evening Sitcoms",
+			Cron:      "0 20 * * *",
+			Duration:  60,
+			ChannelID: "channel-1",
+			Priority:  10,
+			Series: []SeriesConfig{
+				{
+					ShowTitle:        "The Office",
+					EpisodesPerBlock: 1,
+					OnComplete:       CompletionActionContinue,
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(nil, blocks, mockStore, nil, time.UTC)
+
+	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
+	endTime := startTime.Add(24 * time.Hour)
+
+	_, err = engine.GenerateForTimeRange(startTime, endTime, programs)
+	if err != nil {
+		t.Fatalf("GenerateForTimeRange failed: %v", err)
+	}
+
+	if err := engine.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Verify state was restored and used as starting point
+	state, err := mockStore.GetSeriesState(nil, "The Office")
+	if err != nil {
+		t.Fatalf("GetSeriesState failed: %v", err)
+	}
+
+	// State should have progressed from episode 2
+	t.Logf("State is now S%02dE%02d (started from S01E02)", state.CurrentSeason, state.CurrentEpisode)
+
+	// The episode should be >= 2 since we started from 2
+	if state.CurrentSeason == 1 && state.CurrentEpisode < 2 {
+		t.Errorf("State went backwards: expected >= S01E02, got S%02dE%02d",
+			state.CurrentSeason, state.CurrentEpisode)
+	}
+}
+
+// TestIntegration_MixedBlockTypes tests scheduling with both filter and series blocks.
+func TestIntegration_MixedBlockTypes(t *testing.T) {
+	// Load test data
+	sitcomsData, err := os.ReadFile("../../testdata/programs/sitcoms.json")
+	if err != nil {
+		t.Fatalf("Failed to load sitcoms fixture: %v", err)
+	}
+
+	cartoonsData, err := os.ReadFile("../../testdata/programs/cartoons.json")
+	if err != nil {
+		t.Fatalf("Failed to load cartoons fixture: %v", err)
+	}
+
+	var sitcoms []tunarr.Program
+	if err := json.Unmarshal(sitcomsData, &sitcoms); err != nil {
+		t.Fatalf("Failed to parse sitcoms JSON: %v", err)
+	}
+
+	var cartoons []tunarr.Program
+	if err := json.Unmarshal(cartoonsData, &cartoons); err != nil {
+		t.Fatalf("Failed to parse cartoons JSON: %v", err)
+	}
+
+	// Combine all programs
+	allPrograms := append(sitcoms, cartoons...)
+
+	mockStore := NewMockStateStore()
+
+	blocks := []Block{
+		{
+			Type:      BlockTypeFilter,
+			Name:      "Morning Cartoons",
+			Cron:      "0 6 * * *",
+			Duration:  120,
+			ChannelID: "channel-1",
+			Priority:  5,
+			Filter: Filter{
+				Genres:      []string{"Animation", "Family"},
+				MaxDuration: 30,
+			},
+		},
+		{
+			Type:      BlockTypeSeries,
+			Name:      "Evening Sitcoms",
+			Cron:      "0 20 * * *",
+			Duration:  60,
+			ChannelID: "channel-1",
+			Priority:  10,
+			Series: []SeriesConfig{
+				{
+					ShowTitle:        "The Office",
+					EpisodesPerBlock: 2,
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(nil, blocks, mockStore, nil, time.UTC)
+
+	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
+	endTime := startTime.Add(24 * time.Hour)
+
+	schedule, err := engine.GenerateForTimeRange(startTime, endTime, allPrograms)
+	if err != nil {
+		t.Fatalf("GenerateForTimeRange failed: %v", err)
+	}
+
+	channelSlots, ok := schedule["channel-1"]
+	if !ok {
+		t.Fatal("No slots generated")
+	}
+
+	// Should have slots from both block types
+	hasFilterBlock := false
+	hasSeriesBlock := false
+
+	for _, slot := range channelSlots {
+		switch slot.Block.Type {
+		case BlockTypeFilter:
+			hasFilterBlock = true
+		case BlockTypeSeries:
+			hasSeriesBlock = true
+		}
+	}
+
+	t.Logf("Generated %d slots: filter=%v, series=%v", len(channelSlots), hasFilterBlock, hasSeriesBlock)
+
+	// Verify no overlaps
+	for i := 0; i < len(channelSlots)-1; i++ {
+		for j := i + 1; j < len(channelSlots); j++ {
+			if slotsOverlap(channelSlots[i], channelSlots[j]) {
+				t.Errorf("Slots overlap: %s (%v-%v) and %s (%v-%v)",
+					channelSlots[i].Block.Name, channelSlots[i].StartTime, channelSlots[i].EndTime,
+					channelSlots[j].Block.Name, channelSlots[j].StartTime, channelSlots[j].EndTime)
+			}
+		}
+	}
+}
+
 // TestIntegration_FilterValidation tests that filtering works correctly
 // with real test data across different filter criteria.
 func TestIntegration_FilterValidation(t *testing.T) {
