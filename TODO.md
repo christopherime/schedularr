@@ -251,18 +251,22 @@ These were previously implemented and should not be revisited:
 
 **Goal**: Achieve production-readiness through comprehensive testing, automated maintenance, and observability.
 
-**Current Test Coverage**:
+**Current Test Coverage** (Updated 2026-01-14):
 | Package | Coverage | Target |
 |---------|----------|--------|
 | cache | 100% | ✅ |
-| config | 94.4% | ✅ |
+| config | 95.8% | ✅ |
 | cronbuilder | 98.8% | ✅ |
-| external/jellyfin | 86.7% | ✅ |
-| external/radarr | 100% | ✅ |
-| external/sonarr | 100% | ✅ |
+| cueconfig | 85.5% | ✅ |
+| external/jellyfin | 100% | ✅ |
+| external/radarr | 87.5% | ✅ |
+| external/sonarr | 86.7% | ✅ |
 | external/tunarr | 90.8% | ✅ |
+| httpclient | 89.7% | ✅ |
 | scheduler | 91.9% | ✅ |
-| store | 89.5% | ✅ |
+| store | 92.7% | ✅ |
+
+**Note**: TUI package has 0% coverage as interactive UI code is harder to unit test.
 
 ---
 
