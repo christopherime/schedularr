@@ -202,7 +202,7 @@ func (s *Store) CleanupScheduleHistory(ctx context.Context, window time.Duration
 func (s *Store) ExportAllSeriesStates(ctx context.Context) ([]scheduler.SeriesState, error) {
 	var states []scheduler.SeriesState
 	err := s.db.SelectContext(ctx, &states, `
-		SELECT show_title, current_season, current_episode, completed, last_aired
+		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled
 		FROM series_state ORDER BY show_title`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query series states: %w", err)
@@ -224,13 +224,15 @@ func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.Serie
 
 	for _, state := range states {
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired)
-			VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired)
+			INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled)
+			VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled)
 			ON CONFLICT(show_title) DO UPDATE SET
 				current_season = excluded.current_season,
 				current_episode = excluded.current_episode,
 				completed = excluded.completed,
-				last_aired = excluded.last_aired`, state); err != nil {
+				last_aired = excluded.last_aired,
+				run_count = excluded.run_count,
+				disabled = excluded.disabled`, state); err != nil {
 			return fmt.Errorf("failed to import state for %s: %w", state.ShowTitle, err)
 		}
 	}
@@ -246,7 +248,7 @@ func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.Serie
 func (s *Store) ResetSeriesState(ctx context.Context, showTitle string) error {
 	query := `
 		UPDATE series_state
-		SET current_season = 1, current_episode = 1, completed = 0, last_aired = NULL
+		SET current_season = 1, current_episode = 1, completed = 0, last_aired = NULL, run_count = 0, disabled = 0
 		WHERE show_title = ?
 	`
 	result, err := s.db.ExecContext(ctx, query, showTitle)
@@ -262,6 +264,28 @@ func (s *Store) ResetSeriesState(ctx context.Context, showTitle string) error {
 	if affected == 0 {
 		// Series doesn't exist in database, nothing to reset
 		return nil
+	}
+
+	return nil
+}
+
+// SetSeriesState sets a series to a specific season and episode.
+// If the series doesn't exist, it creates a new entry.
+func (s *Store) SetSeriesState(ctx context.Context, showTitle string, season, episode int) error {
+	if season < 1 || episode < 1 {
+		return fmt.Errorf("season and episode must be >= 1, got S%02dE%02d", season, episode)
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO series_state (show_title, current_season, current_episode, completed, run_count, disabled)
+		VALUES (?, ?, ?, 0, 0, 0)
+		ON CONFLICT(show_title) DO UPDATE SET
+			current_season = excluded.current_season,
+			current_episode = excluded.current_episode,
+			completed = 0,
+			disabled = 0`, showTitle, season, episode)
+	if err != nil {
+		return fmt.Errorf("failed to set series state: %w", err)
 	}
 
 	return nil

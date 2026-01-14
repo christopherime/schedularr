@@ -3,10 +3,10 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
@@ -242,10 +242,62 @@ Example:
 	},
 }
 
+var stateSetCmd = &cobra.Command{
+	Use:   "set <show-title>",
+	Short: "Set a series to a specific episode",
+	Long: `Set a series progression state to a specific season and episode.
+
+This is useful when you want to skip episodes or jump to a specific point in a series.
+If the series doesn't exist in the database, it will be created.
+
+Example:
+  schedularr state set "My Favorite Show" --season 2 --episode 5`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		showTitle := args[0]
+
+		if stateSetSeason < 1 || stateSetEpisode < 1 {
+			return errors.New("season and episode must be >= 1")
+		}
+
+		// Load config
+		var cfg config.Config
+		if err := viper.Unmarshal(&cfg); err != nil {
+			return fmt.Errorf("failed to parse config: %w", err)
+		}
+
+		// Get database path from config or use default
+		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
+		if cfg.Database != "" {
+			dbPath = cfg.Database
+		}
+
+		// Open store
+		s, err := store.New(dbPath)
+		if err != nil {
+			return fmt.Errorf("failed to open database: %w", err)
+		}
+		defer s.Close()
+
+		// Set state
+		ctx := context.Background()
+		if err := s.SetSeriesState(ctx, showTitle, stateSetSeason, stateSetEpisode); err != nil {
+			return fmt.Errorf("failed to set state: %w", err)
+		}
+
+		fmt.Printf("Set series state for \"%s\" to S%02dE%02d\n", showTitle, stateSetSeason, stateSetEpisode)
+		return nil
+	},
+}
+
+var stateSetSeason int
+var stateSetEpisode int
+
 var stateListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all series states",
-	Long: `List all series progression states showing current episode and completion status.
+	Long: `List all series progression states showing current episode, completion status,
+run count, and disabled status.
 
 Example:
   schedularr state list`,
@@ -282,8 +334,8 @@ Example:
 		}
 
 		// Print header
-		fmt.Printf("%-40s %-15s %-10s %-20s\n", "Show Title", "Current", "Status", "Last Aired")
-		fmt.Println(string(make([]byte, 90)))
+		fmt.Printf("%-35s %-10s %-12s %-6s %-8s %-20s\n", "Show Title", "Current", "Status", "Runs", "Enabled", "Last Aired")
+		fmt.Println(string(make([]byte, 95)))
 
 		// Print each state
 		for _, state := range states {
@@ -292,17 +344,29 @@ Example:
 			if state.Completed {
 				status = "Completed"
 			}
+			enabled := "Yes"
+			if state.Disabled {
+				enabled = "No"
+			}
 			lastAired := "Never"
 			if state.LastAired != nil && !state.LastAired.IsZero() {
-				lastAired = state.LastAired.Format(time.RFC3339)
+				lastAired = state.LastAired.Format("2006-01-02 15:04")
 			}
 
-			fmt.Printf("%-40s %-15s %-10s %-20s\n", state.ShowTitle, current, status, lastAired)
+			fmt.Printf("%-35s %-10s %-12s %-6d %-8s %-20s\n", truncate(state.ShowTitle, 35), current, status, state.RunCount, enabled, lastAired)
 		}
 
 		fmt.Printf("\nTotal: %d series\n", len(states))
 		return nil
 	},
+}
+
+// truncate shortens a string to max length with ellipsis if needed.
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 func init() {
@@ -312,4 +376,11 @@ func init() {
 	stateCmd.AddCommand(stateResetCmd)
 	stateCmd.AddCommand(stateBackupCmd)
 	stateCmd.AddCommand(stateListCmd)
+	stateCmd.AddCommand(stateSetCmd)
+
+	// Flags for state set command
+	stateSetCmd.Flags().IntVarP(&stateSetSeason, "season", "s", 1, "Season number to set (required, >= 1)")
+	stateSetCmd.Flags().IntVarP(&stateSetEpisode, "episode", "e", 1, "Episode number to set (required, >= 1)")
+	_ = stateSetCmd.MarkFlagRequired("season")
+	_ = stateSetCmd.MarkFlagRequired("episode")
 }

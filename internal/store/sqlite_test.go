@@ -610,3 +610,110 @@ func TestStore_ImportSeriesStates_UpdateExisting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, stateC.CurrentSeason, "Show C should exist")
 }
+
+func TestStore_SetSeriesState(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	showTitle := "Test Show"
+
+	// Set state for a new series
+	require.NoError(t, s.SetSeriesState(ctx, showTitle, 2, 5), "SetSeriesState failed")
+
+	// Verify the state
+	state, err := s.GetSeriesState(ctx, showTitle)
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.Equal(t, 2, state.CurrentSeason, "Expected season 2")
+	assert.Equal(t, 5, state.CurrentEpisode, "Expected episode 5")
+	assert.False(t, state.Completed, "Expected not completed")
+	assert.False(t, state.Disabled, "Expected not disabled")
+	assert.Equal(t, 0, state.RunCount, "Expected run count 0")
+
+	// Update the state to a different position
+	require.NoError(t, s.SetSeriesState(ctx, showTitle, 3, 10), "SetSeriesState failed")
+
+	// Verify the update
+	state, err = s.GetSeriesState(ctx, showTitle)
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.Equal(t, 3, state.CurrentSeason, "Expected season 3")
+	assert.Equal(t, 10, state.CurrentEpisode, "Expected episode 10")
+}
+
+func TestStore_SetSeriesState_ClearsCompletedAndDisabled(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	showTitle := "Completed Show"
+
+	// First create a completed and disabled state
+	now := time.Now()
+	state := &scheduler.SeriesState{
+		ShowTitle:      showTitle,
+		CurrentSeason:  5,
+		CurrentEpisode: 20,
+		Completed:      true,
+		Disabled:       true,
+		RunCount:       3,
+		LastAired:      &now,
+	}
+	require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed")
+
+	// Verify it's completed and disabled
+	state, err = s.GetSeriesState(ctx, showTitle)
+	require.NoError(t, err)
+	assert.True(t, state.Completed, "Expected completed to be true")
+	assert.True(t, state.Disabled, "Expected disabled to be true")
+	assert.Equal(t, 3, state.RunCount, "Expected run count 3")
+
+	// Use SetSeriesState to jump to a specific episode
+	require.NoError(t, s.SetSeriesState(ctx, showTitle, 1, 1), "SetSeriesState failed")
+
+	// Verify completed and disabled are cleared, but run count is preserved
+	state, err = s.GetSeriesState(ctx, showTitle)
+	require.NoError(t, err)
+	assert.Equal(t, 1, state.CurrentSeason, "Expected season 1")
+	assert.Equal(t, 1, state.CurrentEpisode, "Expected episode 1")
+	assert.False(t, state.Completed, "Expected completed to be cleared")
+	assert.False(t, state.Disabled, "Expected disabled to be cleared")
+}
+
+func TestStore_SetSeriesState_InvalidInput(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Season < 1
+	err = s.SetSeriesState(ctx, "Test Show", 0, 5)
+	assert.Error(t, err, "Expected error for season < 1")
+
+	// Episode < 1
+	err = s.SetSeriesState(ctx, "Test Show", 1, 0)
+	assert.Error(t, err, "Expected error for episode < 1")
+
+	// Negative values
+	err = s.SetSeriesState(ctx, "Test Show", -1, 5)
+	assert.Error(t, err, "Expected error for negative season")
+
+	err = s.SetSeriesState(ctx, "Test Show", 1, -5)
+	assert.Error(t, err, "Expected error for negative episode")
+}
+
+func TestStore_SetSeriesState_OnClosedStore(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+
+	ctx := context.Background()
+
+	// Close the store
+	require.NoError(t, s.Close(), "Close failed")
+
+	// SetSeriesState on closed store should fail
+	err = s.SetSeriesState(ctx, "Test Show", 1, 1)
+	assert.Error(t, err, "SetSeriesState on closed store should error")
+}
