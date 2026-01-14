@@ -61,15 +61,15 @@ func (i item) FilterValue() string { return i.block.Name }
 
 // Model is the Bubble Tea model for the TUI.
 type Model struct {
-	cfg            *config.Config
-	store          *store.Store
-	list           list.Model
-	state          sessionState
-	prevState      sessionState // previous state before help
-	selected       int          // index of block being edited
-	schedulerFile  string       // path to scheduler file for saving
-	statusMessage  string       // status message to display
-	hasUnsavedChanges bool      // track if there are unsaved changes
+	cfg               *config.Config
+	store             *store.Store
+	list              list.Model
+	state             sessionState
+	prevState         sessionState // previous state before help
+	selected          int          // index of block being edited
+	schedulerFile     string       // path to scheduler file for saving
+	statusMessage     string       // status message to display
+	hasUnsavedChanges bool         // track if there are unsaved changes
 	// Block edit form (huh)
 	blockForm     *huh.Form
 	formName      string
@@ -102,9 +102,9 @@ type Model struct {
 	fileBrowserDir     string   // Current directory being browsed
 	fileBrowserMessage string   // Status message for file browser
 	// Series Edit state
-	seriesEditSeason   string // Season number being edited
-	seriesEditEpisode  string // Episode number being edited
-	seriesEditField    int    // Currently focused field (0=season, 1=episode, 2=save)
+	seriesEditSeason    string // Season number being edited
+	seriesEditEpisode   string // Episode number being edited
+	seriesEditField     int    // Currently focused field (0=season, 1=episode, 2=save)
 	seriesEditShowTitle string // Title of series being edited
 	// Block Timeline state
 	timelineSlots  []timelineSlot // Scheduled slots for next 24 hours

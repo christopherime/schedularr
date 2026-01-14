@@ -328,7 +328,7 @@ func TestMaintenanceConfig_GetHistoryRetention(t *testing.T) {
 		{"valid 24h", "24h", 24 * time.Hour},
 		{"valid 720h (30 days)", "720h", 720 * time.Hour},
 		{"invalid format", "abc", 7 * 24 * time.Hour}, // Should default to 7 days
-		{"empty string", "", 7 * 24 * time.Hour},       // Should default to 7 days
+		{"empty string", "", 7 * 24 * time.Hour},      // Should default to 7 days
 	}
 
 	for _, tt := range tests {

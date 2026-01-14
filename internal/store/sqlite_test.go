@@ -513,11 +513,11 @@ func TestStore_CleanupScheduleHistory_MultipleCutoffs(t *testing.T) {
 
 	// Create entries at different times
 	entries := []scheduler.ScheduleHistoryEntry{
-		{ProgramID: "prog-1", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-7 * 24 * time.Hour)},  // 7 days ago
-		{ProgramID: "prog-2", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-3 * 24 * time.Hour)},  // 3 days ago
-		{ProgramID: "prog-3", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-1 * 24 * time.Hour)},  // 1 day ago
-		{ProgramID: "prog-4", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-12 * time.Hour)},      // 12 hours ago
-		{ProgramID: "prog-5", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now()},                           // now
+		{ProgramID: "prog-1", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-7 * 24 * time.Hour)}, // 7 days ago
+		{ProgramID: "prog-2", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-3 * 24 * time.Hour)}, // 3 days ago
+		{ProgramID: "prog-3", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-1 * 24 * time.Hour)}, // 1 day ago
+		{ProgramID: "prog-4", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-12 * time.Hour)},     // 12 hours ago
+		{ProgramID: "prog-5", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now()},                          // now
 	}
 	require.NoError(t, s.RecordScheduleHistory(ctx, entries), "RecordScheduleHistory failed")
 

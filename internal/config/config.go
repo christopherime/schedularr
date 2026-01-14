@@ -47,9 +47,9 @@ type CacheConfig struct {
 
 // MaintenanceConfig holds configuration for background maintenance tasks
 type MaintenanceConfig struct {
-	CleanupInterval    string `mapstructure:"cleanup_interval" yaml:"cleanup_interval" json:"cleanup_interval,omitempty"`          // How often to run cleanup (e.g., "24h")
-	HistoryRetention   string `mapstructure:"history_retention" yaml:"history_retention" json:"history_retention,omitempty"`       // How long to keep schedule history (e.g., "168h" for 7 days)
-	CleanupEnabled     bool   `mapstructure:"cleanup_enabled" yaml:"cleanup_enabled" json:"cleanup_enabled"`                       // Whether to enable automatic cleanup
+	CleanupInterval  string `mapstructure:"cleanup_interval" yaml:"cleanup_interval" json:"cleanup_interval,omitempty"`    // How often to run cleanup (e.g., "24h")
+	HistoryRetention string `mapstructure:"history_retention" yaml:"history_retention" json:"history_retention,omitempty"` // How long to keep schedule history (e.g., "168h" for 7 days)
+	CleanupEnabled   bool   `mapstructure:"cleanup_enabled" yaml:"cleanup_enabled" json:"cleanup_enabled"`                 // Whether to enable automatic cleanup
 }
 
 // GetCleanupInterval parses the CleanupInterval string into a time.Duration.
