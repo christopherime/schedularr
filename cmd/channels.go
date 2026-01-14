@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"text/tabwriter"
 
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -30,18 +30,14 @@ var channelsCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		if _, err := fmt.Fprintln(w, "ID\tNumber\tName\tEnabled"); err != nil {
-			fmt.Printf("Error writing header: %v\n", err)
-			os.Exit(1)
-		}
+		t := table.NewWriter()
+		t.SetOutputMirror(os.Stdout)
+		t.AppendHeader(table.Row{"ID", "Number", "Name", "Enabled"})
 		for _, ch := range channels {
-			fmt.Fprintf(w, "%s\t%d\t%s\t%v\n", ch.ID, ch.Number, ch.Name, ch.Enabled)
+			t.AppendRow(table.Row{ch.ID, ch.Number, ch.Name, ch.Enabled})
 		}
-		if err := w.Flush(); err != nil {
-			fmt.Printf("Error flushing output: %v\n", err)
-			os.Exit(1)
-		}
+		t.SetStyle(table.StyleLight)
+		t.Render()
 	},
 }
 

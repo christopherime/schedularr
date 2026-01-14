@@ -11,6 +11,8 @@ import (
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -333,11 +335,10 @@ Example:
 			return nil
 		}
 
-		// Print header
-		fmt.Printf("%-35s %-10s %-12s %-6s %-8s %-20s\n", "Show Title", "Current", "Status", "Runs", "Enabled", "Last Aired")
-		fmt.Println(string(make([]byte, 95)))
+		t := table.NewWriter()
+		t.SetOutputMirror(os.Stdout)
+		t.AppendHeader(table.Row{"Show Title", "Current", "Status", "Runs", "Enabled", "Last Aired"})
 
-		// Print each state
 		for _, state := range states {
 			current := fmt.Sprintf("S%02dE%02d", state.CurrentSeason, state.CurrentEpisode)
 			status := "In Progress"
@@ -353,20 +354,18 @@ Example:
 				lastAired = state.LastAired.Format("2006-01-02 15:04")
 			}
 
-			fmt.Printf("%-35s %-10s %-12s %-6d %-8s %-20s\n", truncate(state.ShowTitle, 35), current, status, state.RunCount, enabled, lastAired)
+			t.AppendRow(table.Row{state.ShowTitle, current, status, state.RunCount, enabled, lastAired})
 		}
 
-		fmt.Printf("\nTotal: %d series\n", len(states))
+		t.SetColumnConfigs([]table.ColumnConfig{
+			{Number: 1, WidthMax: 35, WidthMaxEnforcer: text.WrapSoft},
+		})
+		t.SetStyle(table.StyleLight)
+		t.AppendFooter(table.Row{"Total", fmt.Sprintf("%d series", len(states)), "", "", "", ""})
+		t.Render()
+
 		return nil
 	},
-}
-
-// truncate shortens a string to max length with ellipsis if needed.
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }
 
 func init() {

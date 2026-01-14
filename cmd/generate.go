@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -16,6 +15,8 @@ import (
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -292,53 +293,45 @@ func (cs *channelStats) incrementType(programType string) lipgloss.Style {
 	}
 }
 
-func truncateString(s string, maxLen int) string {
-	if len(s) > maxLen {
-		return s[:maxLen-3] + "..."
-	}
-	return s
-}
-
-func formatProgramRow(w *tabwriter.Writer, currentTime time.Time, program tunarr.Program, blockName string, typeStyle lipgloss.Style) time.Time {
-	programEndTime := currentTime.Add(time.Duration(program.Duration) * time.Millisecond)
-
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n",
-		infoStyle.Render(currentTime.Format("15:04")),
-		infoStyle.Render(programEndTime.Format("15:04")),
-		blockName,
-		truncateString(program.Title, 30),
-		fmtDuration(program.Duration),
-		typeStyle.Render(program.Type),
-		truncateString(program.ShowTitle, 20),
-		program.Season,
-		program.Episode,
-	)
-
-	return programEndTime
-}
-
 func displayChannelSchedule(channelID string, slots []scheduler.ScheduledSlot) channelStats {
 	stats := channelStats{}
 
-	var output strings.Builder
-	output.WriteString("\n" + channelStyle.Render("📺 Channel "+channelID) + "\n")
+	fmt.Println("\n" + channelStyle.Render("📺 Channel "+channelID))
 
-	w := tabwriter.NewWriter(&output, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprint(w, headerStyle.Render("START\tEND\tBLOCK\tPROGRAM\tDURATION\tTYPE\tSHOW\tS\tE\n"))
-	_, _ = fmt.Fprint(w, headerStyle.Render(strings.Repeat("─", 90)+"\n"))
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"Start", "End", "Block", "Program", "Duration", "Type", "Show", "S", "E"})
 
 	for _, slot := range slots {
 		currentTime := slot.StartTime
 		for _, program := range slot.Programs {
+			programEndTime := currentTime.Add(time.Duration(program.Duration) * time.Millisecond)
 			typeStyle := stats.incrementType(program.Type)
-			currentTime = formatProgramRow(w, currentTime, program, slot.Block.Name, typeStyle)
+
+			t.AppendRow(table.Row{
+				currentTime.Format("15:04"),
+				programEndTime.Format("15:04"),
+				slot.Block.Name,
+				program.Title,
+				fmtDuration(program.Duration),
+				typeStyle.Render(program.Type),
+				program.ShowTitle,
+				program.Season,
+				program.Episode,
+			})
+
+			currentTime = programEndTime
 			stats.totalDuration += program.Duration
 			stats.programCount++
 		}
 	}
 
-	_ = w.Flush()
-	fmt.Print(output.String())
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 4, WidthMax: 30, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 7, WidthMax: 20, WidthMaxEnforcer: text.WrapSoft},
+	})
+	t.SetStyle(table.StyleLight)
+	t.Render()
 	displayChannelSummary(stats)
 
 	return stats

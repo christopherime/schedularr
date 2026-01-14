@@ -252,19 +252,20 @@ These were previously implemented and should not be revisited:
 **Goal**: Achieve production-readiness through comprehensive testing, automated maintenance, and observability.
 
 **Current Test Coverage** (Updated 2026-01-14):
-| Package | Coverage | Target |
-|---------|----------|--------|
-| cache | 100% | ✅ |
-| config | 94.6% | ✅ |
-| cronbuilder | 98.8% | ✅ |
-| cueconfig | 85.5% | ✅ |
-| external/jellyfin | 100% | ✅ |
-| external/radarr | 87.5% | ✅ |
-| external/sonarr | 86.7% | ✅ |
-| external/tunarr | 90.8% | ✅ |
-| httpclient | 89.7% | ✅ |
-| scheduler | 91.9% | ✅ |
-| store | 93.0% | ✅ |
+
+| Package           | Coverage | Target |
+| ----------------- | -------- | ------ |
+| cache             | 100%     | ✅     |
+| config            | 94.6%    | ✅     |
+| cronbuilder       | 98.8%    | ✅     |
+| cueconfig         | 85.5%    | ✅     |
+| external/jellyfin | 100%     | ✅     |
+| external/radarr   | 87.5%    | ✅     |
+| external/sonarr   | 86.7%    | ✅     |
+| external/tunarr   | 90.8%    | ✅     |
+| httpclient        | 89.7%    | ✅     |
+| scheduler         | 91.9%    | ✅     |
+| store             | 93.0%    | ✅     |
 
 **Note**: TUI package has 0% coverage as interactive UI code is harder to unit test.
 
@@ -275,6 +276,7 @@ These were previously implemented and should not be revisited:
 **Problem**: Store package at 78.9% coverage, needs additional tests for edge cases.
 
 **Tasks**:
+
 - [x] Add tests for `CleanupScheduleHistory()` with various cutoff scenarios ✅
 - [x] Add tests for concurrent access patterns (via closed store operations) ✅
 - [x] Add tests for database migration edge cases (RunCount, Disabled fields) ✅
@@ -291,6 +293,7 @@ These were previously implemented and should not be revisited:
 **Problem**: Cache package at 77.8% coverage, missing edge case tests.
 
 **Tasks**:
+
 - [x] Add tests for TTL expiration behavior ✅
 - [x] Add tests for concurrent access ✅
 - [x] Add tests for `ItemCount()` accuracy ✅
@@ -323,6 +326,7 @@ These were previously implemented and should not be revisited:
    - Can be tested via RunOnce() method
 
 **Tasks**:
+
 - [x] Create a background goroutine for periodic cleanup ✅
 - [x] Make cleanup interval configurable (default: 24 hours) ✅
 - [x] Add graceful shutdown handling ✅
@@ -331,6 +335,7 @@ These were previously implemented and should not be revisited:
 - [x] Integrate cleanup into generate --apply command ✅
 
 **Configuration** (in `.schedularr.yaml`):
+
 ```yaml
 maintenance:
   cleanup_enabled: true
@@ -339,6 +344,7 @@ maintenance:
 ```
 
 **Metrics** (for background Cleaner):
+
 - `schedularr_cleanup_runs_total` - Total cleanup runs executed
 - `schedularr_cleanup_entries_removed_total` - Entries removed by cleanup
 - `schedularr_cleanup_duration_seconds` - Cleanup operation duration
@@ -357,12 +363,14 @@ maintenance:
 **Solution**: Added comprehensive integration tests in `internal/scheduler/integration_test.go`:
 
 **Tasks**:
+
 - [x] Create E2E test for full schedule generation with mock Tunarr ✅
 - [x] Add E2E test for series-based scheduling with state persistence ✅
 - [x] Add E2E test for conflict resolution between blocks ✅
 - [x] Add E2E test for mixed block types (filter + series) ✅
 
 **Tests Added**:
+
 - `TestIntegration_FullSchedulingWorkflow` - Full workflow with filter blocks
 - `TestIntegration_ConflictResolution` - Priority-based conflict resolution
 - `TestIntegration_SeriesSchedulingWithState` - Series blocks with state tracking
@@ -387,6 +395,7 @@ maintenance:
 **Solution**: Implemented full CRUD operations with persistence:
 
 **Tasks**:
+
 - [x] Complete block creation flow with validation ✅ (huh forms with validators)
 - [x] Implement block deletion with confirmation ✅
 - [x] Add block duplication feature ✅ (`D` key)
@@ -395,6 +404,7 @@ maintenance:
 - [ ] Add undo/redo support for changes (deferred - lower priority)
 
 **New Features**:
+
 - `D` - Duplicate selected block
 - `+`/`-` - Adjust block priority
 - `ctrl+s` - Save configuration to scheduler.yaml
@@ -402,6 +412,7 @@ maintenance:
 - Priority displayed in block list
 
 **Files Modified**:
+
 - `internal/tui/model.go` - CRUD operations, priority adjustment, save functionality
 - `internal/config/config.go` - Added `SaveSchedulerConfig()` function
 - `cmd/tui.go` - Updated to pass scheduler file path
@@ -417,6 +428,7 @@ maintenance:
 **Solution**: Implemented both CLI dry-run and TUI timeline views.
 
 **Tasks**:
+
 - [x] Implement `--dry-run` mode for schedule generation ✅ (already exists in generate command)
 - [x] Create TUI view for schedule preview ✅ (block timeline view)
 - [x] Show program titles, durations, and time slots ✅
@@ -427,6 +439,7 @@ The `generate --dry-run` flag provides full schedule preview with actual content
 Use `--verbose` for detailed filtering and history output.
 
 **TUI Timeline** (in `internal/tui/model.go`):
+
 - Press 't' from block list to view 24-hour schedule timeline
 - Shows: Block name, start/end times, channel ID, priority
 - Highlights conflicts when blocks overlap on the same channel
@@ -444,12 +457,14 @@ Use `--verbose` for detailed filtering and history output.
 **Solution**: Implemented comprehensive series state management with CLI and TUI.
 
 **Tasks**:
+
 - [x] Add CLI command to view series state (`schedularr state list`) ✅
 - [x] Create TUI panel for series state overview ✅ (press 's' in block list)
 - [x] Show current episode per series ✅
 - [x] Add ability to manually adjust episode position ✅ (press 'e' to edit)
 
 **CLI Commands** (in `cmd/state.go`):
+
 - `schedularr state list` - List all series with episode, status, run count
 - `schedularr state set <show> -s <season> -e <episode>` - Set series position
 - `schedularr state reset <show>` - Reset series to S01E01
@@ -458,6 +473,7 @@ Use `--verbose` for detailed filtering and history output.
 - `schedularr state backup <file>` - Full database backup
 
 **TUI Features** (in `internal/tui/model.go`):
+
 - Press 's' from block list to view series progress
 - Displays: Show title, current episode, run count, status, last aired
 - Press 'e' to edit selected series position
@@ -465,6 +481,7 @@ Use `--verbose` for detailed filtering and history output.
 - Color-coded status: Active (white), Completed (green), Disabled (gray)
 
 **Files Modified**:
+
 - `cmd/state.go` - Added `set` command, improved `list` output
 - `internal/store/sqlite.go` - Added `SetSeriesState` method, fixed export/import
 - `internal/tui/model.go` - Added series edit view (stateSeriesEdit)
@@ -480,25 +497,31 @@ Use `--verbose` for detailed filtering and history output.
 The following code is reported as "unreachable" by deadcode but is intentionally kept:
 
 **Public API Methods** (designed for consumers or future use):
+
 - `internal/cache/cache.go`: `SetWithExpiration`, `Clear`, `ClearAll`, `ItemCount`
 - `internal/config/config.go`: `New`, `GetSchedulerConfig`
 - `internal/external/tunarr/client.go`: `GetShows`, `GetShowEpisodes`, `SearchPrograms`, `GetFillerLists`
 - `internal/httpclient/client.go`: `Put`, `Delete`, `SetBaseURL`, `ValidateRequired`
 
 **Engine Variants** (constructor options):
+
 - `internal/scheduler/engine.go`: `NewEngineWithOptions`, `NewEngineWithHistory`
 
 **In-Memory History** (complete API surface, tested):
+
 - `internal/scheduler/history.go`: `GetLastScheduled`, `CleanupOldEntries`, `GetStats`, `FilterByHistory`
 - Note: Core methods `Window()`, `RecordPrograms()`, `WasRecentlyScheduled()` ARE used
 
 **Test Helpers**:
+
 - `internal/scheduler/mock_store.go`: All methods (used in tests)
 
 **Future Features**:
+
 - `internal/store/cleaner.go`: Background `Cleaner` struct for daemon mode
 
 **Rationale for keeping**:
+
 1. Public API completeness for external consumers
 2. Well-tested code that may be used in future features
 3. Standard patterns (HTTP methods, constructors with options)
@@ -517,11 +540,13 @@ The following code is reported as "unreachable" by deadcode but is intentionally
 ### 9.1 CLI Table Output with go-pretty (~80 lines saved)
 
 **Problem**: Multiple CLI commands use `text/tabwriter` with manual column formatting:
+
 - `cmd/generate.go`: ~60 lines for schedule display with manual width calculation
 - `cmd/channels.go`: ~20 lines for channel listing
 - `cmd/state.go`: ~15 lines for series state listing
 
 **Current Implementation**:
+
 ```go
 w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 fmt.Fprintln(w, "ID\tNumber\tName\tEnabled")
@@ -532,6 +557,7 @@ w.Flush()
 **Candidate Library**: `github.com/jedib0t/go-pretty/v6/table` (8K+ stars, actively maintained)
 
 **Benefits**:
+
 - Automatic column width calculation
 - Built-in borders and styling (consistent with lipgloss usage)
 - Color support, sorting, filtering
@@ -539,6 +565,7 @@ w.Flush()
 - Reduces boilerplate significantly
 
 **Example After**:
+
 ```go
 t := table.NewWriter()
 t.SetOutputMirror(os.Stdout)
@@ -548,22 +575,24 @@ t.Render()
 ```
 
 **Tasks**:
-- [ ] Add `github.com/jedib0t/go-pretty/v6` to go.mod
-- [ ] Refactor `displayChannelSchedule()` in cmd/generate.go
-- [ ] Refactor `formatProgramRow()` in cmd/generate.go
-- [ ] Refactor channel listing in cmd/channels.go
-- [ ] Refactor state listing in cmd/state.go
-- [ ] Remove manual truncation functions (go-pretty handles this)
 
-**Estimated Impact**: ~80 lines removed, better UX with auto-sizing columns
+- [x] Add `github.com/jedib0t/go-pretty/v6` to go.mod ✅
+- [x] Refactor `displayChannelSchedule()` in cmd/generate.go ✅
+- [x] Refactor `formatProgramRow()` in cmd/generate.go (merged into displayChannelSchedule) ✅
+- [x] Refactor channel listing in cmd/channels.go ✅
+- [x] Refactor state listing in cmd/state.go ✅
+- [x] Remove manual truncation functions (go-pretty handles this) ✅
 
-**Status**: 🔲 PENDING
+**Actual Impact**: ~60 lines removed, better UX with auto-sizing columns and consistent table styling
+
+**Status**: ✅ COMPLETE
 
 ---
 
 ### 9.2 Database Migrations with golang-migrate (~40 lines saved)
 
 **Problem**: `internal/store/sqlite.go` uses manual migration pattern with ignored errors:
+
 ```go
 migrations := []string{
     `ALTER TABLE series_state ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0`,
@@ -575,6 +604,7 @@ for _, migration := range migrations {
 ```
 
 **Issues with current approach**:
+
 1. Errors are silently ignored (dangerous for production)
 2. No version tracking - can't tell which migrations ran
 3. No rollback support
@@ -583,6 +613,7 @@ for _, migration := range migrations {
 **Candidate Library**: `github.com/golang-migrate/migrate/v4` (14K+ stars, actively maintained)
 
 **Benefits**:
+
 - Versioned migrations with up/down support
 - Proper error handling and transaction safety
 - SQL files separated from Go code
@@ -590,6 +621,7 @@ for _, migration := range migrations {
 - Automatic version tracking in database
 
 **Example Structure After**:
+
 ```
 migrations/
 ├── 000001_initial_schema.up.sql
@@ -599,6 +631,7 @@ migrations/
 ```
 
 **Tasks**:
+
 - [ ] Add `github.com/golang-migrate/migrate/v4` to go.mod
 - [ ] Create `migrations/` directory with SQL files
 - [ ] Extract current schema to `000001_initial_schema.up.sql`
@@ -616,6 +649,7 @@ migrations/
 ### 9.3 Retry Logic Consolidation with avast/retry-go (~20 lines saved)
 
 **Problem**: Custom retry logic in `cmd/generate.go`:
+
 ```go
 func refreshJellyfinWithRetries(client *jellyfin.Client) error {
     maxRetries := 3
@@ -640,6 +674,7 @@ This duplicates retry logic already in `internal/httpclient/client.go`.
 **Candidate Library**: `github.com/avast/retry-go/v4` (2K+ stars, actively maintained)
 
 **Benefits**:
+
 - Declarative retry configuration
 - Built-in exponential backoff, jitter
 - Context support for cancellation
@@ -647,6 +682,7 @@ This duplicates retry logic already in `internal/httpclient/client.go`.
 - Already a dependency pattern (httpclient uses resty retries)
 
 **Example After**:
+
 ```go
 err := retry.Do(
     func() error { return client.RefreshLiveTVGuide(ctx) },
@@ -660,6 +696,7 @@ err := retry.Do(
 ```
 
 **Tasks**:
+
 - [ ] Add `github.com/avast/retry-go/v4` to go.mod
 - [ ] Refactor `refreshJellyfinWithRetries()` to use retry-go
 - [ ] Consider using retry-go in httpclient for consistency (optional)
@@ -672,13 +709,14 @@ err := retry.Do(
 
 ### Priority Summary - Phase 9
 
-| Priority | Task | Lines Saved | Effort | Dependency |
-|----------|------|-------------|--------|------------|
-| High | 9.1 CLI Tables (go-pretty) | ~80 | Medium | go-pretty/v6 |
-| Medium | 9.2 DB Migrations (migrate) | ~40 | Medium | golang-migrate/v4 |
-| Low | 9.3 Retry Logic (retry-go) | ~20 | Low | avast/retry-go/v4 |
+| Priority | Task                        | Lines Saved | Effort | Status      |
+| -------- | --------------------------- | ----------- | ------ | ----------- |
+| High     | 9.1 CLI Tables (go-pretty)  | ~60         | Medium | ✅ Complete |
+| Medium   | 9.2 DB Migrations (migrate) | ~40         | Medium | 🔲 Pending  |
+| Low      | 9.3 Retry Logic (retry-go)  | ~20         | Low    | 🔲 Pending  |
 
-**Total Potential Savings**: ~140 lines of custom code
+**Total Achieved Savings**: ~60 lines (9.1)
+**Remaining Potential**: ~60 lines (9.2, 9.3)
 
 ---
 
@@ -686,15 +724,15 @@ err := retry.Do(
 
 The codebase already makes excellent use of libraries:
 
-| Area | Current Library | Assessment |
-|------|-----------------|------------|
-| TUI Framework | Bubble Tea, Lipgloss, Huh | Best-in-class, no replacement |
-| Config | Viper, yaml.v3 | Industry standard |
-| HTTP Client | go-resty | Well-integrated with retries |
-| Caching | go-cache | Appropriate for use case |
-| Cron Parsing | robfig/cron | Industry standard |
-| Validation | go-playground/validator | Industry standard |
-| Functional | samber/lo | Good use of modern Go patterns |
-| Metrics | Prometheus client | Industry standard |
-| Database | sqlx | Already migrated from raw sql |
-| Schema | CUE | Specialized, appropriate |
+| Area          | Current Library           | Assessment                     |
+| ------------- | ------------------------- | ------------------------------ |
+| TUI Framework | Bubble Tea, Lipgloss, Huh | Best-in-class, no replacement  |
+| Config        | Viper, yaml.v3            | Industry standard              |
+| HTTP Client   | go-resty                  | Well-integrated with retries   |
+| Caching       | go-cache                  | Appropriate for use case       |
+| Cron Parsing  | robfig/cron               | Industry standard              |
+| Validation    | go-playground/validator   | Industry standard              |
+| Functional    | samber/lo                 | Good use of modern Go patterns |
+| Metrics       | Prometheus client         | Industry standard              |
+| Database      | sqlx                      | Already migrated from raw sql  |
+| Schema        | CUE                       | Specialized, appropriate       |

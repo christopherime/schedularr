@@ -193,6 +193,7 @@ linters:
             - github.com/go-playground/validator/v10
             - github.com/jmoiron/sqlx
             - github.com/charmbracelet/huh
+            - github.com/jedib0t/go-pretty/v6
 
     sloglint:
       no-mixed-args: true
