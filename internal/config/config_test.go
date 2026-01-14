@@ -293,6 +293,72 @@ func TestGetSchedulerConfig(t *testing.T) {
 	}
 }
 
+func TestMaintenanceConfig_GetCleanupInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval string
+		expected time.Duration
+	}{
+		{"valid 1h", "1h", 1 * time.Hour},
+		{"valid 24h", "24h", 24 * time.Hour},
+		{"valid 30m", "30m", 30 * time.Minute},
+		{"invalid format", "abc", 24 * time.Hour}, // Should default to 24h
+		{"empty string", "", 24 * time.Hour},      // Should default to 24h
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &MaintenanceConfig{CleanupInterval: tt.interval}
+			actual := m.GetCleanupInterval()
+
+			if actual != tt.expected {
+				t.Errorf("For interval '%s', expected %v, got %v", tt.interval, tt.expected, actual)
+			}
+		})
+	}
+}
+
+func TestMaintenanceConfig_GetHistoryRetention(t *testing.T) {
+	tests := []struct {
+		name      string
+		retention string
+		expected  time.Duration
+	}{
+		{"valid 168h (7 days)", "168h", 168 * time.Hour},
+		{"valid 24h", "24h", 24 * time.Hour},
+		{"valid 720h (30 days)", "720h", 720 * time.Hour},
+		{"invalid format", "abc", 7 * 24 * time.Hour}, // Should default to 7 days
+		{"empty string", "", 7 * 24 * time.Hour},       // Should default to 7 days
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &MaintenanceConfig{HistoryRetention: tt.retention}
+			actual := m.GetHistoryRetention()
+
+			if actual != tt.expected {
+				t.Errorf("For retention '%s', expected %v, got %v", tt.retention, tt.expected, actual)
+			}
+		})
+	}
+}
+
+func TestNew_MaintenanceDefaults(t *testing.T) {
+	cfg := New()
+
+	if cfg.Maintenance.CleanupInterval != "24h" {
+		t.Errorf("Expected default CleanupInterval '24h', got '%s'", cfg.Maintenance.CleanupInterval)
+	}
+
+	if cfg.Maintenance.HistoryRetention != "168h" {
+		t.Errorf("Expected default HistoryRetention '168h', got '%s'", cfg.Maintenance.HistoryRetention)
+	}
+
+	if !cfg.Maintenance.CleanupEnabled {
+		t.Error("Expected default CleanupEnabled to be true, got false")
+	}
+}
+
 func TestLoadSchedulerConfig_PriorityOrder(t *testing.T) {
 	// Test that explicit file parameter takes priority over config field
 	tmpDir := t.TempDir()

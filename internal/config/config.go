@@ -19,16 +19,17 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	Tunarr        tunarr.Config    `mapstructure:"tunarr" yaml:"tunarr" json:"tunarr"`
-	Radarr        radarr.Config    `mapstructure:"radarr" yaml:"radarr" json:"radarr,omitempty"`
-	Sonarr        sonarr.Config    `mapstructure:"sonarr" yaml:"sonarr" json:"sonarr,omitempty"`
-	Jellyfin      jellyfin.Config  `mapstructure:"jellyfin" yaml:"jellyfin" json:"jellyfin,omitempty"`
-	Log           LogConfig        `mapstructure:"log" yaml:"log" json:"log"`
-	MetricsPort   int              `mapstructure:"metrics_port" yaml:"metrics_port" json:"metrics_port,omitempty"`       // Port for Prometheus metrics endpoint
-	Database      string           `mapstructure:"database" yaml:"database" json:"database,omitempty"`                   // Path to SQLite database file
-	SchedulerFile string           `mapstructure:"scheduler_file" yaml:"scheduler_file" json:"scheduler_file,omitempty"` // Path to scheduler config file
-	Scheduler     scheduler.Config `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler,omitempty"`                // Inline scheduler config (legacy)
-	Cache         CacheConfig      `mapstructure:"cache" yaml:"cache" json:"cache"`
+	Tunarr        tunarr.Config     `mapstructure:"tunarr" yaml:"tunarr" json:"tunarr"`
+	Radarr        radarr.Config     `mapstructure:"radarr" yaml:"radarr" json:"radarr,omitempty"`
+	Sonarr        sonarr.Config     `mapstructure:"sonarr" yaml:"sonarr" json:"sonarr,omitempty"`
+	Jellyfin      jellyfin.Config   `mapstructure:"jellyfin" yaml:"jellyfin" json:"jellyfin,omitempty"`
+	Log           LogConfig         `mapstructure:"log" yaml:"log" json:"log"`
+	MetricsPort   int               `mapstructure:"metrics_port" yaml:"metrics_port" json:"metrics_port,omitempty"`       // Port for Prometheus metrics endpoint
+	Database      string            `mapstructure:"database" yaml:"database" json:"database,omitempty"`                   // Path to SQLite database file
+	SchedulerFile string            `mapstructure:"scheduler_file" yaml:"scheduler_file" json:"scheduler_file,omitempty"` // Path to scheduler config file
+	Scheduler     scheduler.Config  `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler,omitempty"`                // Inline scheduler config (legacy)
+	Cache         CacheConfig       `mapstructure:"cache" yaml:"cache" json:"cache"`
+	Maintenance   MaintenanceConfig `mapstructure:"maintenance" yaml:"maintenance" json:"maintenance"`
 }
 
 // LogConfig holds configuration for logging
@@ -42,6 +43,39 @@ type LogConfig struct {
 type CacheConfig struct {
 	CacheDir      string `mapstructure:"cache_dir" yaml:"cache_dir" json:"cache_dir,omitempty"`                // Directory to store cache files
 	CacheDuration string `mapstructure:"cache_duration" yaml:"cache_duration" json:"cache_duration,omitempty"` // How long cache entries are valid (e.g., "1h", "24h")
+}
+
+// MaintenanceConfig holds configuration for background maintenance tasks
+type MaintenanceConfig struct {
+	CleanupInterval    string `mapstructure:"cleanup_interval" yaml:"cleanup_interval" json:"cleanup_interval,omitempty"`          // How often to run cleanup (e.g., "24h")
+	HistoryRetention   string `mapstructure:"history_retention" yaml:"history_retention" json:"history_retention,omitempty"`       // How long to keep schedule history (e.g., "168h" for 7 days)
+	CleanupEnabled     bool   `mapstructure:"cleanup_enabled" yaml:"cleanup_enabled" json:"cleanup_enabled"`                       // Whether to enable automatic cleanup
+}
+
+// GetCleanupInterval parses the CleanupInterval string into a time.Duration.
+// Returns a default of 24 hours if parsing fails.
+func (m *MaintenanceConfig) GetCleanupInterval() time.Duration {
+	if m.CleanupInterval == "" {
+		return 24 * time.Hour
+	}
+	duration, err := time.ParseDuration(m.CleanupInterval)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	return duration
+}
+
+// GetHistoryRetention parses the HistoryRetention string into a time.Duration.
+// Returns a default of 7 days if parsing fails.
+func (m *MaintenanceConfig) GetHistoryRetention() time.Duration {
+	if m.HistoryRetention == "" {
+		return 7 * 24 * time.Hour // 7 days
+	}
+	duration, err := time.ParseDuration(m.HistoryRetention)
+	if err != nil {
+		return 7 * 24 * time.Hour
+	}
+	return duration
 }
 
 // GetCacheDuration parses the CacheDuration string into a time.Duration.
@@ -79,6 +113,11 @@ func New() *Config {
 		Cache: CacheConfig{
 			CacheDir:      filepath.Join(os.TempDir(), "schedularr_cache"),
 			CacheDuration: "1h",
+		},
+		Maintenance: MaintenanceConfig{
+			CleanupInterval:  "24h",
+			HistoryRetention: "168h", // 7 days
+			CleanupEnabled:   true,
 		},
 	}
 }

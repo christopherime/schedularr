@@ -304,16 +304,34 @@ These were previously implemented and should not be revisited:
 
 **Problem**: `CleanupScheduleHistory()` exists but is not automatically scheduled.
 
-**Solution**: Implement a background cleanup job that periodically removes old history entries.
+**Solution**: Implemented a `Cleaner` component in `internal/store/cleaner.go` that:
+- Runs as a background goroutine with configurable interval
+- Uses Prometheus metrics to track cleanup operations
+- Supports graceful shutdown via Stop() or context cancellation
+- Can be tested via RunOnce() method
 
 **Tasks**:
-- [ ] Create a background goroutine for periodic cleanup
-- [ ] Make cleanup interval configurable (default: 24 hours)
-- [ ] Add graceful shutdown handling
-- [ ] Add metrics for cleanup operations
-- [ ] Add tests for cleanup scheduling
+- [x] Create a background goroutine for periodic cleanup ✅
+- [x] Make cleanup interval configurable (default: 24 hours) ✅
+- [x] Add graceful shutdown handling ✅
+- [x] Add metrics for cleanup operations ✅
+- [x] Add tests for cleanup scheduling ✅
 
-**Status**: 🔲 PENDING
+**Configuration** (in `.schedularr.yaml`):
+```yaml
+maintenance:
+  cleanup_enabled: true
+  cleanup_interval: "24h"
+  history_retention: "168h"  # 7 days
+```
+
+**Metrics**:
+- `schedularr_cleanup_runs_total` - Total cleanup runs executed
+- `schedularr_cleanup_entries_removed_total` - Entries removed by cleanup
+- `schedularr_cleanup_duration_seconds` - Cleanup operation duration
+- `schedularr_cleanup_errors_total` - Cleanup errors
+
+**Status**: ✅ COMPLETE
 
 ---
 
