@@ -215,3 +215,191 @@ func TestCleanupInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestGet_InterfacePointer(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Store a value
+	key := "interface_key"
+	data := TestData{Name: "test", Value: 42}
+	err = cache.Set(key, data)
+	require.NoError(t, err)
+
+	// Get with *interface{} target (covers the switch case in Get)
+	var result interface{}
+	found, err := cache.Get(key, &result)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.NotNil(t, result)
+
+	// Verify the data is correct
+	retrievedData, ok := result.(TestData)
+	assert.True(t, ok, "Expected TestData type")
+	assert.Equal(t, "test", retrievedData.Name)
+	assert.Equal(t, 42, retrievedData.Value)
+}
+
+func TestCopyValue_SliceInterface(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Store a []interface{} slice
+	key := "slice_interface_key"
+	data := []interface{}{"a", 1, true, nil}
+	err = cache.Set(key, data)
+	require.NoError(t, err)
+
+	// Get with *[]interface{} target
+	var result []interface{}
+	found, err := cache.Get(key, &result)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, 4, len(result))
+	assert.Equal(t, "a", result[0])
+	assert.Equal(t, 1, result[1])
+	assert.Equal(t, true, result[2])
+	assert.Nil(t, result[3])
+}
+
+func TestCopyValue_MapStringInterface(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Store a map[string]interface{}
+	key := "map_interface_key"
+	data := map[string]interface{}{
+		"name":   "John",
+		"age":    30,
+		"active": true,
+	}
+	err = cache.Set(key, data)
+	require.NoError(t, err)
+
+	// Get with *map[string]interface{} target
+	var result map[string]interface{}
+	found, err := cache.Get(key, &result)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "John", result["name"])
+	assert.Equal(t, 30, result["age"])
+	assert.Equal(t, true, result["active"])
+}
+
+func TestCopyValue_TypeMismatch(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Store a string but try to get as []interface{}
+	key := "type_mismatch_key"
+	err = cache.Set(key, "not a slice")
+	require.NoError(t, err)
+
+	// This should still return true (found), but the slice won't be populated
+	var result []interface{}
+	found, err := cache.Get(key, &result)
+	require.NoError(t, err)
+	assert.True(t, found) // Item was found, even though type doesn't match
+
+	// Store an int but try to get as map[string]interface{}
+	err = cache.Set("int_key", 42)
+	require.NoError(t, err)
+
+	var mapResult map[string]interface{}
+	found, err = cache.Get("int_key", &mapResult)
+	require.NoError(t, err)
+	assert.True(t, found)
+}
+
+func TestConcurrentAccess(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Concurrent writes and reads
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(id int) {
+			for j := 0; j < 100; j++ {
+				key := "concurrent_key"
+				_ = cache.Set(key, id*100+j)
+				var val int
+				_, _ = cache.Get(key, &val)
+			}
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Should not panic or have data races
+	count := cache.ItemCount()
+	assert.GreaterOrEqual(t, count, 0)
+}
+
+func TestCopyValue_StringType(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Store a string and retrieve with *string
+	key := "string_copy_key"
+	err = cache.Set(key, "hello world")
+	require.NoError(t, err)
+
+	var result string
+	found, err := cache.Get(key, &result)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "hello world", result)
+}
+
+func TestCopyValue_IntType(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Store an int and retrieve with *int
+	key := "int_copy_key"
+	err = cache.Set(key, 12345)
+	require.NoError(t, err)
+
+	var result int
+	found, err := cache.Get(key, &result)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, 12345, result)
+}
+
+func TestCopyValue_ComplexType(t *testing.T) {
+	cache, err := New(1 * time.Hour)
+	require.NoError(t, err)
+
+	// Store a complex struct type
+	type ComplexData struct {
+		Items  []string
+		Counts map[string]int
+		Nested TestData
+	}
+	key := "complex_key"
+	data := ComplexData{
+		Items:  []string{"a", "b", "c"},
+		Counts: map[string]int{"x": 1, "y": 2},
+		Nested: TestData{Name: "nested", Value: 100},
+	}
+	err = cache.Set(key, data)
+	require.NoError(t, err)
+
+	// Retrieve with *interface{} to test the generic path
+	var result interface{}
+	found, err := cache.Get(key, &result)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.NotNil(t, result)
+
+	// Verify the data is the correct type
+	retrievedData, ok := result.(ComplexData)
+	assert.True(t, ok, "Expected ComplexData type")
+	assert.Equal(t, 3, len(retrievedData.Items))
+	assert.Equal(t, "nested", retrievedData.Nested.Name)
+}

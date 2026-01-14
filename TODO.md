@@ -244,3 +244,136 @@ These were previously implemented and should not be revisited:
 - ✅ Slice Utilities with samber/lo
 - ✅ Test Assertions with testify
 - ✅ Logging simplified to use slog directly
+
+---
+
+## Phase 4: Operational Excellence & Testing
+
+**Goal**: Achieve production-readiness through comprehensive testing, automated maintenance, and observability.
+
+**Current Test Coverage**:
+| Package | Coverage | Target |
+|---------|----------|--------|
+| cache | 100% | ✅ |
+| config | 94.4% | ✅ |
+| cronbuilder | 98.8% | ✅ |
+| external/jellyfin | 86.7% | ✅ |
+| external/radarr | 100% | ✅ |
+| external/sonarr | 100% | ✅ |
+| external/tunarr | 90.8% | ✅ |
+| scheduler | 91.9% | ✅ |
+| store | 89.5% | ✅ |
+
+---
+
+### 4.1 Store Package Test Coverage
+
+**Problem**: Store package at 78.9% coverage, needs additional tests for edge cases.
+
+**Tasks**:
+- [x] Add tests for `CleanupScheduleHistory()` with various cutoff scenarios ✅
+- [x] Add tests for concurrent access patterns (via closed store operations) ✅
+- [x] Add tests for database migration edge cases (RunCount, Disabled fields) ✅
+- [x] Add error injection tests for database failures (closed store, invalid paths) ✅
+
+**Actual Impact**: Coverage improved from 78.9% to 89.5%
+
+**Status**: ✅ COMPLETE
+
+---
+
+### 4.2 Cache Package Test Coverage
+
+**Problem**: Cache package at 77.8% coverage, missing edge case tests.
+
+**Tasks**:
+- [x] Add tests for TTL expiration behavior ✅
+- [x] Add tests for concurrent access ✅
+- [x] Add tests for `ItemCount()` accuracy ✅
+- [x] Add tests for `SetWithExpiration()` custom TTL ✅
+- [x] Add tests for `copyValue()` all type paths ✅
+- [x] Add tests for `Get()` with interface pointer ✅
+
+**Actual Impact**: Coverage improved from 77.8% to 100%
+
+**Status**: ✅ COMPLETE
+
+---
+
+### 4.3 Automatic Schedule History Cleanup
+
+**Problem**: `CleanupScheduleHistory()` exists but is not automatically scheduled.
+
+**Solution**: Implement a background cleanup job that periodically removes old history entries.
+
+**Tasks**:
+- [ ] Create a background goroutine for periodic cleanup
+- [ ] Make cleanup interval configurable (default: 24 hours)
+- [ ] Add graceful shutdown handling
+- [ ] Add metrics for cleanup operations
+- [ ] Add tests for cleanup scheduling
+
+**Status**: 🔲 PENDING
+
+---
+
+### 4.4 End-to-End Testing
+
+**Problem**: Minimal E2E tests for the complete schedule generation workflow.
+
+**Tasks**:
+- [ ] Create E2E test for full schedule generation with mock Tunarr
+- [ ] Add E2E test for series-based scheduling with state persistence
+- [ ] Add E2E test for conflict resolution between blocks
+- [ ] Add E2E test for filler content integration
+
+**Status**: 🔲 PENDING
+
+---
+
+## Phase 5: UX Enhancements
+
+**Goal**: Improve user experience through better TUI interactions and visualizations.
+
+---
+
+### 5.1 TUI Block Editing CRUD Operations
+
+**Problem**: TUI has basic scaffolding but incomplete CRUD operations.
+
+**Tasks**:
+- [ ] Complete block creation flow with validation
+- [ ] Implement block deletion with confirmation
+- [ ] Add block duplication feature
+- [ ] Implement block reordering by priority
+- [ ] Add undo/redo support for changes
+
+**Status**: 🔲 PENDING
+
+---
+
+### 5.2 Schedule Preview Visualization
+
+**Problem**: No way to preview what a schedule would look like before applying.
+
+**Tasks**:
+- [ ] Implement `--dry-run` mode for schedule generation
+- [ ] Create TUI view for schedule preview
+- [ ] Show program titles, durations, and time slots
+- [ ] Highlight potential conflicts or gaps
+
+**Status**: 🔲 PENDING
+
+---
+
+### 5.3 Series State Visualization
+
+**Problem**: No visibility into current episode tracking state.
+
+**Tasks**:
+- [ ] Add CLI command to view series state (`schedularr series list`)
+- [ ] Create TUI panel for series state overview
+- [ ] Show current episode per series
+- [ ] Add ability to manually adjust episode position
+
+**Status**: 🔲 PENDING

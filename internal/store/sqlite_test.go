@@ -410,3 +410,203 @@ func TestStore_Backup(t *testing.T) {
 	assert.Equal(t, 2, restoredState.CurrentSeason, "Backup data mismatch: season")
 	assert.Equal(t, 5, restoredState.CurrentEpisode, "Backup data mismatch: episode")
 }
+
+func TestStore_Backup_InvalidPath(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Backup to an invalid path should return an error
+	err = s.Backup(ctx, "/nonexistent/directory/backup.db")
+	assert.Error(t, err, "Expected error for backup to invalid path")
+}
+
+func TestStore_SeriesState_RunCountAndDisabled(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	showTitle := "Test Show With RunCount"
+
+	// Create a state with RunCount and Disabled fields
+	now := time.Now()
+	state := &scheduler.SeriesState{
+		ShowTitle:      showTitle,
+		CurrentSeason:  1,
+		CurrentEpisode: 1,
+		Completed:      false,
+		LastAired:      &now,
+		RunCount:       5,
+		Disabled:       true,
+	}
+	require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed")
+
+	// Verify RunCount and Disabled are persisted
+	retrievedState, err := s.GetSeriesState(ctx, showTitle)
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.Equal(t, 5, retrievedState.RunCount, "Expected RunCount to be 5")
+	assert.True(t, retrievedState.Disabled, "Expected Disabled to be true")
+
+	// Update RunCount
+	state.RunCount = 10
+	state.Disabled = false
+	require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed")
+
+	retrievedState, err = s.GetSeriesState(ctx, showTitle)
+	require.NoError(t, err, "GetSeriesState failed")
+	assert.Equal(t, 10, retrievedState.RunCount, "Expected RunCount to be 10")
+	assert.False(t, retrievedState.Disabled, "Expected Disabled to be false")
+}
+
+func TestStore_OperationsOnClosedStore(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+
+	ctx := context.Background()
+
+	// Close the store
+	require.NoError(t, s.Close(), "Close failed")
+
+	// All operations on a closed store should fail
+	_, err = s.GetSeriesState(ctx, "Test")
+	assert.Error(t, err, "GetSeriesState on closed store should error")
+
+	err = s.UpdateSeriesState(ctx, &scheduler.SeriesState{ShowTitle: "Test"})
+	assert.Error(t, err, "UpdateSeriesState on closed store should error")
+
+	err = s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{
+		{ProgramID: "p1", ChannelID: "c1", BlockName: "b1", ScheduledAt: time.Now()},
+	})
+	assert.Error(t, err, "RecordScheduleHistory on closed store should error")
+
+	_, err = s.WasRecentlyScheduled(ctx, "p1", "c1", time.Hour)
+	assert.Error(t, err, "WasRecentlyScheduled on closed store should error")
+
+	_, err = s.CleanupScheduleHistory(ctx, time.Hour)
+	assert.Error(t, err, "CleanupScheduleHistory on closed store should error")
+
+	_, err = s.ExportAllSeriesStates(ctx)
+	assert.Error(t, err, "ExportAllSeriesStates on closed store should error")
+
+	err = s.ImportSeriesStates(ctx, []scheduler.SeriesState{{ShowTitle: "Test"}})
+	assert.Error(t, err, "ImportSeriesStates on closed store should error")
+
+	err = s.ResetSeriesState(ctx, "Test")
+	assert.Error(t, err, "ResetSeriesState on closed store should error")
+}
+
+func TestNew_InvalidDSN(t *testing.T) {
+	// Opening a database at an invalid path should fail
+	_, err := New("/nonexistent/path/to/db.sqlite")
+	assert.Error(t, err, "Expected error for invalid DSN path")
+}
+
+func TestStore_CleanupScheduleHistory_MultipleCutoffs(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Create entries at different times
+	entries := []scheduler.ScheduleHistoryEntry{
+		{ProgramID: "prog-1", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-7 * 24 * time.Hour)},  // 7 days ago
+		{ProgramID: "prog-2", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-3 * 24 * time.Hour)},  // 3 days ago
+		{ProgramID: "prog-3", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-1 * 24 * time.Hour)},  // 1 day ago
+		{ProgramID: "prog-4", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now().Add(-12 * time.Hour)},      // 12 hours ago
+		{ProgramID: "prog-5", ChannelID: "ch-1", BlockName: "b1", ScheduledAt: time.Now()},                           // now
+	}
+	require.NoError(t, s.RecordScheduleHistory(ctx, entries), "RecordScheduleHistory failed")
+
+	// Cleanup with 2-day window (should remove prog-1, prog-2)
+	removed, err := s.CleanupScheduleHistory(ctx, 2*24*time.Hour)
+	require.NoError(t, err, "CleanupScheduleHistory failed")
+	assert.Equal(t, int64(2), removed, "Expected 2 entries removed")
+
+	// Verify remaining entries
+	for _, prog := range []string{"prog-3", "prog-4", "prog-5"} {
+		recent, err := s.WasRecentlyScheduled(ctx, prog, "ch-1", 30*24*time.Hour)
+		require.NoError(t, err)
+		assert.True(t, recent, "Expected %s to still exist", prog)
+	}
+
+	for _, prog := range []string{"prog-1", "prog-2"} {
+		recent, err := s.WasRecentlyScheduled(ctx, prog, "ch-1", 30*24*time.Hour)
+		require.NoError(t, err)
+		assert.False(t, recent, "Expected %s to be removed", prog)
+	}
+}
+
+func TestStore_WasRecentlyScheduled_DifferentChannels(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Record same program on different channels
+	entries := []scheduler.ScheduleHistoryEntry{
+		{ProgramID: "prog-1", ChannelID: "channel-A", BlockName: "b1", ScheduledAt: time.Now()},
+		{ProgramID: "prog-1", ChannelID: "channel-B", BlockName: "b1", ScheduledAt: time.Now().Add(-48 * time.Hour)},
+	}
+	require.NoError(t, s.RecordScheduleHistory(ctx, entries), "RecordScheduleHistory failed")
+
+	// prog-1 should be recent on channel-A but not on channel-B (with 24h window)
+	recentA, err := s.WasRecentlyScheduled(ctx, "prog-1", "channel-A", 24*time.Hour)
+	require.NoError(t, err)
+	assert.True(t, recentA, "Expected prog-1 to be recent on channel-A")
+
+	recentB, err := s.WasRecentlyScheduled(ctx, "prog-1", "channel-B", 24*time.Hour)
+	require.NoError(t, err)
+	assert.False(t, recentB, "Expected prog-1 to not be recent on channel-B with 24h window")
+
+	// With 72h window, should find on channel-B
+	recentB72, err := s.WasRecentlyScheduled(ctx, "prog-1", "channel-B", 72*time.Hour)
+	require.NoError(t, err)
+	assert.True(t, recentB72, "Expected prog-1 to be recent on channel-B with 72h window")
+}
+
+func TestStore_ImportSeriesStates_UpdateExisting(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Initial import
+	t1 := time.Now()
+	initial := []scheduler.SeriesState{
+		{ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1, Completed: false, LastAired: &t1},
+		{ShowTitle: "Show B", CurrentSeason: 1, CurrentEpisode: 5, Completed: false, LastAired: &t1},
+	}
+	require.NoError(t, s.ImportSeriesStates(ctx, initial), "Initial import failed")
+
+	// Update via import (should use ON CONFLICT DO UPDATE)
+	t2 := time.Now()
+	updated := []scheduler.SeriesState{
+		{ShowTitle: "Show A", CurrentSeason: 2, CurrentEpisode: 10, Completed: true, LastAired: &t2},
+		{ShowTitle: "Show C", CurrentSeason: 1, CurrentEpisode: 1, Completed: false, LastAired: &t2}, // new show
+	}
+	require.NoError(t, s.ImportSeriesStates(ctx, updated), "Update import failed")
+
+	// Verify Show A was updated
+	stateA, err := s.GetSeriesState(ctx, "Show A")
+	require.NoError(t, err)
+	assert.Equal(t, 2, stateA.CurrentSeason, "Show A season should be updated")
+	assert.Equal(t, 10, stateA.CurrentEpisode, "Show A episode should be updated")
+	assert.True(t, stateA.Completed, "Show A should be completed")
+
+	// Verify Show B was not modified
+	stateB, err := s.GetSeriesState(ctx, "Show B")
+	require.NoError(t, err)
+	assert.Equal(t, 1, stateB.CurrentSeason, "Show B should not be modified")
+	assert.Equal(t, 5, stateB.CurrentEpisode, "Show B should not be modified")
+
+	// Verify Show C was added
+	stateC, err := s.GetSeriesState(ctx, "Show C")
+	require.NoError(t, err)
+	assert.Equal(t, 1, stateC.CurrentSeason, "Show C should exist")
+}
