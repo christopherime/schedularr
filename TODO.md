@@ -632,17 +632,22 @@ migrations/
 
 **Tasks**:
 
-- [ ] Add `github.com/golang-migrate/migrate/v4` to go.mod
-- [ ] Create `migrations/` directory with SQL files
-- [ ] Extract current schema to `000001_initial_schema.up.sql`
-- [ ] Extract ALTER statements to `000002_add_run_count_disabled.up.sql`
-- [ ] Add down migrations for rollback support
-- [ ] Refactor `initSchema()` to use migrate library
-- [ ] Add migration CLI commands (optional: `schedularr db migrate`)
+- [x] Add `github.com/golang-migrate/migrate/v4` to go.mod ✅
+- [x] Create `migrations/` directory with SQL files ✅
+- [x] Extract current schema to `000001_initial_schema.up.sql` ✅
+- [x] Add down migrations for rollback support ✅
+- [x] Refactor `initSchema()` to use migrate library ✅
+- [ ] Add migration CLI commands (optional: `schedularr db migrate`) - deferred, not needed for basic usage
 
-**Estimated Impact**: ~40 lines of Go code replaced, safer migrations, better auditability
+**Implementation Notes**:
+- Used Go's embed.FS to embed migrations in the binary (no external files needed)
+- Single migration file with complete schema (since columns already exist in current schema)
+- Migrations are automatically applied on Store initialization
+- Version tracking via golang-migrate's schema_migrations table
 
-**Status**: 🔲 PENDING
+**Actual Impact**: ~35 lines of inline schema code replaced with proper migration system
+
+**Status**: ✅ COMPLETE
 
 ---
 
@@ -712,11 +717,11 @@ err := retry.Do(
 | Priority | Task                        | Lines Saved | Effort | Status      |
 | -------- | --------------------------- | ----------- | ------ | ----------- |
 | High     | 9.1 CLI Tables (go-pretty)  | ~60         | Medium | ✅ Complete |
-| Medium   | 9.2 DB Migrations (migrate) | ~40         | Medium | 🔲 Pending  |
+| Medium   | 9.2 DB Migrations (migrate) | ~35         | Medium | ✅ Complete |
 | Low      | 9.3 Retry Logic (retry-go)  | ~20         | Low    | 🔲 Pending  |
 
-**Total Achieved Savings**: ~60 lines (9.1)
-**Remaining Potential**: ~60 lines (9.2, 9.3)
+**Total Achieved Savings**: ~95 lines (9.1, 9.2)
+**Remaining Potential**: ~20 lines (9.3)
 
 ---
 

@@ -33,57 +33,18 @@ func New(dsn string) (*Store, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	s := &Store{db: db}
-	if err := s.initSchema(context.Background()); err != nil {
+	// Run migrations
+	if err := runMigrations(db); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("failed to init schema: %w", err)
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	return s, nil
+	return &Store{db: db}, nil
 }
 
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
-}
-
-func (s *Store) initSchema(ctx context.Context) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS series_state (
-		show_title TEXT PRIMARY KEY,
-		current_season INTEGER NOT NULL DEFAULT 1,
-		current_episode INTEGER NOT NULL DEFAULT 1,
-		completed BOOLEAN NOT NULL DEFAULT 0,
-		last_aired DATETIME,
-		run_count INTEGER NOT NULL DEFAULT 0,
-		disabled BOOLEAN NOT NULL DEFAULT 0
-	);
-	CREATE TABLE IF NOT EXISTS schedule_history (
-		program_id TEXT NOT NULL,
-		channel_id TEXT NOT NULL,
-		block_name TEXT NOT NULL,
-		scheduled_at DATETIME NOT NULL,
-		PRIMARY KEY (program_id, channel_id, scheduled_at)
-	);
-	CREATE INDEX IF NOT EXISTS idx_schedule_history_recent
-		ON schedule_history (channel_id, scheduled_at);
-	`
-	if _, err := s.db.ExecContext(ctx, query); err != nil {
-		return err
-	}
-
-	// Migrate existing tables to add new columns if they don't exist
-	migrations := []string{
-		`ALTER TABLE series_state ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE series_state ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0`,
-	}
-
-	for _, migration := range migrations {
-		// Ignore errors for columns that already exist
-		_, _ = s.db.ExecContext(ctx, migration)
-	}
-
-	return nil
 }
 
 // GetSeriesState retrieves the tracking state for a given show.
