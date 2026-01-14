@@ -265,9 +265,10 @@ These were previously implemented and should not be revisited:
 | external/tunarr   | 90.8%    | ✅     |
 | httpclient        | 89.7%    | ✅     |
 | scheduler         | 91.9%    | ✅     |
-| store             | 93.0%    | ✅     |
+| store             | 91.3%    | ✅     |
 
 **Note**: TUI package has 0% coverage as interactive UI code is harder to unit test.
+**Note**: Store package includes `migrate.go` (66.7% coverage) - error paths are difficult to test without extensive mocking.
 
 ---
 
