@@ -157,38 +157,25 @@ err := db.SelectContext(ctx, &states, query, args...)
 
 ### 8.4 History Tracker with Cache Library (~50 lines saved)
 
-**Problem**: `internal/scheduler/history.go` (168 lines) implements custom in-memory tracking:
+**Problem**: `internal/scheduler/history.go` (168 lines) implements custom in-memory tracking.
 
-- Manual sync.RWMutex for concurrency
-- Custom TTL-based cleanup (`CleanupOldEntries`)
-- Per-program, per-channel history maps
+**Analysis**: After evaluation, the current implementation is well-suited for its purpose:
 
-**Current Implementation**:
+- Nested data structure: `map[programID][]ScheduleHistoryEntry`
+- Per-channel filtering within each program's history
+- TTL applies to individual entries, not entire cache keys
+- Domain-specific methods like `FilterByHistory`, `WasRecentlyScheduled`
 
-```go
-type HistoryTracker struct {
-    mu      sync.RWMutex
-    entries map[string]map[string][]HistoryEntry
-    window  time.Duration
-}
-```
+**Evaluation**: Generic cache libraries (ccache, golang-lru) don't fit well because:
 
-**Candidate Libraries**:
+1. Cache key would need to be composite (programID + channelID)
+2. TTL on entries within a slice, not the slice itself
+3. Custom filtering logic needed for channel-specific checks
+4. Current implementation is clean, well-tested, and only 168 lines
 
-| Library                              | Stars | Last Commit | Notes                                   |
-| ------------------------------------ | ----- | ----------- | --------------------------------------- |
-| `github.com/karlseguin/ccache/v3`    | 2k+   | Active      | Concurrent cache with TTL and callbacks |
-| `github.com/hashicorp/golang-lru/v2` | 5k+   | Active      | Thread-safe LRU with generics           |
+**Decision**: DEFERRED - Current implementation is appropriate and purpose-built.
 
-**Analysis**: Current implementation is domain-specific (per-program, per-channel). A generic cache may not fit perfectly but could simplify the TTL logic.
-
-**Tasks**:
-
-- [ ] Evaluate if generic cache fits domain requirements
-- [ ] If yes: replace internal map with ccache or golang-lru
-- [ ] If no: keep custom implementation, consider simplifying cleanup logic
-
-**Estimated Impact**: ~50 lines if applicable, but may lose domain-specific features
+**Status**: DEFERRED - Domain-specific requirements make generic caching unsuitable
 
 ---
 
@@ -265,11 +252,11 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 | High     | 8.3 Database Layer (sqlx)   | ~60         | Medium | ✅ Complete |
 | Medium   | 8.2 In-Memory Cache         | 0           | N/A    | Deferred    |
 | Medium   | 8.5 Cron Builder Extraction | ~170        | Medium | ✅ Complete |
-| Low      | 8.4 History Tracker         | ~50         | Low    | Pending     |
+| Low      | 8.4 History Tracker         | ~50         | Low    | Deferred    |
 | Low      | 8.6 HTTP Client Middleware  | ~10         | Low    | ✅ Complete |
 
 **Total Achieved Savings**: ~240 lines (8.3, 8.5, 8.6)
-**Remaining Potential**: ~50 lines (8.4 only - 8.1 and 8.2 deferred)
+**Remaining Potential**: 0 lines (all pending tasks deferred after evaluation)
 
 ---
 
