@@ -3,7 +3,7 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

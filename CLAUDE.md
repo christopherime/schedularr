@@ -78,15 +78,20 @@ cmd/schedularr/          # Application entry point (main.go)
 internal/
   ├── cli/               # Cobra-based CLI commands (root, channels, generate, tui)
   ├── config/            # Viper-based configuration management
+  ├── cache/             # In-memory caching with TTL (using go-cache)
+  ├── cronbuilder/       # Cron expression builder and description utilities
+  ├── external/          # External API clients
+  │   ├── tunarr/        # Tunarr API client
+  │   ├── radarr/        # Radarr API client
+  │   ├── sonarr/        # Sonarr API client
+  │   └── jellyfin/      # Jellyfin API client
+  ├── httpclient/        # Generic HTTP client wrapper (using go-resty)
   ├── scheduler/         # Core scheduling engine with filtering logic
   │   ├── engine.go      # Main scheduling engine (GenerateForTimeRange, PlanBlock)
   │   ├── filter.go      # Content filtering by genres, ratings, duration, etc.
   │   └── types.go       # Block, Filter, and Config types
-  ├── tunarr/            # Tunarr API client
-  │   ├── client.go      # HTTP client with auth (GetChannels, GetPrograms, UpdateSchedule)
-  │   ├── models.go      # Channel and Program data models
-  │   └── config.go      # Tunarr connection configuration
-  └── tui/               # Bubble Tea terminal UI for block editing
+  ├── store/             # SQLite persistence layer (using sqlx)
+  └── tui/               # Bubble Tea terminal UI for block editing (using huh forms)
 configs/                 # Example configuration files
 docs/                    # Architecture, specifications, and API research
 ```
@@ -108,7 +113,7 @@ docs/                    # Architecture, specifications, and API research
    - Fills block duration using a simple greedy algorithm (knapsack-like)
 3. Returns map of `ChannelID -> []Program`
 
-**Tunarr Client (`internal/tunarr/client.go`):**
+**Tunarr Client (`internal/external/tunarr/client.go`):**
 
 - REST API client with optional API key authentication (`X-API-Key` header)
 - Main methods:
@@ -137,7 +142,7 @@ type Block struct {
 }
 ```
 
-**Program (`internal/tunarr/models.go`):**
+**Program (`internal/external/tunarr/models.go`):**
 
 ```go
 type Program struct {
@@ -194,7 +199,7 @@ Each metric is labeled by `endpoint` (generalized path like `/api/channels`) and
 
 ### Tunarr API Endpoints Documentation (Implemented)
 
-The following public methods are available in `internal/tunarr/client.go` and interact with the Tunarr API:
+The following public methods are available in `internal/external/tunarr/client.go` and interact with the Tunarr API:
 
 - `GetChannels()`: Fetches all channels from `/api/channels` (GET)
 - `GetPrograms()`: Fetches available programs from `/api/programs` (GET)
@@ -227,7 +232,7 @@ Prometheus metrics have been added to track application performance and behavior
   - `schedularr_series_state_updates_total`: Total series state updates, by `show_title`.
   - `schedularr_conflicts_resolved_total`: Total scheduling conflicts resolved by priority.
 
-- **Tunarr API Client (`internal/tunarr/client.go`)**:
+- **Tunarr API Client (`internal/external/tunarr/client.go`)**:
   - `schedularr_tunarr_api_calls_total`: Total Tunarr API calls, by `endpoint` and `method`.
   - `schedularr_tunarr_api_call_duration_seconds`: Histogram of Tunarr API call duration, by `endpoint` and `method`.
   - `schedularr_tunarr_api_errors_total`: Total Tunarr API errors, by `endpoint`, `method`, and `error_type` (e.g., `request_creation_error`, `api_call_error`, `invalid_channel_id`, `program_validation_error`, `response_validation_error`, `empty_query`).

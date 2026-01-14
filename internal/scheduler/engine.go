@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/geekxflood/schedularr/internal/metrics"
-	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
 )

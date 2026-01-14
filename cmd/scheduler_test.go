@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/geekxflood/schedularr/internal/scheduler"
-	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/spf13/viper"
 )
 

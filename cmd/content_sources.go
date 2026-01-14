@@ -8,9 +8,9 @@ import (
 
 	"github.com/geekxflood/schedularr/internal/cache"
 	"github.com/geekxflood/schedularr/internal/config"
-	"github.com/geekxflood/schedularr/internal/radarr"
-	"github.com/geekxflood/schedularr/internal/sonarr"
-	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/geekxflood/schedularr/internal/external/radarr"
+	"github.com/geekxflood/schedularr/internal/external/sonarr"
+	"github.com/geekxflood/schedularr/internal/external/tunarr"
 )
 
 const (
@@ -23,12 +23,12 @@ func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.
 	fmt.Println(infoStyle.Render("📡 Fetching content..."))
 
 	cacheDuration := cfg.GetCacheDuration()
-	contentCache, err := cache.New(cfg.Cache.CacheDir, cacheDuration)
+	contentCache, err := cache.New(cacheDuration)
 	if err != nil {
 		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not initialize content cache: %v. Proceeding without cache.", err)))
 		contentCache = nil // Disable caching if initialization failed
 	} else {
-		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗄️  Using cache in %s (duration %s)", cfg.Cache.CacheDir, cacheDuration)))
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗄️  Using in-memory cache (duration %s)", cacheDuration)))
 	}
 
 	programs := fetchTunarrContent(tunarrClient, contentCache)

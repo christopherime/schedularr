@@ -49,52 +49,25 @@
 - TTL based on file modification time
 - Manual cleanup of expired entries
 
-**Current Implementation**:
+**Solution**: Replaced file-based cache with `github.com/patrickmn/go-cache`:
 
-```go
-// Custom file-based cache
-type Cache struct {
-    cacheDir      string
-    cacheDuration time.Duration
-}
-func (c *Cache) Get(key string, v interface{}) (bool, error) { ... }
-func (c *Cache) Set(key string, v interface{}) error { ... }
-```
-
-**Analysis**: File persistence is used for API response caching (`tunarr_programs.json`, `radarr_movies.json`). However, if in-memory caching is acceptable (data re-fetched on restart), this can be simplified.
-
-**Candidate Libraries**:
-
-| Library                           | Stars | Last Commit | Notes                                  |
-| --------------------------------- | ----- | ----------- | -------------------------------------- |
-| `github.com/patrickmn/go-cache`   | 8k+   | Stable      | Simple in-memory cache with TTL        |
-| `github.com/dgraph-io/ristretto`  | 5k+   | Active      | High-performance with admission policy |
-| `github.com/karlseguin/ccache/v3` | 2k+   | Active      | Concurrent cache with TTL              |
-
-**Recommended**: `github.com/patrickmn/go-cache` - Simple API, proven, matches current functionality.
-
-**Example Transformation**:
-
-```go
-// Before: 111 lines of file-based caching
-cache := cache.New("/tmp/schedularr", 1*time.Hour)
-cache.Set("programs", programs)
-
-// After: 5 lines
-import gocache "github.com/patrickmn/go-cache"
-c := gocache.New(1*time.Hour, 10*time.Minute)
-c.Set("programs", programs, gocache.DefaultExpiration)
-```
+- Removed file I/O operations and JSON serialization
+- Simplified `New()` function (no longer needs cacheDir parameter)
+- Automatic TTL-based expiration with background cleanup
+- Added `SetWithExpiration()` for custom TTL per item
+- Added `ItemCount()` for cache statistics
 
 **Tasks**:
 
-- [x] Evaluate if file persistence is required (currently survives restarts) ✅
-- [ ] If in-memory acceptable: replace with go-cache (~80 lines saved)
-- [x] If persistence required: keep current or add go-cache as in-memory layer ✅
+- [x] Add `github.com/patrickmn/go-cache` dependency ✅
+- [x] Replace file-based cache implementation with go-cache ✅
+- [x] Update `New()` signature (remove cacheDir parameter) ✅
+- [x] Update caller in `cmd/content_sources.go` ✅
+- [x] Update tests to reflect new behavior ✅
 
-**Decision**: File persistence IS required. The cache stores API responses to disk to survive process restarts (important for daemon mode), reduce API load on external services, and enable cache inspection/debugging via file system.
+**Actual Impact**: ~30 lines removed (111 → ~80), simpler API, automatic cleanup
 
-**Status**: DEFERRED - Current implementation is appropriate for the use case
+**Status**: ✅ COMPLETE
 
 ---
 
@@ -252,12 +225,12 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 | -------- | --------------------------- | ----------- | ------ | ----------- |
 | High     | 8.1 TUI Form Handling (huh) | ~100        | Medium | ✅ Complete |
 | High     | 8.3 Database Layer (sqlx)   | ~60         | Medium | ✅ Complete |
-| Medium   | 8.2 In-Memory Cache         | 0           | N/A    | Deferred    |
+| Medium   | 8.2 In-Memory Cache         | ~30         | Low    | ✅ Complete |
 | Medium   | 8.5 Cron Builder Extraction | ~170        | Medium | ✅ Complete |
 | Low      | 8.4 History Tracker         | ~50         | Low    | Deferred    |
 | Low      | 8.6 HTTP Client Middleware  | ~10         | Low    | ✅ Complete |
 
-**Total Achieved Savings**: ~340 lines (8.1, 8.3, 8.5, 8.6)
+**Total Achieved Savings**: ~370 lines (8.1, 8.2, 8.3, 8.5, 8.6)
 **Remaining Potential**: 0 lines (all pending tasks deferred after evaluation)
 
 ---

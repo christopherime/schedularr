@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/jellyfin"
-	"github.com/geekxflood/schedularr/internal/radarr"
+	"github.com/geekxflood/schedularr/internal/external/jellyfin"
+	"github.com/geekxflood/schedularr/internal/external/radarr"
 	"github.com/geekxflood/schedularr/internal/scheduler"
-	"github.com/geekxflood/schedularr/internal/sonarr"
-	"github.com/geekxflood/schedularr/internal/tunarr"
+	"github.com/geekxflood/schedularr/internal/external/sonarr"
+	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
