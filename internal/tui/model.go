@@ -36,6 +36,7 @@ const (
 	stateSeriesSelector
 	stateFilterBuilder
 	stateFileBrowser
+	stateSeriesEdit
 )
 
 type item struct {
@@ -90,6 +91,11 @@ type Model struct {
 	fileBrowserIdx     int      // Currently selected file
 	fileBrowserDir     string   // Current directory being browsed
 	fileBrowserMessage string   // Status message for file browser
+	// Series Edit state
+	seriesEditSeason   string // Season number being edited
+	seriesEditEpisode  string // Episode number being edited
+	seriesEditField    int    // Currently focused field (0=season, 1=episode, 2=save)
+	seriesEditShowTitle string // Title of series being edited
 }
 
 // NewModel creates a new TUI model with the given configuration and optional store.
@@ -223,6 +229,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateFilterBuilder(msg)
 	case stateFileBrowser:
 		return m.updateFileBrowser(msg)
+	case stateSeriesEdit:
+		return m.updateSeriesEdit(msg)
 	default:
 		return m, nil
 	}
@@ -549,7 +557,11 @@ func (m Model) updateSeriesProgress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "e":
-		// Edit series state - future feature
+		// Edit selected series state
+		if len(m.seriesStates) > 0 && m.seriesScroll < len(m.seriesStates) {
+			m.initSeriesEdit()
+			m.state = stateSeriesEdit
+		}
 		return m, nil
 	case "r":
 		m.loadSeriesStates()
@@ -577,6 +589,8 @@ func (m Model) View() string {
 		return m.renderFilterBuilder()
 	case stateFileBrowser:
 		return m.renderFileBrowser()
+	case stateSeriesEdit:
+		return m.renderSeriesEdit()
 	case stateHelp:
 		return m.renderHelp()
 	default:
@@ -757,7 +771,7 @@ func (m Model) renderSeriesProgress() string {
 
 	// Help text
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | e: Edit (future) | r: Refresh | esc/q: Back | ?: Help"))
+	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | e: Edit | r: Refresh | esc/q: Back | ?: Help"))
 
 	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 }
@@ -947,8 +961,8 @@ func (m Model) renderHelp() string {
 	case stateSeriesProgress:
 		builder.WriteString(titleStyle.Render("Series Progress Viewer") + "\n\n")
 		builder.WriteString(keyStyle.Render("  ↑/↓, j/k") + descStyle.Render("  Navigate through series\n"))
+		builder.WriteString(keyStyle.Render("  e") + descStyle.Render("          Edit selected series position\n"))
 		builder.WriteString(keyStyle.Render("  r") + descStyle.Render("          Refresh series states from database\n"))
-		builder.WriteString(keyStyle.Render("  e") + descStyle.Render("          Edit series state (future feature)\n"))
 		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Return to block list\n\n"))
 		builder.WriteString(descStyle.Render("Series Display:\n"))
 		builder.WriteString(descStyle.Render("  • Shows current episode (S##E##) for each series\n"))
@@ -1018,6 +1032,16 @@ func (m Model) renderHelp() string {
 		builder.WriteString(descStyle.Render("  • ~/.config/schedularr/\n"))
 		builder.WriteString(descStyle.Render("  • /etc/schedularr/\n\n"))
 		builder.WriteString(descStyle.Render("File Patterns: scheduler.yaml, scheduler.yml, *.scheduler.yaml\n"))
+
+	case stateSeriesEdit:
+		builder.WriteString(titleStyle.Render("Edit Series Progress") + "\n\n")
+		builder.WriteString(keyStyle.Render("  ↑/↓, tab") + descStyle.Render("  Navigate between fields\n"))
+		builder.WriteString(keyStyle.Render("  0-9") + descStyle.Render("        Enter season/episode numbers\n"))
+		builder.WriteString(keyStyle.Render("  backspace") + descStyle.Render("  Delete last character\n"))
+		builder.WriteString(keyStyle.Render("  enter") + descStyle.Render("      Save changes (when on Save button)\n"))
+		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Cancel and return to series list\n\n"))
+		builder.WriteString(descStyle.Render("Edit the current episode position for a series.\n"))
+		builder.WriteString(descStyle.Render("This resets the series state, clearing completion and disabled flags.\n"))
 
 	default:
 		builder.WriteString(titleStyle.Render("General Commands") + "\n\n")
@@ -1248,6 +1272,182 @@ func (m Model) renderSeriesSelector() string {
 
 	builder.WriteString("\n\n")
 	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | enter: Select | esc/q: Cancel | ?: Help"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+// ============================================================================
+// Series Edit Interface
+// ============================================================================
+
+// initSeriesEdit initializes the series edit state with current values
+func (m *Model) initSeriesEdit() {
+	if m.seriesScroll >= len(m.seriesStates) {
+		return
+	}
+
+	state := m.seriesStates[m.seriesScroll]
+	m.seriesEditShowTitle = state.ShowTitle
+	m.seriesEditSeason = strconv.Itoa(state.CurrentSeason)
+	m.seriesEditEpisode = strconv.Itoa(state.CurrentEpisode)
+	m.seriesEditField = 0
+}
+
+// updateSeriesEdit handles key events in the series edit state
+func (m Model) updateSeriesEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.state = stateSeriesProgress
+		return m, nil
+	case "enter":
+		if m.seriesEditField == 2 { // Save button
+			m.saveSeriesEdit()
+			m.loadSeriesStates() // Refresh states
+			m.state = stateSeriesProgress
+		}
+		return m, nil
+	case "tab", "down", "j":
+		m.seriesEditField = (m.seriesEditField + 1) % 3
+		return m, nil
+	case "shift+tab", "up", "k":
+		m.seriesEditField = (m.seriesEditField - 1 + 3) % 3
+		return m, nil
+	case "backspace":
+		m.handleSeriesEditBackspace()
+		return m, nil
+	default:
+		m.handleSeriesEditInput(msg.String())
+		return m, nil
+	}
+}
+
+// handleSeriesEditBackspace handles backspace in series edit fields
+func (m *Model) handleSeriesEditBackspace() {
+	switch m.seriesEditField {
+	case 0: // Season
+		if len(m.seriesEditSeason) > 0 {
+			m.seriesEditSeason = m.seriesEditSeason[:len(m.seriesEditSeason)-1]
+		}
+	case 1: // Episode
+		if len(m.seriesEditEpisode) > 0 {
+			m.seriesEditEpisode = m.seriesEditEpisode[:len(m.seriesEditEpisode)-1]
+		}
+	}
+}
+
+// handleSeriesEditInput handles numeric input in series edit fields
+func (m *Model) handleSeriesEditInput(input string) {
+	if len(input) != 1 || input < "0" || input > "9" {
+		return
+	}
+
+	switch m.seriesEditField {
+	case 0: // Season
+		if len(m.seriesEditSeason) < 3 {
+			m.seriesEditSeason += input
+		}
+	case 1: // Episode
+		if len(m.seriesEditEpisode) < 4 {
+			m.seriesEditEpisode += input
+		}
+	}
+}
+
+// saveSeriesEdit saves the edited series state to the store
+func (m *Model) saveSeriesEdit() {
+	if m.store == nil {
+		m.statusMessage = "No database connected"
+		return
+	}
+
+	season, err := strconv.Atoi(m.seriesEditSeason)
+	if err != nil || season < 1 {
+		m.statusMessage = "Invalid season number"
+		return
+	}
+
+	episode, err := strconv.Atoi(m.seriesEditEpisode)
+	if err != nil || episode < 1 {
+		m.statusMessage = "Invalid episode number"
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := m.store.SetSeriesState(ctx, m.seriesEditShowTitle, season, episode); err != nil {
+		m.statusMessage = fmt.Sprintf("Error saving: %v", err)
+		return
+	}
+
+	m.statusMessage = fmt.Sprintf("Updated %s to S%02dE%02d", m.seriesEditShowTitle, season, episode)
+}
+
+// renderSeriesEdit renders the series edit view
+func (m Model) renderSeriesEdit() string {
+	var builder strings.Builder
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	activeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Background(lipgloss.Color("236")).
+		Bold(true)
+
+	inactiveStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("86"))
+
+	builder.WriteString(titleStyle.Render("Edit Series Progress") + "\n\n")
+	builder.WriteString(labelStyle.Render("Series: "))
+	builder.WriteString(valueStyle.Render(m.seriesEditShowTitle) + "\n\n")
+
+	// Season field
+	seasonStyle := inactiveStyle
+	if m.seriesEditField == 0 {
+		seasonStyle = activeStyle
+	}
+	seasonValue := m.seriesEditSeason
+	if seasonValue == "" {
+		seasonValue = "_"
+	}
+	builder.WriteString(seasonStyle.Render("  Season:  "+seasonValue) + "\n")
+
+	// Episode field
+	episodeStyle := inactiveStyle
+	if m.seriesEditField == 1 {
+		episodeStyle = activeStyle
+	}
+	episodeValue := m.seriesEditEpisode
+	if episodeValue == "" {
+		episodeValue = "_"
+	}
+	builder.WriteString(episodeStyle.Render("  Episode: "+episodeValue) + "\n\n")
+
+	// Save button
+	saveStyle := inactiveStyle
+	if m.seriesEditField == 2 {
+		saveStyle = activeStyle
+	}
+	builder.WriteString(saveStyle.Render("  [ Save Changes ]") + "\n\n")
+
+	// Status message
+	if m.statusMessage != "" {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+		builder.WriteString(statusStyle.Render(m.statusMessage) + "\n\n")
+	}
+
+	builder.WriteString(helpStyle.Render("↑/↓, tab: Navigate | 0-9: Enter numbers | backspace: Delete | enter: Save | esc/q: Cancel"))
 
 	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
 }
