@@ -503,3 +503,198 @@ The following code is reported as "unreachable" by deadcode but is intentionally
 2. Well-tested code that may be used in future features
 3. Standard patterns (HTTP methods, constructors with options)
 4. No runtime overhead when unused
+
+---
+
+## Phase 9: Further Code Reduction via External Libraries
+
+**Goal**: Reduce custom code by leveraging well-maintained external libraries where the trade-off (dependency vs. code reduction) is favorable.
+
+**Analysis Date**: 2026-01-14
+
+---
+
+### 9.1 CLI Table Output with go-pretty (~80 lines saved)
+
+**Problem**: Multiple CLI commands use `text/tabwriter` with manual column formatting:
+- `cmd/generate.go`: ~60 lines for schedule display with manual width calculation
+- `cmd/channels.go`: ~20 lines for channel listing
+- `cmd/state.go`: ~15 lines for series state listing
+
+**Current Implementation**:
+```go
+w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+fmt.Fprintln(w, "ID\tNumber\tName\tEnabled")
+fmt.Fprintf(w, "%s\t%d\t%s\t%t\n", ch.ID, ch.Number, ch.Name, ch.Enabled)
+w.Flush()
+```
+
+**Candidate Library**: `github.com/jedib0t/go-pretty/v6/table` (8K+ stars, actively maintained)
+
+**Benefits**:
+- Automatic column width calculation
+- Built-in borders and styling (consistent with lipgloss usage)
+- Color support, sorting, filtering
+- Markdown/HTML/CSV output modes
+- Reduces boilerplate significantly
+
+**Example After**:
+```go
+t := table.NewWriter()
+t.SetOutputMirror(os.Stdout)
+t.AppendHeader(table.Row{"ID", "Number", "Name", "Enabled"})
+t.AppendRow(table.Row{ch.ID, ch.Number, ch.Name, ch.Enabled})
+t.Render()
+```
+
+**Tasks**:
+- [ ] Add `github.com/jedib0t/go-pretty/v6` to go.mod
+- [ ] Refactor `displayChannelSchedule()` in cmd/generate.go
+- [ ] Refactor `formatProgramRow()` in cmd/generate.go
+- [ ] Refactor channel listing in cmd/channels.go
+- [ ] Refactor state listing in cmd/state.go
+- [ ] Remove manual truncation functions (go-pretty handles this)
+
+**Estimated Impact**: ~80 lines removed, better UX with auto-sizing columns
+
+**Status**: 🔲 PENDING
+
+---
+
+### 9.2 Database Migrations with golang-migrate (~40 lines saved)
+
+**Problem**: `internal/store/sqlite.go` uses manual migration pattern with ignored errors:
+```go
+migrations := []string{
+    `ALTER TABLE series_state ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE series_state ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0`,
+}
+for _, migration := range migrations {
+    _, _ = s.db.ExecContext(ctx, migration)  // Errors silently ignored!
+}
+```
+
+**Issues with current approach**:
+1. Errors are silently ignored (dangerous for production)
+2. No version tracking - can't tell which migrations ran
+3. No rollback support
+4. Migrations embedded in Go code, harder to audit
+
+**Candidate Library**: `github.com/golang-migrate/migrate/v4` (14K+ stars, actively maintained)
+
+**Benefits**:
+- Versioned migrations with up/down support
+- Proper error handling and transaction safety
+- SQL files separated from Go code
+- CLI tool for manual migration management
+- Automatic version tracking in database
+
+**Example Structure After**:
+```
+migrations/
+├── 000001_initial_schema.up.sql
+├── 000001_initial_schema.down.sql
+├── 000002_add_run_count_disabled.up.sql
+└── 000002_add_run_count_disabled.down.sql
+```
+
+**Tasks**:
+- [ ] Add `github.com/golang-migrate/migrate/v4` to go.mod
+- [ ] Create `migrations/` directory with SQL files
+- [ ] Extract current schema to `000001_initial_schema.up.sql`
+- [ ] Extract ALTER statements to `000002_add_run_count_disabled.up.sql`
+- [ ] Add down migrations for rollback support
+- [ ] Refactor `initSchema()` to use migrate library
+- [ ] Add migration CLI commands (optional: `schedularr db migrate`)
+
+**Estimated Impact**: ~40 lines of Go code replaced, safer migrations, better auditability
+
+**Status**: 🔲 PENDING
+
+---
+
+### 9.3 Retry Logic Consolidation with avast/retry-go (~20 lines saved)
+
+**Problem**: Custom retry logic in `cmd/generate.go`:
+```go
+func refreshJellyfinWithRetries(client *jellyfin.Client) error {
+    maxRetries := 3
+    baseDelay := 2 * time.Second
+    var err error
+    for i := 0; i < maxRetries; i++ {
+        err = client.RefreshLiveTVGuide(context.Background())
+        if err == nil {
+            return nil
+        }
+        if i < maxRetries-1 {
+            delay := baseDelay * time.Duration(1<<i)
+            time.Sleep(delay)
+        }
+    }
+    return fmt.Errorf("after %d attempts: %w", maxRetries, err)
+}
+```
+
+This duplicates retry logic already in `internal/httpclient/client.go`.
+
+**Candidate Library**: `github.com/avast/retry-go/v4` (2K+ stars, actively maintained)
+
+**Benefits**:
+- Declarative retry configuration
+- Built-in exponential backoff, jitter
+- Context support for cancellation
+- Retry condition functions
+- Already a dependency pattern (httpclient uses resty retries)
+
+**Example After**:
+```go
+err := retry.Do(
+    func() error { return client.RefreshLiveTVGuide(ctx) },
+    retry.Attempts(3),
+    retry.Delay(2*time.Second),
+    retry.DelayType(retry.BackOffDelay),
+    retry.OnRetry(func(n uint, err error) {
+        fmt.Printf("Retry %d: %v\n", n, err)
+    }),
+)
+```
+
+**Tasks**:
+- [ ] Add `github.com/avast/retry-go/v4` to go.mod
+- [ ] Refactor `refreshJellyfinWithRetries()` to use retry-go
+- [ ] Consider using retry-go in httpclient for consistency (optional)
+
+**Estimated Impact**: ~20 lines removed, more maintainable retry logic
+
+**Status**: 🔲 PENDING (Low Priority)
+
+---
+
+### Priority Summary - Phase 9
+
+| Priority | Task | Lines Saved | Effort | Dependency |
+|----------|------|-------------|--------|------------|
+| High | 9.1 CLI Tables (go-pretty) | ~80 | Medium | go-pretty/v6 |
+| Medium | 9.2 DB Migrations (migrate) | ~40 | Medium | golang-migrate/v4 |
+| Low | 9.3 Retry Logic (retry-go) | ~20 | Low | avast/retry-go/v4 |
+
+**Total Potential Savings**: ~140 lines of custom code
+
+---
+
+### Libraries Already Well-Utilized (No Changes Recommended)
+
+The codebase already makes excellent use of libraries:
+
+| Area | Current Library | Assessment |
+|------|-----------------|------------|
+| TUI Framework | Bubble Tea, Lipgloss, Huh | Best-in-class, no replacement |
+| Config | Viper, yaml.v3 | Industry standard |
+| HTTP Client | go-resty | Well-integrated with retries |
+| Caching | go-cache | Appropriate for use case |
+| Cron Parsing | robfig/cron | Industry standard |
+| Validation | go-playground/validator | Industry standard |
+| Functional | samber/lo | Good use of modern Go patterns |
+| Metrics | Prometheus client | Industry standard |
+| Database | sqlx | Already migrated from raw sql |
+| Schema | CUE | Specialized, appropriate |
