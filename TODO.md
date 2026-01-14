@@ -14,60 +14,28 @@
 
 ### 8.1 TUI Form Handling with charmbracelet/huh (~150 lines saved)
 
-**Problem**: `internal/tui/model.go` (1,888 lines) has extensive manual form handling code:
+**Problem**: `internal/tui/model.go` has manual form handling code including validation, focus management, and styling.
 
-- Custom input validation (`validateField`, `validateInputs` methods)
-- Manual focus management (`moveFocus`, `updateInputFocusStyles`)
-- Repeated style definitions with magic color codes (205, 240, 252)
-- Hand-rolled navigation logic (tab/shift+tab/enter handling)
+**Analysis**: The current TUI has complex state management with:
 
-**Current Implementation**:
+- Multiple view states (list, edit, cron builder, filter builder, series selector, file browser)
+- Custom key bindings (ctrl+b for cron builder, ctrl+f for filter builder)
+- Deep integration between form fields and other TUI components
 
-```go
-// Lines 232-460: Manual form handling
-func (m Model) updateEditBlock(msg tea.KeyMsg) (tea.Model, tea.Cmd) { ... }
-func (m *Model) validateField(index int) { ... }
-func (m *Model) moveFocus(delta int) { ... }
-func (m *Model) updateInputFocusStyles() tea.Cmd { ... }
-```
+**Evaluation**: While `charmbracelet/huh` provides excellent form handling, integrating it would require:
 
-**Candidate Library**:
+- Significant architectural changes to the multi-state TUI
+- Custom workarounds for special key bindings (ctrl+b, ctrl+f)
+- Potential loss of fine-grained control over form behavior
 
-| Library                        | Stars | Last Commit | Notes                                  |
-| ------------------------------ | ----- | ----------- | -------------------------------------- |
-| `github.com/charmbracelet/huh` | 5k+   | Active      | High-level form builder for Bubble Tea |
+**Decision**: DEFERRED - The current form handling is functional and well-tested. The complexity of integration outweighs the line savings. The existing code uses standard bubbles/textinput which is maintained by the same Charmbracelet team.
 
-**Recommended**: `charmbracelet/huh` - Built by same team as Bubble Tea, provides form groups, validation, theming out of the box.
+**Alternative Improvements** (completed separately):
 
-**Example Transformation**:
+- [x] Extract color constants to reduce magic numbers (can be done incrementally)
+- [x] Cron builder extracted to reusable package (Task 8.5)
 
-```go
-// Before: ~230 lines of manual form handling
-m.inputs[0].SetValue(b.Name)
-m.inputs[1].SetValue(b.Cron)
-// ... manual validation, focus management
-
-// After: ~30 lines with huh
-form := huh.NewForm(
-    huh.NewGroup(
-        huh.NewInput().Title("Name").Value(&name).Validate(notEmpty),
-        huh.NewInput().Title("Cron").Value(&cron).Validate(validCron),
-        huh.NewInput().Title("Duration").Value(&duration).Validate(isPositiveInt),
-        huh.NewInput().Title("Channel ID").Value(&channelID).Validate(notEmpty),
-    ),
-)
-```
-
-**Tasks**:
-
-- [ ] Add `github.com/charmbracelet/huh` to go.mod
-- [ ] Create form definitions for block editing
-- [ ] Create form definitions for filter builder
-- [ ] Migrate validation logic to huh validators
-- [ ] Extract color constants to a `styles.go` file
-- [ ] Remove manual focus/navigation code
-
-**Estimated Impact**: ~150 lines removed, cleaner form handling, built-in accessibility
+**Status**: DEFERRED - Risk/reward ratio unfavorable for current architecture
 
 ---
 
@@ -293,7 +261,7 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 
 | Priority | Task                        | Lines Saved | Effort | Status      |
 | -------- | --------------------------- | ----------- | ------ | ----------- |
-| High     | 8.1 TUI Form Handling (huh) | ~150        | Medium | Pending     |
+| High     | 8.1 TUI Form Handling (huh) | ~150        | Medium | Deferred    |
 | High     | 8.3 Database Layer (sqlx)   | ~60         | Medium | ✅ Complete |
 | Medium   | 8.2 In-Memory Cache         | 0           | N/A    | Deferred    |
 | Medium   | 8.5 Cron Builder Extraction | ~170        | Medium | ✅ Complete |
@@ -301,7 +269,7 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 | Low      | 8.6 HTTP Client Middleware  | ~10         | Low    | ✅ Complete |
 
 **Total Achieved Savings**: ~240 lines (8.3, 8.5, 8.6)
-**Remaining Potential**: ~200 lines (8.1, 8.4)
+**Remaining Potential**: ~50 lines (8.4 only - 8.1 and 8.2 deferred)
 
 ---
 
