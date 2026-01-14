@@ -118,11 +118,13 @@ c.Set("programs", programs, gocache.DefaultExpiration)
 
 **Tasks**:
 
-- [ ] Evaluate if file persistence is required (currently survives restarts)
+- [x] Evaluate if file persistence is required (currently survives restarts) ✅
 - [ ] If in-memory acceptable: replace with go-cache (~80 lines saved)
-- [ ] If persistence required: keep current or add go-cache as in-memory layer
+- [x] If persistence required: keep current or add go-cache as in-memory layer ✅
 
-**Estimated Impact**: ~80 lines if in-memory is acceptable
+**Decision**: File persistence IS required. The cache stores API responses to disk to survive process restarts (important for daemon mode), reduce API load on external services, and enable cache inspection/debugging via file system.
+
+**Status**: DEFERRED - Current implementation is appropriate for the use case
 
 ---
 
@@ -292,7 +294,7 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 | -------- | -------------------------------- | ----------- | ------ |
 | High     | 8.1 TUI Form Handling (huh)      | ~150        | Medium |
 | High     | 8.3 Database Layer (sqlx) ✅     | ~60         | Medium |
-| Medium   | 8.2 In-Memory Cache              | ~80         | Low    |
+| Medium   | 8.2 In-Memory Cache (deferred)   | 0           | N/A    |
 | Medium   | 8.5 Cron Builder Extraction      | ~100        | Medium |
 | Low      | 8.4 History Tracker              | ~50         | Low    |
 | Low      | 8.6 HTTP Client Middleware ✅    | ~10         | Low    |

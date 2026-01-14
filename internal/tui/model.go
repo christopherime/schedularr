@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
+	"github.com/geekxflood/schedularr/internal/cronbuilder"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/robfig/cron/v3"
@@ -58,11 +59,7 @@ type Model struct {
 	selected       int          // index of block being edited
 	seriesStates   []scheduler.SeriesState
 	seriesScroll   int
-	cronMinute     string
-	cronHour       string
-	cronDayOfMonth string
-	cronMonth      string
-	cronDayOfWeek  string
+	cronExpr       *cronbuilder.Expression
 	cronFieldIndex int
 	// Series Selector state
 	seriesSearchInput textinput.Model
@@ -765,28 +762,14 @@ func truncate(s string, maxLen int) string {
 // initCronBuilder initializes the cron builder state by parsing the current cron expression
 func (m *Model) initCronBuilder() {
 	// Parse existing cron expression from the input field
-	cronExpr := m.inputs[1].Value()
-	parts := strings.Fields(cronExpr)
-
-	// Initialize with defaults or parsed values
-	m.cronMinute = "*"
-	m.cronHour = "*"
-	m.cronDayOfMonth = "*"
-	m.cronMonth = "*"
-	m.cronDayOfWeek = "*"
+	cronExprStr := m.inputs[1].Value()
+	m.cronExpr = cronbuilder.Parse(cronExprStr)
 	m.cronFieldIndex = 0
-
-	if len(parts) >= 5 {
-		m.cronMinute = parts[0]
-		m.cronHour = parts[1]
-		m.cronDayOfMonth = parts[2]
-		m.cronMonth = parts[3]
-		m.cronDayOfWeek = parts[4]
-	}
 }
 
 // updateCronBuilder handles key events in the cron builder state
 func (m Model) updateCronBuilder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	ft := cronbuilder.FieldType(m.cronFieldIndex)
 	switch msg.String() {
 	case "esc", "q":
 		// Cancel and return to edit block
@@ -794,7 +777,7 @@ func (m Model) updateCronBuilder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		// Apply the built cron expression
-		m.applyCronExpression()
+		m.inputs[1].SetValue(m.cronExpr.String())
 		m.state = stateEditBlock
 		return m, nil
 	case "tab", "right", "l":
@@ -807,132 +790,28 @@ func (m Model) updateCronBuilder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "up", "k":
 		// Increment current field value
-		m.incrementCronField()
+		m.cronExpr.CycleNext(ft)
 		return m, nil
 	case "down", "j":
 		// Decrement current field value
-		m.decrementCronField()
+		m.cronExpr.CyclePrev(ft)
 		return m, nil
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
 		// Direct input - build number
-		m.appendToCronField(msg.String())
+		m.cronExpr.AppendDigit(ft, msg.String())
 		return m, nil
 	case "backspace":
 		// Remove last character from current field
-		m.backspaceCronField()
+		m.cronExpr.Backspace(ft)
 		return m, nil
 	case "*":
 		// Set current field to wildcard
-		m.setCronFieldWildcard()
+		m.cronExpr.SetWildcard(ft)
 		return m, nil
 	}
 	return m, nil
 }
 
-// applyCronExpression builds the final cron expression and applies it to the input field
-func (m *Model) applyCronExpression() {
-	cronExpr := fmt.Sprintf("%s %s %s %s %s",
-		m.cronMinute, m.cronHour, m.cronDayOfMonth, m.cronMonth, m.cronDayOfWeek)
-	m.inputs[1].SetValue(cronExpr)
-}
-
-// incrementCronField cycles through common values for the current field
-func (m *Model) incrementCronField() {
-	switch m.cronFieldIndex {
-	case 0: // Minute
-		m.cycleCronValue(&m.cronMinute, []string{"*", "0", "15", "30", "45", "*/5", "*/10", "*/15", "*/30"})
-	case 1: // Hour
-		m.cycleCronValue(&m.cronHour, []string{"*", "0", "6", "9", "12", "15", "18", "21", "*/2", "*/3", "*/6"})
-	case 2: // Day of month
-		m.cycleCronValue(&m.cronDayOfMonth, []string{"*", "1", "15", "*/7"})
-	case 3: // Month
-		m.cycleCronValue(&m.cronMonth, []string{"*", "1", "3", "6", "9", "12"})
-	case 4: // Day of week
-		m.cycleCronValue(&m.cronDayOfWeek, []string{"*", "0", "1", "2", "3", "4", "5", "6", "1-5"})
-	}
-}
-
-// decrementCronField cycles through common values in reverse
-func (m *Model) decrementCronField() {
-	switch m.cronFieldIndex {
-	case 0: // Minute
-		m.reverseCycleCronValue(&m.cronMinute, []string{"*", "0", "15", "30", "45", "*/5", "*/10", "*/15", "*/30"})
-	case 1: // Hour
-		m.reverseCycleCronValue(&m.cronHour, []string{"*", "0", "6", "9", "12", "15", "18", "21", "*/2", "*/3", "*/6"})
-	case 2: // Day of month
-		m.reverseCycleCronValue(&m.cronDayOfMonth, []string{"*", "1", "15", "*/7"})
-	case 3: // Month
-		m.reverseCycleCronValue(&m.cronMonth, []string{"*", "1", "3", "6", "9", "12"})
-	case 4: // Day of week
-		m.reverseCycleCronValue(&m.cronDayOfWeek, []string{"*", "0", "1", "2", "3", "4", "5", "6", "1-5"})
-	}
-}
-
-// cycleCronValue moves forward through preset values
-func (m *Model) cycleCronValue(field *string, values []string) {
-	for i, v := range values {
-		if v == *field {
-			*field = values[(i+1)%len(values)]
-			return
-		}
-	}
-	*field = values[0]
-}
-
-// reverseCycleCronValue moves backward through preset values
-func (m *Model) reverseCycleCronValue(field *string, values []string) {
-	for i, v := range values {
-		if v == *field {
-			*field = values[(i-1+len(values))%len(values)]
-			return
-		}
-	}
-	*field = values[len(values)-1]
-}
-
-// appendToCronField adds a digit to the current field
-func (m *Model) appendToCronField(digit string) {
-	field := m.getCurrentCronField()
-	if *field == "*" || *field == "" {
-		*field = digit
-	} else {
-		*field += digit
-	}
-}
-
-// backspaceCronField removes the last character
-func (m *Model) backspaceCronField() {
-	field := m.getCurrentCronField()
-	if len(*field) > 0 {
-		*field = (*field)[:len(*field)-1]
-	}
-	if *field == "" {
-		*field = "*"
-	}
-}
-
-// setCronFieldWildcard sets the current field to *
-func (m *Model) setCronFieldWildcard() {
-	field := m.getCurrentCronField()
-	*field = "*"
-}
-
-// getCurrentCronField returns a pointer to the currently selected field
-func (m *Model) getCurrentCronField() *string {
-	switch m.cronFieldIndex {
-	case 0:
-		return &m.cronMinute
-	case 1:
-		return &m.cronHour
-	case 2:
-		return &m.cronDayOfMonth
-	case 3:
-		return &m.cronMonth
-	case 4:
-		return &m.cronDayOfWeek
-	}
-	return &m.cronMinute
-}
 
 // renderCronBuilder displays the interactive cron expression builder
 func (m Model) renderCronBuilder() string {
@@ -958,19 +837,8 @@ func (m Model) renderCronBuilder() string {
 
 	builder.WriteString(titleStyle.Render("Visual Cron Expression Builder") + "\n\n")
 
-	// Field labels
-	fields := []struct {
-		label string
-		value *string
-		desc  string
-	}{
-		{"Minute", &m.cronMinute, "(0-59)"},
-		{"Hour", &m.cronHour, "(0-23)"},
-		{"Day", &m.cronDayOfMonth, "(1-31)"},
-		{"Month", &m.cronMonth, "(1-12)"},
-		{"Weekday", &m.cronDayOfWeek, "(0-6, 0=Sun)"},
-	}
-
+	// Field labels using cronbuilder.Fields()
+	fields := cronbuilder.Fields()
 	for i, field := range fields {
 		var fieldStyle lipgloss.Style
 		if i == m.cronFieldIndex {
@@ -979,35 +847,32 @@ func (m Model) renderCronBuilder() string {
 			fieldStyle = inactiveStyle
 		}
 
-		builder.WriteString(labelStyle.Render(fmt.Sprintf("%-10s", field.label)))
+		value := *m.cronExpr.Field(field.Type)
+		builder.WriteString(labelStyle.Render(fmt.Sprintf("%-10s", field.Label)))
 		builder.WriteString(" ")
-		builder.WriteString(fieldStyle.Render(fmt.Sprintf(" %-15s ", *field.value)))
+		builder.WriteString(fieldStyle.Render(fmt.Sprintf(" %-15s ", value)))
 		builder.WriteString(" ")
-		builder.WriteString(helpStyle.Render(field.desc))
+		builder.WriteString(helpStyle.Render(field.Desc))
 		builder.WriteString("\n")
 	}
 
 	// Preview
 	builder.WriteString("\n")
 	builder.WriteString(labelStyle.Render("Preview: "))
-	cronExpr := fmt.Sprintf("%s %s %s %s %s",
-		m.cronMinute, m.cronHour, m.cronDayOfMonth, m.cronMonth, m.cronDayOfWeek)
-	builder.WriteString(activeStyle.Render(cronExpr))
+	builder.WriteString(activeStyle.Render(m.cronExpr.String()))
 	builder.WriteString("\n\n")
 
 	// Human-readable description
 	builder.WriteString(labelStyle.Render("Description: "))
-	builder.WriteString(m.describeCronExpression())
+	builder.WriteString(m.cronExpr.Describe())
 	builder.WriteString("\n\n")
 
 	// Common presets
 	builder.WriteString(titleStyle.Render("Common Presets:") + "\n")
-	builder.WriteString(helpStyle.Render("  Every minute:      * * * * *\n"))
-	builder.WriteString(helpStyle.Render("  Hourly:            0 * * * *\n"))
-	builder.WriteString(helpStyle.Render("  Daily at 6am:      0 6 * * *\n"))
-	builder.WriteString(helpStyle.Render("  Weekly (Monday):   0 0 * * 1\n"))
-	builder.WriteString(helpStyle.Render("  Monthly (1st):     0 0 1 * *\n"))
-	builder.WriteString(helpStyle.Render("  Weekdays 9am:      0 9 * * 1-5\n\n"))
+	for _, preset := range cronbuilder.CommonPresets() {
+		builder.WriteString(helpStyle.Render(fmt.Sprintf("  %-18s %s\n", preset.Label+":", preset.Expr)))
+	}
+	builder.WriteString("\n")
 
 	// Help
 	builder.WriteString(helpStyle.Render("Navigation: tab/shift+tab, ←/→, h/l\n"))
@@ -1016,95 +881,6 @@ func (m Model) renderCronBuilder() string {
 	builder.WriteString(helpStyle.Render("Apply: enter | Cancel: esc/q | Help: ?"))
 
 	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
-}
-
-// describeCronExpression provides a human-readable description
-func (m Model) describeCronExpression() string {
-	parts := make([]string, 0, 5)
-
-	// Minute
-	parts = append(parts, m.describeMinuteField()...)
-	// Hour
-	parts = append(parts, m.describeHourField()...)
-	// Day of month
-	parts = append(parts, m.describeDayOfMonthField()...)
-	// Month
-	parts = append(parts, m.describeMonthField()...)
-	// Day of week
-	parts = append(parts, m.describeDayOfWeekField()...)
-
-	if len(parts) == 0 {
-		return "runs continuously"
-	}
-
-	return strings.Join(parts, ", ")
-}
-
-// describeMinuteField returns description for minute field
-func (m Model) describeMinuteField() []string {
-	if m.cronMinute == "*" {
-		return []string{"every minute"}
-	}
-	if strings.HasPrefix(m.cronMinute, "*/") {
-		return []string{"every " + strings.TrimPrefix(m.cronMinute, "*/") + " minutes"}
-	}
-	return []string{"at minute " + m.cronMinute}
-}
-
-// describeHourField returns description for hour field
-func (m Model) describeHourField() []string {
-	if m.cronHour == "*" {
-		return nil
-	}
-	if strings.HasPrefix(m.cronHour, "*/") {
-		return []string{"every " + strings.TrimPrefix(m.cronHour, "*/") + " hours"}
-	}
-	return []string{"at hour " + m.cronHour}
-}
-
-// describeDayOfMonthField returns description for day of month field
-func (m Model) describeDayOfMonthField() []string {
-	if m.cronDayOfMonth == "*" {
-		return nil
-	}
-	if strings.HasPrefix(m.cronDayOfMonth, "*/") {
-		return []string{"every " + strings.TrimPrefix(m.cronDayOfMonth, "*/") + " days"}
-	}
-	return []string{"on day " + m.cronDayOfMonth}
-}
-
-// describeMonthField returns description for month field
-func (m Model) describeMonthField() []string {
-	if m.cronMonth == "*" {
-		return nil
-	}
-
-	monthNames := []string{"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
-	if m.cronMonth >= "1" && m.cronMonth <= "12" {
-		if month, err := strconv.Atoi(m.cronMonth); err == nil && month >= 1 && month <= 12 {
-			return []string{"in " + monthNames[month]}
-		}
-	}
-	return []string{"in month " + m.cronMonth}
-}
-
-// describeDayOfWeekField returns description for day of week field
-func (m Model) describeDayOfWeekField() []string {
-	if m.cronDayOfWeek == "*" {
-		return nil
-	}
-
-	if m.cronDayOfWeek == "1-5" {
-		return []string{"on weekdays"}
-	}
-
-	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
-	if m.cronDayOfWeek >= "0" && m.cronDayOfWeek <= "6" {
-		if day, err := strconv.Atoi(m.cronDayOfWeek); err == nil && day >= 0 && day <= 6 {
-			return []string{"on " + dayNames[day]}
-		}
-	}
-	return []string{"on day " + m.cronDayOfWeek}
 }
 
 func (m Model) renderHelp() string {
