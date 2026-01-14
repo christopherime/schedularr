@@ -37,10 +37,20 @@ const (
 	stateFilterBuilder
 	stateFileBrowser
 	stateSeriesEdit
+	stateBlockTimeline
 )
 
 type item struct {
 	block scheduler.Block
+}
+
+// timelineSlot represents a scheduled block occurrence
+type timelineSlot struct {
+	BlockName string
+	ChannelID string
+	StartTime time.Time
+	EndTime   time.Time
+	Priority  int
 }
 
 func (i item) Title() string { return i.block.Name }
@@ -96,6 +106,9 @@ type Model struct {
 	seriesEditEpisode  string // Episode number being edited
 	seriesEditField    int    // Currently focused field (0=season, 1=episode, 2=save)
 	seriesEditShowTitle string // Title of series being edited
+	// Block Timeline state
+	timelineSlots  []timelineSlot // Scheduled slots for next 24 hours
+	timelineScroll int            // Current scroll position
 }
 
 // NewModel creates a new TUI model with the given configuration and optional store.
@@ -231,6 +244,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateFileBrowser(msg)
 	case stateSeriesEdit:
 		return m.updateSeriesEdit(msg)
+	case stateBlockTimeline:
+		return m.updateBlockTimeline(msg)
 	default:
 		return m, nil
 	}
@@ -313,6 +328,10 @@ func (m Model) handleViewSwitch(msg tea.KeyMsg) (bool, tea.Model) {
 	case "f":
 		m.initFileBrowser()
 		m.state = stateFileBrowser
+		return true, m
+	case "t":
+		m.initBlockTimeline()
+		m.state = stateBlockTimeline
 		return true, m
 	}
 	return false, m
@@ -591,6 +610,8 @@ func (m Model) View() string {
 		return m.renderFileBrowser()
 	case stateSeriesEdit:
 		return m.renderSeriesEdit()
+	case stateBlockTimeline:
+		return m.renderBlockTimeline()
 	case stateHelp:
 		return m.renderHelp()
 	default:
@@ -616,9 +637,9 @@ func (m Model) renderListView() string {
 		builder.WriteString(unsavedStyle.Render("[unsaved changes - ctrl+s to save]"))
 	}
 
-	helpText := "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | ctrl+s save | '?' help | 'q' quit"
+	helpText := "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 't' timeline | ctrl+s save | '?' help | 'q' quit"
 	if m.store != nil {
-		helpText = "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 's' series | ctrl+s save | '?' help | 'q' quit"
+		helpText = "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 's' series | 't' timeline | ctrl+s save | '?' help | 'q' quit"
 	}
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(helpText)
 	builder.WriteString(help)
@@ -934,6 +955,7 @@ func (m Model) renderHelp() string {
 			builder.WriteString(keyStyle.Render("  s") + descStyle.Render("          View series progress\n"))
 		}
 		builder.WriteString(keyStyle.Render("  S") + descStyle.Render("          Search series (series selector)\n"))
+		builder.WriteString(keyStyle.Render("  t") + descStyle.Render("          View schedule timeline (next 24h)\n"))
 		builder.WriteString(keyStyle.Render("  f") + descStyle.Render("          Browse scheduler files\n"))
 		builder.WriteString(keyStyle.Render("  q, ctrl+c") + descStyle.Render("  Quit application\n"))
 
@@ -1042,6 +1064,17 @@ func (m Model) renderHelp() string {
 		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Cancel and return to series list\n\n"))
 		builder.WriteString(descStyle.Render("Edit the current episode position for a series.\n"))
 		builder.WriteString(descStyle.Render("This resets the series state, clearing completion and disabled flags.\n"))
+
+	case stateBlockTimeline:
+		builder.WriteString(titleStyle.Render("Block Schedule Timeline") + "\n\n")
+		builder.WriteString(keyStyle.Render("  ↑/↓, j/k") + descStyle.Render("  Navigate through scheduled slots\n"))
+		builder.WriteString(keyStyle.Render("  r") + descStyle.Render("          Refresh timeline\n"))
+		builder.WriteString(keyStyle.Render("  esc, q") + descStyle.Render("     Return to block list\n\n"))
+		builder.WriteString(descStyle.Render("Timeline Display:\n"))
+		builder.WriteString(descStyle.Render("  • Shows all block occurrences in the next 24 hours\n"))
+		builder.WriteString(descStyle.Render("  • Conflicts are marked in red when blocks overlap\n"))
+		builder.WriteString(descStyle.Render("  • Higher priority blocks override lower priority ones\n"))
+		builder.WriteString(descStyle.Render("  • Blocks are sorted by start time\n"))
 
 	default:
 		builder.WriteString(titleStyle.Render("General Commands") + "\n\n")
@@ -1450,6 +1483,236 @@ func (m Model) renderSeriesEdit() string {
 	builder.WriteString(helpStyle.Render("↑/↓, tab: Navigate | 0-9: Enter numbers | backspace: Delete | enter: Save | esc/q: Cancel"))
 
 	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+// ============================================================================
+// Block Timeline View
+// ============================================================================
+
+// initBlockTimeline initializes the block timeline view
+func (m *Model) initBlockTimeline() {
+	m.timelineSlots = m.generateTimelineSlots()
+	m.timelineScroll = 0
+}
+
+// generateTimelineSlots generates scheduled slots for the next 24 hours
+func (m *Model) generateTimelineSlots() []timelineSlot {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	now := time.Now()
+	end := now.Add(24 * time.Hour)
+
+	var slots []timelineSlot
+
+	for _, block := range m.cfg.Scheduler.Blocks {
+		schedule, err := parser.Parse(block.Cron)
+		if err != nil {
+			continue
+		}
+
+		// Find all occurrences in the next 24 hours
+		current := now
+		for {
+			next := schedule.Next(current)
+			if next.After(end) {
+				break
+			}
+
+			endTime := next.Add(time.Duration(block.Duration) * time.Minute)
+			slots = append(slots, timelineSlot{
+				BlockName: block.Name,
+				ChannelID: block.ChannelID,
+				StartTime: next,
+				EndTime:   endTime,
+				Priority:  block.Priority,
+			})
+
+			current = next
+		}
+	}
+
+	// Sort by start time
+	sort.Slice(slots, func(i, j int) bool {
+		return slots[i].StartTime.Before(slots[j].StartTime)
+	})
+
+	return slots
+}
+
+// updateBlockTimeline handles key events in the block timeline view
+func (m Model) updateBlockTimeline(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		m.state = stateListView
+		return m, nil
+	case "up", "k":
+		if m.timelineScroll > 0 {
+			m.timelineScroll--
+		}
+		return m, nil
+	case "down", "j":
+		if m.timelineScroll < len(m.timelineSlots)-1 {
+			m.timelineScroll++
+		}
+		return m, nil
+	case "r":
+		m.initBlockTimeline()
+		return m, nil
+	}
+	return m, nil
+}
+
+// renderBlockTimeline renders the block timeline view
+func (m Model) renderBlockTimeline() string {
+	var builder strings.Builder
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	builder.WriteString(titleStyle.Render("Block Schedule Timeline (Next 24 Hours)") + "\n\n")
+
+	if len(m.timelineSlots) == 0 {
+		builder.WriteString(normalStyle.Render("No blocks scheduled in the next 24 hours.\n\n"))
+		builder.WriteString(normalStyle.Render("Check that your blocks have valid cron expressions.\n"))
+		builder.WriteString(normalStyle.Render("Press 'esc' or 'q' to return.\n"))
+		return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+	}
+
+	m.renderTimelineSlots(&builder)
+
+	// Conflict summary
+	conflicts := m.countConflicts()
+	if conflicts > 0 {
+		conflictStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true)
+		builder.WriteString(conflictStyle.Render(fmt.Sprintf("⚠ %d potential conflict(s) detected\n", conflicts)))
+		builder.WriteString(normalStyle.Render("Higher priority blocks will override lower priority ones.\n\n"))
+	}
+
+	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | r: Refresh | esc/q: Back | ?: Help"))
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+// renderTimelineSlots renders the timeline slots table
+func (m *Model) renderTimelineSlots(builder *strings.Builder) {
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Bold(true)
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	highlightStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+
+	// Header
+	builder.WriteString(headerStyle.Render(fmt.Sprintf("%-20s %-12s %-12s %-15s %-4s %s\n",
+		"Block", "Start", "End", "Channel", "Pri", "Status")))
+	builder.WriteString(strings.Repeat("─", 80) + "\n")
+
+	// Show slots with scrolling
+	start := m.timelineScroll
+	end := start + 15
+	if end > len(m.timelineSlots) {
+		end = len(m.timelineSlots)
+	}
+
+	for i := start; i < end; i++ {
+		style := normalStyle
+		if i == m.timelineScroll {
+			style = highlightStyle
+		}
+
+		line := m.formatTimelineSlot(i)
+		builder.WriteString(style.Render(line) + "\n")
+	}
+
+	builder.WriteString("\n")
+	builder.WriteString(normalStyle.Render(fmt.Sprintf("Showing %d-%d of %d scheduled slots\n\n", start+1, end, len(m.timelineSlots))))
+}
+
+// formatTimelineSlot formats a single timeline slot for display
+func (m *Model) formatTimelineSlot(index int) string {
+	slot := m.timelineSlots[index]
+
+	conflictStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("196")).
+		Bold(true)
+
+	channelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("86"))
+
+	hasConflict := m.hasConflictAt(index)
+
+	startStr := slot.StartTime.Format("15:04")
+	endStr := slot.EndTime.Format("15:04")
+
+	// Show day indicator if not today
+	if !isToday(slot.StartTime) {
+		startStr = slot.StartTime.Format("Mon 15:04")
+	}
+
+	status := ""
+	if hasConflict {
+		status = conflictStyle.Render("CONFLICT")
+	}
+
+	return fmt.Sprintf("%-20s %-12s %-12s %-15s %-4d %s",
+		truncate(slot.BlockName, 20),
+		startStr,
+		endStr,
+		channelStyle.Render(truncate(slot.ChannelID, 15)),
+		slot.Priority,
+		status)
+}
+
+// hasConflictAt checks if the slot at the given index has a conflict
+func (m *Model) hasConflictAt(index int) bool {
+	slot := m.timelineSlots[index]
+	for j, other := range m.timelineSlots {
+		if index != j && slot.ChannelID == other.ChannelID {
+			if slot.StartTime.Before(other.EndTime) && slot.EndTime.After(other.StartTime) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isToday checks if a time is today
+func isToday(t time.Time) bool {
+	now := time.Now()
+	return t.Year() == now.Year() && t.Month() == now.Month() && t.Day() == now.Day()
+}
+
+// countConflicts counts the number of conflicting slots
+func (m *Model) countConflicts() int {
+	conflicts := 0
+	seen := make(map[int]struct{})
+
+	for i, slot := range m.timelineSlots {
+		for j, other := range m.timelineSlots {
+			if i != j && slot.ChannelID == other.ChannelID {
+				if slot.StartTime.Before(other.EndTime) && slot.EndTime.After(other.StartTime) {
+					if _, ok := seen[i]; !ok {
+						conflicts++
+						seen[i] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+
+	return conflicts
 }
 
 // ============================================================================
