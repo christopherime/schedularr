@@ -403,17 +403,26 @@ maintenance:
 
 **Problem**: No way to preview what a schedule would look like before applying.
 
+**Solution**: Implemented both CLI dry-run and TUI timeline views.
+
 **Tasks**:
 - [x] Implement `--dry-run` mode for schedule generation ✅ (already exists in generate command)
-- [ ] Create TUI view for schedule preview
-- [ ] Show program titles, durations, and time slots
-- [ ] Highlight potential conflicts or gaps
+- [x] Create TUI view for schedule preview ✅ (block timeline view)
+- [x] Show program titles, durations, and time slots ✅
+- [x] Highlight potential conflicts or gaps ✅ (conflict detection)
 
 **CLI Preview**:
-The `generate --dry-run` flag already provides schedule preview functionality.
+The `generate --dry-run` flag provides full schedule preview with actual content.
 Use `--verbose` for detailed filtering and history output.
 
-**Status**: 🔄 PARTIAL (CLI dry-run complete, TUI preview pending)
+**TUI Timeline** (in `internal/tui/model.go`):
+- Press 't' from block list to view 24-hour schedule timeline
+- Shows: Block name, start/end times, channel ID, priority
+- Highlights conflicts when blocks overlap on the same channel
+- Navigate with j/k or arrows, refresh with 'r'
+- Parses cron expressions to calculate block occurrences
+
+**Status**: ✅ COMPLETE
 
 ---
 
