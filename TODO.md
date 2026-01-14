@@ -273,24 +273,26 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 
 **Tasks**:
 
-- [ ] Use resty `OnBeforeRequest` hook for auth headers
-- [ ] Use resty `OnAfterResponse` hook for error handling
-- [ ] Simplify `newRequest` to just `SetContext`
+- [x] Use resty `OnBeforeRequest` hook for auth headers ✅
+- [ ] Use resty `OnAfterResponse` hook for error handling (deferred - current approach is cleaner)
+- [x] Simplify `newRequest` to just `SetContext` ✅
 
-**Estimated Impact**: ~30 lines, cleaner separation of concerns
+**Estimated Impact**: ~10 lines saved, cleaner separation of concerns
+
+**Status**: ✅ COMPLETE - Auth header injection moved to middleware
 
 ---
 
 ## Priority Summary
 
-| Priority | Task                        | Lines Saved | Effort |
-| -------- | --------------------------- | ----------- | ------ |
-| High     | 8.1 TUI Form Handling (huh) | ~150        | Medium |
-| High     | 8.3 Database Layer (sqlx)   | ~100        | Medium |
-| Medium   | 8.2 In-Memory Cache         | ~80         | Low    |
-| Medium   | 8.5 Cron Builder Extraction | ~100        | Medium |
-| Low      | 8.4 History Tracker         | ~50         | Low    |
-| Low      | 8.6 HTTP Client Middleware  | ~30         | Low    |
+| Priority | Task                             | Lines Saved | Effort |
+| -------- | -------------------------------- | ----------- | ------ |
+| High     | 8.1 TUI Form Handling (huh)      | ~150        | Medium |
+| High     | 8.3 Database Layer (sqlx)        | ~100        | Medium |
+| Medium   | 8.2 In-Memory Cache              | ~80         | Low    |
+| Medium   | 8.5 Cron Builder Extraction      | ~100        | Medium |
+| Low      | 8.4 History Tracker              | ~50         | Low    |
+| Low      | 8.6 HTTP Client Middleware ✅    | ~10         | Low    |
 
 **Total Potential Savings**: ~510 lines
 
