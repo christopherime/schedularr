@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avast/retry-go/v4"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/external/jellyfin"
@@ -249,24 +250,17 @@ func syncJellyfinLiveTV(cfg *config.Config) {
 }
 
 func refreshJellyfinWithRetries(client *jellyfin.Client) error {
-	maxRetries := 3
-	baseDelay := 2 * time.Second
-
-	var err error
-	for i := 0; i < maxRetries; i++ {
-		// Use a short timeout for the request itself if possible, but client has 30s timeout.
-		err = client.RefreshLiveTVGuide(context.Background())
-		if err == nil {
-			return nil
-		}
-
-		if i < maxRetries-1 {
-			delay := baseDelay * time.Duration(1<<i) // 2s, 4s, 8s
-			fmt.Printf("   %s %v (retrying in %s)...\n", warnStyle.Render("⚠ Refresh failed:"), err, delay)
-			time.Sleep(delay)
-		}
-	}
-	return fmt.Errorf("after %d attempts: %w", maxRetries, err)
+	return retry.Do(
+		func() error {
+			return client.RefreshLiveTVGuide(context.Background())
+		},
+		retry.Attempts(3),
+		retry.Delay(2*time.Second),
+		retry.DelayType(retry.BackOffDelay),
+		retry.OnRetry(func(n uint, err error) {
+			fmt.Printf("   %s %v (attempt %d)...\n", warnStyle.Render("⚠ Refresh failed:"), err, n+1)
+		}),
+	)
 }
 
 type channelStats struct {

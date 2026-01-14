@@ -702,13 +702,13 @@ err := retry.Do(
 
 **Tasks**:
 
-- [ ] Add `github.com/avast/retry-go/v4` to go.mod
-- [ ] Refactor `refreshJellyfinWithRetries()` to use retry-go
-- [ ] Consider using retry-go in httpclient for consistency (optional)
+- [x] Add `github.com/avast/retry-go/v4` to go.mod ✅
+- [x] Refactor `refreshJellyfinWithRetries()` to use retry-go ✅
+- [ ] Consider using retry-go in httpclient for consistency (optional - deferred, httpclient uses resty's built-in retries)
 
-**Estimated Impact**: ~20 lines removed, more maintainable retry logic
+**Actual Impact**: ~8 lines removed, cleaner declarative retry logic
 
-**Status**: 🔲 PENDING (Low Priority)
+**Status**: ✅ COMPLETE
 
 ---
 
@@ -718,10 +718,10 @@ err := retry.Do(
 | -------- | --------------------------- | ----------- | ------ | ----------- |
 | High     | 9.1 CLI Tables (go-pretty)  | ~60         | Medium | ✅ Complete |
 | Medium   | 9.2 DB Migrations (migrate) | ~35         | Medium | ✅ Complete |
-| Low      | 9.3 Retry Logic (retry-go)  | ~20         | Low    | 🔲 Pending  |
+| Low      | 9.3 Retry Logic (retry-go)  | ~8          | Low    | ✅ Complete |
 
-**Total Achieved Savings**: ~95 lines (9.1, 9.2)
-**Remaining Potential**: ~20 lines (9.3)
+**Total Achieved Savings**: ~103 lines (9.1, 9.2, 9.3)
+**Phase 9 Status**: ✅ COMPLETE
 
 ---
 
