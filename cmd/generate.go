@@ -96,10 +96,41 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	displaySchedule(plan, verbose)
 	flattenedPlan := flattenSchedule(plan)
 
-	return handleScheduleOutput(cfg, client, engine, flattenedPlan, scheduleOutputOptions{
+	err = handleScheduleOutput(cfg, client, engine, flattenedPlan, scheduleOutputOptions{
 		apply:  apply,
 		dryRun: dryRun,
 	})
+	if err != nil {
+		return err
+	}
+
+	// Run cleanup after successful apply if enabled
+	if apply && !dryRun && cfg.Maintenance.CleanupEnabled {
+		runScheduleHistoryCleanup(cfg, st)
+	}
+
+	return nil
+}
+
+// runScheduleHistoryCleanup removes old schedule history entries based on retention policy.
+func runScheduleHistoryCleanup(cfg *config.Config, st *store.Store) {
+	retention := cfg.Maintenance.GetHistoryRetention()
+	if retention == 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	removed, err := st.CleanupScheduleHistory(ctx, retention)
+	if err != nil {
+		fmt.Printf("%s %v\n", warnStyle.Render("⚠ Schedule history cleanup failed (non-fatal):"), err)
+		return
+	}
+
+	if removed > 0 {
+		fmt.Printf("%s Cleaned up %d old schedule history entries\n", successStyle.Render("✓"), removed)
+	}
 }
 
 func initializeScheduler(cfg *config.Config, schedFile string) (*scheduler.Config, *store.Store, error) {
