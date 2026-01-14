@@ -404,12 +404,16 @@ maintenance:
 **Problem**: No way to preview what a schedule would look like before applying.
 
 **Tasks**:
-- [ ] Implement `--dry-run` mode for schedule generation
+- [x] Implement `--dry-run` mode for schedule generation ✅ (already exists in generate command)
 - [ ] Create TUI view for schedule preview
 - [ ] Show program titles, durations, and time slots
 - [ ] Highlight potential conflicts or gaps
 
-**Status**: 🔲 PENDING
+**CLI Preview**:
+The `generate --dry-run` flag already provides schedule preview functionality.
+Use `--verbose` for detailed filtering and history output.
+
+**Status**: 🔄 PARTIAL (CLI dry-run complete, TUI preview pending)
 
 ---
 
@@ -417,10 +421,32 @@ maintenance:
 
 **Problem**: No visibility into current episode tracking state.
 
-**Tasks**:
-- [ ] Add CLI command to view series state (`schedularr series list`)
-- [ ] Create TUI panel for series state overview
-- [ ] Show current episode per series
-- [ ] Add ability to manually adjust episode position
+**Solution**: Implemented comprehensive series state management with CLI and TUI.
 
-**Status**: 🔲 PENDING
+**Tasks**:
+- [x] Add CLI command to view series state (`schedularr state list`) ✅
+- [x] Create TUI panel for series state overview ✅ (press 's' in block list)
+- [x] Show current episode per series ✅
+- [x] Add ability to manually adjust episode position ✅ (press 'e' to edit)
+
+**CLI Commands** (in `cmd/state.go`):
+- `schedularr state list` - List all series with episode, status, run count
+- `schedularr state set <show> -s <season> -e <episode>` - Set series position
+- `schedularr state reset <show>` - Reset series to S01E01
+- `schedularr state export <file>` - Export states to JSON
+- `schedularr state import <file>` - Import states from JSON
+- `schedularr state backup <file>` - Full database backup
+
+**TUI Features** (in `internal/tui/model.go`):
+- Press 's' from block list to view series progress
+- Displays: Show title, current episode, run count, status, last aired
+- Press 'e' to edit selected series position
+- Press 'r' to refresh from database
+- Color-coded status: Active (white), Completed (green), Disabled (gray)
+
+**Files Modified**:
+- `cmd/state.go` - Added `set` command, improved `list` output
+- `internal/store/sqlite.go` - Added `SetSeriesState` method, fixed export/import
+- `internal/tui/model.go` - Added series edit view (stateSeriesEdit)
+
+**Status**: ✅ COMPLETE
