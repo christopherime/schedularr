@@ -163,26 +163,40 @@ type Program struct {
 
 ### Current State
 
-- **Complete:** Basic CLI structure, Tunarr client skeleton, scheduling engine with cron and filtering, interactive TUI for block editing
-- **In Progress:** Tunarr API endpoint verification (see TODO.md Phase 1)
-- **Planned:** Series-based scheduling (sequential episode progression), episode state tracking with SQLite, separate scheduler file architecture
+**Complete:**
+- CLI structure with Cobra commands (generate, channels, state, tui, validate)
+- Tunarr client with REST API integration and Prometheus metrics
+- Scheduling engine with cron and filtering logic
+- Series-based scheduling with sequential episode progression
+- Episode state tracking with SQLite persistence
+- Interactive TUI for block editing (with charmbracelet/bubbletea + huh forms)
+- Config separation: `--scheduler <file>` parameter for different scheduling scenarios
+- Schedule history tracking and cleanup
+- Comprehensive test coverage (>85% for most packages)
+
+**Stable Features:**
+- Filter-based blocks (genres, ratings, year, duration, title regex)
+- Series blocks with automatic episode progression
+- Priority-based conflict resolution
+- TUI with block CRUD, timeline view, and series state management
+- CLI commands for state management (list, set, reset, export, import, backup)
 
 ### Key Architectural Decisions
 
-**Upcoming Major Changes (see TODO.md):**
+**Implemented Changes:**
 
-1. **Config Separation:** Split app config (tunarr connection, logging) from scheduler config (blocks/rules)
-   - Enable `--scheduler <file>` CLI parameter for different scheduling scenarios
-   - Support multiple scheduler files for different programming strategies
+1. **Config Separation:** App config (tunarr, logging) is separated from scheduler config (blocks/rules)
+   - Use `--scheduler <file>` CLI parameter for different scheduling scenarios
+   - Supports multiple scheduler files for different programming strategies
 
-2. **Series-Based Scheduling:** New block type for sequential episode progression
-   - Track current episode per series using SQLite persistence
-   - Support mixed series and filter-based blocks
-   - Implement fallback logic when series completes (redistribute time or use filler)
+2. **Series-Based Scheduling:** Block type for sequential episode progression
+   - Tracks current episode per series using SQLite persistence
+   - Supports mixed series and filter-based blocks
+   - Series state can be managed via CLI (`schedularr state`) or TUI
 
-3. **Enhanced Tunarr Integration:** Verify and implement actual API endpoints
-   - Current endpoints are placeholders and need testing against real Tunarr instance
-   - See `docs/TUNARR_API_RESEARCH.md` for API investigation notes
+3. **Database Migrations:** Using golang-migrate with embedded SQL files
+   - Version-tracked migrations in `internal/store/migrations/`
+   - Automatic migration on store initialization
 
 ### API Client Considerations
 
