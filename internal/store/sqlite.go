@@ -9,17 +9,18 @@ import (
 	"time"
 
 	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
 
 // Store implements the persistence layer for Schedularr.
 type Store struct {
-	db *sql.DB
+	db *sqlx.DB
 }
 
 // New creates a new Store instance connected to the specified SQLite database.
 func New(dsn string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sqlx.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -88,19 +89,12 @@ func (s *Store) initSchema(ctx context.Context) error {
 // GetSeriesState retrieves the tracking state for a given show.
 // If no state exists, it returns a default starting state (S01E01).
 func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
-	query := `
-	SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled
-	FROM series_state
-	WHERE show_title = ?
-	`
-	row := s.db.QueryRowContext(ctx, query, showTitle)
-
 	var state scheduler.SeriesState
-	var lastAired sql.NullTime
+	err := s.db.GetContext(ctx, &state, `
+		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled
+		FROM series_state WHERE show_title = ?`, showTitle)
 
-	err := row.Scan(&state.ShowTitle, &state.CurrentSeason, &state.CurrentEpisode, &state.Completed, &lastAired, &state.RunCount, &state.Disabled)
-	if err == sql.ErrNoRows {
-		// Return default state if not found
+	if errors.Is(err, sql.ErrNoRows) {
 		return &scheduler.SeriesState{
 			ShowTitle:      showTitle,
 			CurrentSeason:  1,
@@ -111,11 +105,7 @@ func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*schedule
 		}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan series state: %w", err)
-	}
-
-	if lastAired.Valid {
-		state.LastAired = lastAired.Time
+		return nil, fmt.Errorf("failed to get series state: %w", err)
 	}
 
 	return &state, nil
@@ -123,18 +113,16 @@ func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*schedule
 
 // UpdateSeriesState updates or inserts the tracking state for a show.
 func (s *Store) UpdateSeriesState(ctx context.Context, state *scheduler.SeriesState) error {
-	query := `
-	INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(show_title) DO UPDATE SET
-		current_season = excluded.current_season,
-		current_episode = excluded.current_episode,
-		completed = excluded.completed,
-		last_aired = excluded.last_aired,
-		run_count = excluded.run_count,
-		disabled = excluded.disabled
-	`
-	_, err := s.db.ExecContext(ctx, query, state.ShowTitle, state.CurrentSeason, state.CurrentEpisode, state.Completed, state.LastAired, state.RunCount, state.Disabled)
+	_, err := s.db.NamedExecContext(ctx, `
+		INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled)
+		VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled)
+		ON CONFLICT(show_title) DO UPDATE SET
+			current_season = excluded.current_season,
+			current_episode = excluded.current_episode,
+			completed = excluded.completed,
+			last_aired = excluded.last_aired,
+			run_count = excluded.run_count,
+			disabled = excluded.disabled`, state)
 	if err != nil {
 		return fmt.Errorf("failed to update series state: %w", err)
 	}
@@ -147,29 +135,16 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 		return nil
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at)
-		VALUES (?, ?, ?, ?)
-	`)
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("failed to prepare schedule history insert: %w", err)
-	}
-	defer stmt.Close()
+	defer func() { _ = tx.Rollback() }()
 
 	for _, entry := range entries {
-		if _, err := stmt.ExecContext(ctx, entry.ProgramID, entry.ChannelID, entry.BlockName, entry.ScheduledAt); err != nil {
-			_ = tx.Rollback()
+		if _, err := tx.NamedExecContext(ctx, `
+			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at)
+			VALUES (:program_id, :channel_id, :block_name, :scheduled_at)`, entry); err != nil {
 			return fmt.Errorf("failed to insert schedule history: %w", err)
 		}
 	}
@@ -225,37 +200,13 @@ func (s *Store) CleanupScheduleHistory(ctx context.Context, window time.Duration
 
 // ExportAllSeriesStates exports all series states to a slice for backup/export.
 func (s *Store) ExportAllSeriesStates(ctx context.Context) ([]scheduler.SeriesState, error) {
-	query := `
+	var states []scheduler.SeriesState
+	err := s.db.SelectContext(ctx, &states, `
 		SELECT show_title, current_season, current_episode, completed, last_aired
-		FROM series_state
-		ORDER BY show_title
-	`
-	rows, err := s.db.QueryContext(ctx, query)
+		FROM series_state ORDER BY show_title`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query series states: %w", err)
 	}
-	defer rows.Close()
-
-	var states []scheduler.SeriesState
-	for rows.Next() {
-		var state scheduler.SeriesState
-		var lastAired sql.NullTime
-
-		if err := rows.Scan(&state.ShowTitle, &state.CurrentSeason, &state.CurrentEpisode, &state.Completed, &lastAired); err != nil {
-			return nil, fmt.Errorf("failed to scan series state: %w", err)
-		}
-
-		if lastAired.Valid {
-			state.LastAired = lastAired.Time
-		}
-
-		states = append(states, state)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating series states: %w", err)
-	}
-
 	return states, nil
 }
 
@@ -265,32 +216,21 @@ func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.Serie
 		return nil
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(show_title) DO UPDATE SET
-			current_season = excluded.current_season,
-			current_episode = excluded.current_episode,
-			completed = excluded.completed,
-			last_aired = excluded.last_aired
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare import statement: %w", err)
-	}
-	defer stmt.Close()
+	defer func() { _ = tx.Rollback() }()
 
 	for _, state := range states {
-		if _, err := stmt.ExecContext(ctx, state.ShowTitle, state.CurrentSeason, state.CurrentEpisode, state.Completed, state.LastAired); err != nil {
+		if _, err := tx.NamedExecContext(ctx, `
+			INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired)
+			VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired)
+			ON CONFLICT(show_title) DO UPDATE SET
+				current_season = excluded.current_season,
+				current_episode = excluded.current_episode,
+				completed = excluded.completed,
+				last_aired = excluded.last_aired`, state); err != nil {
 			return fmt.Errorf("failed to import state for %s: %w", state.ShowTitle, err)
 		}
 	}

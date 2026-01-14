@@ -390,7 +390,8 @@ func (e *Engine) planSeriesForConfig(block Block, seriesConf SeriesConfig, avail
 			playlist = append(playlist, *ep)
 			currentDuration += ep.Duration
 			state.CurrentEpisode++
-			state.LastAired = time.Now()
+			now := time.Now()
+			state.LastAired = &now
 			episodesAdded++
 			e.pendingStates[seriesConf.ShowTitle] = state
 			metrics.ProgramsScheduledTotal.WithLabelValues(block.ChannelID, block.Name, ep.Type).Inc()
@@ -404,7 +405,7 @@ func (e *Engine) planSeriesForConfig(block Block, seriesConf SeriesConfig, avail
 }
 
 func (e *Engine) initializeSeriesState(state *SeriesState, seriesConf SeriesConfig) {
-	if !state.LastAired.IsZero() {
+	if state.LastAired != nil && !state.LastAired.IsZero() {
 		return
 	}
 

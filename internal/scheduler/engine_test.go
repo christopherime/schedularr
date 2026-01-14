@@ -1032,7 +1032,7 @@ func TestInitializeSeriesState_NewStateWithStartSeasonAndEpisode(t *testing.T) {
 		ShowTitle:      "Test Show",
 		CurrentSeason:  1,
 		CurrentEpisode: 1,
-		LastAired:      time.Time{}, // Zero time, indicating new state
+		LastAired:      nil, // nil, indicating new state
 	}
 
 	config := SeriesConfig{
@@ -1052,11 +1052,12 @@ func TestInitializeSeriesState_ExistingStateNotModified(t *testing.T) {
 	store := NewMockStateStore()
 	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
+	now := time.Now()
 	state := &SeriesState{
 		ShowTitle:      "Test Show",
 		CurrentSeason:  2,
 		CurrentEpisode: 7,
-		LastAired:      time.Now(), // Non-zero time, indicating existing state
+		LastAired:      &now, // Non-nil, indicating existing state
 	}
 
 	config := SeriesConfig{
@@ -1081,7 +1082,7 @@ func TestInitializeSeriesState_StartSeasonOnly(t *testing.T) {
 		ShowTitle:      "Test Show",
 		CurrentSeason:  1,
 		CurrentEpisode: 1,
-		LastAired:      time.Time{},
+		LastAired:      nil,
 	}
 
 	config := SeriesConfig{
@@ -1105,7 +1106,7 @@ func TestInitializeSeriesState_StartEpisodeOnly(t *testing.T) {
 		ShowTitle:      "Test Show",
 		CurrentSeason:  1,
 		CurrentEpisode: 1,
-		LastAired:      time.Time{},
+		LastAired:      nil,
 	}
 
 	config := SeriesConfig{
@@ -1129,7 +1130,7 @@ func TestInitializeSeriesState_NoStartConfig(t *testing.T) {
 		ShowTitle:      "Test Show",
 		CurrentSeason:  1,
 		CurrentEpisode: 1,
-		LastAired:      time.Time{},
+		LastAired:      nil,
 	}
 
 	config := SeriesConfig{

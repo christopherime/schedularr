@@ -27,12 +27,13 @@ func TestStore_SeriesState(t *testing.T) {
 	assert.False(t, state.Completed, "Expected not completed")
 
 	// 2. Update state
+	now := time.Now()
 	newState := &scheduler.SeriesState{
 		ShowTitle:      showTitle,
 		CurrentSeason:  2,
 		CurrentEpisode: 5,
 		Completed:      false,
-		LastAired:      time.Now(),
+		LastAired:      &now,
 	}
 	require.NoError(t, s.UpdateSeriesState(ctx, newState), "UpdateSeriesState failed")
 
@@ -41,7 +42,8 @@ func TestStore_SeriesState(t *testing.T) {
 	require.NoError(t, err, "GetSeriesState failed")
 	assert.Equal(t, 2, updatedState.CurrentSeason)
 	assert.Equal(t, 5, updatedState.CurrentEpisode)
-	assert.False(t, updatedState.LastAired.IsZero(), "Expected LastAired to be set")
+	assert.NotNil(t, updatedState.LastAired, "Expected LastAired to be set")
+	assert.False(t, updatedState.LastAired.IsZero(), "Expected LastAired to not be zero")
 
 	// 4. Mark completed
 	newState.Completed = true
@@ -115,27 +117,30 @@ func TestStore_ExportImportSeriesStates(t *testing.T) {
 	ctx := context.Background()
 
 	// Create some test states
+	t1 := time.Now().Add(-24 * time.Hour)
+	t2 := time.Now().Add(-12 * time.Hour)
+	t3 := time.Now().Add(-48 * time.Hour)
 	states := []scheduler.SeriesState{
 		{
 			ShowTitle:      "Show A",
 			CurrentSeason:  2,
 			CurrentEpisode: 5,
 			Completed:      false,
-			LastAired:      time.Now().Add(-24 * time.Hour),
+			LastAired:      &t1,
 		},
 		{
 			ShowTitle:      "Show B",
 			CurrentSeason:  1,
 			CurrentEpisode: 10,
 			Completed:      false,
-			LastAired:      time.Now().Add(-12 * time.Hour),
+			LastAired:      &t2,
 		},
 		{
 			ShowTitle:      "Show C",
 			CurrentSeason:  3,
 			CurrentEpisode: 1,
 			Completed:      true,
-			LastAired:      time.Now().Add(-48 * time.Hour),
+			LastAired:      &t3,
 		},
 	}
 
@@ -178,12 +183,13 @@ func TestStore_ResetSeriesState(t *testing.T) {
 	showTitle := "Test Show"
 
 	// Create a state with progress
+	now := time.Now()
 	state := &scheduler.SeriesState{
 		ShowTitle:      showTitle,
 		CurrentSeason:  3,
 		CurrentEpisode: 15,
 		Completed:      true,
-		LastAired:      time.Now(),
+		LastAired:      &now,
 	}
 	require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed")
 
@@ -197,7 +203,7 @@ func TestStore_ResetSeriesState(t *testing.T) {
 	assert.Equal(t, 1, resetState.CurrentSeason, "Expected season 1 after reset")
 	assert.Equal(t, 1, resetState.CurrentEpisode, "Expected episode 1 after reset")
 	assert.False(t, resetState.Completed, "Expected completed to be false after reset")
-	assert.True(t, resetState.LastAired.IsZero(), "Expected LastAired to be zero after reset")
+	assert.Nil(t, resetState.LastAired, "Expected LastAired to be nil after reset")
 }
 
 func TestStore_ImportSeriesStates_Empty(t *testing.T) {
@@ -308,12 +314,13 @@ func TestStore_GetSeriesState_MultipleShows(t *testing.T) {
 	}
 
 	for _, show := range shows {
+		now := time.Now()
 		state := &scheduler.SeriesState{
 			ShowTitle:      show.title,
 			CurrentSeason:  show.season,
 			CurrentEpisode: show.episode,
 			Completed:      false,
-			LastAired:      time.Now(),
+			LastAired:      &now,
 		}
 		require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed for %s", show.title)
 	}
@@ -378,12 +385,13 @@ func TestStore_Backup(t *testing.T) {
 	ctx := context.Background()
 
 	// Add some data
+	now := time.Now()
 	state := &scheduler.SeriesState{
 		ShowTitle:      "Test Show",
 		CurrentSeason:  2,
 		CurrentEpisode: 5,
 		Completed:      false,
-		LastAired:      time.Now(),
+		LastAired:      &now,
 	}
 	require.NoError(t, s.UpdateSeriesState(ctx, state), "UpdateSeriesState failed")
 

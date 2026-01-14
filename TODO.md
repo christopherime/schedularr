@@ -172,13 +172,16 @@ err := db.SelectContext(ctx, &states, query, args...)
 
 **Tasks**:
 
-- [ ] Add `github.com/jmoiron/sqlx` to go.mod
-- [ ] Refactor `GetAllSeriesStates` to use `Select`
-- [ ] Refactor `GetSeriesState` to use `Get`
-- [ ] Refactor `SaveSeriesState` to use `NamedExec`
-- [ ] Replace manual transaction handling with sqlx transactions
+- [x] Add `github.com/jmoiron/sqlx` to go.mod ✅
+- [x] Refactor `ExportAllSeriesStates` to use `SelectContext` ✅
+- [x] Refactor `GetSeriesState` to use `GetContext` ✅
+- [x] Refactor `UpdateSeriesState` to use `NamedExecContext` ✅
+- [x] Replace manual transaction handling with sqlx transactions (`BeginTxx`) ✅
+- [x] Add db tags to `ScheduleHistoryEntry` struct ✅
 
-**Estimated Impact**: ~100 lines removed, type-safe queries, less boilerplate
+**Actual Impact**: ~60 lines removed (339 → 279), cleaner struct-based queries
+
+**Status**: ✅ COMPLETE
 
 ---
 
@@ -288,7 +291,7 @@ func (c *Client) newRequest(ctx context.Context) *resty.Request {
 | Priority | Task                             | Lines Saved | Effort |
 | -------- | -------------------------------- | ----------- | ------ |
 | High     | 8.1 TUI Form Handling (huh)      | ~150        | Medium |
-| High     | 8.3 Database Layer (sqlx)        | ~100        | Medium |
+| High     | 8.3 Database Layer (sqlx) ✅     | ~60         | Medium |
 | Medium   | 8.2 In-Memory Cache              | ~80         | Low    |
 | Medium   | 8.5 Cron Builder Extraction      | ~100        | Medium |
 | Low      | 8.4 History Tracker              | ~50         | Low    |

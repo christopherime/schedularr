@@ -716,7 +716,7 @@ func (m Model) renderSeriesProgress() string {
 
 		// Format last aired
 		lastAired := "Never"
-		if !state.LastAired.IsZero() {
+		if state.LastAired != nil && !state.LastAired.IsZero() {
 			lastAired = state.LastAired.Format("2006-01-02")
 		}
 

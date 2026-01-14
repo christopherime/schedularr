@@ -7,12 +7,12 @@ import (
 	"github.com/geekxflood/schedularr/internal/tunarr"
 )
 
-// ScheduleHistoryEntry represents a single program that was scheduled
+// ScheduleHistoryEntry represents a single program that was scheduled.
 type ScheduleHistoryEntry struct {
-	ProgramID   string
-	ChannelID   string
-	ScheduledAt time.Time
-	BlockName   string
+	ProgramID   string    `db:"program_id"`
+	ChannelID   string    `db:"channel_id"`
+	ScheduledAt time.Time `db:"scheduled_at"`
+	BlockName   string    `db:"block_name"`
 }
 
 // ScheduleHistory tracks what content has been scheduled to prevent repetition
