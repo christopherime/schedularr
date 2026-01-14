@@ -13,9 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/external/jellyfin"
+	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

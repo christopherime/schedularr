@@ -324,7 +324,6 @@ func (m *Model) startEditBlock(index int) {
 	m.createBlockForm()
 }
 
-
 func (m Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
@@ -671,7 +670,6 @@ func (m Model) updateCronBuilder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-
 
 // renderCronBuilder displays the interactive cron expression builder
 func (m Model) renderCronBuilder() string {

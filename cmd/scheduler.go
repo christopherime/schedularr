@@ -12,8 +12,8 @@ import (
 
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cueconfig"
-	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

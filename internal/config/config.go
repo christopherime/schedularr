@@ -10,9 +10,9 @@ import (
 
 	"github.com/geekxflood/schedularr/internal/external/jellyfin"
 	"github.com/geekxflood/schedularr/internal/external/radarr"
-	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/external/sonarr"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )

@@ -9,8 +9,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/metrics"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/geekxflood/schedularr/internal/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
 )

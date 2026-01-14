@@ -214,10 +214,10 @@ func TestCyclePrev(t *testing.T) {
 
 func TestAppendDigit(t *testing.T) {
 	tests := []struct {
-		name      string
-		initial   string
-		digit     string
-		expected  string
+		name     string
+		initial  string
+		digit    string
+		expected string
 	}{
 		{"append to wildcard", "*", "5", "5"},
 		{"append to empty", "", "3", "3"},
