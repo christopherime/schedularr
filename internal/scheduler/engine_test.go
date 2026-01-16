@@ -147,14 +147,14 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 			ID:       "prog1",
 			Title:    "Show A",
 			Duration: 1800000, // 30 minutes
-			Genres:   []string{"Comedy"},
+			Genres:   []tunarr.Genre{{Name: "Comedy"}},
 			Type:     "episode",
 		},
 		{
 			ID:       "prog2",
 			Title:    "Show B",
 			Duration: 1800000, // 30 minutes
-			Genres:   []string{"Comedy"},
+			Genres:   []tunarr.Genre{{Name: "Comedy"}},
 			Type:     "episode",
 		},
 	}
@@ -190,7 +190,7 @@ func TestPlanBlock_NoMatchingContent(t *testing.T) {
 			ID:       "prog1",
 			Title:    "Show A",
 			Duration: 1800000,
-			Genres:   []string{"Comedy"},
+			Genres:   []tunarr.Genre{{Name: "Comedy"}},
 			Type:     "episode",
 		},
 	}
@@ -276,16 +276,16 @@ func TestPlanBlock_Series(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "p1", Title: "Ep 1", ShowTitle: "Show A", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
-		{ID: "p2", Title: "Ep 2", ShowTitle: "Show A", Season: 1, Episode: 2, Duration: 1800000, Type: "episode"},
-		{ID: "p3", Title: "Ep 3", ShowTitle: "Show A", Season: 1, Episode: 3, Duration: 1800000, Type: "episode"},
+		{ID: "p1", Title: "Ep 1", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Ep 2", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1800000, Type: "episode"},
+		{ID: "p3", Title: "Ep 3", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1800000, Type: "episode"},
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
 	require.NoError(t, err, "PlanBlock returned error")
 	require.Len(t, playlist, 2, "Expected 2 episodes")
-	assert.Equal(t, 1, playlist[0].Episode, "Expected Ep 1")
-	assert.Equal(t, 2, playlist[1].Episode, "Expected Ep 2")
+	assert.Equal(t, 1, playlist[0].EpisodeNumber, "Expected Ep 1")
+	assert.Equal(t, 2, playlist[1].EpisodeNumber, "Expected Ep 2")
 
 	// Verify pending state
 	state, ok := engine.pendingStates["Show A"]
@@ -311,7 +311,7 @@ func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "p1", Title: "Other Show", ShowTitle: "Other Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+		{ID: "p1", Title: "Other Show", ShowTitle: "Other Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
@@ -352,7 +352,7 @@ func TestSeriesCompletion_Restart(t *testing.T) {
 
 	// No more episodes available - should trigger completion
 	availablePrograms := []tunarr.Program{
-		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
 	}
 
 	_, err := engine.PlanBlock(block, availablePrograms)
@@ -470,11 +470,11 @@ func TestSeriesEpisodeSkipping(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
-		{ID: "p2", Title: "Test Show S01E02", ShowTitle: "Test Show", Season: 1, Episode: 2, Duration: 1800000, Type: "episode"},
-		{ID: "p3", Title: "Test Show S01E03", ShowTitle: "Test Show", Season: 1, Episode: 3, Duration: 1800000, Type: "episode"},
-		{ID: "p4", Title: "Test Show S01E04", ShowTitle: "Test Show", Season: 1, Episode: 4, Duration: 1800000, Type: "episode"},
-		{ID: "p5", Title: "Test Show S01E05", ShowTitle: "Test Show", Season: 1, Episode: 5, Duration: 1800000, Type: "episode"},
+		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Test Show S01E02", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1800000, Type: "episode"},
+		{ID: "p3", Title: "Test Show S01E03", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1800000, Type: "episode"},
+		{ID: "p4", Title: "Test Show S01E04", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 4, Duration: 1800000, Type: "episode"},
+		{ID: "p5", Title: "Test Show S01E05", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 5, Duration: 1800000, Type: "episode"},
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)
@@ -483,9 +483,9 @@ func TestSeriesEpisodeSkipping(t *testing.T) {
 	// Should get E01, skip E02, get E03, get E05 (skipping E02 and E04)
 	require.Len(t, playlist, 3, "Expected 3 episodes (E01, E03, E05 - skipping E02 and E04)")
 
-	assert.Equal(t, 1, playlist[0].Episode, "Expected first episode to be E01")
-	assert.Equal(t, 3, playlist[1].Episode, "Expected second episode to be E03 (skipped E02)")
-	assert.Equal(t, 5, playlist[2].Episode, "Expected third episode to be E05 (skipped E04)")
+	assert.Equal(t, 1, playlist[0].EpisodeNumber, "Expected first episode to be E01")
+	assert.Equal(t, 3, playlist[1].EpisodeNumber, "Expected second episode to be E03 (skipped E02)")
+	assert.Equal(t, 5, playlist[2].EpisodeNumber, "Expected third episode to be E05 (skipped E04)")
 
 	state, ok := engine.pendingStates["Test Show"]
 	require.True(t, ok, "Expected pending state for Test Show")
@@ -520,7 +520,7 @@ func TestSeriesSkipDisabled(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000, Type: "episode"},
+		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
 	}
 
 	playlist, err := engine.PlanBlock(block, availablePrograms)

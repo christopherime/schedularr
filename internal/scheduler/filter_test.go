@@ -8,10 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func intPtr(i int) *int { return &i }
+
 func TestFilterPrograms(t *testing.T) {
 	programs := []tunarr.Program{
-		{Title: "Movie A", Year: 2000, Genres: []string{"Action"}, Duration: 6000000}, // 100 min
-		{Title: "Show B", Year: 2020, Genres: []string{"Comedy"}, Duration: 1800000},  // 30 min
+		{Title: "Movie A", Year: intPtr(2000), Genres: []tunarr.Genre{{Name: "Action"}}, Duration: 6000000}, // 100 min
+		{Title: "Show B", Year: intPtr(2020), Genres: []tunarr.Genre{{Name: "Comedy"}}, Duration: 1800000},  // 30 min
 	}
 
 	f := Filter{

@@ -27,8 +27,10 @@ const (
 	AuthNone AuthType = iota
 	// AuthXAPIKey uses X-API-Key header (Tunarr, Radarr, Sonarr).
 	AuthXAPIKey
-	// AuthXEmbyToken uses X-Emby-Token header (Jellyfin).
+	// AuthXEmbyToken uses X-Emby-Token header (Jellyfin legacy/Emby compatibility).
 	AuthXEmbyToken
+	// AuthJellyfinAuthorization uses Authorization header with MediaBrowser token (Jellyfin official).
+	AuthJellyfinAuthorization
 )
 
 // Config holds the configuration for creating a new HTTP client.
@@ -92,6 +94,9 @@ func (c *Client) addAuthHeader(_ *resty.Client, req *resty.Request) error {
 		req.SetHeader("X-API-Key", c.apiKey)
 	case AuthXEmbyToken:
 		req.SetHeader("X-Emby-Token", c.apiKey)
+	case AuthJellyfinAuthorization:
+		// Jellyfin official API uses Authorization header with MediaBrowser token format
+		req.SetHeader("Authorization", "MediaBrowser Token=\""+c.apiKey+"\"")
 	}
 	return nil
 }

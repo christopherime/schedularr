@@ -53,7 +53,7 @@ func (sh *ScheduleHistory) RecordScheduled(programID, channelID, blockName strin
 // RecordPrograms records multiple programs as scheduled
 func (sh *ScheduleHistory) RecordPrograms(programs []tunarr.Program, channelID, blockName string, scheduledAt time.Time) {
 	for _, p := range programs {
-		sh.RecordScheduled(p.ID, channelID, blockName, scheduledAt)
+		sh.RecordScheduled(p.GetID(), channelID, blockName, scheduledAt)
 	}
 }
 
@@ -159,7 +159,7 @@ func (sh *ScheduleHistory) FilterByHistory(programs []tunarr.Program, channelID 
 
 	var filtered []tunarr.Program
 	for _, p := range programs {
-		if !sh.WasRecentlyScheduled(p.ID, channelID) {
+		if !sh.WasRecentlyScheduled(p.GetID(), channelID) {
 			filtered = append(filtered, p)
 		}
 	}

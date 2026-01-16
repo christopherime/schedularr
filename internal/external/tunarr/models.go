@@ -54,6 +54,10 @@ type Program struct {
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`
 	EpisodeNumber int    `json:"episodeNumber,omitempty"`
 
+	// ShowTitle is populated internally for series scheduling.
+	// Not part of Tunarr API - must be set from Show.Title when needed.
+	ShowTitle string `json:"-"`
+
 	// Source information
 	SourceType    string `json:"sourceType,omitempty"` // plex, jellyfin, emby, local
 	MediaSourceID string `json:"mediaSourceId,omitempty"`

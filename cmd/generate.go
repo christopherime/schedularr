@@ -310,8 +310,8 @@ func displayChannelSchedule(channelID string, slots []scheduler.ScheduledSlot) c
 				fmtDuration(program.Duration),
 				typeStyle.Render(program.Type),
 				program.ShowTitle,
-				program.Season,
-				program.Episode,
+				program.SeasonNumber,
+				program.EpisodeNumber,
 			})
 
 			currentTime = programEndTime

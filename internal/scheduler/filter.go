@@ -32,7 +32,7 @@ func matchesFilter(p tunarr.Program, f Filter, titleRegex *regexp.Regexp) bool {
 		return false
 	}
 
-	if len(f.Genres) > 0 && !containsAnyIgnoreCase(p.Genres, f.Genres) {
+	if len(f.Genres) > 0 && !containsAnyIgnoreCase(p.GetGenreNames(), f.Genres) {
 		return false
 	}
 
@@ -40,7 +40,7 @@ func matchesFilter(p tunarr.Program, f Filter, titleRegex *regexp.Regexp) bool {
 		return false
 	}
 
-	if !matchesYearRange(p.Year, f.YearFrom, f.YearTo) {
+	if !matchesYearRange(p.GetYear(), f.YearFrom, f.YearTo) {
 		return false
 	}
 

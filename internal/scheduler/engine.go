@@ -574,7 +574,7 @@ func (e *Engine) getSeriesState(title string) (*SeriesState, error) {
 func findEpisode(programs []tunarr.Program, title string, season, episode int) *tunarr.Program {
 	for i := range programs {
 		p := &programs[i]
-		if p.Type == "episode" && p.ShowTitle == title && p.Season == season && p.Episode == episode {
+		if p.Type == "episode" && p.ShowTitle == title && p.SeasonNumber == season && p.EpisodeNumber == episode {
 			return p
 		}
 	}
@@ -590,7 +590,7 @@ func makeHistoryEntries(programs []tunarr.Program, channelID, blockName string, 
 	entries := make([]ScheduleHistoryEntry, 0, len(programs))
 	for _, program := range programs {
 		entries = append(entries, ScheduleHistoryEntry{
-			ProgramID:   program.ID,
+			ProgramID:   program.GetID(),
 			ChannelID:   channelID,
 			BlockName:   blockName,
 			ScheduledAt: scheduledAt,
@@ -605,14 +605,15 @@ func (e *Engine) filterByHistory(programs []tunarr.Program, channelID string) []
 	ctx := context.Background()
 
 	for _, program := range programs {
-		if e.history.WasRecentlyScheduled(program.ID, channelID) {
+		programID := program.GetID()
+		if e.history.WasRecentlyScheduled(programID, channelID) {
 			continue
 		}
 		if e.store != nil {
-			recent, err := e.store.WasRecentlyScheduled(ctx, program.ID, channelID, window)
+			recent, err := e.store.WasRecentlyScheduled(ctx, programID, channelID, window)
 			if err != nil {
 				e.logger.Warn("failed to check schedule history",
-					"program_id", program.ID,
+					"program_id", programID,
 					"channel_id", channelID,
 					"error", err)
 			} else if recent {
@@ -631,10 +632,10 @@ func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Progr
 		return nil, errors.New("no filler list ID specified")
 	}
 
-	// Fetch filler content from the specified list
-	fillerContent, err := e.client.GetFillerContent(context.Background(), block.Filler.FillerListID)
+	// Fetch filler programs from the specified list
+	fillerContent, err := e.client.GetFillerPrograms(context.Background(), block.Filler.FillerListID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch filler content: %w", err)
+		return nil, fmt.Errorf("failed to fetch filler programs: %w", err)
 	}
 
 	if len(fillerContent) == 0 {
