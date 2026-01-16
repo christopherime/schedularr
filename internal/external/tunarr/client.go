@@ -41,6 +41,7 @@ func validateProgram(p *Program) error {
 }
 
 // GetChannels retrieves all channels from the Tunarr instance.
+// GET /api/channels
 func (c *Client) GetChannels(ctx context.Context) ([]Channel, error) {
 	const endpoint = "/api/channels"
 	const method = http.MethodGet
@@ -65,19 +66,26 @@ func (c *Client) GetChannels(ctx context.Context) ([]Channel, error) {
 	return channels, nil
 }
 
-// GetPrograms retrieves all available programs from the Tunarr instance.
-func (c *Client) GetPrograms(ctx context.Context) ([]Program, error) {
-	const endpoint = "/api/programs"
+// GetChannelPrograms retrieves all programs for a specific channel.
+// GET /api/channels/{id}/programs
+func (c *Client) GetChannelPrograms(ctx context.Context, channelID string) ([]Program, error) {
+	const endpoint = "/api/channels/{id}/programs"
 	const method = http.MethodGet
 
 	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
 	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
 	defer timer.ObserveDuration()
 
+	if channelID == "" {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_channel_id").Inc()
+		return nil, errors.New("channel ID cannot be empty")
+	}
+
+	path := "/api/channels/" + channelID + "/programs"
 	var programs []Program
-	if err := c.http.Get(ctx, endpoint, &programs); err != nil {
+	if err := c.http.Get(ctx, path, &programs); err != nil {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to get programs: %w", err)
+		return nil, fmt.Errorf("failed to get programs for channel %s: %w", channelID, err)
 	}
 
 	for i := range programs {
@@ -90,10 +98,11 @@ func (c *Client) GetPrograms(ctx context.Context) ([]Program, error) {
 	return programs, nil
 }
 
-// UpdateSchedule updates the programming schedule for a specific channel.
-func (c *Client) UpdateSchedule(ctx context.Context, channelID string, schedule []Program) error {
-	const endpoint = "/api/channels/schedule"
-	const method = http.MethodPost
+// GetChannelShows retrieves all TV shows for a specific channel.
+// GET /api/channels/{id}/shows
+func (c *Client) GetChannelShows(ctx context.Context, channelID string) ([]Show, error) {
+	const endpoint = "/api/channels/{id}/shows"
+	const method = http.MethodGet
 
 	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
 	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
@@ -101,160 +110,112 @@ func (c *Client) UpdateSchedule(ctx context.Context, channelID string, schedule 
 
 	if channelID == "" {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_channel_id").Inc()
-		return errors.New("channel ID cannot be empty")
+		return nil, errors.New("channel ID cannot be empty")
 	}
 
-	for i := range schedule {
-		if err := validateProgram(&schedule[i]); err != nil {
-			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "program_validation_error").Inc()
-			return fmt.Errorf("invalid program in schedule at index %d: %w", i, err)
-		}
-	}
-
-	path := "/api/channels/" + channelID + "/schedule"
-	if err := c.http.Post(ctx, path, schedule, nil); err != nil {
-		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return fmt.Errorf("failed to update schedule for channel %s: %w", channelID, err)
-	}
-
-	return nil
-}
-
-// GetLibraries retrieves all available media libraries from connected servers.
-func (c *Client) GetLibraries(ctx context.Context) ([]Library, error) {
-	const endpoint = "/api/libraries"
-	const method = http.MethodGet
-
-	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
-	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
-	defer timer.ObserveDuration()
-
-	var libraries []Library
-	if err := c.http.Get(ctx, endpoint, &libraries); err != nil {
-		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to get libraries: %w", err)
-	}
-
-	return libraries, nil
-}
-
-// GetLibraryPrograms retrieves all programs from a specific library.
-func (c *Client) GetLibraryPrograms(ctx context.Context, libraryID string) ([]Program, error) {
-	const endpoint = "/api/libraries/{libraryID}/programs"
-	const method = http.MethodGet
-
-	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
-	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
-	defer timer.ObserveDuration()
-
-	if libraryID == "" {
-		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_library_id").Inc()
-		return nil, errors.New("library ID cannot be empty")
-	}
-
-	path := "/api/libraries/" + libraryID + "/programs"
-	var programs []Program
-	if err := c.http.Get(ctx, path, &programs); err != nil {
-		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to get programs from library %s: %w", libraryID, err)
-	}
-
-	for i := range programs {
-		if err := validateProgram(&programs[i]); err != nil {
-			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
-			return nil, fmt.Errorf("invalid program in library response: %w", err)
-		}
-	}
-
-	return programs, nil
-}
-
-// GetShows retrieves all TV shows from the connected media servers.
-func (c *Client) GetShows(ctx context.Context) ([]Show, error) {
-	const endpoint = "/api/shows"
-	const method = http.MethodGet
-
-	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
-	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
-	defer timer.ObserveDuration()
-
+	path := "/api/channels/" + channelID + "/shows"
 	var shows []Show
-	if err := c.http.Get(ctx, endpoint, &shows); err != nil {
+	if err := c.http.Get(ctx, path, &shows); err != nil {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to get shows: %w", err)
+		return nil, fmt.Errorf("failed to get shows for channel %s: %w", channelID, err)
 	}
 
 	return shows, nil
 }
 
-// GetShowEpisodes retrieves episodes for a specific show.
-// If season is 0, all episodes are returned. Otherwise, only episodes from that season.
-func (c *Client) GetShowEpisodes(ctx context.Context, showID string, season int) ([]Program, error) {
-	const endpoint = "/api/shows/{showID}/episodes"
+// GetMediaSources retrieves all connected media sources (Plex/Jellyfin/Emby).
+// GET /api/media-sources
+func (c *Client) GetMediaSources(ctx context.Context) ([]MediaSource, error) {
+	const endpoint = "/api/media-sources"
 	const method = http.MethodGet
 
 	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
 	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
 	defer timer.ObserveDuration()
 
-	if showID == "" {
-		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_show_id").Inc()
-		return nil, errors.New("show ID cannot be empty")
-	}
-
-	path := "/api/shows/" + showID + "/episodes"
-	if season > 0 {
-		path = fmt.Sprintf("%s?season=%d", path, season)
-	}
-
-	var episodes []Program
-	if err := c.http.Get(ctx, path, &episodes); err != nil {
+	var sources []MediaSource
+	if err := c.http.Get(ctx, endpoint, &sources); err != nil {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to get episodes for show %s: %w", showID, err)
+		return nil, fmt.Errorf("failed to get media sources: %w", err)
 	}
 
-	for i := range episodes {
-		if err := validateProgram(&episodes[i]); err != nil {
-			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
-			return nil, fmt.Errorf("invalid episode in response: %w", err)
-		}
-	}
-
-	return episodes, nil
+	return sources, nil
 }
 
-// SearchPrograms searches for programs by title.
-func (c *Client) SearchPrograms(ctx context.Context, query string) ([]Program, error) {
-	const endpoint = "/api/programs/search"
+// GetLibraries retrieves all libraries for a specific media source.
+// GET /api/media-sources/{id}/libraries
+func (c *Client) GetLibraries(ctx context.Context, mediaSourceID string) ([]Library, error) {
+	const endpoint = "/api/media-sources/{id}/libraries"
 	const method = http.MethodGet
 
 	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
 	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
 	defer timer.ObserveDuration()
 
-	if query == "" {
-		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "empty_query").Inc()
-		return nil, errors.New("search query cannot be empty")
+	if mediaSourceID == "" {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_media_source_id").Inc()
+		return nil, errors.New("media source ID cannot be empty")
 	}
 
-	path := "/api/programs/search?q=" + query
-	var programs []Program
-	if err := c.http.Get(ctx, path, &programs); err != nil {
+	path := "/api/media-sources/" + mediaSourceID + "/libraries"
+	var libraries []Library
+	if err := c.http.Get(ctx, path, &libraries); err != nil {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to search programs with query '%s': %w", query, err)
+		return nil, fmt.Errorf("failed to get libraries for media source %s: %w", mediaSourceID, err)
 	}
 
-	for i := range programs {
-		if err := validateProgram(&programs[i]); err != nil {
+	return libraries, nil
+}
+
+// SearchPrograms searches for programs using the Tunarr search API.
+// POST /api/programs/search
+func (c *Client) SearchPrograms(ctx context.Context, req ProgramSearchRequest) (*ProgramSearchResponse, error) {
+	const endpoint = "/api/programs/search"
+	const method = http.MethodPost
+
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
+	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
+	defer timer.ObserveDuration()
+
+	var response ProgramSearchResponse
+	if err := c.http.Post(ctx, endpoint, req, &response); err != nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
+		return nil, fmt.Errorf("failed to search programs: %w", err)
+	}
+
+	for i := range response.Results {
+		if err := validateProgram(&response.Results[i]); err != nil {
 			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
 			return nil, fmt.Errorf("invalid program in search results: %w", err)
 		}
 	}
 
-	return programs, nil
+	return &response, nil
+}
+
+// SearchProgramsByTitle is a convenience method to search programs by title.
+func (c *Client) SearchProgramsByTitle(ctx context.Context, title string) ([]Program, error) {
+	if title == "" {
+		return nil, errors.New("search title cannot be empty")
+	}
+
+	req := ProgramSearchRequest{
+		Query: &ProgramSearchQuery{
+			Query: title,
+		},
+		Limit: 100,
+	}
+
+	resp, err := c.SearchPrograms(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Results, nil
 }
 
 // GetFillerLists retrieves all available filler content lists.
+// GET /api/filler-lists
 func (c *Client) GetFillerLists(ctx context.Context) ([]FillerList, error) {
 	const endpoint = "/api/filler-lists"
 	const method = http.MethodGet
@@ -272,9 +233,10 @@ func (c *Client) GetFillerLists(ctx context.Context) ([]FillerList, error) {
 	return fillerLists, nil
 }
 
-// GetFillerContent retrieves programs from a specific filler list.
-func (c *Client) GetFillerContent(ctx context.Context, fillerListID string) ([]Program, error) {
-	const endpoint = "/api/filler-lists/{fillerListID}/content"
+// GetFillerPrograms retrieves programs from a specific filler list.
+// GET /api/filler-lists/{id}/programs
+func (c *Client) GetFillerPrograms(ctx context.Context, fillerListID string) ([]Program, error) {
+	const endpoint = "/api/filler-lists/{id}/programs"
 	const method = http.MethodGet
 
 	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
@@ -286,19 +248,138 @@ func (c *Client) GetFillerContent(ctx context.Context, fillerListID string) ([]P
 		return nil, errors.New("filler list ID cannot be empty")
 	}
 
-	path := "/api/filler-lists/" + fillerListID + "/content"
+	path := "/api/filler-lists/" + fillerListID + "/programs"
 	var programs []Program
 	if err := c.http.Get(ctx, path, &programs); err != nil {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to get filler content for list %s: %w", fillerListID, err)
+		return nil, fmt.Errorf("failed to get filler programs for list %s: %w", fillerListID, err)
 	}
 
 	for i := range programs {
 		if err := validateProgram(&programs[i]); err != nil {
 			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
-			return nil, fmt.Errorf("invalid program in filler content: %w", err)
+			return nil, fmt.Errorf("invalid program in filler programs: %w", err)
 		}
 	}
 
 	return programs, nil
+}
+
+// GetChannelSchedule retrieves the current schedule for a channel.
+// GET /api/channels/{id}/schedule
+func (c *Client) GetChannelSchedule(ctx context.Context, channelID string) ([]Program, error) {
+	const endpoint = "/api/channels/{id}/schedule"
+	const method = http.MethodGet
+
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
+	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
+	defer timer.ObserveDuration()
+
+	if channelID == "" {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_channel_id").Inc()
+		return nil, errors.New("channel ID cannot be empty")
+	}
+
+	path := "/api/channels/" + channelID + "/schedule"
+	var schedule []Program
+	if err := c.http.Get(ctx, path, &schedule); err != nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
+		return nil, fmt.Errorf("failed to get schedule for channel %s: %w", channelID, err)
+	}
+
+	return schedule, nil
+}
+
+// UpdateScheduleTimeSlots updates the programming schedule for a channel using time slots.
+// POST /api/channels/{channelId}/schedule-time-slots
+func (c *Client) UpdateScheduleTimeSlots(ctx context.Context, channelID string, schedule *TimeBasedSchedule) error {
+	const endpoint = "/api/channels/{channelId}/schedule-time-slots"
+	const method = http.MethodPost
+
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
+	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
+	defer timer.ObserveDuration()
+
+	if channelID == "" {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_channel_id").Inc()
+		return errors.New("channel ID cannot be empty")
+	}
+
+	if schedule == nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_schedule").Inc()
+		return errors.New("schedule cannot be nil")
+	}
+
+	req := ScheduleRequest{Schedule: schedule}
+	path := "/api/channels/" + channelID + "/schedule-time-slots"
+	if err := c.http.Post(ctx, path, req, nil); err != nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
+		return fmt.Errorf("failed to update schedule for channel %s: %w", channelID, err)
+	}
+
+	return nil
+}
+
+// GetChannelLineup retrieves the lineup (schedule) for a channel.
+// GET /api/channels/{id}/lineup
+func (c *Client) GetChannelLineup(ctx context.Context, channelID string) ([]Program, error) {
+	const endpoint = "/api/channels/{id}/lineup"
+	const method = http.MethodGet
+
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
+	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
+	defer timer.ObserveDuration()
+
+	if channelID == "" {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_channel_id").Inc()
+		return nil, errors.New("channel ID cannot be empty")
+	}
+
+	path := "/api/channels/" + channelID + "/lineup"
+	var lineup []Program
+	if err := c.http.Get(ctx, path, &lineup); err != nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
+		return nil, fmt.Errorf("failed to get lineup for channel %s: %w", channelID, err)
+	}
+
+	return lineup, nil
+}
+
+// Deprecated method aliases for backward compatibility.
+// These will be removed in a future version.
+
+// GetPrograms is deprecated. Use GetChannelPrograms instead.
+// This method now returns an error as the /api/programs endpoint does not exist.
+func (c *Client) GetPrograms(ctx context.Context) ([]Program, error) {
+	return nil, errors.New("GetPrograms is deprecated: /api/programs endpoint does not exist in Tunarr API; use GetChannelPrograms(channelID) or SearchPrograms() instead")
+}
+
+// GetLibraryPrograms is deprecated. Use GetChannelPrograms or SearchPrograms instead.
+// The /api/libraries/{id}/programs endpoint does not exist in Tunarr API.
+func (c *Client) GetLibraryPrograms(ctx context.Context, libraryID string) ([]Program, error) {
+	return nil, errors.New("GetLibraryPrograms is deprecated: /api/libraries/{id}/programs endpoint does not exist in Tunarr API; use GetChannelPrograms(channelID) or SearchPrograms() instead")
+}
+
+// GetShows is deprecated. Use GetChannelShows instead.
+// The /api/shows endpoint does not exist in Tunarr API.
+func (c *Client) GetShows(ctx context.Context) ([]Show, error) {
+	return nil, errors.New("GetShows is deprecated: /api/shows endpoint does not exist in Tunarr API; use GetChannelShows(channelID) instead")
+}
+
+// GetShowEpisodes is deprecated. Use SearchPrograms instead.
+// The /api/shows/{id}/episodes endpoint does not exist in Tunarr API.
+func (c *Client) GetShowEpisodes(ctx context.Context, showID string, season int) ([]Program, error) {
+	return nil, errors.New("GetShowEpisodes is deprecated: /api/shows/{id}/episodes endpoint does not exist in Tunarr API; use SearchPrograms() instead")
+}
+
+// UpdateSchedule is deprecated. Use UpdateScheduleTimeSlots instead.
+// The POST /api/channels/{id}/schedule endpoint does not accept a program array.
+func (c *Client) UpdateSchedule(ctx context.Context, channelID string, schedule []Program) error {
+	return errors.New("UpdateSchedule is deprecated: use UpdateScheduleTimeSlots() with a TimeBasedSchedule instead")
+}
+
+// GetFillerContent is deprecated. Use GetFillerPrograms instead.
+// The endpoint path was incorrect (/content vs /programs).
+func (c *Client) GetFillerContent(ctx context.Context, fillerListID string) ([]Program, error) {
+	return c.GetFillerPrograms(ctx, fillerListID)
 }
