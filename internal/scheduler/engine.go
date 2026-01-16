@@ -281,9 +281,9 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	})
 
 	for _, p := range candidates {
-		if currentDuration+p.Duration <= allowedDurationWithOverflow {
+		if currentDuration+p.GetDurationMs() <= allowedDurationWithOverflow {
 			playlist = append(playlist, p)
-			currentDuration += p.Duration
+			currentDuration += p.GetDurationMs()
 			metrics.ProgramsScheduledTotal.WithLabelValues(block.ChannelID, block.Name, p.Type).Inc()
 		} else {
 			break
@@ -308,7 +308,7 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 				"block_name", block.Name)
 			playlist = append(playlist, fillerPrograms...)
 			for _, f := range fillerPrograms {
-				currentDuration += f.Duration
+				currentDuration += f.GetDurationMs()
 			}
 		}
 	}
@@ -386,9 +386,9 @@ func (e *Engine) planSeriesForConfig(block Block, seriesConf SeriesConfig, avail
 			break
 		}
 
-		if currentDuration+ep.Duration <= allowedDurationWithOverflow {
+		if currentDuration+ep.GetDurationMs() <= allowedDurationWithOverflow {
 			playlist = append(playlist, *ep)
-			currentDuration += ep.Duration
+			currentDuration += ep.GetDurationMs()
 			state.CurrentEpisode++
 			now := time.Now()
 			state.LastAired = &now
@@ -532,9 +532,9 @@ func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Pro
 	})
 
 	for _, p := range candidates {
-		if currentDuration+p.Duration <= targetDuration {
+		if currentDuration+p.GetDurationMs() <= targetDuration {
 			playlist = append(playlist, p)
-			currentDuration += p.Duration
+			currentDuration += p.GetDurationMs()
 		}
 		if currentDuration >= targetDuration {
 			break
@@ -558,7 +558,7 @@ func (e *Engine) applyBlockFiller(block Block, playlist []tunarr.Program, curren
 
 	playlist = append(playlist, fillerPrograms...)
 	for _, filler := range fillerPrograms {
-		currentDuration += filler.Duration
+		currentDuration += filler.GetDurationMs()
 	}
 
 	return playlist, currentDuration
@@ -661,9 +661,9 @@ func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Progr
 
 	// Fill remaining time with filler content
 	for _, f := range fillerContent {
-		if fillerDuration+f.Duration <= maxFillerDuration {
+		if fillerDuration+f.GetDurationMs() <= maxFillerDuration {
 			fillerPlaylist = append(fillerPlaylist, f)
-			fillerDuration += f.Duration
+			fillerDuration += f.GetDurationMs()
 		}
 		if fillerDuration >= maxFillerDuration {
 			break

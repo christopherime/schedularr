@@ -5,41 +5,47 @@ package schema
 	// Tunarr connection configuration
 	tunarr: #TunarrConfig
 
-	// Optional Radarr connection configuration
-	radarr?: #RadarrConfig
+	// Radarr connection configuration
+	radarr: #RadarrConfig
 
-	// Optional Sonarr connection configuration
-	sonarr?: #SonarrConfig
+	// Sonarr connection configuration
+	sonarr: #SonarrConfig
 
-	// Optional Jellyfin connection configuration
-	jellyfin?: #JellyfinConfig
+	// Jellyfin connection configuration
+	jellyfin: #JellyfinConfig
 
 	// Logging configuration
 	log: #LogConfig
 
-	// Optional path to SQLite database file (defaults to ~/.schedularr.db)
-	database?: string
+	// Port for Prometheus metrics endpoint
+	metrics_port: int | *9090
 
-	// Optional path to external scheduler configuration file
-	scheduler_file?: string
+	// Path to SQLite database file
+	database: string | *"schedularr.db"
+
+	// Path to external scheduler configuration file
+	scheduler_file: string | *"scheduler.yaml"
 
 	// Inline scheduler configuration (legacy support)
 	scheduler?: #SchedulerConfig
 
-	// Optional content caching configuration
+	// Content caching configuration
 	cache: #CacheConfig
+
+	// Maintenance configuration for background tasks
+	maintenance: #MaintenanceConfig
 }
 
 // TunarrConfig defines the Tunarr API connection settings
 #TunarrConfig: {
 	// Tunarr API base URL
-	url: string | *"http://localhost:8000"
+	url: string | *"${SCHEDULARR_TUNARR_URL}"
 
-	// Optional API key for authentication
-	api_key?: string
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_TUNARR_API_KEY}"
 
 	// Request timeout duration
-	timeout?: string | *"10s"
+	timeout: string | *"30s"
 }
 
 // CacheConfig defines content caching settings
@@ -54,40 +60,40 @@ package schema
 // RadarrConfig defines the Radarr API connection settings
 #RadarrConfig: {
 	// Radarr API base URL
-	url: string
+	url: string | *"${SCHEDULARR_RADARR_URL}"
 
-	// Optional API key for authentication
-	api_key?: string
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_RADARR_API_KEY}"
 
 	// Exclude movies that are missing files on disk
-	exclude_missing_file?: bool | *true
+	exclude_missing_file: bool | *true
 }
 
 // SonarrConfig defines the Sonarr API connection settings
 #SonarrConfig: {
 	// Sonarr API base URL
-	url: string
+	url: string | *"${SCHEDULARR_SONARR_URL}"
 
-	// Optional API key for authentication
-	api_key?: string
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_SONARR_API_KEY}"
 
 	// Exclude episodes that are missing files on disk
-	exclude_missing_file?: bool | *true
+	exclude_missing_file: bool | *true
 }
 
 // JellyfinConfig defines the Jellyfin API connection settings
 #JellyfinConfig: {
 	// Jellyfin API base URL
-	url: string
+	url: string | *"${SCHEDULARR_JELLYFIN_URL}"
 
-	// Optional API key for authentication
-	api_key?: string
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_JELLYFIN_API_KEY}"
 
-	// Optional user ID for user-scoped endpoints
-	user_id?: string
+	// User ID for user-scoped endpoints
+	user_id: string | *""
 
 	// Whether to refresh the Live TV guide after schedule apply
-	sync_live_tv?: bool | *false
+	sync_live_tv: bool | *true
 }
 
 // LogConfig defines logging settings
@@ -97,6 +103,21 @@ package schema
 
 	// Log format: text or json
 	format: "text" | "json" | *"text"
+
+	// IANA Time Zone name (e.g., "America/New_York", "UTC", "Local")
+	timezone: string | *"Local"
+}
+
+// MaintenanceConfig defines background maintenance task settings
+#MaintenanceConfig: {
+	// How often to run cleanup tasks (e.g., "24h")
+	cleanup_interval: string | *"24h"
+
+	// How long to keep schedule history (e.g., "168h" for 7 days)
+	history_retention: string | *"168h"
+
+	// Whether to enable automatic cleanup
+	cleanup_enabled: bool | *true
 }
 
 // SchedulerConfig defines the scheduling configuration
@@ -197,17 +218,5 @@ package schema
 	filler_filter?: #Filter
 }
 
-// Default configuration instance
-config: #Config & {
-	tunarr: {
-		url: "http://localhost:8000"
-	}
-	log: {
-		level:  "info"
-		format: "text"
-	}
-	cache: {
-		cache_dir:      "/tmp/schedularr_cache"
-		cache_duration: "1h"
-	}
-}
+// Default configuration instance - all defaults come from type definitions
+config: #Config

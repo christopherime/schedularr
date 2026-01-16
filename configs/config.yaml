@@ -1,1 +1,37 @@
 ---
+tunarr:
+  url: ${SCHEDULARR_BASE_URL_TUNARR}
+
+radarr:
+  url: ${SCHEDULARR_BASE_URL_RADARR}
+  api_key: ${SCHEDULARR_API_KEY_RADARR}
+  exclude_missing_file: true
+
+sonarr:
+  url: ${SCHEDULARR_BASE_URL_SONARR}
+  api_key: ${SCHEDULARR_API_KEY_SONARR}
+  exclude_missing_file: true
+
+jellyfin:
+  url: ${SCHEDULARR_BASE_URL_JELLYFIN}
+  api_key: ${SCHEDULARR_API_KEY_JELLYFIN}
+  sync_live_tv: true
+
+log:
+  level: info
+  format: text
+  timezone: Local
+  log_file: schedularr.log
+
+metrics_port: 9090
+database: schedularr.db
+scheduler_file: scheduler.yaml
+
+cache:
+  cache_dir: /tmp/schedularr_cache
+  cache_duration: 1h
+
+maintenance:
+  cleanup_interval: 24h
+  history_retention: 168h
+  cleanup_enabled: true

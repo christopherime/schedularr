@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -56,25 +58,72 @@ func init() {
 	rootCmd.AddCommand(healthCmd) // Add health command to root
 }
 
-// initConfig reads in config file and ENV variables if set
+// initConfig reads in config file and ENV variables if set.
+// Supports ${VAR_NAME} syntax for environment variable interpolation in config files.
 func initConfig() {
-	if cfgFile != "" {
-		// Use config file from the flag
-		viper.SetConfigFile(cfgFile)
-	} else {
-		// Find home directory
-		home, err := os.UserHomeDir()
-		cobra.CheckErr(err)
-
-		// Search config in home directory and current directory
-		viper.AddConfigPath(home)
-		viper.AddConfigPath(".")
-		viper.SetConfigType("yaml")
-		viper.SetConfigName(".schedularr")
-	}
-
 	viper.AutomaticEnv() // read in environment variables that match
 
-	// If a config file is found, read it in (silently)
-	_ = viper.ReadInConfig()
+	configPath := cfgFile
+	if configPath == "" {
+		// Try to find config in default locations
+		configPath = findConfigFile()
+	}
+
+	if configPath != "" {
+		// Read config file with environment variable interpolation
+		if err := readConfigWithEnvInterpolation(configPath); err != nil {
+			// Silently ignore missing config files
+			return
+		}
+	}
+}
+
+// findConfigFile searches for config file in default locations.
+func findConfigFile() string {
+	// Check current directory first
+	if _, err := os.Stat("config.yaml"); err == nil {
+		return "config.yaml"
+	}
+	if _, err := os.Stat(".schedularr.yaml"); err == nil {
+		return ".schedularr.yaml"
+	}
+
+	// Check home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	homePath := filepath.Join(home, ".schedularr.yaml")
+	if _, err := os.Stat(homePath); err == nil {
+		return homePath
+	}
+
+	return ""
+}
+
+// readConfigWithEnvInterpolation reads a config file and expands ${VAR_NAME} references.
+func readConfigWithEnvInterpolation(configPath string) error {
+	// Read the raw config file
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Expand environment variables using ${VAR_NAME} syntax
+	expanded := os.ExpandEnv(string(data))
+
+	// Set config type based on extension
+	ext := filepath.Ext(configPath)
+	switch ext {
+	case ".json":
+		viper.SetConfigType("json")
+	case ".yaml", ".yml":
+		viper.SetConfigType("yaml")
+	default:
+		viper.SetConfigType("yaml")
+	}
+
+	// Read expanded config into Viper
+	return viper.ReadConfig(bytes.NewBufferString(expanded))
 }

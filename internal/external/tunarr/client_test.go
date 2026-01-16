@@ -580,10 +580,10 @@ func TestValidateProgram(t *testing.T) {
 			program: Program{
 				ID:       "prog-6",
 				Title:    "Test",
-				Duration: 0,
+				Duration: 0, // Zero duration is valid (for placeholder content)
 				Type:     "movie",
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "Negative duration",

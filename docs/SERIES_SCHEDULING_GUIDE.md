@@ -2,29 +2,6 @@
 
 This guide provides a comprehensive tutorial on how to use Schedularr's series-based scheduling feature, covering configuration, behavior, and best practices.
 
-## Table of Contents
-
-- [Schedularr Series Scheduling Guide](#schedularr-series-scheduling-guide)
-  - [Table of Contents](#table-of-contents)
-  - [1. Introduction](#1-introduction)
-  - [2. Series Block Configuration](#2-series-block-configuration)
-    - [Multiple Series per Block](#multiple-series-per-block)
-    - [Initial Progression (`start_season`, `start_episode`)](#initial-progression-start_season-start_episode)
-    - [Completion Actions (`on_complete`)](#completion-actions-on_complete)
-    - [Maximum Runs (`max_runs`)](#maximum-runs-max_runs)
-    - [Skipping Episodes (`skip_episodes`)](#skipping-episodes-skip_episodes)
-    - [Flexible Duration (`max_duration_overflow_minutes`)](#flexible-duration-max_duration_overflow_minutes)
-  - [3. Fallback Strategies](#3-fallback-strategies)
-    - [Redistribute Mode (`mode: "redistribute"`)](#redistribute-mode-mode-redistribute)
-    - [Filler Mode (`mode: "filler"`)](#filler-mode-mode-filler)
-  - [4. Filler Content for Gaps](#4-filler-content-for-gaps)
-  - [5. State Management](#5-state-management)
-  - [6. Examples](#6-examples)
-    - [Basic Series Marathon](#basic-series-marathon)
-    - [Daily Series Continuation with Filler](#daily-series-continuation-with-filler)
-    - [Thematic Block with Multiple Series](#thematic-block-with-multiple-series)
-  - [7. Best Practices](#7-best-practices)
-
 ## 1. Introduction
 
 Schedularr's series-based blocks allow you to automate the scheduling of TV show episodes in sequential order. Unlike filter-based blocks which randomly select content, series blocks intelligently track your progress through a show, ensuring episodes are played in the correct sequence. This is ideal for marathons, daily show schedules, or thematic programming that spans multiple series.

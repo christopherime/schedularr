@@ -32,9 +32,6 @@ package schema
 	// Tunarr API base URL
 	url: string | *"http://localhost:8000"
 
-	// Optional API key for authentication
-	api_key?: string
-
 	// Request timeout duration
 	timeout?: string | *"10s"
 }
@@ -42,7 +39,7 @@ package schema
 // RadarrConfig defines the Radarr API connection settings
 #RadarrConfig: {
 	// Radarr API base URL
-	url: string
+	url: string | *"http://localhost:8000"
 
 	// Optional API key for authentication
 	api_key?: string
@@ -177,15 +174,4 @@ package schema
 
 	// Filler filter (used when mode="filler")
 	filler_filter?: #Filter
-}
-
-// Default configuration instance
-config: #Config & {
-	tunarr: {
-		url: "http://localhost:8000"
-	}
-	log: {
-		level:  "info"
-		format: "text"
-	}
 }

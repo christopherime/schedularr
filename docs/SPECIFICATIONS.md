@@ -2,17 +2,6 @@
 
 This document defines the detailed specifications for Schedularr's configuration format, block types, filter criteria, and operational behavior.
 
-## Table of Contents
-
-1. [Configuration Format](#configuration-format)
-2. [Block Types](#block-types)
-3. [Filter Criteria](#filter-criteria)
-4. [Cron Expression Format](#cron-expression-format)
-5. [Series Progression](#series-progression)
-6. [Filler Content](#filler-content)
-7. [Priority and Conflict Resolution](#priority-and-conflict-resolution)
-8. [Schedule History](#schedule-history)
-
 ## Configuration Format
 
 Schedularr uses two separate configuration files:

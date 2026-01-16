@@ -156,6 +156,64 @@ func (v *SchemaValidator) GenerateConfig(format string) ([]byte, error) {
 	}
 }
 
+// GenerateConfigWithOverrides generates a configuration file with optional overrides.
+// Overrides are applied as nested map paths (e.g., {"tunarr": {"url": "http://..."}}).
+func (v *SchemaValidator) GenerateConfigWithOverrides(format string, overrides map[string]interface{}) ([]byte, error) {
+	// Compile the schema
+	schemaValue := v.ctx.CompileString(configSchema)
+	if schemaValue.Err() != nil {
+		return nil, fmt.Errorf("failed to compile schema: %w", schemaValue.Err())
+	}
+
+	// Get the default config instance
+	defaultConfig := schemaValue.LookupPath(cue.ParsePath("config"))
+	if defaultConfig.Err() != nil {
+		return nil, fmt.Errorf("failed to get default config: %w", defaultConfig.Err())
+	}
+
+	// Convert to map for manipulation
+	var configData map[string]interface{}
+	if err := defaultConfig.Decode(&configData); err != nil {
+		return nil, fmt.Errorf("failed to decode config: %w", err)
+	}
+
+	// Apply overrides by merging maps
+	mergeMap(configData, overrides)
+
+	// Convert to requested format
+	switch format {
+	case "yaml", "yml":
+		return yaml.Marshal(configData)
+	case "json":
+		return json.MarshalIndent(configData, "", "  ")
+	default:
+		return nil, fmt.Errorf("unsupported format: %s", format)
+	}
+}
+
+// mergeMap recursively merges src into dst, overwriting existing values.
+func mergeMap(dst, src map[string]interface{}) {
+	for key, srcVal := range src {
+		if srcMap, ok := srcVal.(map[string]interface{}); ok {
+			// Source value is a map - need to recursively merge
+			if dstVal, exists := dst[key]; exists {
+				if dstMap, ok := dstVal.(map[string]interface{}); ok {
+					// Destination also has a map - merge recursively
+					mergeMap(dstMap, srcMap)
+					continue
+				}
+			}
+			// Destination doesn't have this key or it's not a map - create new map
+			newMap := make(map[string]interface{})
+			mergeMap(newMap, srcMap)
+			dst[key] = newMap
+		} else {
+			// Simple value - just overwrite
+			dst[key] = srcVal
+		}
+	}
+}
+
 // GenerateScheduler generates a scheduler configuration file from the schema with defaults
 func (v *SchemaValidator) GenerateScheduler(format string) ([]byte, error) {
 	// Compile the schema

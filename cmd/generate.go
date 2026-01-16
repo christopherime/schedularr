@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/avast/retry-go/v4"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
+	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/geekxflood/schedularr/internal/external/jellyfin"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/geekxflood/schedularr/internal/scheduler"
@@ -27,6 +29,16 @@ var (
 	schedulerFile string
 	dryRun        bool
 	verbose       bool
+
+	// Flags for generate config subcommand
+	configOutputPath      string
+	genTunarrURL          string
+	genTunarrAPIKey       string
+	genLogLevel           string
+	genLogFormat          string
+	genJellyfinURL        string
+	genJellyfinAPIKey     string
+	genJellyfinSyncLiveTV bool
 )
 
 // Color styles
@@ -46,10 +58,15 @@ var (
 
 var generateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Generate schedule based on rules",
-	Long: `Generate programming schedules based on configured blocks.
+	Short: "Generate schedule or configuration files",
+	Long: `Generate programming schedules or configuration files.
 
-This command:
+Subcommands:
+  config    Generate a configuration file from CUE schema
+
+Without a subcommand, generates programming schedules based on configured blocks.
+
+Schedule generation:
 1. Fetches available content from Tunarr libraries
 2. Applies filtering rules from each block
 3. Generates optimized schedules with conflict resolution
@@ -69,6 +86,109 @@ Use --verbose for detailed output including filtering and history.`,
 			os.Exit(1)
 		}
 	},
+}
+
+var generateConfigCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Generate application configuration file from CUE schema",
+	Long: `Generate an application configuration file from the embedded CUE schema with defaults.
+
+The generated file will contain all configuration options with their default values
+extracted from the CUE schema. Output format (YAML/JSON) is determined by file extension.
+
+You can override default values using flags.
+
+Examples:
+  schedularr generate config --output config.yaml
+  schedularr generate config --output my-config.json --tunarr-url "http://my-tunarr:8000"
+  schedularr generate config -o config.yaml --log-level debug`,
+	Run: func(_ *cobra.Command, _ []string) {
+		if configOutputPath == "" {
+			_, _ = fmt.Fprintf(os.Stderr, "%s --output flag is required\n", errorStyle.Render("✗ Error:"))
+			os.Exit(1)
+		}
+
+		// Check if file already exists
+		if _, err := os.Stat(configOutputPath); err == nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s File %s already exists. Remove it first or choose a different name.\n",
+				errorStyle.Render("✗ Error:"), configOutputPath)
+			os.Exit(1)
+		}
+
+		// Determine format from extension
+		ext := strings.ToLower(filepath.Ext(configOutputPath))
+		format := "yaml"
+		if ext == ".json" {
+			format = "json"
+		}
+
+		// Build overrides map from flags (only include non-empty values)
+		overrides := buildConfigOverrides()
+
+		// Generate from CUE schema with overrides
+		validator := cueconfig.NewValidator()
+		data, err := validator.GenerateConfigWithOverrides(format, overrides)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error generating config:"), err)
+			os.Exit(1)
+		}
+
+		if err := os.WriteFile(configOutputPath, data, 0o600); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error creating file:"), err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("%s %s\n", successStyle.Render("✓ Created configuration file:"), configOutputPath)
+		fmt.Printf("Format: %s\n", format)
+		fmt.Printf("\nEdit this file to configure Schedularr, then use:\n")
+		fmt.Printf("  schedularr --config %s <command>\n", configOutputPath)
+	},
+}
+
+// buildConfigOverrides constructs a nested map of config overrides from command flags.
+func buildConfigOverrides() map[string]interface{} {
+	overrides := make(map[string]interface{})
+
+	// Tunarr overrides
+	tunarrOverrides := make(map[string]interface{})
+	if genTunarrURL != "" {
+		tunarrOverrides["url"] = genTunarrURL
+	}
+	if genTunarrAPIKey != "" {
+		tunarrOverrides["api_key"] = genTunarrAPIKey
+	}
+	if len(tunarrOverrides) > 0 {
+		overrides["tunarr"] = tunarrOverrides
+	}
+
+	// Log overrides
+	logOverrides := make(map[string]interface{})
+	if genLogLevel != "" {
+		logOverrides["level"] = genLogLevel
+	}
+	if genLogFormat != "" {
+		logOverrides["format"] = genLogFormat
+	}
+	if len(logOverrides) > 0 {
+		overrides["log"] = logOverrides
+	}
+
+	// Jellyfin overrides
+	jellyfinOverrides := make(map[string]interface{})
+	if genJellyfinURL != "" {
+		jellyfinOverrides["url"] = genJellyfinURL
+	}
+	if genJellyfinAPIKey != "" {
+		jellyfinOverrides["api_key"] = genJellyfinAPIKey
+	}
+	if genJellyfinSyncLiveTV {
+		jellyfinOverrides["sync_livetv"] = genJellyfinSyncLiveTV
+	}
+	if len(jellyfinOverrides) > 0 {
+		overrides["jellyfin"] = jellyfinOverrides
+	}
+
+	return overrides
 }
 
 // ProcessSchedule generates and optionally applies the schedule.
@@ -299,7 +419,7 @@ func displayChannelSchedule(channelID string, slots []scheduler.ScheduledSlot) c
 	for _, slot := range slots {
 		currentTime := slot.StartTime
 		for _, program := range slot.Programs {
-			programEndTime := currentTime.Add(time.Duration(program.Duration) * time.Millisecond)
+			programEndTime := currentTime.Add(time.Duration(program.GetDurationMs()) * time.Millisecond)
 			typeStyle := stats.incrementType(program.Type)
 
 			t.AppendRow(table.Row{
@@ -307,7 +427,7 @@ func displayChannelSchedule(channelID string, slots []scheduler.ScheduledSlot) c
 				programEndTime.Format("15:04"),
 				slot.Block.Name,
 				program.Title,
-				fmtDuration(program.Duration),
+				fmtDuration(program.GetDurationMs()),
 				typeStyle.Render(program.Type),
 				program.ShowTitle,
 				program.SeasonNumber,
@@ -315,7 +435,7 @@ func displayChannelSchedule(channelID string, slots []scheduler.ScheduledSlot) c
 			})
 
 			currentTime = programEndTime
-			stats.totalDuration += program.Duration
+			stats.totalDuration += program.GetDurationMs()
 			stats.programCount++
 		}
 	}
@@ -401,7 +521,7 @@ func displayDryRunSummary(plan map[string][]tunarr.Program) {
 		// Calculate total duration
 		totalDuration := int64(0)
 		for _, p := range programs {
-			totalDuration += p.Duration
+			totalDuration += p.GetDurationMs()
 		}
 		fmt.Printf("     Total duration: %s\n", infoStyle.Render(fmtDuration(totalDuration)))
 
@@ -492,6 +612,24 @@ func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) erro
 
 func init() {
 	rootCmd.AddCommand(generateCmd)
+
+	// Flags for schedule generation (default behavior)
 	generateCmd.Flags().BoolVar(&apply, "apply", false, "Apply generated schedule to Tunarr channels")
 	generateCmd.Flags().StringVar(&schedulerFile, "scheduler", "", "Path to scheduler config file (default: scheduler.yaml)")
+	generateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview schedule without applying changes")
+	generateCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output including filtering and history")
+
+	// Add config subcommand
+	generateCmd.AddCommand(generateConfigCmd)
+
+	// Flags for generate config subcommand
+	generateConfigCmd.Flags().StringVarP(&configOutputPath, "output", "o", "", "Output file path (required)")
+	generateConfigCmd.Flags().StringVar(&genTunarrURL, "tunarr-url", "", "Override default Tunarr API URL")
+	generateConfigCmd.Flags().StringVar(&genTunarrAPIKey, "tunarr-api-key", "", "Override default Tunarr API Key")
+	generateConfigCmd.Flags().StringVar(&genLogLevel, "log-level", "", "Override default log level (debug, info, warn, error)")
+	generateConfigCmd.Flags().StringVar(&genLogFormat, "log-format", "", "Override default log format (text, json)")
+	generateConfigCmd.Flags().StringVar(&genJellyfinURL, "jellyfin-url", "", "Override default Jellyfin API URL")
+	generateConfigCmd.Flags().StringVar(&genJellyfinAPIKey, "jellyfin-api-key", "", "Override default Jellyfin API Key")
+	generateConfigCmd.Flags().BoolVar(&genJellyfinSyncLiveTV, "jellyfin-sync-livetv", false, "Enable Jellyfin Live TV sync")
+	_ = generateConfigCmd.MarkFlagRequired("output")
 }

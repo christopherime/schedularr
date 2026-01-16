@@ -166,7 +166,7 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 	// Check total duration
 	var totalDuration int64
 	for _, p := range playlist {
-		totalDuration += p.Duration
+		totalDuration += p.GetDurationMs()
 	}
 
 	// Should be 60 minutes (3600000 ms)
@@ -758,7 +758,7 @@ func TestGetFiller_Success(t *testing.T) {
 
 	totalDuration := int64(0)
 	for _, f := range filler {
-		totalDuration += f.Duration
+		totalDuration += f.GetDurationMs()
 	}
 
 	assert.LessOrEqual(t, totalDuration, int64(1800000), "Filler duration exceeds requested")
@@ -856,7 +856,7 @@ func TestGetFiller_MaxFillerTime(t *testing.T) {
 
 	totalDuration := int64(0)
 	for _, f := range filler {
-		totalDuration += f.Duration
+		totalDuration += f.GetDurationMs()
 	}
 
 	// Should not exceed 10 minutes (600000 ms)

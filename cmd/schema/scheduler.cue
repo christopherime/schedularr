@@ -97,28 +97,3 @@ package schema
 	// Filler filter (used when mode="filler")
 	filler_filter?: #Filter
 }
-
-// Example scheduler configuration with defaults
-scheduler: #SchedulerFile & {
-	blocks: [
-		{
-			type:       "filter"
-			name:       "Morning Cartoons"
-			cron:       "0 6 * * *"
-			duration:   240
-			channel_id: "channel-1"
-			priority:   10
-			filter: {
-				genres:       ["Animation", "Family"]
-				max_duration: 30
-				ratings:      ["TV-Y", "TV-G"]
-				year_from:    2000
-			}
-		},
-	]
-	settings: {
-		rotation_window_days: 7
-		min_gap_minutes:      5
-		max_filler_minutes:   30
-	}
-}

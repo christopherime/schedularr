@@ -2,14 +2,6 @@
 
 This document describes Schedularr's system architecture, including component interactions, data flow, and design patterns adopted from the athena project.
 
-## Table of Contents
-
-1. [System Overview](#system-overview)
-2. [Architecture Diagram](#architecture-diagram)
-3. [Component Details](#component-details)
-4. [Data Flow](#data-flow)
-5. [Athena Project Patterns](#athena-project-patterns)
-
 ## System Overview
 
 Schedularr is an intelligent automation tool for Tunarr TV channel programming. It uses cron-based scheduling to automatically generate and apply content schedules based on user-defined rules (blocks). The system handles content filtering, series progression tracking, conflict resolution, and gap filling to create optimal channel lineups.
@@ -25,92 +17,58 @@ Schedularr is an intelligent automation tool for Tunarr TV channel programming. 
 
 ## Architecture Diagram
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│                         User Interface                           │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐  ┌────────────────┐ │
-│  │   CLI    │  │   TUI    │  │  Config   │  │   Validate     │ │
-│  │ Commands │  │  Editor  │  │ Generate  │  │   Command      │ │
-│  └────┬─────┘  └────┬─────┘  └─────┬─────┘  └──────┬─────────┘ │
-└───────┼─────────────┼──────────────┼────────────────┼───────────┘
-        │             │              │                │
-        ▼             ▼              ▼                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Configuration Layer                           │
-│  ┌────────────────────┐          ┌───────────────────────────┐  │
-│  │  config.yaml       │          │  scheduler.yaml           │  │
-│  │  ─────────────     │          │  ─────────────────        │  │
-│  │  - tunarr.url      │          │  blocks:                  │  │
-│  │  - tunarr.api_key  │◄────────►│  - name: "Block A"        │  │
-│  │  - log.level       │  Loaded  │    cron: "0 6 * * *"      │  │
-│  │  - log.format      │    by    │    duration: 240          │  │
-│  └────────────────────┘  Viper   │    filter: {...}          │  │
-│           │                       └───────────────────────────┘  │
-│           │ Validated by CUE Schema                              │
-│           ▼                                                      │
-│  ┌────────────────────┐                                         │
-│  │  CUE Validator     │                                         │
-│  │  ───────────────   │                                         │
-│  │  - config.cue      │                                         │
-│  │  - scheduler.cue   │                                         │
-│  └────────────────────┘                                         │
-└─────────────────────────────────────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Scheduling Engine                            │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Engine (engine.go)                                        │ │
-│  │  ──────────────────                                        │ │
-│  │  • GenerateForTimeRange() - Main entry point              │ │
-│  │  • PlanBlock() - Process single scheduling block          │ │
-│  │  • PlanSeriesBlock() - Handle series progression          │ │
-│  │  • ResolveConflicts() - Handle overlapping blocks         │ │
-│  │  • GetFiller() - Fill time gaps with filler content       │ │
-│  └────────┬─────────────────────────────────┬─────────────────┘ │
-│           │                                 │                   │
-│           ▼                                 ▼                   │
-│  ┌────────────────┐              ┌────────────────────────┐    │
-│  │ Filter Engine  │              │  Schedule History      │    │
-│  │ ─────────────  │              │  ────────────────      │    │
-│  │ • FilterPrograms()            │  • Track recent plays  │    │
-│  │ • Genre filter │              │  • Prevent repeats     │    │
-│  │ • Rating filter│              │  • 7-day window        │    │
-│  │ • Duration     │              └────────────────────────┘    │
-│  │ • Year range   │                                            │
-│  │ • Title regex  │                                            │
-│  └────────────────┘                                            │
-└───────┬─────────────────────────────┬──────────────────────────┘
-        │                             │
-        ▼                             ▼
-┌─────────────────────┐   ┌──────────────────────────────────────┐
-│   State Store       │   │      Tunarr API Client               │
-│   ─────────────     │   │      ─────────────────               │
-│   SQLite Database   │   │  ┌────────────────────────────────┐  │
-│                     │   │  │  Client (client.go)            │  │
-│  ┌──────────────┐   │   │  │  ──────────────               │  │
-│  │ Series State │   │   │  │  • GetChannels()              │  │
-│  │ ────────────│   │   │  │  • GetPrograms()              │  │
-│  │ - show_id    │   │   │  │  • GetLibraries()             │  │
-│  │ - season     │   │   │  │  • GetLibraryPrograms()       │  │
-│  │ - episode    │   │   │  │  • GetShowEpisodes()          │  │
-│  │ - last_used  │   │   │  │  • UpdateSchedule()           │  │
-│  └──────────────┘   │   │  │  • SearchPrograms()           │  │
-│                     │   │  │  • GetFillerContent()         │  │
-└─────────────────────┘   │  └────────┬───────────────────────┘  │
-                          │           │ HTTP + Retry Logic       │
-                          └───────────┼──────────────────────────┘
-                                      │
-                                      ▼
-                          ┌──────────────────────────┐
-                          │    Tunarr Instance       │
-                          │    ────────────────      │
-                          │    REST API Server       │
-                          │    - Channels            │
-                          │    - Programs            │
-                          │    - Libraries (Plex/    │
-                          │      Jellyfin/Emby)      │
-                          └──────────────────────────┘
+```mermaid
+graph TB
+  subgraph UI["User Interface"]
+    CLI["CLI Commands"]
+    TUI["TUI Editor"]
+    ConfigGen["Config Generate"]
+    Validate["Validate Command"]
+  end
+
+  subgraph ConfigLayer["Configuration Layer"]
+    ConfigYAML["config.yaml<br/>- tunarr.url<br/>- tunarr.api_key<br/>- log.level<br/>- log.format"]
+    SchedulerYAML["scheduler.yaml<br/>blocks:<br/>- name: Block A<br/>- cron: 0 6 * * *<br/>- duration: 240<br/>- filter: {...}"]
+    CUEValidator["CUE Validator<br/>- config.cue<br/>- scheduler.cue"]
+
+    ConfigYAML <-->|"Loaded by Viper"| SchedulerYAML
+    ConfigYAML --> CUEValidator
+    SchedulerYAML --> CUEValidator
+  end
+
+  subgraph Engine["Scheduling Engine"]
+    EngineCore["Engine (engine.go)<br/>• GenerateForTimeRange()<br/>• PlanBlock()<br/>• PlanSeriesBlock()<br/>• ResolveConflicts()<br/>• GetFiller()"]
+    FilterEngine["Filter Engine<br/>• FilterPrograms()<br/>• Genre filter<br/>• Rating filter<br/>• Duration<br/>• Year range<br/>• Title regex"]
+    History["Schedule History<br/>• Track recent plays<br/>• Prevent repeats<br/>• 7-day window"]
+
+    EngineCore --> FilterEngine
+    EngineCore --> History
+  end
+
+  subgraph StateStore["State Store"]
+    SQLite["SQLite Database<br/>Series State:<br/>- show_id<br/>- season<br/>- episode<br/>- last_used"]
+  end
+
+  subgraph TunarrClient["Tunarr API Client"]
+    Client["Client (client.go)<br/>• GetChannels()<br/>• GetPrograms()<br/>• GetLibraries()<br/>• GetLibraryPrograms()<br/>• GetShowEpisodes()<br/>• UpdateSchedule()<br/>• SearchPrograms()<br/>• GetFillerContent()"]
+    HTTP["HTTP + Retry Logic"]
+
+    Client --> HTTP
+  end
+
+  subgraph Tunarr["Tunarr Instance"]
+    TunarrAPI["REST API Server<br/>- Channels<br/>- Programs<br/>- Libraries (Plex/<br/>  Jellyfin/Emby)"]
+  end
+
+  CLI --> ConfigLayer
+  TUI --> ConfigLayer
+  ConfigGen --> ConfigLayer
+  Validate --> ConfigLayer
+
+  ConfigLayer --> Engine
+  Engine --> StateStore
+  Engine --> TunarrClient
+  HTTP --> Tunarr
 ```
 
 ## Component Details

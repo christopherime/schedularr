@@ -33,18 +33,18 @@ type Program struct {
 	// UUID is the primary identifier in newer API responses
 	UUID string `json:"uuid,omitempty"`
 
-	Title    string `json:"title" validate:"required"`
-	Year     *int   `json:"year,omitempty"`
-	Summary  string `json:"summary,omitempty"`
-	Duration int64  `json:"duration" validate:"gt=0"` // in milliseconds
-	Rating   string `json:"rating,omitempty"`
-	Icon     string `json:"icon,omitempty"`
+	Title    string  `json:"title" validate:"required"`
+	Year     *int    `json:"year,omitempty"`
+	Summary  string  `json:"summary,omitempty"`
+	Duration float64 `json:"duration" validate:"gte=0"` // in milliseconds (float from Tunarr API, 0 for placeholders)
+	Rating   string  `json:"rating,omitempty"`
+	Icon     string  `json:"icon,omitempty"`
 
 	// Genres can be simple strings or objects depending on the endpoint
 	Genres []Genre `json:"genres,omitempty"`
 
-	// Type: movie, episode, track, music_video, other_video, redirect, custom, flex
-	Type string `json:"type" validate:"omitempty,oneof=movie episode track music_video other_video redirect custom flex content"`
+	// Type: movie, episode, track, music_video, other_video, redirect, custom, flex, show (Tunarr may return others)
+	Type string `json:"type" validate:"omitempty,oneof=movie episode track music_video other_video redirect custom flex content show"`
 	// Subtype is used in filler content: movie, episode, track, music_video, other_video
 	Subtype string `json:"subtype,omitempty"`
 
@@ -80,6 +80,12 @@ func (p *Program) GetYear() int {
 		return *p.Year
 	}
 	return 0
+}
+
+// GetDurationMs returns the duration in milliseconds as int64.
+// Tunarr API returns duration as float64 for precision.
+func (p *Program) GetDurationMs() int64 {
+	return int64(p.Duration)
 }
 
 // GetGenreNames returns a slice of genre names for filtering.

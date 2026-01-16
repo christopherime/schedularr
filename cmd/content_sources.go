@@ -34,9 +34,9 @@ func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.
 	programs := fetchTunarrContent(tunarrClient, contentCache)
 
 	if len(programs) == 0 {
-		fmt.Println(warnStyle.Render("⚠ No content available - using fallback GetPrograms()"))
+		fmt.Println(warnStyle.Render("⚠ No content available from libraries - using fallback SearchPrograms()"))
 		var err error
-		programs, err = tunarrClient.GetPrograms(context.Background())
+		programs, err = fetchAllProgramsViaSearch(tunarrClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch programs: %w", err)
 		}
@@ -131,19 +131,70 @@ func fetchSingleLibrary(client *tunarr.Client, lib tunarr.Library) []tunarr.Prog
 		fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
 	}
 
-	programs, err := client.GetLibraryPrograms(context.Background(), lib.ID)
-	if err != nil {
-		if verbose {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
+	// Use SearchPrograms with library ID to get programs from this library
+	var allPrograms []tunarr.Program
+	page := 1
+	limit := 100
+
+	for {
+		req := tunarr.ProgramSearchRequest{
+			Query:     &tunarr.ProgramSearchQuery{}, // API requires query object
+			LibraryID: lib.ID,
+			Page:      page,
+			Limit:     limit,
 		}
-		return nil
+
+		resp, err := client.SearchPrograms(context.Background(), req)
+		if err != nil {
+			if verbose {
+				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
+			}
+			return nil
+		}
+
+		allPrograms = append(allPrograms, resp.Results...)
+
+		// Check if we've fetched all programs
+		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
+			break
+		}
+		page++
 	}
 
 	if verbose {
-		fmt.Printf("    ✓ %d programs\n", len(programs))
+		fmt.Printf("    ✓ %d programs\n", len(allPrograms))
 	}
 
-	return programs
+	return allPrograms
+}
+
+func fetchAllProgramsViaSearch(client *tunarr.Client) ([]tunarr.Program, error) {
+	var allPrograms []tunarr.Program
+	page := 1
+	limit := 100
+
+	for {
+		req := tunarr.ProgramSearchRequest{
+			Query: &tunarr.ProgramSearchQuery{}, // API requires query object
+			Page:  page,
+			Limit: limit,
+		}
+
+		resp, err := client.SearchPrograms(context.Background(), req)
+		if err != nil {
+			return nil, err
+		}
+
+		allPrograms = append(allPrograms, resp.Results...)
+
+		// Check if we've fetched all programs
+		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
+			break
+		}
+		page++
+	}
+
+	return allPrograms, nil
 }
 
 func saveTunarrCache(contentCache *cache.Cache, allPrograms []tunarr.Program) {
