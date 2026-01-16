@@ -98,8 +98,8 @@ func (p *Program) GetGenreNames() []string {
 type Library struct {
 	ID            string `json:"id" validate:"required"`
 	Name          string `json:"name" validate:"required"`
-	MediaType     string `json:"mediaType"`     // movies, shows, music_videos, other_videos, tracks
-	Type          string `json:"type"`          // plex, jellyfin, emby, local
+	MediaType     string `json:"mediaType"` // movies, shows, music_videos, other_videos, tracks
+	Type          string `json:"type"`      // plex, jellyfin, emby, local
 	Enabled       bool   `json:"enabled"`
 	ExternalKey   string `json:"externalKey,omitempty"`
 	LastScannedAt int64  `json:"lastScannedAt,omitempty"`

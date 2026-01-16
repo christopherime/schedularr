@@ -562,8 +562,8 @@ func TestGenerateForTimeRange(t *testing.T) {
 	engine := NewEngine(client, blocks, store, slog.Default(), time.UTC)
 
 	availablePrograms := []tunarr.Program{
-		{ID: "p1", Title: "Comedy Show", Genres: []string{"Comedy"}, Duration: 1800000, Type: "episode"},
-		{ID: "p2", Title: "Drama Show", Genres: []string{"Drama"}, Duration: 3600000, Type: "episode"},
+		{ID: "p1", Title: "Comedy Show", Genres: []tunarr.Genre{{Name: "Comedy"}}, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Drama Show", Genres: []tunarr.Genre{{Name: "Drama"}}, Duration: 3600000, Type: "episode"},
 	}
 
 	// Test a 24-hour period
@@ -637,8 +637,8 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 	engine := NewEngine(client, blocks, store, slog.Default(), time.UTC)
 
 	availablePrograms := []tunarr.Program{
-		{ID: "p1", Title: "Comedy Show", Genres: []string{"Comedy"}, Duration: 1800000, Type: "episode"},
-		{ID: "p2", Title: "Drama Show", Genres: []string{"Drama"}, Duration: 1800000, Type: "episode"},
+		{ID: "p1", Title: "Comedy Show", Genres: []tunarr.Genre{{Name: "Comedy"}}, Duration: 1800000, Type: "episode"},
+		{ID: "p2", Title: "Drama Show", Genres: []tunarr.Genre{{Name: "Drama"}}, Duration: 1800000, Type: "episode"},
 	}
 
 	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
@@ -728,7 +728,7 @@ func TestFilterByHistory(t *testing.T) {
 func TestGetFiller_Success(t *testing.T) {
 	// Create a test server that returns filler content
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/filler-lists/filler-1/content", r.URL.Path, "unexpected path")
+		assert.Equal(t, "/api/filler-lists/filler-1/programs", r.URL.Path, "unexpected path")
 		fillerContent := []tunarr.Program{
 			{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"},  // 5 min
 			{ID: "f2", Title: "Filler 2", Duration: 600000, Type: "track"},  // 10 min
@@ -954,8 +954,8 @@ func TestApplySeriesFallback_FillerMode(t *testing.T) {
 	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
 
 	availablePrograms := []tunarr.Program{
-		{ID: "f1", Title: "Filler Show", Duration: 600000, Type: "episode", Genres: []string{"Comedy"}},
-		{ID: "f2", Title: "Another Filler", Duration: 600000, Type: "episode", Genres: []string{"Comedy"}},
+		{ID: "f1", Title: "Filler Show", Duration: 600000, Type: "episode", Genres: []tunarr.Genre{{Name: "Comedy"}}},
+		{ID: "f2", Title: "Another Filler", Duration: 600000, Type: "episode", Genres: []tunarr.Genre{{Name: "Comedy"}}},
 	}
 
 	block := Block{
@@ -1221,9 +1221,9 @@ func TestFindNextSeriesEpisode_FindsCurrent(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
-		{ID: "e2", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 2, Duration: 1800000},
-		{ID: "e3", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 3, Duration: 1800000},
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000},
+		{ID: "e2", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1800000},
+		{ID: "e3", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1800000},
 	}
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
@@ -1249,10 +1249,10 @@ func TestFindNextSeriesEpisode_SkipsEpisodes(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
-		{ID: "e2", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 2, Duration: 1800000},
-		{ID: "e3", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 3, Duration: 1800000},
-		{ID: "e4", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 4, Duration: 1800000},
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000},
+		{ID: "e2", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1800000},
+		{ID: "e3", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1800000},
+		{ID: "e4", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 4, Duration: 1800000},
 	}
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
@@ -1278,9 +1278,9 @@ func TestFindNextSeriesEpisode_AdvancesToNextSeason(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
-		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 1, Duration: 1800000},
-		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 2, Duration: 1800000},
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000},
+		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 1, Duration: 1800000},
+		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 2, Duration: 1800000},
 	}
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
@@ -1308,8 +1308,8 @@ func TestFindNextSeriesEpisode_MarksCompleteWhenNoneFound(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
-		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 1, Duration: 1800000},
+		{ID: "e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000},
+		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 1, Duration: 1800000},
 	}
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
@@ -1335,9 +1335,9 @@ func TestFindNextSeriesEpisode_SkipsFirstEpisodeOfNewSeason(t *testing.T) {
 	}
 
 	availablePrograms := []tunarr.Program{
-		{ID: "s1e1", Type: "episode", ShowTitle: "Test Show", Season: 1, Episode: 1, Duration: 1800000},
-		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 1, Duration: 1800000},
-		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", Season: 2, Episode: 2, Duration: 1800000},
+		{ID: "s1e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000},
+		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 1, Duration: 1800000},
+		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 2, Duration: 1800000},
 	}
 
 	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
