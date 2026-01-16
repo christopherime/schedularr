@@ -6,10 +6,10 @@
     "duration": 1320000,
     "year": 2005,
     "rating": "TV-14",
-    "genres": ["Comedy"],
+    "genres": [{"name": "Comedy"}],
     "showTitle": "The Office",
-    "season": 1,
-    "episode": 1
+    "seasonNumber": 1,
+    "episodeNumber": 1
   },
   {
     "id": "prog-11",
@@ -18,10 +18,10 @@
     "duration": 1320000,
     "year": 2005,
     "rating": "TV-14",
-    "genres": ["Comedy"],
+    "genres": [{"name": "Comedy"}],
     "showTitle": "The Office",
-    "season": 1,
-    "episode": 2
+    "seasonNumber": 1,
+    "episodeNumber": 2
   },
   {
     "id": "prog-12",
@@ -30,10 +30,10 @@
     "duration": 1320000,
     "year": 2009,
     "rating": "TV-PG",
-    "genres": ["Comedy"],
+    "genres": [{"name": "Comedy"}],
     "showTitle": "Parks and Recreation",
-    "season": 1,
-    "episode": 1
+    "seasonNumber": 1,
+    "episodeNumber": 1
   },
   {
     "id": "prog-13",
@@ -42,10 +42,10 @@
     "duration": 1320000,
     "year": 2013,
     "rating": "TV-14",
-    "genres": ["Comedy", "Crime"],
+    "genres": [{"name": "Comedy"}, {"name": "Crime"}],
     "showTitle": "Brooklyn Nine-Nine",
-    "season": 1,
-    "episode": 1
+    "seasonNumber": 1,
+    "episodeNumber": 1
   },
   {
     "id": "prog-14",
@@ -54,9 +54,9 @@
     "duration": 1320000,
     "year": 1994,
     "rating": "TV-PG",
-    "genres": ["Comedy", "Romance"],
+    "genres": [{"name": "Comedy"}, {"name": "Romance"}],
     "showTitle": "Friends",
-    "season": 1,
-    "episode": 1
+    "seasonNumber": 1,
+    "episodeNumber": 1
   }
 ]

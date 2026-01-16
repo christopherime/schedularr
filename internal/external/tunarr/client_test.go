@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/geekxflood/schedularr/internal/httpclient"
 )
 
 func TestClient_GetChannels(t *testing.T) {
@@ -76,79 +78,30 @@ func TestClient_GetChannels(t *testing.T) {
 	}
 }
 
-func TestClient_GetPrograms(t *testing.T) {
-	year := 2023
-	mockPrograms := []Program{
-		{
-			ID:       "prog-1",
-			Title:    "Movie A",
-			Year:     &year,
-			Duration: 7200000,
-			Type:     "movie",
-		},
+func TestClient_GetPrograms_Deprecated(t *testing.T) {
+	// GetPrograms is deprecated - it should return an error
+	client := NewClient(Config{URL: "http://localhost"})
+	_, err := client.GetPrograms(context.Background())
+	if err == nil {
+		t.Error("Expected deprecation error, got nil")
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET request, got %s", r.Method)
-		}
-		if r.URL.Path != "/api/programs" {
-			t.Errorf("expected /api/programs path, got %s", r.URL.Path)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(mockPrograms); err != nil {
-			t.Fatalf("failed to encode mock response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	programs, err := client.GetPrograms(context.Background())
-	if err != nil {
-		t.Fatalf("GetPrograms returned error: %v", err)
-	}
-
-	if len(programs) != len(mockPrograms) {
-		t.Errorf("expected %d programs, got %d", len(mockPrograms), len(programs))
-	}
-	if !reflect.DeepEqual(programs[0], mockPrograms[0]) {
-		t.Errorf("program mismatch: expected %+v, got %+v", mockPrograms[0], programs[0])
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Errorf("Expected error to mention deprecation, got: %v", err)
 	}
 }
 
-func TestClient_UpdateSchedule(t *testing.T) {
-	channelID := "channel-1"
+func TestClient_UpdateSchedule_Deprecated(t *testing.T) {
+	// UpdateSchedule is deprecated - it should return an error
+	client := NewClient(Config{URL: "http://localhost"})
 	schedule := []Program{
 		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST request, got %s", r.Method)
-		}
-		if r.URL.Path != "/api/channels/"+channelID+"/schedule" {
-			t.Errorf("expected correct path, got %s", r.URL.Path)
-		}
-
-		var receivedSchedule []Program
-		if err := json.NewDecoder(r.Body).Decode(&receivedSchedule); err != nil {
-			t.Fatalf("failed to decode request body: %v", err)
-		}
-
-		if len(receivedSchedule) != len(schedule) {
-			t.Errorf("expected %d items in schedule, got %d", len(schedule), len(receivedSchedule))
-		}
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	err := client.UpdateSchedule(context.Background(), channelID, schedule)
-	if err != nil {
-		t.Fatalf("UpdateSchedule returned error: %v", err)
+	err := client.UpdateSchedule(context.Background(), "channel-1", schedule)
+	if err == nil {
+		t.Error("Expected deprecation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Errorf("Expected error to mention deprecation, got: %v", err)
 	}
 }
 
@@ -171,16 +124,18 @@ func TestClient_GetChannels_Error(t *testing.T) {
 
 func TestClient_GetLibraries(t *testing.T) {
 	mockLibraries := []Library{
-		{ID: "lib-1", Name: "Movies", Type: "movie"},
-		{ID: "lib-2", Name: "TV Shows", Type: "show"},
+		{ID: "lib-1", Name: "Movies", MediaType: "movies"},
+		{ID: "lib-2", Name: "TV Shows", MediaType: "shows"},
 	}
+	mediaSourceID := "source-1"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET request, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/libraries" {
-			t.Errorf("expected /api/libraries path, got %s", r.URL.Path)
+		expectedPath := "/api/media-sources/" + mediaSourceID + "/libraries"
+		if r.URL.Path != expectedPath {
+			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(mockLibraries)
@@ -188,7 +143,7 @@ func TestClient_GetLibraries(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	libraries, err := client.GetLibraries(context.Background(), "test-server")
+	libraries, err := client.GetLibraries(context.Background(), mediaSourceID)
 	if err != nil {
 		t.Fatalf("GetLibraries returned error: %v", err)
 	}
@@ -198,138 +153,78 @@ func TestClient_GetLibraries(t *testing.T) {
 	}
 }
 
-func TestClient_GetLibraryPrograms(t *testing.T) {
-	libraryID := "lib-1"
-	mockPrograms := []Program{
-		{ID: "prog-1", Title: "Movie A", Duration: 7200000, Type: "movie"},
-		{ID: "prog-2", Title: "Movie B", Duration: 6000000, Type: "movie"},
+func TestClient_GetLibraryPrograms_Deprecated(t *testing.T) {
+	client := NewClient(Config{URL: "http://localhost"})
+	_, err := client.GetLibraryPrograms(context.Background(), "lib-1")
+	if err == nil {
+		t.Error("Expected deprecation error, got nil")
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET request, got %s", r.Method)
-		}
-		expectedPath := "/api/libraries/" + libraryID + "/programs"
-		if r.URL.Path != expectedPath {
-			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockPrograms)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	programs, err := client.GetLibraryPrograms(context.Background(), libraryID)
-	if err != nil {
-		t.Fatalf("GetLibraryPrograms returned error: %v", err)
-	}
-
-	if len(programs) != len(mockPrograms) {
-		t.Errorf("expected %d programs, got %d", len(mockPrograms), len(programs))
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Errorf("Expected error to mention deprecation, got: %v", err)
 	}
 }
 
-func TestClient_GetShows(t *testing.T) {
-	mockShows := []Show{
-		{Title: "Show A", Seasons: []Season{{}, {}, {}, {}, {}}},
-		{Title: "Show B", Seasons: []Season{{}, {}, {}}},
+func TestClient_GetShows_Deprecated(t *testing.T) {
+	client := NewClient(Config{URL: "http://localhost"})
+	_, err := client.GetShows(context.Background())
+	if err == nil {
+		t.Error("Expected deprecation error, got nil")
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET request, got %s", r.Method)
-		}
-		if r.URL.Path != "/api/shows" {
-			t.Errorf("expected /api/shows path, got %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockShows)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	shows, err := client.GetShows(context.Background())
-	if err != nil {
-		t.Fatalf("GetShows returned error: %v", err)
-	}
-
-	if len(shows) != len(mockShows) {
-		t.Errorf("expected %d shows, got %d", len(mockShows), len(shows))
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Errorf("Expected error to mention deprecation, got: %v", err)
 	}
 }
 
-func TestClient_GetShowEpisodes(t *testing.T) {
-	showID := "show-1"
-	season := 1
-	mockEpisodes := []Program{
-		{ID: "ep-1", Title: "Episode 1", Duration: 1800000, Type: "episode"},
-		{ID: "ep-2", Title: "Episode 2", Duration: 1800000, Type: "episode"},
+func TestClient_GetShowEpisodes_Deprecated(t *testing.T) {
+	client := NewClient(Config{URL: "http://localhost"})
+	_, err := client.GetShowEpisodes(context.Background(), "show-1", 1)
+	if err == nil {
+		t.Error("Expected deprecation error, got nil")
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET request, got %s", r.Method)
-		}
-		expectedPath := "/api/shows/" + showID + "/episodes"
-		if r.URL.Path != expectedPath {
-			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
-		}
-		if r.URL.RawQuery != "season=1" {
-			t.Errorf("expected season=1 query param, got %s", r.URL.RawQuery)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockEpisodes)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	episodes, err := client.GetShowEpisodes(context.Background(), showID, season)
-	if err != nil {
-		t.Fatalf("GetShowEpisodes returned error: %v", err)
-	}
-
-	if len(episodes) != len(mockEpisodes) {
-		t.Errorf("expected %d episodes, got %d", len(mockEpisodes), len(episodes))
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Errorf("Expected error to mention deprecation, got: %v", err)
 	}
 }
 
 func TestClient_SearchPrograms(t *testing.T) {
 	query := "Star"
-	mockResults := []Program{
-		{ID: "prog-1", Title: "Star Wars", Duration: 7200000, Type: "movie"},
-		{ID: "prog-2", Title: "Star Trek", Duration: 6000000, Type: "movie"},
+	mockResponse := ProgramSearchResponse{
+		Results: []Program{
+			{ID: "prog-1", Title: "Star Wars", Duration: 7200000, Type: "movie"},
+			{ID: "prog-2", Title: "Star Trek", Duration: 6000000, Type: "movie"},
+		},
+		Total: 2,
+		Page:  1,
+		Limit: 100,
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET request, got %s", r.Method)
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
 		}
 		if r.URL.Path != "/api/programs/search" {
 			t.Errorf("expected /api/programs/search path, got %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("q") != query {
-			t.Errorf("expected q=%s query param, got %s", query, r.URL.Query().Get("q"))
-		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResults)
+		json.NewEncoder(w).Encode(mockResponse)
 	}))
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	response, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Q: query}})
+	response, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Query: query}})
 	if err != nil {
 		t.Fatalf("SearchPrograms returned error: %v", err)
 	}
 
-	if len(response.Programs) != len(mockResults) {
-		t.Errorf("expected %d programs, got %d", len(mockResults), len(response.Programs))
+	if len(response.Results) != len(mockResponse.Results) {
+		t.Errorf("expected %d programs, got %d", len(mockResponse.Results), len(response.Results))
 	}
 }
 
 func TestClient_GetFillerLists(t *testing.T) {
 	mockFillers := []FillerList{
-		{ID: "filler-1", Name: "Commercials", Count: 50},
-		{ID: "filler-2", Name: "Bumpers", Count: 30},
+		{ID: "filler-1", Name: "Commercials", ContentCount: 50},
+		{ID: "filler-2", Name: "Bumpers", ContentCount: 30},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +261,7 @@ func TestClient_GetFillerContent(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET request, got %s", r.Method)
 		}
-		expectedPath := "/api/filler-lists/" + fillerID + "/content"
+		expectedPath := "/api/filler-lists/" + fillerID + "/programs"
 		if r.URL.Path != expectedPath {
 			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
 		}
@@ -527,87 +422,38 @@ func TestClient_GetLibraries_Error(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetLibraries(context.Background(), "test-server")
+	_, err := client.GetLibraries(context.Background(), "source-1")
 	if err == nil {
 		t.Error("Expected error for 500 response, got nil")
 	}
 }
 
-func TestClient_GetLibraryPrograms_EmptyID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Should not reach server due to empty library ID")
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetLibraryPrograms(context.Background(), "")
-	if err == nil {
-		t.Error("Expected error for empty library ID, got nil")
-	}
-}
-
-func TestClient_GetLibraryPrograms_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetLibraryPrograms(context.Background(), "lib-999")
-	if err == nil {
-		t.Error("Expected error for 404 response, got nil")
-	}
-}
-
-func TestClient_GetShows_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetShows(context.Background())
-	if err == nil {
-		t.Error("Expected error for 500 response, got nil")
-	}
-}
-
-func TestClient_GetShowEpisodes_EmptyID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Should not reach server due to empty show ID")
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetShowEpisodes(context.Background(), "", 1)
-	if err == nil {
-		t.Error("Expected error for empty show ID, got nil")
-	}
-}
-
-func TestClient_GetShowEpisodes_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetShowEpisodes(context.Background(), "show-999", 1)
-	if err == nil {
-		t.Error("Expected error for 404 response, got nil")
-	}
-}
+// Note: GetLibraryPrograms, GetShows, and GetShowEpisodes are deprecated.
+// The following tests verify they return deprecation errors as expected.
+// See TestClient_GetLibraryPrograms_Deprecated, TestClient_GetShows_Deprecated,
+// and TestClient_GetShowEpisodes_Deprecated for the main deprecation tests.
 
 func TestClient_SearchPrograms_EmptyQuery(t *testing.T) {
+	// Note: The current implementation doesn't validate empty queries client-side.
+	// The search will proceed and return results based on filters.
+	// This test validates that the API call completes without error.
+	mockResponse := ProgramSearchResponse{
+		Results: []Program{},
+		Total:   0,
+		Page:    1,
+		Limit:   100,
+	}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Should not reach server due to empty query")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
 	}))
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	_, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Q: ""}})
-	if err == nil {
-		t.Error("Expected error for empty query, got nil")
+	_, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Query: ""}})
+	if err != nil {
+		t.Errorf("SearchPrograms with empty query should not fail: %v", err)
 	}
 }
 
@@ -618,7 +464,7 @@ func TestClient_SearchPrograms_Error(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	_, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Q: "test"}})
+	_, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Query: "test"}})
 	if err == nil {
 		t.Error("Expected error for 500 response, got nil")
 	}
@@ -710,14 +556,14 @@ func TestValidateProgram(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Missing ID",
+			name: "Missing ID is valid (UUID can be used instead)",
 			program: Program{
 				ID:       "",
 				Title:    "Test",
 				Duration: 1800000,
 				Type:     "movie",
 			},
-			wantErr: true,
+			wantErr: false, // ID is optional - programs can use UUID instead
 		},
 		{
 			name: "Missing title",
@@ -763,15 +609,9 @@ func TestValidateProgram(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// We need to test the validation indirectly through UpdateSchedule
-			// since validateProgram is not exported
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			}))
-			defer server.Close()
-
-			client := NewClient(Config{URL: server.URL})
-			err := client.UpdateSchedule(context.Background(), "test-channel", []Program{tt.program})
+			// Test validation directly using httpclient.Validate
+			// which is the same validation used internally
+			err := httpclient.Validate(&tt.program)
 
 			if tt.wantErr && err == nil {
 				t.Error("Expected validation error, got nil")

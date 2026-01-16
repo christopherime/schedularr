@@ -1,6 +1,7 @@
 <div align="center">
+<img src="assets/logo.svg" alt="Schedularr Logo" width="150"/>
 
-# 📺 Schedularr
+# Schedularr
 
 ## Intelligent Content Scheduling for Tunarr
 
@@ -255,7 +256,7 @@ schedularr channels
 
 **Output:**
 
-```
+```txt
 ID              Number  Name                    Enabled
 channel-1       1       Classic Movies          true
 channel-2       2       Kids Programming        true
@@ -276,7 +277,7 @@ schedularr generate --apply
 
 **Example Output:**
 
-```
+```txt
 Channel channel-1: 12 items scheduled
  - The Incredibles (115 min)
  - Finding Nemo (100 min)
@@ -383,7 +384,7 @@ scheduler:
 
 ### Project Structure
 
-```
+```txt
 schedularr/
 ├── cmd/
 │   └── schedularr/          # Application entry point

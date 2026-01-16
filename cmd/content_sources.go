@@ -86,20 +86,39 @@ func tryLoadFromCache(contentCache *cache.Cache, key string, target interface{})
 
 func fetchLibraryPrograms(client *tunarr.Client) []tunarr.Program {
 	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
-	libraries, err := client.GetLibraries(context.Background())
+
+	// First, get all media sources
+	sources, err := client.GetMediaSources(context.Background())
 	if err != nil {
 		if verbose {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries: %v", err)))
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch media sources: %v", err)))
 		}
 		return nil
 	}
 
 	if verbose {
-		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📚 Found %d librar(y/ies)", len(libraries))))
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📡 Found %d media source(s)", len(sources))))
+	}
+
+	// Collect libraries from all media sources
+	var allLibraries []tunarr.Library
+	for _, source := range sources {
+		libraries, err := client.GetLibraries(context.Background(), source.ID)
+		if err != nil {
+			if verbose {
+				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries for %s: %v", source.Name, err)))
+			}
+			continue
+		}
+		allLibraries = append(allLibraries, libraries...)
+	}
+
+	if verbose {
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📚 Found %d librar(y/ies)", len(allLibraries))))
 	}
 
 	var allPrograms []tunarr.Program
-	for _, lib := range libraries {
+	for _, lib := range allLibraries {
 		programs := fetchSingleLibrary(client, lib)
 		allPrograms = append(allPrograms, programs...)
 	}
@@ -342,8 +361,8 @@ func isRadarrMovieAvailable(program tunarr.Program, index radarrMovieIndex) bool
 	if program.Title == "" {
 		return false
 	}
-	if program.Year > 0 {
-		if _, ok := index.byTitleYear[movieKey(program.Title, program.Year)]; ok {
+	if program.GetYear() > 0 {
+		if _, ok := index.byTitleYear[movieKey(program.Title, program.GetYear())]; ok {
 			return true
 		}
 	}
@@ -389,10 +408,10 @@ func filterEpisodePrograms(programs []tunarr.Program, available map[string]struc
 }
 
 func isSonarrEpisodeAvailable(program tunarr.Program, available map[string]struct{}) bool {
-	if program.ShowTitle == "" || program.Season == 0 || program.Episode == 0 {
+	if program.ShowTitle == "" || program.SeasonNumber == 0 || program.EpisodeNumber == 0 {
 		return true
 	}
-	_, ok := available[episodeKey(program.ShowTitle, program.Season, program.Episode)]
+	_, ok := available[episodeKey(program.ShowTitle, program.SeasonNumber, program.EpisodeNumber)]
 	return ok
 }
 

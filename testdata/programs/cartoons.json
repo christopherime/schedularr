@@ -6,10 +6,10 @@
     "duration": 1320000,
     "year": 2005,
     "rating": "TV-Y",
-    "genres": ["Animation", "Comedy", "Family"],
+    "genres": [{"name": "Animation"}, {"name": "Comedy"}, {"name": "Family"}],
     "showTitle": "SpongeBob SquarePants",
-    "season": 3,
-    "episode": 12
+    "seasonNumber": 3,
+    "episodeNumber": 12
   },
   {
     "id": "prog-2",
@@ -18,10 +18,10 @@
     "duration": 660000,
     "year": 2015,
     "rating": "TV-Y7",
-    "genres": ["Animation", "Adventure", "Fantasy"],
+    "genres": [{"name": "Animation"}, {"name": "Adventure"}, {"name": "Fantasy"}],
     "showTitle": "Adventure Time",
-    "season": 6,
-    "episode": 5
+    "seasonNumber": 6,
+    "episodeNumber": 5
   },
   {
     "id": "prog-3",
@@ -30,10 +30,10 @@
     "duration": 1320000,
     "year": 2014,
     "rating": "TV-Y7",
-    "genres": ["Animation", "Mystery", "Family"],
+    "genres": [{"name": "Animation"}, {"name": "Mystery"}, {"name": "Family"}],
     "showTitle": "Gravity Falls",
-    "season": 2,
-    "episode": 3
+    "seasonNumber": 2,
+    "episodeNumber": 3
   },
   {
     "id": "prog-4",
@@ -42,10 +42,10 @@
     "duration": 1320000,
     "year": 2006,
     "rating": "TV-Y7",
-    "genres": ["Animation", "Action", "Adventure"],
+    "genres": [{"name": "Animation"}, {"name": "Action"}, {"name": "Adventure"}],
     "showTitle": "Avatar: The Last Airbender",
-    "season": 2,
-    "episode": 10
+    "seasonNumber": 2,
+    "episodeNumber": 10
   },
   {
     "id": "prog-5",
@@ -54,9 +54,9 @@
     "duration": 660000,
     "year": 2018,
     "rating": "TV-Y7",
-    "genres": ["Animation", "Comedy", "Family"],
+    "genres": [{"name": "Animation"}, {"name": "Comedy"}, {"name": "Family"}],
     "showTitle": "The Amazing World of Gumball",
-    "season": 5,
-    "episode": 20
+    "seasonNumber": 5,
+    "episodeNumber": 20
   }
 ]

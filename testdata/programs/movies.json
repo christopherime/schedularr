@@ -6,7 +6,7 @@
     "duration": 8160000,
     "year": 1999,
     "rating": "R",
-    "genres": ["Action", "Sci-Fi"]
+    "genres": [{"name": "Action"}, {"name": "Sci-Fi"}]
   },
   {
     "id": "movie-2",
@@ -15,7 +15,7 @@
     "duration": 8880000,
     "year": 2010,
     "rating": "PG-13",
-    "genres": ["Action", "Sci-Fi", "Thriller"]
+    "genres": [{"name": "Action"}, {"name": "Sci-Fi"}, {"name": "Thriller"}]
   },
   {
     "id": "movie-3",
@@ -24,7 +24,7 @@
     "duration": 9120000,
     "year": 2008,
     "rating": "PG-13",
-    "genres": ["Action", "Crime", "Drama"]
+    "genres": [{"name": "Action"}, {"name": "Crime"}, {"name": "Drama"}]
   },
   {
     "id": "movie-4",
@@ -33,7 +33,7 @@
     "duration": 7200000,
     "year": 2015,
     "rating": "R",
-    "genres": ["Action", "Adventure", "Sci-Fi"]
+    "genres": [{"name": "Action"}, {"name": "Adventure"}, {"name": "Sci-Fi"}]
   },
   {
     "id": "movie-5",
@@ -42,6 +42,6 @@
     "duration": 6960000,
     "year": 2018,
     "rating": "PG",
-    "genres": ["Animation", "Action", "Adventure"]
+    "genres": [{"name": "Animation"}, {"name": "Action"}, {"name": "Adventure"}]
   }
 ]

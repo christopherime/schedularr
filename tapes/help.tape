@@ -1,8 +1,8 @@
 Output assets/help.gif
 
 Set FontSize 20
-Set Width 2400
-Set Height 3000
+Set Width 1200
+Set Height 1500
 
 # Type a command in the terminal.
 Type "bin/schedularr --help"

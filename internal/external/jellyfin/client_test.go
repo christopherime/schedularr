@@ -16,8 +16,10 @@ func TestClient_RefreshLiveTVGuide(t *testing.T) {
 		if r.URL.Path != "/LiveTv/RefreshGuide" {
 			t.Errorf("expected /LiveTv/RefreshGuide path, got %s", r.URL.Path)
 		}
-		if r.Header.Get("X-Emby-Token") != "jellyfin-key" {
-			t.Errorf("expected X-Emby-Token header, got %s", r.Header.Get("X-Emby-Token"))
+		// Default client uses Authorization header with MediaBrowser token format
+		expectedAuth := `MediaBrowser Token="jellyfin-key"`
+		if r.Header.Get("Authorization") != expectedAuth {
+			t.Errorf("expected Authorization header %q, got %q", expectedAuth, r.Header.Get("Authorization"))
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -82,8 +84,8 @@ func TestClient_RefreshLiveTVGuide_InvalidURL(t *testing.T) {
 func TestClient_RefreshLiveTVGuide_NoAPIKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify no auth header is sent when API key is empty
-		if r.Header.Get("X-Emby-Token") != "" {
-			t.Error("Expected no X-Emby-Token header when API key is empty")
+		if r.Header.Get("Authorization") != "" {
+			t.Error("Expected no Authorization header when API key is empty")
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -109,6 +111,25 @@ func TestClient_RefreshLiveTVGuide_ContextCancellation(t *testing.T) {
 	err := client.RefreshLiveTVGuide(ctx)
 	if err == nil {
 		t.Error("Expected context cancellation error, got nil")
+	}
+}
+
+func TestClientLegacy_RefreshLiveTVGuide(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
+		}
+		// Legacy client uses X-Emby-Token header
+		if r.Header.Get("X-Emby-Token") != "jellyfin-key" {
+			t.Errorf("expected X-Emby-Token header %q, got %q", "jellyfin-key", r.Header.Get("X-Emby-Token"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewClientLegacy(Config{URL: server.URL, APIKey: "jellyfin-key"})
+	if err := client.RefreshLiveTVGuide(context.Background()); err != nil {
+		t.Fatalf("RefreshLiveTVGuide returned error: %v", err)
 	}
 }
 

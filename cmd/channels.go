@@ -32,9 +32,9 @@ var channelsCmd = &cobra.Command{
 
 		t := table.NewWriter()
 		t.SetOutputMirror(os.Stdout)
-		t.AppendHeader(table.Row{"ID", "Number", "Name", "Enabled"})
+		t.AppendHeader(table.Row{"ID", "Number", "Name", "Group"})
 		for _, ch := range channels {
-			t.AppendRow(table.Row{ch.ID, ch.Number, ch.Name, ch.Enabled})
+			t.AppendRow(table.Row{ch.ID, ch.Number, ch.Name, ch.GroupTitle})
 		}
 		t.SetStyle(table.StyleLight)
 		t.Render()
