@@ -58,6 +58,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code (excluding web directory as it's built separately)
+COPY main.go ./
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY configs/ ./configs/
@@ -70,7 +71,7 @@ ENV GOARCH=amd64
 # Build the Go binary
 RUN mkdir -p bin && \
   go build -ldflags="-w -s -X main.Version=${VERSION} -X main.BuildDate=${BUILD_DATE} -X main.GitCommit=${GIT_COMMIT}" \
-  -o bin/schedularr ./cmd/schedularr
+  -o bin/schedularr .
 
 # Compress the binary for smaller image size
 RUN upx --best --lzma bin/schedularr
