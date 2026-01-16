@@ -111,7 +111,7 @@ func TestIntegration_FullSchedulingWorkflow(t *testing.T) {
 			hasMatchingGenre := false
 			for _, genre := range prog.Genres {
 				for _, filterGenre := range slot.Block.Filter.Genres {
-					if genre == filterGenre {
+					if genre.Name == filterGenre {
 						hasMatchingGenre = true
 						break
 					}
@@ -543,7 +543,7 @@ func TestIntegration_FilterValidation(t *testing.T) {
 			// Must have "Action" genre
 			hasAction := false
 			for _, genre := range prog.Genres {
-				if genre == "Action" {
+				if genre.Name == "Action" {
 					hasAction = true
 					break
 				}
@@ -564,8 +564,8 @@ func TestIntegration_FilterValidation(t *testing.T) {
 			}
 
 			// Must be from 2000 or later
-			if prog.Year < 2000 {
-				t.Errorf("Program %s too old: %d", prog.Title, prog.Year)
+			if prog.Year != nil && *prog.Year < 2000 {
+				t.Errorf("Program %s too old: %d", prog.Title, *prog.Year)
 			}
 		}
 	}

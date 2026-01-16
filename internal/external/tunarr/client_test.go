@@ -14,20 +14,16 @@ func TestClient_GetChannels(t *testing.T) {
 	// mock response data
 	mockChannels := []Channel{
 		{
-			ID:      "channel-1",
-			Number:  1,
-			Name:    "Test Channel 1",
-			Icon:    "http://example.com/icon1.png",
-			Group:   "General",
-			Enabled: true,
+			ID:     "channel-1",
+			Number: 1,
+			Name:   "Test Channel 1",
+			Icon:   &ChannelIcon{Path: "http://example.com/icon1.png"},
 		},
 		{
-			ID:      "channel-2",
-			Number:  2,
-			Name:    "Test Channel 2",
-			Icon:    "http://example.com/icon2.png",
-			Group:   "Movies",
-			Enabled: false,
+			ID:     "channel-2",
+			Number: 2,
+			Name:   "Test Channel 2",
+			Icon:   &ChannelIcon{Path: "http://example.com/icon2.png"},
 		},
 	}
 
@@ -81,11 +77,12 @@ func TestClient_GetChannels(t *testing.T) {
 }
 
 func TestClient_GetPrograms(t *testing.T) {
+	year := 2023
 	mockPrograms := []Program{
 		{
 			ID:       "prog-1",
 			Title:    "Movie A",
-			Year:     2023,
+			Year:     &year,
 			Duration: 7200000,
 			Type:     "movie",
 		},
@@ -174,8 +171,8 @@ func TestClient_GetChannels_Error(t *testing.T) {
 
 func TestClient_GetLibraries(t *testing.T) {
 	mockLibraries := []Library{
-		{ID: "lib-1", Name: "Movies", Type: "movie", Server: "plex"},
-		{ID: "lib-2", Name: "TV Shows", Type: "show", Server: "plex"},
+		{ID: "lib-1", Name: "Movies", Type: "movie"},
+		{ID: "lib-2", Name: "TV Shows", Type: "show"},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +188,7 @@ func TestClient_GetLibraries(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	libraries, err := client.GetLibraries(context.Background())
+	libraries, err := client.GetLibraries(context.Background(), "test-server")
 	if err != nil {
 		t.Fatalf("GetLibraries returned error: %v", err)
 	}
@@ -234,8 +231,8 @@ func TestClient_GetLibraryPrograms(t *testing.T) {
 
 func TestClient_GetShows(t *testing.T) {
 	mockShows := []Show{
-		{ID: "show-1", Title: "Show A", Seasons: 5, Episodes: 100},
-		{ID: "show-2", Title: "Show B", Seasons: 3, Episodes: 60},
+		{Title: "Show A", Seasons: []Season{{}, {}, {}, {}, {}}},
+		{Title: "Show B", Seasons: []Season{{}, {}, {}}},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -265,8 +262,8 @@ func TestClient_GetShowEpisodes(t *testing.T) {
 	showID := "show-1"
 	season := 1
 	mockEpisodes := []Program{
-		{ID: "ep-1", Title: "Episode 1", Duration: 1800000, Type: "episode", Season: season, Episode: 1},
-		{ID: "ep-2", Title: "Episode 2", Duration: 1800000, Type: "episode", Season: season, Episode: 2},
+		{ID: "ep-1", Title: "Episode 1", Duration: 1800000, Type: "episode"},
+		{ID: "ep-2", Title: "Episode 2", Duration: 1800000, Type: "episode"},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -319,13 +316,13 @@ func TestClient_SearchPrograms(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	programs, err := client.SearchPrograms(context.Background(), query)
+	response, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Q: query}})
 	if err != nil {
 		t.Fatalf("SearchPrograms returned error: %v", err)
 	}
 
-	if len(programs) != len(mockResults) {
-		t.Errorf("expected %d programs, got %d", len(mockResults), len(programs))
+	if len(response.Programs) != len(mockResults) {
+		t.Errorf("expected %d programs, got %d", len(mockResults), len(response.Programs))
 	}
 }
 
@@ -530,7 +527,7 @@ func TestClient_GetLibraries_Error(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetLibraries(context.Background())
+	_, err := client.GetLibraries(context.Background(), "test-server")
 	if err == nil {
 		t.Error("Expected error for 500 response, got nil")
 	}
@@ -608,7 +605,7 @@ func TestClient_SearchPrograms_EmptyQuery(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	_, err := client.SearchPrograms(context.Background(), "")
+	_, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Q: ""}})
 	if err == nil {
 		t.Error("Expected error for empty query, got nil")
 	}
@@ -621,7 +618,7 @@ func TestClient_SearchPrograms_Error(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	_, err := client.SearchPrograms(context.Background(), "test")
+	_, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Q: "test"}})
 	if err == nil {
 		t.Error("Expected error for 500 response, got nil")
 	}
