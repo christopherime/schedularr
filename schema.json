@@ -1,0 +1,414 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/geekxflood/schedularr/schema.json",
+  "title": "Schedularr Configuration",
+  "description": "Configuration schema for Schedularr - automated TV channel programming for Tunarr",
+  "type": "object",
+  "properties": {
+    "tunarr": {
+      "$ref": "#/$defs/TunarrConfig"
+    },
+    "radarr": {
+      "$ref": "#/$defs/RadarrConfig"
+    },
+    "sonarr": {
+      "$ref": "#/$defs/SonarrConfig"
+    },
+    "jellyfin": {
+      "$ref": "#/$defs/JellyfinConfig"
+    },
+    "log": {
+      "$ref": "#/$defs/LogConfig"
+    },
+    "metrics_port": {
+      "type": "integer",
+      "description": "Port for Prometheus metrics endpoint",
+      "default": 9090
+    },
+    "database": {
+      "type": "string",
+      "description": "Path to SQLite database file",
+      "default": "schedularr.db"
+    },
+    "scheduler_file": {
+      "type": "string",
+      "description": "Path to external scheduler configuration file",
+      "default": "scheduler.yaml"
+    },
+    "scheduler": {
+      "$ref": "#/$defs/SchedulerConfig"
+    },
+    "cache": {
+      "$ref": "#/$defs/CacheConfig"
+    },
+    "maintenance": {
+      "$ref": "#/$defs/MaintenanceConfig"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "TunarrConfig": {
+      "type": "object",
+      "description": "Tunarr API connection settings",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Tunarr API base URL",
+          "default": "${SCHEDULARR_TUNARR_URL}"
+        },
+        "api_key": {
+          "type": "string",
+          "description": "API key for authentication",
+          "default": "${SCHEDULARR_TUNARR_API_KEY}"
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Request timeout duration (e.g., \"30s\", \"1m\")",
+          "default": "30s",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RadarrConfig": {
+      "type": "object",
+      "description": "Radarr API connection settings",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Radarr API base URL",
+          "default": "${SCHEDULARR_RADARR_URL}"
+        },
+        "api_key": {
+          "type": "string",
+          "description": "API key for authentication",
+          "default": "${SCHEDULARR_RADARR_API_KEY}"
+        },
+        "exclude_missing_file": {
+          "type": "boolean",
+          "description": "Exclude movies that are missing files on disk",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "SonarrConfig": {
+      "type": "object",
+      "description": "Sonarr API connection settings",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Sonarr API base URL",
+          "default": "${SCHEDULARR_SONARR_URL}"
+        },
+        "api_key": {
+          "type": "string",
+          "description": "API key for authentication",
+          "default": "${SCHEDULARR_SONARR_API_KEY}"
+        },
+        "exclude_missing_file": {
+          "type": "boolean",
+          "description": "Exclude episodes that are missing files on disk",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "JellyfinConfig": {
+      "type": "object",
+      "description": "Jellyfin API connection settings",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Jellyfin API base URL",
+          "default": "${SCHEDULARR_JELLYFIN_URL}"
+        },
+        "api_key": {
+          "type": "string",
+          "description": "API key for authentication",
+          "default": "${SCHEDULARR_JELLYFIN_API_KEY}"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "User ID for user-scoped endpoints",
+          "default": ""
+        },
+        "sync_live_tv": {
+          "type": "boolean",
+          "description": "Whether to refresh the Live TV guide after schedule apply",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "LogConfig": {
+      "type": "object",
+      "description": "Logging settings",
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Log level",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info"
+        },
+        "format": {
+          "type": "string",
+          "description": "Log format",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "default": "text"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "IANA Time Zone name (e.g., \"America/New_York\", \"UTC\", \"Local\")",
+          "default": "Local"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CacheConfig": {
+      "type": "object",
+      "description": "Content caching settings",
+      "properties": {
+        "cache_dir": {
+          "type": "string",
+          "description": "Directory to store cached content metadata",
+          "default": "/tmp/schedularr_cache"
+        },
+        "cache_duration": {
+          "type": "string",
+          "description": "How long cached entries are considered valid (e.g., \"1h\", \"24h\")",
+          "default": "1h",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "MaintenanceConfig": {
+      "type": "object",
+      "description": "Background maintenance task settings",
+      "properties": {
+        "cleanup_interval": {
+          "type": "string",
+          "description": "How often to run cleanup tasks (e.g., \"24h\")",
+          "default": "24h",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
+        },
+        "history_retention": {
+          "type": "string",
+          "description": "How long to keep schedule history (e.g., \"168h\" for 7 days)",
+          "default": "168h",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
+        },
+        "cleanup_enabled": {
+          "type": "boolean",
+          "description": "Whether to enable automatic cleanup",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "SchedulerConfig": {
+      "type": "object",
+      "description": "Scheduling configuration (inline, legacy support)",
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "description": "List of scheduling blocks",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "settings": {
+          "$ref": "#/$defs/SchedulerSettings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SchedulerSettings": {
+      "type": "object",
+      "description": "Global scheduler settings",
+      "properties": {
+        "rotation_window_days": {
+          "type": "integer",
+          "description": "Default rotation window in days (prevent re-scheduling within X days)",
+          "default": 7
+        },
+        "min_gap_minutes": {
+          "type": "integer",
+          "description": "Minimum gap time in minutes to trigger filler content",
+          "default": 5
+        },
+        "max_filler_minutes": {
+          "type": "integer",
+          "description": "Maximum filler duration in minutes",
+          "default": 30
+        }
+      },
+      "additionalProperties": false
+    },
+    "Block": {
+      "type": "object",
+      "description": "Scheduling block (filter-based or series-based)",
+      "required": [
+        "name",
+        "cron",
+        "duration",
+        "channel_id"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Block type",
+          "enum": [
+            "filter",
+            "series"
+          ],
+          "default": "filter"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable block name"
+        },
+        "cron": {
+          "type": "string",
+          "description": "Cron expression (standard 5-field format: minute hour dom month dow)"
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Block duration in minutes",
+          "minimum": 1
+        },
+        "channel_id": {
+          "type": "string",
+          "description": "Target Tunarr channel ID"
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Priority for conflict resolution (higher = more important)",
+          "default": 10
+        },
+        "filter": {
+          "$ref": "#/$defs/Filter"
+        },
+        "series": {
+          "type": "array",
+          "description": "Series configuration (for type=\"series\")",
+          "items": {
+            "$ref": "#/$defs/SeriesConfig"
+          }
+        },
+        "fallback": {
+          "$ref": "#/$defs/FallbackConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Filter": {
+      "type": "object",
+      "description": "Content filtering criteria",
+      "properties": {
+        "title_pattern": {
+          "type": "string",
+          "description": "Title pattern (regex)"
+        },
+        "genres": {
+          "type": "array",
+          "description": "Genre filter (any match)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ratings": {
+          "type": "array",
+          "description": "Rating filter (any match)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "year_from": {
+          "type": "integer",
+          "description": "Year range filter (start)"
+        },
+        "year_to": {
+          "type": "integer",
+          "description": "Year range filter (end)"
+        },
+        "min_duration": {
+          "type": "integer",
+          "description": "Minimum duration in minutes"
+        },
+        "max_duration": {
+          "type": "integer",
+          "description": "Maximum duration in minutes"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Tag filter",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "SeriesConfig": {
+      "type": "object",
+      "description": "Series for sequential scheduling",
+      "required": [
+        "show_title"
+      ],
+      "properties": {
+        "show_title": {
+          "type": "string",
+          "description": "Show title to match"
+        },
+        "episodes_per_block": {
+          "type": "integer",
+          "description": "Number of episodes per block",
+          "minimum": 1,
+          "default": 1
+        },
+        "start_season": {
+          "type": "integer",
+          "description": "Starting season",
+          "minimum": 1,
+          "default": 1
+        },
+        "start_episode": {
+          "type": "integer",
+          "description": "Starting episode",
+          "minimum": 1,
+          "default": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "FallbackConfig": {
+      "type": "object",
+      "description": "Fallback behavior when series completes",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Fallback mode",
+          "enum": [
+            "redistribute",
+            "filler"
+          ],
+          "default": "redistribute"
+        },
+        "filler_filter": {
+          "$ref": "#/$defs/Filter"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

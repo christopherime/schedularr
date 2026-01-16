@@ -1,15 +1,17 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 
+	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
-var cfgFile string
+var (
+	cfgFile   string
+	appConfig *config.Config
+)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -58,11 +60,9 @@ func init() {
 	rootCmd.AddCommand(healthCmd) // Add health command to root
 }
 
-// initConfig reads in config file and ENV variables if set.
+// initConfig reads in config file using CUE-based loading.
 // Supports ${VAR_NAME} syntax for environment variable interpolation in config files.
 func initConfig() {
-	viper.AutomaticEnv() // read in environment variables that match
-
 	configPath := cfgFile
 	if configPath == "" {
 		// Try to find config in default locations
@@ -70,12 +70,20 @@ func initConfig() {
 	}
 
 	if configPath != "" {
-		// Read config file with environment variable interpolation
-		if err := readConfigWithEnvInterpolation(configPath); err != nil {
-			// Silently ignore missing config files
+		// Load config using CUE validation and defaults
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			// Config file exists but failed to load - this is an error
 			return
 		}
+		appConfig = cfg
 	}
+}
+
+// getConfig returns the loaded application config.
+// If no config was loaded, it returns nil.
+func getConfig() *config.Config {
+	return appConfig
 }
 
 // findConfigFile searches for config file in default locations.
@@ -100,30 +108,4 @@ func findConfigFile() string {
 	}
 
 	return ""
-}
-
-// readConfigWithEnvInterpolation reads a config file and expands ${VAR_NAME} references.
-func readConfigWithEnvInterpolation(configPath string) error {
-	// Read the raw config file
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	// Expand environment variables using ${VAR_NAME} syntax
-	expanded := os.ExpandEnv(string(data))
-
-	// Set config type based on extension
-	ext := filepath.Ext(configPath)
-	switch ext {
-	case ".json":
-		viper.SetConfigType("json")
-	case ".yaml", ".yml":
-		viper.SetConfigType("yaml")
-	default:
-		viper.SetConfigType("yaml")
-	}
-
-	// Read expanded config into Viper
-	return viper.ReadConfig(bytes.NewBufferString(expanded))
 }

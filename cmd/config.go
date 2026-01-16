@@ -7,10 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -75,40 +73,20 @@ Examples:
 		}
 
 		// Unmarshal generated data to apply flag overrides
-		var cfg config.Config
+		var cfg map[string]any
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			fmt.Printf("%s Failed to unmarshal generated config: %v\n", errorStyle.Render("✗ Error:"), err)
 			os.Exit(1)
 		}
 
-		// Apply flag overrides
-		if tunarrURL != "" {
-			cfg.Tunarr.URL = tunarrURL
-		}
-		if tunarrAPIKey != "" {
-			cfg.Tunarr.APIKey = tunarrAPIKey
-		}
-		if logLevel != "" {
-			cfg.Log.Level = logLevel
-		}
-		if logFormat != "" {
-			cfg.Log.Format = logFormat
-		}
-		if jellyfinURL != "" {
-			cfg.Jellyfin.URL = jellyfinURL
-		}
-		if jellyfinAPIKey != "" {
-			cfg.Jellyfin.APIKey = jellyfinAPIKey
-		}
-		if jellyfinSyncLiveTV { // Only set if flag is explicitly true
-			cfg.Jellyfin.SyncLiveTV = jellyfinSyncLiveTV
-		}
+		// Apply flag overrides using map access
+		applyConfigOverrides(cfg)
 
 		// Marshal back to YAML/JSON
 		if format == "yaml" {
 			data, err = yaml.Marshal(cfg)
 		} else {
-			data, err = json.MarshalIndent(cfg, "", "  ") // Need to import "encoding/json"
+			data, err = json.MarshalIndent(cfg, "", "  ")
 		}
 		if err != nil {
 			fmt.Printf("%s Failed to re-marshal config with overrides: %v\n", errorStyle.Render("✗ Error:"), err)
@@ -135,13 +113,13 @@ environment variables, and applying defaults) to standard output in YAML format.
 Useful for debugging.`,
 	Args: cobra.NoArgs,
 	Run: func(_ *cobra.Command, _ []string) {
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			fmt.Printf("%s Failed to unmarshal config: %v\n", errorStyle.Render("✗ Error:"), err)
+		cfg := getConfig()
+		if cfg == nil {
+			fmt.Printf("%s No configuration loaded\n", errorStyle.Render("✗ Error:"))
 			os.Exit(1)
 		}
 
-		output, err := yaml.Marshal(cfg)
+		output, err := cfg.ToYAML()
 		if err != nil {
 			fmt.Printf("%s Failed to marshal config to YAML: %v\n", errorStyle.Render("✗ Error:"), err)
 			os.Exit(1)
@@ -149,6 +127,55 @@ Useful for debugging.`,
 
 		fmt.Println(string(output))
 	},
+}
+
+// applyConfigOverrides applies command-line flag overrides to the generated config map
+func applyConfigOverrides(cfg map[string]any) {
+	// Helper to ensure nested map exists
+	ensureMap := func(parent map[string]any, key string) map[string]any {
+		if m, ok := parent[key].(map[string]any); ok {
+			return m
+		}
+		m := make(map[string]any)
+		parent[key] = m
+		return m
+	}
+
+	// Apply Tunarr overrides
+	if tunarrURL != "" || tunarrAPIKey != "" {
+		tunarr := ensureMap(cfg, "tunarr")
+		if tunarrURL != "" {
+			tunarr["url"] = tunarrURL
+		}
+		if tunarrAPIKey != "" {
+			tunarr["api_key"] = tunarrAPIKey
+		}
+	}
+
+	// Apply log overrides
+	if logLevel != "" || logFormat != "" {
+		log := ensureMap(cfg, "log")
+		if logLevel != "" {
+			log["level"] = logLevel
+		}
+		if logFormat != "" {
+			log["format"] = logFormat
+		}
+	}
+
+	// Apply Jellyfin overrides
+	if jellyfinURL != "" || jellyfinAPIKey != "" || jellyfinSyncLiveTV {
+		jellyfin := ensureMap(cfg, "jellyfin")
+		if jellyfinURL != "" {
+			jellyfin["url"] = jellyfinURL
+		}
+		if jellyfinAPIKey != "" {
+			jellyfin["api_key"] = jellyfinAPIKey
+		}
+		if jellyfinSyncLiveTV {
+			jellyfin["sync_live_tv"] = jellyfinSyncLiveTV
+		}
+	}
 }
 
 func init() {

@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/geekxflood/schedularr/internal/scheduler"
-	"github.com/spf13/viper"
 )
 
 func TestValidateChannelIDs(t *testing.T) {
@@ -30,19 +32,38 @@ func TestValidateChannelIDs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	viper.Reset()
-	viper.Set("tunarr.url", server.URL)
+	// Create a temp config file with the test server URL
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	configContent := `tunarr:
+  url: "` + server.URL + `"
+  api_key: "test-key"
+`
+	if err := os.WriteFile(configFile, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to create test config: %v", err)
+	}
 
-	cfg := &scheduler.Config{
+	// Load the config and set it as the global app config
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		t.Fatalf("Failed to load test config: %v", err)
+	}
+
+	// Set the global appConfig for this test
+	oldConfig := appConfig
+	appConfig = cfg
+	defer func() { appConfig = oldConfig }()
+
+	schedCfg := &scheduler.Config{
 		Blocks: []scheduler.Block{
 			{Name: "Valid", ChannelID: "channel-1"},
 			{Name: "Invalid", ChannelID: "missing"},
 		},
 	}
 
-	errs := validateChannelIDs(cfg)
+	errs := validateChannelIDs(schedCfg)
 	if len(errs) != 1 {
-		t.Fatalf("expected 1 error, got %d", len(errs))
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
 	if got := errs[0].Error(); got == "" || !strings.Contains(got, "missing") {
 		t.Fatalf("expected error to mention missing channel, got %q", got)

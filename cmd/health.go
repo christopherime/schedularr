@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -34,6 +35,7 @@ func init() {
 }
 
 func startHealthCheckServer(port int) {
+	logger := slog.Default()
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -47,7 +49,7 @@ func startHealthCheckServer(port int) {
 	})
 
 	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("Health check server listening on %s\n", addr)
+	logger.Info("health check server listening", "address", addr)
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -55,7 +57,7 @@ func startHealthCheckServer(port int) {
 	}
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintf(os.Stderr, "%s Health check server failed: %v\n", errorStyle.Render("✗"), err)
+		logger.Error("health check server failed", "error", err)
 		os.Exit(1)
 	}
 }

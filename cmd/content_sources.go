@@ -22,7 +22,7 @@ const (
 func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.Program, error) {
 	fmt.Println(infoStyle.Render("📡 Fetching content..."))
 
-	cacheDuration := cfg.GetCacheDuration()
+	cacheDuration := config.CacheDuration(cfg)
 	contentCache, err := cache.New(cacheDuration)
 	if err != nil {
 		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not initialize content cache: %v. Proceeding without cache.", err)))
@@ -42,12 +42,14 @@ func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.
 		}
 	}
 
-	if cfg.Radarr.URL != "" {
-		programs = applyRadarrAvailability(cfg, programs, contentCache)
+	radarrCfg := config.RadarrConfig(cfg)
+	if radarrCfg.URL != "" {
+		programs = applyRadarrAvailability(radarrCfg, programs, contentCache)
 	}
 
-	if cfg.Sonarr.URL != "" {
-		programs = applySonarrAvailability(cfg, programs, contentCache)
+	sonarrCfg := config.SonarrConfig(cfg)
+	if sonarrCfg.URL != "" {
+		programs = applySonarrAvailability(sonarrCfg, programs, contentCache)
 	}
 
 	return programs, nil
@@ -207,10 +209,10 @@ func saveTunarrCache(contentCache *cache.Cache, allPrograms []tunarr.Program) {
 	}
 }
 
-func applyRadarrAvailability(cfg *config.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
+func applyRadarrAvailability(radarrCfg radarr.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
 	var movies []radarr.Movie
 	var err error
-	radarrClient := radarr.NewClient(cfg.Radarr)
+	radarrClient := radarr.NewClient(radarrCfg)
 
 	if contentCache != nil {
 		var found bool
@@ -239,7 +241,7 @@ func applyRadarrAvailability(cfg *config.Config, programs []tunarr.Program, cont
 	}
 
 ProcessRadarr:
-	availableTitles := buildRadarrMovieIndex(movies, cfg.Radarr.ExcludeMissingFile)
+	availableTitles := buildRadarrMovieIndex(movies, radarrCfg.ExcludeMissingFile)
 	if len(availableTitles.byTitle) == 0 && len(availableTitles.byTitleYear) == 0 {
 		return programs
 	}
@@ -257,11 +259,11 @@ ProcessRadarr:
 	return filtered
 }
 
-func applySonarrAvailability(cfg *config.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
-	sonarrClient := sonarr.NewClient(cfg.Sonarr)
+func applySonarrAvailability(sonarrCfg sonarr.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
+	sonarrClient := sonarr.NewClient(sonarrCfg)
 	series, episodes := loadSonarrData(sonarrClient, contentCache)
 
-	availableEpisodes := buildSonarrEpisodeIndex(buildSeriesMap(series), episodes, cfg.Sonarr.ExcludeMissingFile)
+	availableEpisodes := buildSonarrEpisodeIndex(buildSeriesMap(series), episodes, sonarrCfg.ExcludeMissingFile)
 	if len(availableEpisodes) == 0 {
 		return programs
 	}

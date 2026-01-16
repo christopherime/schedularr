@@ -144,25 +144,6 @@ type Show struct {
 	ExternalID    string `json:"externalId,omitempty"`
 }
 
-// GetYear returns the year value or 0 if nil.
-func (s *Show) GetYear() int {
-	if s.Year != nil {
-		return *s.Year
-	}
-	return 0
-}
-
-// GetGenreNames returns a slice of genre names for filtering.
-func (s *Show) GetGenreNames() []string {
-	names := make([]string, 0, len(s.Genres))
-	for _, g := range s.Genres {
-		if g.Name != "" {
-			names = append(names, g.Name)
-		}
-	}
-	return names
-}
-
 // FillerList represents a collection of filler content.
 type FillerList struct {
 	ID           string    `json:"id" validate:"required"`

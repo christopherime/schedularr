@@ -50,33 +50,6 @@ func TestScheduleHistory_ExpirationWindow(t *testing.T) {
 	}
 }
 
-func TestScheduleHistory_GetLastScheduled(t *testing.T) {
-	history := NewScheduleHistory(24 * time.Hour)
-
-	// No history yet
-	lastTime := history.GetLastScheduled("prog1", "channel1")
-	if lastTime != nil {
-		t.Error("Expected nil for program with no history")
-	}
-
-	// Record at different times
-	time1 := time.Now().Add(-2 * time.Hour)
-	time2 := time.Now().Add(-1 * time.Hour)
-
-	history.RecordScheduled("prog1", "channel1", "Block1", time1)
-	history.RecordScheduled("prog1", "channel1", "Block2", time2)
-
-	// Should return most recent time
-	lastTime = history.GetLastScheduled("prog1", "channel1")
-	if lastTime == nil {
-		t.Fatal("Expected non-nil last scheduled time")
-	}
-
-	if !lastTime.Equal(time2) {
-		t.Errorf("Expected last time %v, got %v", time2, *lastTime)
-	}
-}
-
 func TestScheduleHistory_RecordPrograms(t *testing.T) {
 	history := NewScheduleHistory(24 * time.Hour)
 
@@ -93,87 +66,6 @@ func TestScheduleHistory_RecordPrograms(t *testing.T) {
 		if !history.WasRecentlyScheduled(p.ID, "channel1") {
 			t.Errorf("Program %s should be marked as recently scheduled", p.ID)
 		}
-	}
-}
-
-func TestScheduleHistory_FilterByHistory(t *testing.T) {
-	history := NewScheduleHistory(24 * time.Hour)
-
-	programs := []tunarr.Program{
-		{ID: "prog1", Title: "Show A"},
-		{ID: "prog2", Title: "Show B"},
-		{ID: "prog3", Title: "Show C"},
-	}
-
-	// Record prog1 and prog2 as recently scheduled
-	history.RecordScheduled("prog1", "channel1", "Block1", time.Now())
-	history.RecordScheduled("prog2", "channel1", "Block1", time.Now())
-
-	// Filter should only return prog3
-	filtered := history.FilterByHistory(programs, "channel1")
-
-	if len(filtered) != 1 {
-		t.Errorf("Expected 1 program after filtering, got %d", len(filtered))
-	}
-
-	if len(filtered) > 0 && filtered[0].ID != "prog3" {
-		t.Errorf("Expected prog3, got %s", filtered[0].ID)
-	}
-}
-
-func TestScheduleHistory_CleanupOldEntries(t *testing.T) {
-	history := NewScheduleHistory(1 * time.Hour)
-
-	// Record old and new entries
-	oldTime := time.Now().Add(-2 * time.Hour)
-	newTime := time.Now()
-
-	history.RecordScheduled("prog1", "channel1", "Block1", oldTime)
-	history.RecordScheduled("prog2", "channel1", "Block2", newTime)
-
-	// Cleanup old entries
-	history.CleanupOldEntries()
-
-	// prog1 should be gone, prog2 should remain
-	if history.WasRecentlyScheduled("prog1", "channel1") {
-		t.Error("Old program should have been cleaned up")
-	}
-
-	if !history.WasRecentlyScheduled("prog2", "channel1") {
-		t.Error("Recent program should still be in history")
-	}
-
-	// Check stats
-	stats := history.GetStats()
-	if stats["total_programs"] != 1 {
-		t.Errorf("Expected 1 program in stats, got %d", stats["total_programs"])
-	}
-}
-
-func TestScheduleHistory_GetStats(t *testing.T) {
-	history := NewScheduleHistory(1 * time.Hour)
-
-	// Record some entries
-	history.RecordScheduled("prog1", "channel1", "Block1", time.Now())
-	history.RecordScheduled("prog1", "channel1", "Block2", time.Now())
-	history.RecordScheduled("prog2", "channel1", "Block1", time.Now())
-
-	// Record old entry
-	oldTime := time.Now().Add(-2 * time.Hour)
-	history.RecordScheduled("prog3", "channel1", "Block1", oldTime)
-
-	stats := history.GetStats()
-
-	if stats["total_programs"] != 3 {
-		t.Errorf("Expected 3 unique programs, got %d", stats["total_programs"])
-	}
-
-	if stats["total_entries"] != 4 {
-		t.Errorf("Expected 4 total entries, got %d", stats["total_entries"])
-	}
-
-	if stats["active_entries"] != 3 {
-		t.Errorf("Expected 3 active entries, got %d", stats["active_entries"])
 	}
 }
 

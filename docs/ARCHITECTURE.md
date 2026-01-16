@@ -50,7 +50,7 @@ graph TB
   end
 
   subgraph TunarrClient["Tunarr API Client"]
-    Client["Client (client.go)<br/>• GetChannels()<br/>• GetPrograms()<br/>• GetLibraries()<br/>• GetLibraryPrograms()<br/>• GetShowEpisodes()<br/>• UpdateSchedule()<br/>• SearchPrograms()<br/>• GetFillerContent()"]
+    Client["Client (client.go)<br/>• GetChannels()<br/>• GetMediaSources()<br/>• GetLibraries()<br/>• SearchPrograms()<br/>• GetFillerPrograms()<br/>• UpdateSchedule()"]
     HTTP["HTTP + Retry Logic"]
 
     Client --> HTTP
@@ -148,14 +148,10 @@ HTTP client with robust error handling:
 #### API Methods
 
 - `GetChannels(ctx)` - List all channels
-- `GetPrograms(ctx)` - List all programs (fallback)
-- `GetLibraries(ctx)` - List media libraries (Plex/Jellyfin/Emby)
-- `GetLibraryPrograms(ctx, libraryID)` - Get content from library
-- `GetShows(ctx)` - List TV shows
-- `GetShowEpisodes(ctx, showID, season)` - Get episodes for show
-- `SearchPrograms(ctx, query)` - Search by title
-- `GetFillerLists(ctx)` - List filler content collections
-- `GetFillerContent(ctx, fillerListID)` - Get filler programs
+- `GetMediaSources(ctx)` - List connected media sources (Plex/Jellyfin/Emby)
+- `GetLibraries(ctx, mediaSourceID)` - List libraries for a media source
+- `SearchPrograms(ctx, request)` - Search programs with filters (title, type, library)
+- `GetFillerPrograms(ctx, fillerListID)` - Get programs from a filler list
 - `UpdateSchedule(ctx, channelID, programs)` - Apply schedule to channel
 
 ### State Store (`internal/store/`)
@@ -220,9 +216,9 @@ CUE schema-based configuration with Viper loading:
    └─► Create logger
 
 4. Fetch Available Content
-   ├─► GetLibraries() from Tunarr
-   ├─► For each library:
-   │   └─► GetLibraryPrograms(libraryID)
+   ├─► GetMediaSources() from Tunarr
+   ├─► GetLibraries(mediaSourceID) for each source
+   ├─► SearchPrograms() with library filters
    └─► Result: []Program (all available content)
 
 5. Generate Schedule
@@ -269,7 +265,7 @@ CUE schema-based configuration with Viper loading:
    └─► Result: {show_id, season, episode, last_updated}
 
 3. Fetch Next Episodes
-   ├─► GetShowEpisodes(ctx, show_id, season)
+   ├─► SearchPrograms() with show title and season filters
    ├─► Filter: episode >= current_episode
    ├─► Take: episodes_per_block (e.g., 3 episodes)
    └─► Result: []Program (next 3 episodes)

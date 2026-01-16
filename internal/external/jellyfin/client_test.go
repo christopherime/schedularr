@@ -114,25 +114,6 @@ func TestClient_RefreshLiveTVGuide_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestClientLegacy_RefreshLiveTVGuide(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST request, got %s", r.Method)
-		}
-		// Legacy client uses X-Emby-Token header
-		if r.Header.Get("X-Emby-Token") != "jellyfin-key" {
-			t.Errorf("expected X-Emby-Token header %q, got %q", "jellyfin-key", r.Header.Get("X-Emby-Token"))
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-
-	client := NewClientLegacy(Config{URL: server.URL, APIKey: "jellyfin-key"})
-	if err := client.RefreshLiveTVGuide(context.Background()); err != nil {
-		t.Fatalf("RefreshLiveTVGuide returned error: %v", err)
-	}
-}
-
 func TestClient_RefreshLiveTVGuide_HTTPStatusOK(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

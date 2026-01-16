@@ -61,7 +61,7 @@ func (i item) FilterValue() string { return i.block.Name }
 
 // Model is the Bubble Tea model for the TUI.
 type Model struct {
-	cfg               *config.Config
+	blocks            []scheduler.Block // scheduler blocks being edited
 	store             *store.Store
 	list              list.Model
 	state             sessionState
@@ -111,11 +111,11 @@ type Model struct {
 	timelineScroll int            // Current scroll position
 }
 
-// NewModel creates a new TUI model with the given configuration and optional store.
+// NewModel creates a new TUI model with the given blocks and optional store.
 // The schedulerFile parameter is the path to save scheduler config changes.
-func NewModel(cfg *config.Config, st *store.Store, schedulerFile string) Model {
-	items := make([]list.Item, len(cfg.Scheduler.Blocks))
-	for i, b := range cfg.Scheduler.Blocks {
+func NewModel(blocks []scheduler.Block, st *store.Store, schedulerFile string) Model {
+	items := make([]list.Item, len(blocks))
+	for i, b := range blocks {
 		items[i] = item{block: b}
 	}
 
@@ -124,7 +124,7 @@ func NewModel(cfg *config.Config, st *store.Store, schedulerFile string) Model {
 	l.Title = "Scheduling Blocks"
 
 	return Model{
-		cfg:           cfg,
+		blocks:        blocks,
 		store:         st,
 		list:          l,
 		state:         stateListView,
@@ -279,7 +279,7 @@ func (m Model) handleBlockOperations(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) 
 		}
 		return true, m, tea.Quit
 	case "enter":
-		if len(m.cfg.Scheduler.Blocks) == 0 {
+		if len(m.blocks) == 0 {
 			return true, m, nil
 		}
 		m.startEditBlock(m.list.Index())
@@ -288,7 +288,7 @@ func (m Model) handleBlockOperations(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) 
 		m.startEditBlock(-1)
 		return true, m, nil
 	case "d", "delete":
-		if len(m.cfg.Scheduler.Blocks) == 0 {
+		if len(m.blocks) == 0 {
 			return true, m, nil
 		}
 		m.selected = m.list.Index()
@@ -377,8 +377,8 @@ func (m *Model) startEditBlock(index int) {
 	m.selected = index
 
 	// Populate form values
-	if index >= 0 && index < len(m.cfg.Scheduler.Blocks) {
-		b := m.cfg.Scheduler.Blocks[index]
+	if index >= 0 && index < len(m.blocks) {
+		b := m.blocks[index]
 		m.formName = b.Name
 		m.formCron = b.Cron
 		m.formDuration = strconv.Itoa(b.Duration)
@@ -398,14 +398,15 @@ func (m Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		// Confirm deletion
-		if m.selected >= 0 && m.selected < len(m.cfg.Scheduler.Blocks) {
-			// Remove from config
-			m.cfg.Scheduler.Blocks = append(
-				m.cfg.Scheduler.Blocks[:m.selected],
-				m.cfg.Scheduler.Blocks[m.selected+1:]...,
+		if m.selected >= 0 && m.selected < len(m.blocks) {
+			// Remove from blocks
+			m.blocks = append(
+				m.blocks[:m.selected],
+				m.blocks[m.selected+1:]...,
 			)
 			// Remove from list
 			m.list.RemoveItem(m.selected)
+			m.hasUnsavedChanges = true
 		}
 		m.state = stateListView
 		return m, nil
@@ -442,11 +443,11 @@ func (m *Model) saveBlock() {
 	}
 
 	if m.selected == -1 {
-		m.cfg.Scheduler.Blocks = append(m.cfg.Scheduler.Blocks, newBlock)
+		m.blocks = append(m.blocks, newBlock)
 		m.list.InsertItem(len(m.list.Items()), item{block: newBlock})
 	} else {
 		// Preserve existing filter, series config, and other fields
-		existingBlock := m.cfg.Scheduler.Blocks[m.selected]
+		existingBlock := m.blocks[m.selected]
 		newBlock.Type = existingBlock.Type
 		newBlock.Filter = existingBlock.Filter
 		newBlock.Priority = existingBlock.Priority
@@ -454,7 +455,7 @@ func (m *Model) saveBlock() {
 		newBlock.Fallback = existingBlock.Fallback
 		newBlock.Filler = existingBlock.Filler
 		newBlock.MaxDurationOverflowMinutes = existingBlock.MaxDurationOverflowMinutes
-		m.cfg.Scheduler.Blocks[m.selected] = newBlock
+		m.blocks[m.selected] = newBlock
 		// Update list item
 		m.list.SetItem(m.selected, item{block: newBlock})
 	}
@@ -463,17 +464,17 @@ func (m *Model) saveBlock() {
 
 // duplicateBlock creates a copy of the currently selected block.
 func (m *Model) duplicateBlock() {
-	if len(m.cfg.Scheduler.Blocks) == 0 {
+	if len(m.blocks) == 0 {
 		return
 	}
 
 	idx := m.list.Index()
-	if idx < 0 || idx >= len(m.cfg.Scheduler.Blocks) {
+	if idx < 0 || idx >= len(m.blocks) {
 		return
 	}
 
 	// Create a deep copy of the block
-	original := m.cfg.Scheduler.Blocks[idx]
+	original := m.blocks[idx]
 	duplicate := scheduler.Block{
 		Type:                       original.Type,
 		Name:                       original.Name + " (copy)",
@@ -495,8 +496,8 @@ func (m *Model) duplicateBlock() {
 
 	// Insert after the current block
 	insertIdx := idx + 1
-	m.cfg.Scheduler.Blocks = append(m.cfg.Scheduler.Blocks[:insertIdx],
-		append([]scheduler.Block{duplicate}, m.cfg.Scheduler.Blocks[insertIdx:]...)...)
+	m.blocks = append(m.blocks[:insertIdx],
+		append([]scheduler.Block{duplicate}, m.blocks[insertIdx:]...)...)
 	m.list.InsertItem(insertIdx, item{block: duplicate})
 
 	m.hasUnsavedChanges = true
@@ -505,7 +506,7 @@ func (m *Model) duplicateBlock() {
 
 // saveConfigToDisk saves the current configuration to the scheduler file.
 func (m *Model) saveConfigToDisk() {
-	if err := config.SaveSchedulerConfig(&m.cfg.Scheduler, m.schedulerFile); err != nil {
+	if err := config.SaveSchedulerBlocks(m.blocks, m.schedulerFile); err != nil {
 		m.statusMessage = fmt.Sprintf("Error saving: %v", err)
 		return
 	}
@@ -520,23 +521,23 @@ func (m *Model) saveConfigToDisk() {
 
 // adjustPriority changes the priority of the currently selected block.
 func (m *Model) adjustPriority(delta int) {
-	if len(m.cfg.Scheduler.Blocks) == 0 {
+	if len(m.blocks) == 0 {
 		return
 	}
 
 	idx := m.list.Index()
-	if idx < 0 || idx >= len(m.cfg.Scheduler.Blocks) {
+	if idx < 0 || idx >= len(m.blocks) {
 		return
 	}
 
 	// Adjust priority (minimum 0)
-	newPriority := m.cfg.Scheduler.Blocks[idx].Priority + delta
+	newPriority := m.blocks[idx].Priority + delta
 	if newPriority < 0 {
 		newPriority = 0
 	}
 
-	m.cfg.Scheduler.Blocks[idx].Priority = newPriority
-	m.list.SetItem(idx, item{block: m.cfg.Scheduler.Blocks[idx]})
+	m.blocks[idx].Priority = newPriority
+	m.list.SetItem(idx, item{block: m.blocks[idx]})
 
 	m.hasUnsavedChanges = true
 	m.statusMessage = fmt.Sprintf("Priority set to %d", newPriority)
@@ -679,8 +680,8 @@ func (m Model) renderConfirmDelete() string {
 		Bold(true)
 
 	blockName := ""
-	if m.selected >= 0 && m.selected < len(m.cfg.Scheduler.Blocks) {
-		blockName = m.cfg.Scheduler.Blocks[m.selected].Name
+	if m.selected >= 0 && m.selected < len(m.blocks) {
+		blockName = m.blocks[m.selected].Name
 	}
 
 	builder.WriteString(warningStyle.Render("⚠ Delete Block\n\n"))
@@ -1121,7 +1122,7 @@ func (m *Model) initSeriesSelector() {
 	}
 
 	// From existing block configurations
-	for _, block := range m.cfg.Scheduler.Blocks {
+	for _, block := range m.blocks {
 		for _, s := range block.Series {
 			if s.ShowTitle != "" {
 				seriesSet[s.ShowTitle] = struct{}{}
@@ -1503,7 +1504,7 @@ func (m *Model) generateTimelineSlots() []timelineSlot {
 
 	var slots []timelineSlot
 
-	for _, block := range m.cfg.Scheduler.Blocks {
+	for _, block := range m.blocks {
 		schedule, err := parser.Parse(block.Cron)
 		if err != nil {
 			continue
@@ -1745,11 +1746,11 @@ func (m *Model) initFilterBuilder() {
 	m.filterMaxDur = ""
 
 	// Load from current block's filter if editing existing block
-	if m.selected < 0 || m.selected >= len(m.cfg.Scheduler.Blocks) {
+	if m.selected < 0 || m.selected >= len(m.blocks) {
 		return
 	}
 
-	filter := m.cfg.Scheduler.Blocks[m.selected].Filter
+	filter := m.blocks[m.selected].Filter
 	m.filterTitlePat = filter.TitlePattern
 	m.filterGenres = filter.Genres
 	m.filterRatings = filter.Ratings
@@ -1884,7 +1885,7 @@ func (m *Model) handleFilterInput(input string) {
 
 // applyFilter saves the filter to the current block
 func (m *Model) applyFilter() {
-	if m.selected < 0 || m.selected >= len(m.cfg.Scheduler.Blocks) {
+	if m.selected < 0 || m.selected >= len(m.blocks) {
 		return
 	}
 
@@ -1915,7 +1916,8 @@ func (m *Model) applyFilter() {
 		}
 	}
 
-	m.cfg.Scheduler.Blocks[m.selected].Filter = filter
+	m.blocks[m.selected].Filter = filter
+	m.hasUnsavedChanges = true
 }
 
 // renderFilterBuilder renders the filter builder view

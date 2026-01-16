@@ -10,9 +10,36 @@ import (
 	"time"
 
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// NewEngineWithOptions creates a new scheduling engine with optional configuration.
+// This is a test helper function.
+func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStore, opts EngineOptions) *Engine {
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
+	}
+	if opts.Location == nil {
+		opts.Location = time.Local
+	}
+	historyWindow := opts.HistoryWindow
+	if historyWindow == 0 {
+		historyWindow = 7 * 24 * time.Hour // Default to 7 days
+	}
+	return &Engine{
+		client:         client,
+		blocks:         blocks,
+		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
+		location:       opts.Location,
+		history:        NewScheduleHistory(historyWindow),
+		store:          store,
+		pendingStates:  make(map[string]*SeriesState),
+		pendingHistory: nil,
+		logger:         opts.Logger,
+	}
+}
 
 func TestSlotsOverlap(t *testing.T) {
 	tests := []struct {
@@ -248,7 +275,11 @@ func TestCommit_CleansUpScheduleHistory(t *testing.T) {
 		},
 	}
 
-	engine := NewEngineWithHistory(client, []Block{}, 24*time.Hour, store, slog.Default(), time.UTC)
+	engine := NewEngineWithOptions(client, []Block{}, store, EngineOptions{
+		HistoryWindow: 24 * time.Hour,
+		Logger:        slog.Default(),
+		Location:      time.UTC,
+	})
 
 	require.NoError(t, engine.Commit(), "Commit returned error")
 	require.Len(t, store.History, 1, "Expected 1 history entry after cleanup")
@@ -704,7 +735,11 @@ func TestFilterByHistory(t *testing.T) {
 		},
 	}
 
-	engine := NewEngineWithHistory(client, []Block{}, 7*24*time.Hour, store, slog.Default(), time.UTC)
+	engine := NewEngineWithOptions(client, []Block{}, store, EngineOptions{
+		HistoryWindow: 7 * 24 * time.Hour,
+		Logger:        slog.Default(),
+		Location:      time.UTC,
+	})
 
 	availablePrograms := []tunarr.Program{
 		{ID: "p1", Title: "Recent Show", Duration: 1800000, Type: "episode"},
@@ -1386,4 +1421,161 @@ func TestGetSeriesState_FromStore(t *testing.T) {
 	assert.Equal(t, "Stored Show", state.ShowTitle, "Expected to get state from store")
 	assert.Equal(t, 1, state.CurrentSeason, "Expected season 1")
 	assert.Equal(t, 3, state.CurrentEpisode, "Expected episode 3")
+}
+
+func TestPlanBlock_HistoryFallbackAllowsRepeats(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	// Set up history so all programs are recently scheduled
+	store.History = []ScheduleHistoryEntry{
+		{ProgramID: "prog-1", ChannelID: "channel-1", ScheduledAt: time.Now()},
+		{ProgramID: "prog-2", ChannelID: "channel-1", ScheduledAt: time.Now()},
+	}
+
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		Name:      "Test Block",
+		Duration:  30,
+		ChannelID: "channel-1",
+		Filter: Filter{
+			Genres: []string{"Comedy"},
+		},
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "prog-1", Title: "Show A", Duration: 1800000, Genres: []tunarr.Genre{{Name: "Comedy"}}, Type: "episode"},
+		{ID: "prog-2", Title: "Show B", Duration: 1800000, Genres: []tunarr.Genre{{Name: "Comedy"}}, Type: "episode"},
+	}
+
+	// Should still return content (allows repeats when all filtered)
+	playlist, err := engine.PlanBlock(block, availablePrograms)
+	require.NoError(t, err, "PlanBlock should allow repeats when history filters everything")
+	assert.NotEmpty(t, playlist, "Expected playlist to contain repeated programs")
+}
+
+func TestApplySeriesFallback_FilterErrorLogged(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	// Create a block with invalid filter (negative duration range)
+	block := Block{
+		ChannelID: "channel-1",
+		Name:      "Test Block",
+		Fallback: SeriesFallback{
+			Mode: FallbackModeFiller,
+			FillerFilter: Filter{
+				MinDuration: 100,
+				MaxDuration: 10, // Invalid: min > max
+			},
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Show", Duration: 1800000, Type: "episode"},
+	}
+
+	// Should not panic, just log and return original
+	playlist, duration := engine.applySeriesFallback(block, []tunarr.Program{}, initialPlaylist, 1800000, 3600000)
+
+	assert.Len(t, playlist, 1, "Expected original playlist returned on filter error")
+	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on filter error")
+}
+
+func TestApplySeriesFallback_NoMatchingContent(t *testing.T) {
+	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	// Programs don't match the filter
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Drama Show", Duration: 1800000, Genres: []tunarr.Genre{{Name: "Drama"}}, Type: "episode"},
+	}
+
+	block := Block{
+		ChannelID: "channel-1",
+		Name:      "Test Block",
+		Fallback: SeriesFallback{
+			Mode: FallbackModeFiller,
+			FillerFilter: Filter{
+				Genres: []string{"Comedy"}, // Won't match Drama
+			},
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p0", Title: "Initial", Duration: 1800000, Type: "episode"},
+	}
+
+	playlist, duration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, 1800000, 3600000)
+
+	assert.Len(t, playlist, 1, "Expected original playlist when no content matches filter")
+	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged when no content matches")
+}
+
+func TestApplyBlockFiller_FetchErrorLogged(t *testing.T) {
+	// Create a server that returns an error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		ChannelID: "channel-1",
+		Name:      "Test Block",
+		Filler: FillerConfig{
+			Enabled:      true,
+			FillerListID: "filler-1",
+			MinGapTime:   5,
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Show", Duration: 1800000, Type: "episode"},
+	}
+
+	// Should not panic, just return original playlist
+	playlist, duration := engine.applyBlockFiller(block, initialPlaylist, 1800000, 3600000)
+
+	assert.Len(t, playlist, 1, "Expected original playlist returned on filler fetch error")
+	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on filler fetch error")
+}
+
+func TestApplyBlockFiller_EmptyFillerList(t *testing.T) {
+	// Create a server that returns empty filler list
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]tunarr.Program{})
+	}))
+	defer server.Close()
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	block := Block{
+		ChannelID: "channel-1",
+		Name:      "Test Block",
+		Filler: FillerConfig{
+			Enabled:      true,
+			FillerListID: "filler-1",
+			MinGapTime:   5,
+		},
+	}
+
+	initialPlaylist := []tunarr.Program{
+		{ID: "p1", Title: "Show", Duration: 1800000, Type: "episode"},
+	}
+
+	// Should not panic, just return original playlist
+	playlist, duration := engine.applyBlockFiller(block, initialPlaylist, 1800000, 3600000)
+
+	assert.Len(t, playlist, 1, "Expected original playlist returned on empty filler list")
+	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on empty filler list")
 }

@@ -80,88 +80,6 @@ func TestGet_Expired(t *testing.T) {
 	assert.False(t, found, "Expected data to be expired")
 }
 
-func TestClear(t *testing.T) {
-	cache, err := New(1 * time.Hour)
-	require.NoError(t, err)
-
-	key1 := "key1"
-	key2 := "key2"
-	_ = cache.Set(key1, TestData{Name: "data1"})
-	_ = cache.Set(key2, TestData{Name: "data2"})
-
-	err = cache.Clear(key1)
-	require.NoError(t, err)
-
-	var data TestData
-	found, _ := cache.Get(key1, &data)
-	assert.False(t, found, "Expected key1 to be cleared")
-
-	found, _ = cache.Get(key2, &data)
-	assert.True(t, found, "Expected key2 to still exist")
-
-	// Clear non-existent key should not error
-	err = cache.Clear("non_existent")
-	assert.NoError(t, err)
-}
-
-func TestClearAll(t *testing.T) {
-	cache, err := New(1 * time.Hour)
-	require.NoError(t, err)
-
-	_ = cache.Set("key1", TestData{})
-	_ = cache.Set("key2", TestData{})
-	_ = cache.Set("key3", TestData{})
-
-	assert.Equal(t, 3, cache.ItemCount())
-
-	err = cache.ClearAll()
-	require.NoError(t, err)
-
-	assert.Equal(t, 0, cache.ItemCount())
-}
-
-func TestSetWithExpiration(t *testing.T) {
-	cache, err := New(1 * time.Hour)
-	require.NoError(t, err)
-
-	key := "custom_expiry"
-	data := "test value"
-
-	// Set with 1ms expiration
-	err = cache.SetWithExpiration(key, data, 1*time.Millisecond)
-	require.NoError(t, err)
-
-	// Should exist immediately
-	var retrieved string
-	found, _ := cache.Get(key, &retrieved)
-	assert.True(t, found)
-
-	// Wait for expiration
-	time.Sleep(50 * time.Millisecond)
-
-	found, _ = cache.Get(key, &retrieved)
-	assert.False(t, found, "Expected data to be expired with custom expiration")
-}
-
-func TestItemCount(t *testing.T) {
-	cache, err := New(1 * time.Hour)
-	require.NoError(t, err)
-
-	assert.Equal(t, 0, cache.ItemCount())
-
-	_ = cache.Set("key1", "value1")
-	assert.Equal(t, 1, cache.ItemCount())
-
-	_ = cache.Set("key2", "value2")
-	assert.Equal(t, 2, cache.ItemCount())
-
-	_ = cache.Clear("key1")
-	assert.Equal(t, 1, cache.ItemCount())
-
-	_ = cache.ClearAll()
-	assert.Equal(t, 0, cache.ItemCount())
-}
-
 func TestCacheWithDifferentTypes(t *testing.T) {
 	cache, err := New(1 * time.Hour)
 	require.NoError(t, err)
@@ -334,9 +252,10 @@ func TestConcurrentAccess(t *testing.T) {
 		<-done
 	}
 
-	// Should not panic or have data races
-	count := cache.ItemCount()
-	assert.GreaterOrEqual(t, count, 0)
+	// Should not panic or have data races - verify we can still read
+	var val int
+	_, err = cache.Get("concurrent_key", &val)
+	assert.NoError(t, err)
 }
 
 func TestCopyValue_StringType(t *testing.T) {

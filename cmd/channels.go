@@ -10,20 +10,19 @@ import (
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var channelsCmd = &cobra.Command{
 	Use:   "channels",
 	Short: "List all Tunarr channels",
 	Run: func(_ *cobra.Command, _ []string) {
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			fmt.Printf("Error parsing config: %v\n", err)
+		cfg := getConfig()
+		if cfg == nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s config not loaded\n", errorStyle.Render("✗ Error:"))
 			os.Exit(1)
 		}
 
-		client := tunarr.NewClient(cfg.Tunarr)
+		client := tunarr.NewClient(config.TunarrConfig(cfg))
 		channels, err := client.GetChannels(context.Background())
 		if err != nil {
 			fmt.Printf("Error fetching channels: %v\n", err)

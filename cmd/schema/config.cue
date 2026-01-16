@@ -1,72 +1,100 @@
 package schema
 
 // Config is the root configuration schema for Schedularr
+// This is the single source of truth for configuration structure and defaults
 #Config: {
-	// Tunarr connection configuration
+	// Tunarr connection configuration (required)
 	tunarr: #TunarrConfig
 
-	// Optional Radarr connection configuration
-	radarr?: #RadarrConfig
+	// Radarr connection configuration
+	radarr: #RadarrConfig
 
-	// Optional Sonarr connection configuration
-	sonarr?: #SonarrConfig
+	// Sonarr connection configuration
+	sonarr: #SonarrConfig
 
-	// Optional Jellyfin connection configuration
-	jellyfin?: #JellyfinConfig
+	// Jellyfin connection configuration
+	jellyfin: #JellyfinConfig
 
 	// Logging configuration
 	log: #LogConfig
 
-	// Optional path to SQLite database file (defaults to ~/.schedularr.db)
-	database?: string
+	// Port for Prometheus metrics endpoint
+	metrics_port: int | *9090
 
-	// Optional path to external scheduler configuration file
-	scheduler_file?: string
+	// Path to SQLite database file
+	database: string | *"schedularr.db"
+
+	// Path to external scheduler configuration file
+	scheduler_file: string | *"scheduler.yaml"
 
 	// Inline scheduler configuration (legacy support)
 	scheduler?: #SchedulerConfig
+
+	// Content caching configuration
+	cache: #CacheConfig
+
+	// Maintenance configuration for background tasks
+	maintenance: #MaintenanceConfig
 }
 
 // TunarrConfig defines the Tunarr API connection settings
 #TunarrConfig: {
 	// Tunarr API base URL
-	url: string | *"http://localhost:8000"
+	url: string | *"${SCHEDULARR_TUNARR_URL}"
+
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_TUNARR_API_KEY}"
 
 	// Request timeout duration
-	timeout?: string | *"10s"
+	timeout: string | *"30s"
+}
+
+// CacheConfig defines content caching settings
+#CacheConfig: {
+	// Directory to store cached content metadata
+	cache_dir: string | *"/tmp/schedularr_cache"
+
+	// How long cached entries are considered valid (e.g., "1h", "24h")
+	cache_duration: string | *"1h"
 }
 
 // RadarrConfig defines the Radarr API connection settings
 #RadarrConfig: {
 	// Radarr API base URL
-	url: string | *"http://localhost:8000"
+	url: string | *"${SCHEDULARR_RADARR_URL}"
 
-	// Optional API key for authentication
-	api_key?: string
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_RADARR_API_KEY}"
+
+	// Exclude movies that are missing files on disk
+	exclude_missing_file: bool | *true
 }
 
 // SonarrConfig defines the Sonarr API connection settings
 #SonarrConfig: {
 	// Sonarr API base URL
-	url: string
+	url: string | *"${SCHEDULARR_SONARR_URL}"
 
-	// Optional API key for authentication
-	api_key?: string
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_SONARR_API_KEY}"
+
+	// Exclude episodes that are missing files on disk
+	exclude_missing_file: bool | *true
 }
 
 // JellyfinConfig defines the Jellyfin API connection settings
 #JellyfinConfig: {
 	// Jellyfin API base URL
-	url: string
+	url: string | *"${SCHEDULARR_JELLYFIN_URL}"
 
-	// Optional API key for authentication
-	api_key?: string
+	// API key for authentication
+	api_key: string | *"${SCHEDULARR_JELLYFIN_API_KEY}"
 
-	// Optional user ID for user-scoped endpoints
-	user_id?: string
+	// User ID for user-scoped endpoints
+	user_id: string | *""
 
 	// Whether to refresh the Live TV guide after schedule apply
-	sync_live_tv?: bool | *false
+	sync_live_tv: bool | *true
 }
 
 // LogConfig defines logging settings
@@ -76,6 +104,21 @@ package schema
 
 	// Log format: text or json
 	format: "text" | "json" | *"text"
+
+	// IANA Time Zone name (e.g., "America/New_York", "UTC", "Local")
+	timezone: string | *"Local"
+}
+
+// MaintenanceConfig defines background maintenance task settings
+#MaintenanceConfig: {
+	// How often to run cleanup tasks (e.g., "24h")
+	cleanup_interval: string | *"24h"
+
+	// How long to keep schedule history (e.g., "168h" for 7 days)
+	history_retention: string | *"168h"
+
+	// Whether to enable automatic cleanup
+	cleanup_enabled: bool | *true
 }
 
 // SchedulerConfig defines the scheduling configuration
@@ -90,13 +133,13 @@ package schema
 // SchedulerSettings defines global scheduler settings
 #SchedulerSettings: {
 	// Default rotation window in days (prevent re-scheduling within X days)
-	rotation_window_days?: int | *7
+	rotation_window_days: int | *7
 
 	// Minimum gap time in minutes to trigger filler content
-	min_gap_minutes?: int | *5
+	min_gap_minutes: int | *5
 
 	// Maximum filler duration in minutes
-	max_filler_minutes?: int | *30
+	max_filler_minutes: int | *30
 }
 
 // Block defines a scheduling block (filter-based or series-based)
@@ -119,6 +162,9 @@ package schema
 	// Priority for conflict resolution (higher = more important)
 	priority: int | *10
 
+	// Max minutes a block's actual duration can exceed its planned duration
+	max_duration_overflow_minutes: int | *0
+
 	// Filter criteria (for type="filter")
 	filter?: #Filter
 
@@ -127,6 +173,9 @@ package schema
 
 	// Fallback configuration when series completes
 	fallback?: #FallbackConfig
+
+	// Filler content configuration
+	filler?: #FillerConfig
 }
 
 // Filter defines content filtering criteria
@@ -161,10 +210,19 @@ package schema
 	episodes_per_block: int & >0 | *1
 
 	// Starting season (optional, defaults to 1)
-	start_season?: int & >0 | *1
+	start_season: int & >0 | *1
 
 	// Starting episode (optional, defaults to 1)
-	start_episode?: int & >0 | *1
+	start_episode: int & >0 | *1
+
+	// Action when series completes: "continue", "restart", or "disable"
+	on_complete: "continue" | "restart" | "disable" | *"continue"
+
+	// Episodes to skip (format: "S01E05", "S02E10")
+	skip_episodes?: [...string]
+
+	// Maximum number of times to run through series (0 = unlimited)
+	max_runs: int & >=0 | *0
 }
 
 // FallbackConfig defines fallback behavior when series completes
@@ -175,3 +233,21 @@ package schema
 	// Filler filter (used when mode="filler")
 	filler_filter?: #Filter
 }
+
+// FillerConfig defines filler content configuration for a block
+#FillerConfig: {
+	// Whether to use filler content
+	enabled: bool | *false
+
+	// ID of filler list to use
+	filler_list_id?: string
+
+	// Max minutes of filler allowed (0 = unlimited)
+	max_filler_time: int | *0
+
+	// Minimum gap (minutes) before adding filler
+	min_gap_time: int | *5
+}
+
+// Default configuration instance - all defaults come from type definitions
+config: #Config

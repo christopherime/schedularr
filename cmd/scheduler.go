@@ -16,7 +16,6 @@ import (
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -307,11 +306,6 @@ func validateSchedulerConfig(cfg *scheduler.Config) []error {
 		return []error{errors.New("no scheduling blocks defined")}
 	}
 
-	var appCfg config.Config
-	if err := viper.Unmarshal(&appCfg); err != nil {
-		return []error{fmt.Errorf("failed to load app config for cron parser: %w", err)}
-	}
-
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 	var errs []error
@@ -371,15 +365,17 @@ func validateBlockFilter(filter scheduler.Filter, blockPrefix string) []error {
 }
 
 func validateChannelIDs(cfg *scheduler.Config) []error {
-	var appCfg config.Config
-	if err := viper.Unmarshal(&appCfg); err != nil {
-		return []error{fmt.Errorf("failed to load app config for channel validation: %w", err)}
+	appCfg := getConfig()
+	if appCfg == nil {
+		return []error{errors.New("config not loaded for channel validation")}
 	}
-	if appCfg.Tunarr.URL == "" {
+
+	tunarrCfg := config.TunarrConfig(appCfg)
+	if tunarrCfg.URL == "" {
 		return []error{errors.New("tunarr.url is required for channel validation")}
 	}
 
-	client := tunarr.NewClient(appCfg.Tunarr)
+	client := tunarr.NewClient(tunarrCfg)
 	channels, err := client.GetChannels(context.Background())
 	if err != nil {
 		return []error{fmt.Errorf("failed to fetch channels: %w", err)}

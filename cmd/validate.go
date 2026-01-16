@@ -12,10 +12,7 @@ import (
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
-	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 var warningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
@@ -96,27 +93,28 @@ func validateFile(filePath string) error {
 }
 
 func validateSchedulerSemantics(data []byte) error {
-	var schedCfg scheduler.Config
-	if err := yaml.Unmarshal(data, &schedCfg); err != nil {
+	// Load scheduler config using CUE
+	validator := cueconfig.NewValidator()
+	schedCfg, err := validator.LoadSchedulerConfig(data, "yaml")
+	if err != nil {
 		return fmt.Errorf("failed to parse scheduler config for semantic validation: %w", err)
 	}
 
-	// Load app config to get Tunarr details
-	// We use the already loaded viper config if available
-	var appCfg config.Config
-	if err := viper.Unmarshal(&appCfg); err != nil {
-		// If we can't load app config, we can't check Tunarr.
-		// This is fine, just skip Tunarr validation.
+	// Get app config if available
+	appCfg := getConfig()
+	if appCfg == nil {
+		// No app config loaded, skip Tunarr validation
 		return nil
 	}
 
-	if appCfg.Tunarr.URL == "" {
+	tunarrCfg := config.TunarrConfig(appCfg)
+	if tunarrCfg.URL == "" {
 		// No Tunarr configured, skip validation
 		return nil
 	}
 
 	// Create client
-	client := tunarr.NewClient(appCfg.Tunarr)
+	client := tunarr.NewClient(tunarrCfg)
 
 	// Fetch channels
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -137,9 +135,12 @@ func validateSchedulerSemantics(data []byte) error {
 
 	// Check blocks
 	var invalidChannels []string
-	for _, block := range schedCfg.Blocks {
-		if !channelMap[block.ChannelID] {
-			invalidChannels = append(invalidChannels, fmt.Sprintf("Block '%s' references unknown channel '%s'", block.Name, block.ChannelID))
+	blocks := schedCfg.GetBlocks()
+	for _, block := range blocks {
+		name, _ := block["name"].(string)
+		channelID, _ := block["channel_id"].(string)
+		if channelID != "" && !channelMap[channelID] {
+			invalidChannels = append(invalidChannels, fmt.Sprintf("Block '%s' references unknown channel '%s'", name, channelID))
 		}
 	}
 

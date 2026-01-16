@@ -14,7 +14,6 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var stateCmd = &cobra.Command{
@@ -57,17 +56,8 @@ The exported file contains all series states including:
 	RunE: func(_ *cobra.Command, args []string) error {
 		outputFile := args[0]
 
-		// Load config
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return fmt.Errorf("failed to parse config: %w", err)
-		}
-
-		// Get database path from config or use default
-		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
-		if cfg.Database != "" {
-			dbPath = cfg.Database
-		}
+		// Get database path from config
+		dbPath := getDatabasePath()
 
 		// Open store
 		s, err := store.New(dbPath)
@@ -126,17 +116,8 @@ Example:
 			return fmt.Errorf("failed to parse JSON: %w", err)
 		}
 
-		// Load config
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return fmt.Errorf("failed to parse config: %w", err)
-		}
-
-		// Get database path from config or use default
-		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
-		if cfg.Database != "" {
-			dbPath = cfg.Database
-		}
+		// Get database path from config
+		dbPath := getDatabasePath()
 
 		// Open store
 		s, err := store.New(dbPath)
@@ -169,17 +150,8 @@ Example:
 	RunE: func(_ *cobra.Command, args []string) error {
 		showTitle := args[0]
 
-		// Load config
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return fmt.Errorf("failed to parse config: %w", err)
-		}
-
-		// Get database path from config or use default
-		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
-		if cfg.Database != "" {
-			dbPath = cfg.Database
-		}
+		// Get database path from config
+		dbPath := getDatabasePath()
 
 		// Open store
 		s, err := store.New(dbPath)
@@ -214,17 +186,8 @@ Example:
 	RunE: func(_ *cobra.Command, args []string) error {
 		outputFile := args[0]
 
-		// Load config
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return fmt.Errorf("failed to parse config: %w", err)
-		}
-
-		// Get database path from config or use default
-		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
-		if cfg.Database != "" {
-			dbPath = cfg.Database
-		}
+		// Get database path from config
+		dbPath := getDatabasePath()
 
 		// Open store
 		s, err := store.New(dbPath)
@@ -262,17 +225,8 @@ Example:
 			return errors.New("season and episode must be >= 1")
 		}
 
-		// Load config
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return fmt.Errorf("failed to parse config: %w", err)
-		}
-
-		// Get database path from config or use default
-		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
-		if cfg.Database != "" {
-			dbPath = cfg.Database
-		}
+		// Get database path from config
+		dbPath := getDatabasePath()
 
 		// Open store
 		s, err := store.New(dbPath)
@@ -304,17 +258,8 @@ run count, and disabled status.
 Example:
   schedularr state list`,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		// Load config
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return fmt.Errorf("failed to parse config: %w", err)
-		}
-
-		// Get database path from config or use default
-		dbPath := filepath.Join(os.Getenv("HOME"), ".schedularr.db")
-		if cfg.Database != "" {
-			dbPath = cfg.Database
-		}
+		// Get database path from config
+		dbPath := getDatabasePath()
 
 		// Open store
 		s, err := store.New(dbPath)
@@ -366,6 +311,17 @@ Example:
 
 		return nil
 	},
+}
+
+// getDatabasePath returns the database path from config or default
+func getDatabasePath() string {
+	cfg := getConfig()
+	if cfg != nil {
+		if dbPath := config.DatabasePath(cfg); dbPath != "" {
+			return dbPath
+		}
+	}
+	return filepath.Join(os.Getenv("HOME"), ".schedularr.db")
 }
 
 func init() {

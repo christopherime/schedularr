@@ -92,26 +92,3 @@ func (c *Cache) Set(key string, v interface{}) error {
 	c.store.Set(key, v, gocache.DefaultExpiration)
 	return nil
 }
-
-// SetWithExpiration stores data with a custom expiration time.
-func (c *Cache) SetWithExpiration(key string, v interface{}, d time.Duration) error {
-	c.store.Set(key, v, d)
-	return nil
-}
-
-// Clear removes a specific entry from the cache.
-func (c *Cache) Clear(key string) error {
-	c.store.Delete(key)
-	return nil
-}
-
-// ClearAll removes all entries from the cache.
-func (c *Cache) ClearAll() error {
-	c.store.Flush()
-	return nil
-}
-
-// ItemCount returns the number of items in the cache.
-func (c *Cache) ItemCount() int {
-	return c.store.ItemCount()
-}

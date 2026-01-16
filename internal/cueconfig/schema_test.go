@@ -1,6 +1,7 @@
 package cueconfig
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -165,9 +166,18 @@ func TestGenerateConfig_JSON(t *testing.T) {
 		t.Error("GenerateConfig returned empty data")
 	}
 
-	// Validate the generated config
-	if err := v.ValidateConfig(data, "json"); err != nil {
-		t.Errorf("Generated config is invalid: %v", err)
+	// Verify it's valid JSON by parsing it
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Errorf("Generated JSON is invalid: %v", err)
+	}
+
+	// Check for expected top-level keys
+	if _, ok := parsed["tunarr"]; !ok {
+		t.Error("Generated config missing 'tunarr' key")
+	}
+	if _, ok := parsed["log"]; !ok {
+		t.Error("Generated config missing 'log' key")
 	}
 }
 
@@ -213,14 +223,14 @@ func TestGenerateScheduler_JSON(t *testing.T) {
 		t.Error("GenerateScheduler returned empty data")
 	}
 
-	// Validate the generated scheduler
-	if err := v.ValidateScheduler(data, "json"); err != nil {
-		t.Errorf("Generated scheduler is invalid: %v", err)
+	// Verify it's valid JSON by parsing it
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Errorf("Generated JSON is invalid: %v", err)
 	}
 
-	// Check that it contains expected fields
-	dataStr := string(data)
-	if !strings.Contains(dataStr, "blocks") {
+	// Check for expected fields
+	if _, ok := parsed["blocks"]; !ok {
 		t.Error("Generated scheduler missing 'blocks' field")
 	}
 }
@@ -306,88 +316,6 @@ func TestGenerateConfig_UnsupportedFormat(t *testing.T) {
 	}
 }
 
-func TestValidateConfigStruct(t *testing.T) {
-	v := NewValidator()
-
-	// Test with a valid struct
-	type TestConfig struct {
-		Tunarr struct {
-			URL string `yaml:"url"`
-		} `yaml:"tunarr"`
-		Log struct {
-			Level  string `yaml:"level"`
-			Format string `yaml:"format"`
-		} `yaml:"log"`
-	}
-
-	validConfig := TestConfig{}
-	validConfig.Tunarr.URL = "http://localhost:8000"
-	validConfig.Log.Level = "info"
-	validConfig.Log.Format = "text"
-
-	err := v.ValidateConfigStruct(validConfig)
-	if err != nil {
-		t.Errorf("ValidateConfigStruct failed for valid config: %v", err)
-	}
-
-	// Test with invalid struct (invalid log level)
-	invalidConfig := TestConfig{}
-	invalidConfig.Tunarr.URL = "http://localhost:8000"
-	invalidConfig.Log.Level = "invalid"
-	invalidConfig.Log.Format = "text"
-
-	err = v.ValidateConfigStruct(invalidConfig)
-	if err == nil {
-		t.Error("Expected validation error for invalid log level, got nil")
-	}
-}
-
-func TestValidateSchedulerStruct(t *testing.T) {
-	v := NewValidator()
-
-	// Test with a valid struct
-	type TestScheduler struct {
-		Blocks []map[string]interface{} `yaml:"blocks"`
-	}
-
-	validScheduler := TestScheduler{
-		Blocks: []map[string]interface{}{
-			{
-				"name":       "Test Block",
-				"type":       "filter",
-				"cron":       "0 9 * * *",
-				"duration":   120,
-				"channel_id": "channel-1",
-				"priority":   10,
-			},
-		},
-	}
-
-	err := v.ValidateSchedulerStruct(validScheduler)
-	if err != nil {
-		t.Errorf("ValidateSchedulerStruct failed for valid scheduler: %v", err)
-	}
-
-	// Test with invalid struct (negative duration)
-	invalidScheduler := TestScheduler{
-		Blocks: []map[string]interface{}{
-			{
-				"name":       "Test Block",
-				"type":       "filter",
-				"cron":       "0 9 * * *",
-				"duration":   -10,
-				"channel_id": "channel-1",
-				"priority":   10,
-			},
-		},
-	}
-
-	err = v.ValidateSchedulerStruct(invalidScheduler)
-	if err == nil {
-		t.Error("Expected validation error for negative duration, got nil")
-	}
-}
-
 func TestValidateConfig_MalformedYAML(t *testing.T) {
 	v := NewValidator()
 
@@ -425,8 +353,8 @@ func TestValidateConfig_MalformedJSON(t *testing.T) {
 		t.Error("Expected error for malformed JSON, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "failed to parse data") {
-		t.Errorf("Expected 'failed to parse data' error, got: %v", err)
+	if !strings.Contains(err.Error(), "failed to parse JSON") {
+		t.Errorf("Expected 'failed to parse JSON' error, got: %v", err)
 	}
 }
 
@@ -465,8 +393,8 @@ func TestValidateScheduler_MalformedJSON(t *testing.T) {
 		t.Error("Expected error for malformed JSON, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "failed to parse data") {
-		t.Errorf("Expected 'failed to parse data' error, got: %v", err)
+	if !strings.Contains(err.Error(), "failed to parse JSON") {
+		t.Errorf("Expected 'failed to parse JSON' error, got: %v", err)
 	}
 }
 

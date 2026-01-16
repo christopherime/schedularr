@@ -21,7 +21,6 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -75,13 +74,13 @@ Schedule generation:
 Use --dry-run to preview schedules without applying them.
 Use --verbose for detailed output including filtering and history.`,
 	Run: func(_ *cobra.Command, _ []string) {
-		var cfg config.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error: failed to parse config:"), err)
+		cfg := getConfig()
+		if cfg == nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s config not loaded\n", errorStyle.Render("✗ Error:"))
 			os.Exit(1)
 		}
 
-		if err := ProcessSchedule(&cfg, schedulerFile, apply, dryRun); err != nil {
+		if err := ProcessSchedule(cfg, schedulerFile, apply, dryRun); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error:"), err)
 			os.Exit(1)
 		}
@@ -192,20 +191,21 @@ func buildConfigOverrides() map[string]interface{} {
 }
 
 // ProcessSchedule generates and optionally applies the schedule.
-func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bool) error {
+func ProcessSchedule(cfg *config.Config, schedFile string, applyFlag bool, dryRunFlag bool) error {
 	schedCfg, st, err := initializeScheduler(cfg, schedFile)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
-	client := tunarr.NewClient(cfg.Tunarr)
+	client := tunarr.NewClient(config.TunarrConfig(cfg))
 	programs, err := fetchAndValidateContent(cfg, client)
 	if err != nil {
 		return err
 	}
 
-	engine, err := createEngine(cfg, client, schedCfg.Blocks, st)
+	blocks := config.SchedulerBlocks(schedCfg)
+	engine, err := createEngine(cfg, client, blocks, st)
 	if err != nil {
 		return err
 	}
@@ -219,15 +219,15 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 	flattenedPlan := flattenSchedule(plan)
 
 	err = handleScheduleOutput(cfg, client, engine, flattenedPlan, scheduleOutputOptions{
-		apply:  apply,
-		dryRun: dryRun,
+		apply:  applyFlag,
+		dryRun: dryRunFlag,
 	})
 	if err != nil {
 		return err
 	}
 
 	// Run cleanup after successful apply if enabled
-	if apply && !dryRun && cfg.Maintenance.CleanupEnabled {
+	if applyFlag && !dryRunFlag && config.MaintenanceCleanupEnabled(cfg) {
 		runScheduleHistoryCleanup(cfg, st)
 	}
 
@@ -236,7 +236,7 @@ func ProcessSchedule(cfg *config.Config, schedFile string, apply bool, dryRun bo
 
 // runScheduleHistoryCleanup removes old schedule history entries based on retention policy.
 func runScheduleHistoryCleanup(cfg *config.Config, st *store.Store) {
-	retention := cfg.Maintenance.GetHistoryRetention()
+	retention := config.MaintenanceHistoryRetention(cfg)
 	if retention == 0 {
 		return
 	}
@@ -255,19 +255,20 @@ func runScheduleHistoryCleanup(cfg *config.Config, st *store.Store) {
 	}
 }
 
-func initializeScheduler(cfg *config.Config, schedFile string) (*scheduler.Config, *store.Store, error) {
-	schedCfg, err := config.LoadSchedulerConfig(cfg, schedFile)
+func initializeScheduler(cfg *config.Config, schedFile string) (*config.SchedulerConfig, *store.Store, error) {
+	schedCfg, err := config.FindSchedulerConfig(cfg, schedFile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load scheduler config: %w", err)
 	}
 
-	if len(schedCfg.Blocks) == 0 {
+	blocks := schedCfg.GetBlocks()
+	if len(blocks) == 0 {
 		return nil, nil, errors.New("no scheduling blocks configured")
 	}
 
-	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(schedCfg.Blocks))))
+	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(blocks))))
 
-	st, err := store.New("schedularr.db")
+	st, err := store.New(config.DatabasePath(cfg))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -286,11 +287,12 @@ func fetchAndValidateContent(cfg *config.Config, client *tunarr.Client) ([]tunar
 }
 
 func createEngine(cfg *config.Config, client *tunarr.Client, blocks []scheduler.Block, st *store.Store) (*scheduler.Engine, error) {
-	logger := newLogger(cfg.Log.Level, cfg.Log.Format)
+	logger := newLogger(config.LogLevel(cfg), config.LogFormat(cfg))
 
-	loc, err := time.LoadLocation(cfg.Log.Timezone)
+	timezone := config.LogTimezone(cfg)
+	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		return nil, fmt.Errorf("invalid timezone '%s' in app config: %w", cfg.Log.Timezone, err)
+		return nil, fmt.Errorf("invalid timezone '%s' in app config: %w", timezone, err)
 	}
 
 	return scheduler.NewEngine(client, blocks, st, logger, loc), nil
@@ -303,7 +305,7 @@ func generateSchedulePlan(cfg *config.Config, engine *scheduler.Engine, programs
 	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗓️  Generating schedule from %s to %s in %s",
 		start.Format("2006-01-02 15:04"),
 		end.Format("2006-01-02 15:04"),
-		cfg.Log.Timezone)))
+		config.LogTimezone(cfg))))
 
 	plan, err := engine.GenerateForTimeRange(start, end, programs)
 	if err != nil {
@@ -352,16 +354,17 @@ func applyScheduleAndSync(cfg *config.Config, client *tunarr.Client, engine *sch
 		return fmt.Errorf("failed to commit state: %w", err)
 	}
 
-	if cfg.Jellyfin.URL != "" && cfg.Jellyfin.SyncLiveTV {
-		syncJellyfinLiveTV(cfg)
+	jellyfinCfg := config.JellyfinConfig(cfg)
+	if jellyfinCfg.URL != "" && jellyfinCfg.SyncLiveTV {
+		syncJellyfinLiveTV(jellyfinCfg)
 	}
 
 	return nil
 }
 
-func syncJellyfinLiveTV(cfg *config.Config) {
+func syncJellyfinLiveTV(jellyfinCfg jellyfin.Config) {
 	fmt.Println(infoStyle.Render("📺 Refreshing Jellyfin Live TV guide..."))
-	jellyfinClient := jellyfin.NewClient(cfg.Jellyfin)
+	jellyfinClient := jellyfin.NewClient(jellyfinCfg)
 	if err := refreshJellyfinWithRetries(jellyfinClient); err != nil {
 		fmt.Printf("%s %v\n", warnStyle.Render("⚠ Failed to refresh Jellyfin Live TV guide (non-fatal):"), err)
 	} else {

@@ -21,7 +21,7 @@ log:
   level: info
   format: text
   timezone: Local
-  log_file: schedularr.log
+  file: schedularr.log
 
 metrics_port: 9090
 database: schedularr.db

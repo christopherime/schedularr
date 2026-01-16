@@ -78,30 +78,25 @@ func TestClient_GetChannels(t *testing.T) {
 	}
 }
 
-func TestClient_GetPrograms_Deprecated(t *testing.T) {
-	// GetPrograms is deprecated - it should return an error
-	client := NewClient(Config{URL: "http://localhost"})
-	_, err := client.GetPrograms(context.Background())
-	if err == nil {
-		t.Error("Expected deprecation error, got nil")
-	}
-	if !strings.Contains(err.Error(), "deprecated") {
-		t.Errorf("Expected error to mention deprecation, got: %v", err)
-	}
-}
+func TestClient_UpdateSchedule(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("expected PUT request, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/channels/channel-1/programming" {
+			t.Errorf("expected /api/channels/channel-1/programming path, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
 
-func TestClient_UpdateSchedule_Deprecated(t *testing.T) {
-	// UpdateSchedule is deprecated - it should return an error
-	client := NewClient(Config{URL: "http://localhost"})
+	client := NewClient(Config{URL: server.URL})
 	schedule := []Program{
 		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
 	}
 	err := client.UpdateSchedule(context.Background(), "channel-1", schedule)
-	if err == nil {
-		t.Error("Expected deprecation error, got nil")
-	}
-	if !strings.Contains(err.Error(), "deprecated") {
-		t.Errorf("Expected error to mention deprecation, got: %v", err)
+	if err != nil {
+		t.Fatalf("UpdateSchedule returned error: %v", err)
 	}
 }
 
@@ -153,39 +148,6 @@ func TestClient_GetLibraries(t *testing.T) {
 	}
 }
 
-func TestClient_GetLibraryPrograms_Deprecated(t *testing.T) {
-	client := NewClient(Config{URL: "http://localhost"})
-	_, err := client.GetLibraryPrograms(context.Background(), "lib-1")
-	if err == nil {
-		t.Error("Expected deprecation error, got nil")
-	}
-	if !strings.Contains(err.Error(), "deprecated") {
-		t.Errorf("Expected error to mention deprecation, got: %v", err)
-	}
-}
-
-func TestClient_GetShows_Deprecated(t *testing.T) {
-	client := NewClient(Config{URL: "http://localhost"})
-	_, err := client.GetShows(context.Background())
-	if err == nil {
-		t.Error("Expected deprecation error, got nil")
-	}
-	if !strings.Contains(err.Error(), "deprecated") {
-		t.Errorf("Expected error to mention deprecation, got: %v", err)
-	}
-}
-
-func TestClient_GetShowEpisodes_Deprecated(t *testing.T) {
-	client := NewClient(Config{URL: "http://localhost"})
-	_, err := client.GetShowEpisodes(context.Background(), "show-1", 1)
-	if err == nil {
-		t.Error("Expected deprecation error, got nil")
-	}
-	if !strings.Contains(err.Error(), "deprecated") {
-		t.Errorf("Expected error to mention deprecation, got: %v", err)
-	}
-}
-
 func TestClient_SearchPrograms(t *testing.T) {
 	query := "Star"
 	mockResponse := ProgramSearchResponse{
@@ -218,66 +180,6 @@ func TestClient_SearchPrograms(t *testing.T) {
 
 	if len(response.Results) != len(mockResponse.Results) {
 		t.Errorf("expected %d programs, got %d", len(mockResponse.Results), len(response.Results))
-	}
-}
-
-func TestClient_GetFillerLists(t *testing.T) {
-	mockFillers := []FillerList{
-		{ID: "filler-1", Name: "Commercials", ContentCount: 50},
-		{ID: "filler-2", Name: "Bumpers", ContentCount: 30},
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET request, got %s", r.Method)
-		}
-		if r.URL.Path != "/api/filler-lists" {
-			t.Errorf("expected /api/filler-lists path, got %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockFillers)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	fillers, err := client.GetFillerLists(context.Background())
-	if err != nil {
-		t.Fatalf("GetFillerLists returned error: %v", err)
-	}
-
-	if len(fillers) != len(mockFillers) {
-		t.Errorf("expected %d filler lists, got %d", len(mockFillers), len(fillers))
-	}
-}
-
-func TestClient_GetFillerContent(t *testing.T) {
-	fillerID := "filler-1"
-	mockContent := []Program{
-		{ID: "prog-1", Title: "Commercial A", Duration: 30000, Type: "track"},
-		{ID: "prog-2", Title: "Commercial B", Duration: 30000, Type: "track"},
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET request, got %s", r.Method)
-		}
-		expectedPath := "/api/filler-lists/" + fillerID + "/programs"
-		if r.URL.Path != expectedPath {
-			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockContent)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	content, err := client.GetFillerContent(context.Background(), fillerID)
-	if err != nil {
-		t.Fatalf("GetFillerContent returned error: %v", err)
-	}
-
-	if len(content) != len(mockContent) {
-		t.Errorf("expected %d programs, got %d", len(mockContent), len(content))
 	}
 }
 
@@ -381,9 +283,9 @@ func TestClient_ContextCancellation(t *testing.T) {
 
 func TestClient_UpdateSchedule_ValidationError(t *testing.T) {
 	channelID := "channel-1"
-	// Schedule with invalid program (missing required fields)
+	// Schedule with invalid program (missing required title)
 	schedule := []Program{
-		{ID: "", Title: "Invalid Program", Duration: 0}, // Missing ID and invalid duration
+		{ID: "prog-1", Title: "", Duration: 1800000, Type: "movie"}, // Missing required title
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -428,11 +330,6 @@ func TestClient_GetLibraries_Error(t *testing.T) {
 	}
 }
 
-// Note: GetLibraryPrograms, GetShows, and GetShowEpisodes are deprecated.
-// The following tests verify they return deprecation errors as expected.
-// See TestClient_GetLibraryPrograms_Deprecated, TestClient_GetShows_Deprecated,
-// and TestClient_GetShowEpisodes_Deprecated for the main deprecation tests.
-
 func TestClient_SearchPrograms_EmptyQuery(t *testing.T) {
 	// Note: The current implementation doesn't validate empty queries client-side.
 	// The search will proceed and return results based on filters.
@@ -467,45 +364,6 @@ func TestClient_SearchPrograms_Error(t *testing.T) {
 	_, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{Query: "test"}})
 	if err == nil {
 		t.Error("Expected error for 500 response, got nil")
-	}
-}
-
-func TestClient_GetFillerLists_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetFillerLists(context.Background())
-	if err == nil {
-		t.Error("Expected error for 500 response, got nil")
-	}
-}
-
-func TestClient_GetFillerContent_EmptyID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Should not reach server due to empty filler ID")
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetFillerContent(context.Background(), "")
-	if err == nil {
-		t.Error("Expected error for empty filler list ID, got nil")
-	}
-}
-
-func TestClient_GetFillerContent_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	_, err := client.GetFillerContent(context.Background(), "filler-999")
-	if err == nil {
-		t.Error("Expected error for 404 response, got nil")
 	}
 }
 

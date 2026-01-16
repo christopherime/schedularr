@@ -1,4 +1,6 @@
-// Package config provides configuration management for Schedularr.
+// Package config provides configuration loading for Schedularr.
+// Configuration structure and defaults are defined by CUE schemas in cmd/schema/.
+// This package re-exports cueconfig types and provides loading helpers.
 package config
 
 import (
@@ -8,149 +10,60 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/geekxflood/schedularr/internal/external/jellyfin"
 	"github.com/geekxflood/schedularr/internal/external/radarr"
 	"github.com/geekxflood/schedularr/internal/external/sonarr"
 	"github.com/geekxflood/schedularr/internal/external/tunarr"
 	"github.com/geekxflood/schedularr/internal/scheduler"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
-// Config holds the application configuration
-type Config struct {
-	Tunarr        tunarr.Config     `mapstructure:"tunarr" yaml:"tunarr" json:"tunarr"`
-	Radarr        radarr.Config     `mapstructure:"radarr" yaml:"radarr" json:"radarr,omitempty"`
-	Sonarr        sonarr.Config     `mapstructure:"sonarr" yaml:"sonarr" json:"sonarr,omitempty"`
-	Jellyfin      jellyfin.Config   `mapstructure:"jellyfin" yaml:"jellyfin" json:"jellyfin,omitempty"`
-	Log           LogConfig         `mapstructure:"log" yaml:"log" json:"log"`
-	MetricsPort   int               `mapstructure:"metrics_port" yaml:"metrics_port" json:"metrics_port,omitempty"`       // Port for Prometheus metrics endpoint
-	Database      string            `mapstructure:"database" yaml:"database" json:"database,omitempty"`                   // Path to SQLite database file
-	SchedulerFile string            `mapstructure:"scheduler_file" yaml:"scheduler_file" json:"scheduler_file,omitempty"` // Path to scheduler config file
-	Scheduler     scheduler.Config  `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler,omitempty"`                // Inline scheduler config (legacy)
-	Cache         CacheConfig       `mapstructure:"cache" yaml:"cache" json:"cache"`
-	Maintenance   MaintenanceConfig `mapstructure:"maintenance" yaml:"maintenance" json:"maintenance"`
+// Config is an alias for cueconfig.Config
+// All config access should use the accessor methods (GetString, GetInt, etc.)
+type Config = cueconfig.Config
+
+// SchedulerConfig is an alias for cueconfig.SchedulerConfig
+type SchedulerConfig = cueconfig.SchedulerConfig
+
+// Load loads configuration from a file using CUE validation and defaults.
+func Load(path string) (*Config, error) {
+	validator := cueconfig.NewValidator()
+	return validator.LoadConfigWithEnvInterpolation(path)
 }
 
-// LogConfig holds configuration for logging
-type LogConfig struct {
-	Level    string `mapstructure:"level" yaml:"level" json:"level"`
-	Format   string `mapstructure:"format" yaml:"format" json:"format"`
-	Timezone string `mapstructure:"timezone" yaml:"timezone" json:"timezone,omitempty"` // IANA Time Zone name
-}
-
-// CacheConfig holds configuration for content caching
-type CacheConfig struct {
-	CacheDir      string `mapstructure:"cache_dir" yaml:"cache_dir" json:"cache_dir,omitempty"`                // Directory to store cache files
-	CacheDuration string `mapstructure:"cache_duration" yaml:"cache_duration" json:"cache_duration,omitempty"` // How long cache entries are valid (e.g., "1h", "24h")
-}
-
-// MaintenanceConfig holds configuration for background maintenance tasks
-type MaintenanceConfig struct {
-	CleanupInterval  string `mapstructure:"cleanup_interval" yaml:"cleanup_interval" json:"cleanup_interval,omitempty"`    // How often to run cleanup (e.g., "24h")
-	HistoryRetention string `mapstructure:"history_retention" yaml:"history_retention" json:"history_retention,omitempty"` // How long to keep schedule history (e.g., "168h" for 7 days)
-	CleanupEnabled   bool   `mapstructure:"cleanup_enabled" yaml:"cleanup_enabled" json:"cleanup_enabled"`                 // Whether to enable automatic cleanup
-}
-
-// GetCleanupInterval parses the CleanupInterval string into a time.Duration.
-// Returns a default of 24 hours if parsing fails.
-func (m *MaintenanceConfig) GetCleanupInterval() time.Duration {
-	if m.CleanupInterval == "" {
-		return 24 * time.Hour
-	}
-	duration, err := time.ParseDuration(m.CleanupInterval)
+// LoadScheduler loads scheduler configuration from a file.
+func LoadScheduler(path string) (*SchedulerConfig, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return 24 * time.Hour
+		return nil, fmt.Errorf("failed to read scheduler file: %w", err)
 	}
-	return duration
+
+	// Expand environment variables
+	expanded := os.ExpandEnv(string(data))
+
+	validator := cueconfig.NewValidator()
+	return validator.LoadSchedulerConfig([]byte(expanded), "yaml")
 }
 
-// GetHistoryRetention parses the HistoryRetention string into a time.Duration.
-// Returns a default of 7 days if parsing fails.
-func (m *MaintenanceConfig) GetHistoryRetention() time.Duration {
-	if m.HistoryRetention == "" {
-		return 7 * 24 * time.Hour // 7 days
-	}
-	duration, err := time.ParseDuration(m.HistoryRetention)
-	if err != nil {
-		return 7 * 24 * time.Hour
-	}
-	return duration
-}
-
-// GetCacheDuration parses the CacheDuration string into a time.Duration.
-// Returns a default of 1 hour if parsing fails.
-func (c *Config) GetCacheDuration() time.Duration {
-	duration, err := time.ParseDuration(c.Cache.CacheDuration)
-	if err != nil {
-		// Log this error properly once a logger is available
-		fmt.Fprintf(os.Stderr, "Warning: failed to parse cache duration '%s': %v. Using default 1h.\n", c.Cache.CacheDuration, err)
-		return 1 * time.Hour // Default to 1 hour
-	}
-	return duration
-}
-
-// New creates a new Config with default values
-func New() *Config {
-	return &Config{
-		Tunarr: tunarr.Config{
-			URL: "http://localhost:8000",
-		},
-		Radarr: radarr.Config{
-			ExcludeMissingFile: true,
-		},
-		Sonarr: sonarr.Config{
-			ExcludeMissingFile: true,
-		},
-		Jellyfin: jellyfin.Config{},
-		Log: LogConfig{
-			Level:    "info",
-			Format:   "text",
-			Timezone: "Local", // Default to system's local timezone
-		},
-		MetricsPort:   9090, // Default metrics port
-		SchedulerFile: "",   // Default to inline config or discover scheduler.yaml
-		Cache: CacheConfig{
-			CacheDir:      filepath.Join(os.TempDir(), "schedularr_cache"),
-			CacheDuration: "1h",
-		},
-		Maintenance: MaintenanceConfig{
-			CleanupInterval:  "24h",
-			HistoryRetention: "168h", // 7 days
-			CleanupEnabled:   true,
-		},
-	}
-}
-
-// LoadSchedulerConfig loads scheduler configuration from a file or inline config.
-// Priority: 1) schedulerFile parameter, 2) Config.SchedulerFile, 3) inline Config.Scheduler, 4) default scheduler.yaml
-func LoadSchedulerConfig(cfg *Config, schedulerFile string) (*scheduler.Config, error) {
+// FindSchedulerConfig finds scheduler configuration from various sources.
+// Priority: 1) schedulerFile parameter, 2) cfg.scheduler_file, 3) default locations
+func FindSchedulerConfig(cfg *Config, schedulerFile string) (*SchedulerConfig, error) {
 	if schedulerFile != "" {
-		return loadSchedulerFromFile(schedulerFile)
+		return LoadScheduler(schedulerFile)
 	}
 
-	if cfg.SchedulerFile != "" {
-		return loadSchedulerFromFile(cfg.SchedulerFile)
+	if cfgSchedulerFile := cfg.GetString("scheduler_file"); cfgSchedulerFile != "" {
+		return LoadScheduler(cfgSchedulerFile)
 	}
 
-	schedCfg, err := loadSchedulerFromDefaultLocations()
-	if err == nil {
-		return schedCfg, nil
-	}
-	if !errors.Is(err, errSchedulerConfigNotFound) {
-		return nil, err
-	}
-
-	if len(cfg.Scheduler.Blocks) > 0 {
-		return &cfg.Scheduler, nil
-	}
-
-	return nil, errors.New("no scheduler configuration found")
+	// Try default locations
+	return loadSchedulerFromDefaultLocations()
 }
 
 var errSchedulerConfigNotFound = errors.New("no scheduler configuration found in default locations")
 
-func loadSchedulerFromDefaultLocations() (*scheduler.Config, error) {
+func loadSchedulerFromDefaultLocations() (*SchedulerConfig, error) {
 	searchPaths := []string{
 		"scheduler.yaml",
 		"./scheduler.yaml",
@@ -162,47 +75,259 @@ func loadSchedulerFromDefaultLocations() (*scheduler.Config, error) {
 
 	for _, path := range searchPaths {
 		if _, statErr := os.Stat(path); statErr == nil {
-			return loadSchedulerFromFile(path)
+			return LoadScheduler(path)
 		}
 	}
 
 	return nil, errSchedulerConfigNotFound
 }
 
-// loadSchedulerFromFile loads scheduler config from a YAML file
-func loadSchedulerFromFile(path string) (*scheduler.Config, error) {
-	// #nosec G304 - User-specified config file path is intentional
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read scheduler file %s: %w", path, err)
-	}
+// ============================================================================
+// Client Configuration Helpers
+// Extract typed client configs from CUE-loaded configuration
+// ============================================================================
 
-	var schedCfg scheduler.Config
-	if err := yaml.Unmarshal(data, &schedCfg); err != nil {
-		return nil, fmt.Errorf("failed to parse scheduler file %s: %w", path, err)
+// TunarrConfig extracts Tunarr client configuration from the loaded config.
+func TunarrConfig(cfg *Config) tunarr.Config {
+	m := cfg.GetMap("tunarr")
+	return tunarr.Config{
+		URL:    getStringFromMap(m, "url"),
+		APIKey: getStringFromMap(m, "api_key"),
 	}
-
-	return &schedCfg, nil
 }
 
-// GetSchedulerConfig is a helper that loads scheduler config using Viper
-func GetSchedulerConfig(schedulerFile string) (*scheduler.Config, error) {
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+// JellyfinConfig extracts Jellyfin client configuration from the loaded config.
+func JellyfinConfig(cfg *Config) jellyfin.Config {
+	m := cfg.GetMap("jellyfin")
+	return jellyfin.Config{
+		URL:        getStringFromMap(m, "url"),
+		APIKey:     getStringFromMap(m, "api_key"),
+		UserID:     getStringFromMap(m, "user_id"),
+		SyncLiveTV: getBoolFromMap(m, "sync_live_tv"),
 	}
-
-	return LoadSchedulerConfig(&cfg, schedulerFile)
 }
 
-// SaveSchedulerConfig saves the scheduler configuration to a YAML file.
-// If path is empty, it saves to the default scheduler.yaml in the current directory.
-func SaveSchedulerConfig(schedCfg *scheduler.Config, path string) error {
+// RadarrConfig extracts Radarr client configuration from the loaded config.
+func RadarrConfig(cfg *Config) radarr.Config {
+	m := cfg.GetMap("radarr")
+	return radarr.Config{
+		URL:                getStringFromMap(m, "url"),
+		APIKey:             getStringFromMap(m, "api_key"),
+		ExcludeMissingFile: getBoolFromMap(m, "exclude_missing_file"),
+	}
+}
+
+// SonarrConfig extracts Sonarr client configuration from the loaded config.
+func SonarrConfig(cfg *Config) sonarr.Config {
+	m := cfg.GetMap("sonarr")
+	return sonarr.Config{
+		URL:                getStringFromMap(m, "url"),
+		APIKey:             getStringFromMap(m, "api_key"),
+		ExcludeMissingFile: getBoolFromMap(m, "exclude_missing_file"),
+	}
+}
+
+// LogLevel returns the configured log level.
+func LogLevel(cfg *Config) string {
+	return cfg.GetString("log.level")
+}
+
+// LogFormat returns the configured log format.
+func LogFormat(cfg *Config) string {
+	return cfg.GetString("log.format")
+}
+
+// LogTimezone returns the configured timezone.
+func LogTimezone(cfg *Config) string {
+	return cfg.GetString("log.timezone")
+}
+
+// MetricsPort returns the configured metrics port.
+func MetricsPort(cfg *Config) int {
+	return cfg.GetInt("metrics_port")
+}
+
+// DatabasePath returns the configured database path.
+func DatabasePath(cfg *Config) string {
+	return cfg.GetString("database")
+}
+
+// CacheDuration returns the configured cache duration.
+func CacheDuration(cfg *Config) time.Duration {
+	return cfg.GetDuration("cache.cache_duration")
+}
+
+// MaintenanceCleanupEnabled returns whether cleanup is enabled.
+func MaintenanceCleanupEnabled(cfg *Config) bool {
+	return cfg.GetBool("maintenance.cleanup_enabled")
+}
+
+// MaintenanceHistoryRetention returns the history retention duration.
+func MaintenanceHistoryRetention(cfg *Config) time.Duration {
+	return cfg.GetDuration("maintenance.history_retention")
+}
+
+// ============================================================================
+// Scheduler Configuration Helpers
+// Convert CUE-loaded scheduler config to scheduler.Block types
+// ============================================================================
+
+// SchedulerBlocks converts SchedulerConfig blocks to scheduler.Block slice.
+func SchedulerBlocks(schedCfg *SchedulerConfig) []scheduler.Block {
+	blockMaps := schedCfg.GetBlocks()
+	blocks := make([]scheduler.Block, 0, len(blockMaps))
+	for _, bm := range blockMaps {
+		blocks = append(blocks, blockFromMap(bm))
+	}
+	return blocks
+}
+
+// blockFromMap converts a map to a scheduler.Block
+func blockFromMap(m map[string]any) scheduler.Block {
+	block := scheduler.Block{
+		Type:                       scheduler.BlockType(getStringWithDefault(m, "type", "filter")),
+		Name:                       getStringFromMap(m, "name"),
+		Cron:                       getStringFromMap(m, "cron"),
+		Duration:                   getIntFromMap(m, "duration"),
+		ChannelID:                  getStringFromMap(m, "channel_id"),
+		Priority:                   getIntWithDefault(m, "priority", 10),
+		MaxDurationOverflowMinutes: getIntFromMap(m, "max_duration_overflow_minutes"),
+	}
+
+	// Parse filter
+	if filterMap, ok := m["filter"].(map[string]any); ok {
+		block.Filter = filterFromMap(filterMap)
+	}
+
+	// Parse filler config
+	if fillerMap, ok := m["filler"].(map[string]any); ok {
+		block.Filler = fillerConfigFromMap(fillerMap)
+	}
+
+	// Parse series config
+	if seriesList, ok := m["series"].([]any); ok {
+		for _, s := range seriesList {
+			if sm, ok := s.(map[string]any); ok {
+				block.Series = append(block.Series, seriesConfigFromMap(sm))
+			}
+		}
+	}
+
+	// Parse fallback config
+	if fallbackMap, ok := m["fallback"].(map[string]any); ok {
+		block.Fallback = fallbackFromMap(fallbackMap)
+	}
+
+	return block
+}
+
+func filterFromMap(m map[string]any) scheduler.Filter {
+	return scheduler.Filter{
+		TitlePattern: getStringFromMap(m, "title_pattern"),
+		Genres:       getStringSliceFromMap(m, "genres"),
+		Ratings:      getStringSliceFromMap(m, "ratings"),
+		YearFrom:     getIntFromMap(m, "year_from"),
+		YearTo:       getIntFromMap(m, "year_to"),
+		MinDuration:  getIntFromMap(m, "min_duration"),
+		MaxDuration:  getIntFromMap(m, "max_duration"),
+		Tags:         getStringSliceFromMap(m, "tags"),
+	}
+}
+
+func fillerConfigFromMap(m map[string]any) scheduler.FillerConfig {
+	return scheduler.FillerConfig{
+		Enabled:       getBoolFromMap(m, "enabled"),
+		FillerListID:  getStringFromMap(m, "filler_list_id"),
+		MaxFillerTime: getIntFromMap(m, "max_filler_time"),
+		MinGapTime:    getIntWithDefault(m, "min_gap_time", 5),
+	}
+}
+
+func seriesConfigFromMap(m map[string]any) scheduler.SeriesConfig {
+	return scheduler.SeriesConfig{
+		ShowTitle:        getStringFromMap(m, "show_title"),
+		EpisodesPerBlock: getIntWithDefault(m, "episodes_per_block", 1),
+		StartSeason:      getIntWithDefault(m, "start_season", 1),
+		StartEpisode:     getIntWithDefault(m, "start_episode", 1),
+		OnComplete:       scheduler.CompletionAction(getStringWithDefault(m, "on_complete", "continue")),
+		SkipEpisodes:     getStringSliceFromMap(m, "skip_episodes"),
+		MaxRuns:          getIntFromMap(m, "max_runs"),
+	}
+}
+
+func fallbackFromMap(m map[string]any) scheduler.SeriesFallback {
+	fb := scheduler.SeriesFallback{
+		Mode: scheduler.FallbackMode(getStringWithDefault(m, "mode", "redistribute")),
+	}
+	if filterMap, ok := m["filler_filter"].(map[string]any); ok {
+		fb.FillerFilter = filterFromMap(filterMap)
+	}
+	return fb
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+func getStringFromMap(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getStringWithDefault(m map[string]any, key, def string) string {
+	if s := getStringFromMap(m, key); s != "" {
+		return s
+	}
+	return def
+}
+
+func getBoolFromMap(m map[string]any, key string) bool {
+	if m == nil {
+		return false
+	}
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return false
+}
+
+func getStringSliceFromMap(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	if v, ok := m[key].([]any); ok {
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+func getIntWithDefault(m map[string]any, key string, def int) int {
+	if v := getIntFromMap(m, key); v != 0 {
+		return v
+	}
+	return def
+}
+
+// SaveSchedulerBlocks saves a slice of scheduler.Block to a YAML file.
+// This is used by the TUI to persist changes to the scheduler configuration.
+func SaveSchedulerBlocks(blocks []scheduler.Block, path string) error {
 	if path == "" {
 		path = "scheduler.yaml"
 	}
 
-	data, err := yaml.Marshal(schedCfg)
+	cfg := scheduler.Config{Blocks: blocks}
+	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal scheduler config: %w", err)
 	}
@@ -213,4 +338,17 @@ func SaveSchedulerConfig(schedCfg *scheduler.Config, path string) error {
 	}
 
 	return nil
+}
+
+// Helper to get int from map
+func getIntFromMap(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
 }

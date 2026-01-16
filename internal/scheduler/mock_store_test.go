@@ -11,11 +11,11 @@ type MockStateStore struct {
 	History []ScheduleHistoryEntry
 }
 
-// NewMockStateStore creates a new in-memory mock store.
+// NewMockStateStore creates a new MockStateStore with initialized maps.
 func NewMockStateStore() *MockStateStore {
 	return &MockStateStore{
 		States:  make(map[string]*SeriesState),
-		History: nil,
+		History: []ScheduleHistoryEntry{},
 	}
 }
 

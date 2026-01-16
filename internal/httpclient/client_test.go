@@ -244,42 +244,6 @@ func TestAPIError_Unwrap(t *testing.T) {
 	}
 }
 
-func TestValidateRequired(t *testing.T) {
-	tests := []struct {
-		name    string
-		field   string
-		value   string
-		wantErr bool
-	}{
-		{"valid value", "id", "123", false},
-		{"empty value", "id", "", true},
-		{"whitespace only is valid", "id", "   ", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateRequired(tt.field, tt.value)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateRequired() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestClient_SetBaseURL(t *testing.T) {
-	cfg := DefaultConfig("http://old-url.com", "", AuthNone)
-	client := New(cfg)
-
-	if client.BaseURL() != "http://old-url.com" {
-		t.Errorf("expected base URL http://old-url.com, got %s", client.BaseURL())
-	}
-
-	client.SetBaseURL("http://new-url.com")
-	if client.BaseURL() != "http://new-url.com" {
-		t.Errorf("expected base URL http://new-url.com, got %s", client.BaseURL())
-	}
-}
-
 func TestClient_Put(t *testing.T) {
 	type updateRequest struct {
 		Value int `json:"value"`
@@ -307,24 +271,6 @@ func TestClient_Put(t *testing.T) {
 	client := New(cfg)
 
 	err := client.Put(context.Background(), "/update", updateRequest{Value: 100}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestClient_Delete(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("expected DELETE request, got %s", r.Method)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-
-	cfg := DefaultConfig(server.URL, "", AuthNone)
-	client := New(cfg)
-
-	err := client.Delete(context.Background(), "/item/123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

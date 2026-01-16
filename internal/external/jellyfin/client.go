@@ -34,19 +34,6 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
-// NewClientLegacy creates a Jellyfin client using legacy X-Emby-Token authentication.
-// Use this if your Jellyfin instance doesn't accept the Authorization header format.
-func NewClientLegacy(cfg Config) *Client {
-	httpCfg := httpclient.DefaultConfig(
-		strings.TrimRight(cfg.URL, "/"),
-		cfg.APIKey,
-		httpclient.AuthXEmbyToken,
-	)
-	return &Client{
-		http: httpclient.New(httpCfg),
-	}
-}
-
 // RefreshLiveTVGuide triggers a Live TV guide refresh.
 //
 // Note: The /LiveTv/RefreshGuide endpoint is not documented in the official

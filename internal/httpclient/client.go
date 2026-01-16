@@ -3,7 +3,6 @@ package httpclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -181,13 +180,6 @@ func (c *Client) Put(ctx context.Context, path string, body interface{}, result 
 	return c.handleResponse(resp, err, http.MethodPut, url)
 }
 
-// Delete performs a DELETE request.
-func (c *Client) Delete(ctx context.Context, path string) error {
-	url := c.baseURL + path
-	resp, err := c.newRequest(ctx).Delete(url)
-	return c.handleResponse(resp, err, http.MethodDelete, url)
-}
-
 // handleResponse processes the response and returns an appropriate error if needed.
 func (c *Client) handleResponse(resp *resty.Response, err error, method, url string) error {
 	if err != nil {
@@ -213,17 +205,4 @@ func (c *Client) handleResponse(resp *resty.Response, err error, method, url str
 // BaseURL returns the base URL of the client.
 func (c *Client) BaseURL() string {
 	return c.baseURL
-}
-
-// SetBaseURL updates the base URL of the client.
-func (c *Client) SetBaseURL(url string) {
-	c.baseURL = url
-}
-
-// ValidateRequired validates that required string fields are non-empty.
-func ValidateRequired(name, value string) error {
-	if value == "" {
-		return errors.New(name + " cannot be empty")
-	}
-	return nil
 }

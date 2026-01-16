@@ -45,6 +45,13 @@ var (
 		Help: "Total number of scheduling conflicts resolved by priority",
 	})
 
+	// ScheduleFallbacksTotal counts fallback scenarios during schedule generation
+	// Labels: channel_id, block_name, reason (history_exhausted, fallback_filter_error, fallback_no_content, filler_fetch_error, filler_empty)
+	ScheduleFallbacksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "schedularr_schedule_fallbacks_total",
+		Help: "Total number of fallback scenarios during schedule generation",
+	}, []string{"channel_id", "block_name", "reason"})
+
 	// TunarrAPICallsTotal counts the total number of Tunarr API calls
 	TunarrAPICallsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "schedularr_tunarr_api_calls_total",

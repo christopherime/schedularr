@@ -4,78 +4,219 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
+	"github.com/geekxflood/schedularr/internal/cueconfig"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 )
 
-func TestNew(t *testing.T) {
-	cfg := New()
+func TestLoad(t *testing.T) {
+	// Create a temporary config file
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `tunarr:
+  url: "http://test-tunarr:8000"
+  api_key: "test-key"
+log:
+  level: "debug"
+  format: "json"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
 
 	if cfg == nil {
-		t.Fatal("New() returned nil")
+		t.Fatal("Load() returned nil config")
 	}
 
-	if cfg.Tunarr.URL != "http://localhost:8000" {
-		t.Errorf("Expected default Tunarr URL 'http://localhost:8000', got '%s'", cfg.Tunarr.URL)
+	// Test GetString accessor
+	if url := cfg.GetString("tunarr.url"); url != "http://test-tunarr:8000" {
+		t.Errorf("Expected tunarr.url 'http://test-tunarr:8000', got '%s'", url)
 	}
 
-	if cfg.Log.Level != "info" {
-		t.Errorf("Expected default log level 'info', got '%s'", cfg.Log.Level)
-	}
-
-	if cfg.Log.Format != "text" {
-		t.Errorf("Expected default log format 'text', got '%s'", cfg.Log.Format)
-	}
-
-	if !cfg.Radarr.ExcludeMissingFile {
-		t.Errorf("Expected default Radarr.ExcludeMissingFile to be true, got false")
-	}
-
-	if !cfg.Sonarr.ExcludeMissingFile {
-		t.Errorf("Expected default Sonarr.ExcludeMissingFile to be true, got false")
-	}
-
-	expectedCacheDir := filepath.Join(os.TempDir(), "schedularr_cache")
-	if cfg.Cache.CacheDir != expectedCacheDir {
-		t.Errorf("Expected default Cache.CacheDir '%s', got '%s'", expectedCacheDir, cfg.Cache.CacheDir)
-	}
-
-	if cfg.Cache.CacheDuration != "1h" {
-		t.Errorf("Expected default Cache.CacheDuration '1h', got '%s'", cfg.Cache.CacheDuration)
+	if level := cfg.GetString("log.level"); level != "debug" {
+		t.Errorf("Expected log.level 'debug', got '%s'", level)
 	}
 }
 
-func TestConfig_GetCacheDuration(t *testing.T) {
-	tests := []struct {
-		name     string
-		duration string
-		expected time.Duration
-	}{
-		{"valid 1h", "1h", 1 * time.Hour},
-		{"valid 30m", "30m", 30 * time.Minute},
-		{"valid 2h30m", "2h30m", 2*time.Hour + 30*time.Minute},
-		{"invalid format", "abc", 1 * time.Hour}, // Should default to 1h
-		{"empty string", "", 1 * time.Hour},      // Should default to 1h
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := New()
-			cfg.Cache.CacheDuration = tt.duration
-			actual := cfg.GetCacheDuration()
-
-			if actual != tt.expected {
-				t.Errorf("For duration '%s', expected %v, got %v", tt.duration, tt.expected, actual)
-			}
-		})
-	}
-}
-
-func TestLoadSchedulerConfig_FromFile(t *testing.T) {
-	// Create a temporary scheduler file
+func TestTunarrConfig(t *testing.T) {
+	// Create a temporary config file
 	tmpDir := t.TempDir()
-	schedulerFile := filepath.Join(tmpDir, "test-scheduler.yaml")
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `tunarr:
+  url: "http://my-tunarr:8000"
+  api_key: "my-api-key"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	tunarrCfg := TunarrConfig(cfg)
+
+	if tunarrCfg.URL != "http://my-tunarr:8000" {
+		t.Errorf("Expected Tunarr URL 'http://my-tunarr:8000', got '%s'", tunarrCfg.URL)
+	}
+
+	if tunarrCfg.APIKey != "my-api-key" {
+		t.Errorf("Expected Tunarr APIKey 'my-api-key', got '%s'", tunarrCfg.APIKey)
+	}
+}
+
+func TestJellyfinConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `jellyfin:
+  url: "http://jellyfin:8096"
+  api_key: "jellyfin-key"
+  user_id: "user-123"
+  sync_live_tv: true
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	jellyfinCfg := JellyfinConfig(cfg)
+
+	if jellyfinCfg.URL != "http://jellyfin:8096" {
+		t.Errorf("Expected Jellyfin URL 'http://jellyfin:8096', got '%s'", jellyfinCfg.URL)
+	}
+
+	if !jellyfinCfg.SyncLiveTV {
+		t.Error("Expected SyncLiveTV to be true")
+	}
+}
+
+func TestRadarrConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `radarr:
+  url: "http://radarr:7878"
+  api_key: "radarr-key"
+  exclude_missing_file: true
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	radarrCfg := RadarrConfig(cfg)
+
+	if radarrCfg.URL != "http://radarr:7878" {
+		t.Errorf("Expected Radarr URL 'http://radarr:7878', got '%s'", radarrCfg.URL)
+	}
+
+	if !radarrCfg.ExcludeMissingFile {
+		t.Error("Expected ExcludeMissingFile to be true")
+	}
+}
+
+func TestSonarrConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `sonarr:
+  url: "http://sonarr:8989"
+  api_key: "sonarr-key"
+  exclude_missing_file: false
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	sonarrCfg := SonarrConfig(cfg)
+
+	if sonarrCfg.URL != "http://sonarr:8989" {
+		t.Errorf("Expected Sonarr URL 'http://sonarr:8989', got '%s'", sonarrCfg.URL)
+	}
+
+	if sonarrCfg.ExcludeMissingFile {
+		t.Error("Expected ExcludeMissingFile to be false")
+	}
+}
+
+func TestLogLevel(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `log:
+  level: "warn"
+  format: "text"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if level := LogLevel(cfg); level != "warn" {
+		t.Errorf("Expected log level 'warn', got '%s'", level)
+	}
+
+	if format := LogFormat(cfg); format != "text" {
+		t.Errorf("Expected log format 'text', got '%s'", format)
+	}
+}
+
+func TestDatabasePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `database: "/var/lib/schedularr/data.db"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if dbPath := DatabasePath(cfg); dbPath != "/var/lib/schedularr/data.db" {
+		t.Errorf("Expected database path '/var/lib/schedularr/data.db', got '%s'", dbPath)
+	}
+}
+
+func TestLoadScheduler(t *testing.T) {
+	tmpDir := t.TempDir()
+	schedulerFile := filepath.Join(tmpDir, "scheduler.yaml")
 
 	content := `blocks:
   - name: "Test Block"
@@ -92,403 +233,277 @@ func TestLoadSchedulerConfig_FromFile(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	cfg := New()
-	schedCfg, err := LoadSchedulerConfig(cfg, schedulerFile)
+	schedCfg, err := LoadScheduler(schedulerFile)
 	if err != nil {
-		t.Fatalf("LoadSchedulerConfig failed: %v", err)
+		t.Fatalf("LoadScheduler failed: %v", err)
 	}
 
-	if len(schedCfg.Blocks) != 1 {
-		t.Fatalf("Expected 1 block, got %d", len(schedCfg.Blocks))
+	blocks := schedCfg.GetBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(blocks))
 	}
 
-	if schedCfg.Blocks[0].Name != "Test Block" {
-		t.Errorf("Expected block name 'Test Block', got '%s'", schedCfg.Blocks[0].Name)
+	if name := blocks[0]["name"].(string); name != "Test Block" {
+		t.Errorf("Expected block name 'Test Block', got '%s'", name)
 	}
 }
 
-func TestLoadSchedulerConfig_FromConfigField(t *testing.T) {
-	// Create a temporary scheduler file
+func TestSchedulerBlocks(t *testing.T) {
 	tmpDir := t.TempDir()
-	schedulerFile := filepath.Join(tmpDir, "config-scheduler.yaml")
-
-	content := `blocks:
-  - name: "Config Block"
-    type: "filter"
-    cron: "0 10 * * *"
-    duration: 60
-    channel_id: "channel-2"
-    priority: 5
-`
-
-	if err := os.WriteFile(schedulerFile, []byte(content), 0600); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	cfg := New()
-	cfg.SchedulerFile = schedulerFile
-
-	schedCfg, err := LoadSchedulerConfig(cfg, "")
-	if err != nil {
-		t.Fatalf("LoadSchedulerConfig failed: %v", err)
-	}
-
-	if len(schedCfg.Blocks) != 1 {
-		t.Fatalf("Expected 1 block, got %d", len(schedCfg.Blocks))
-	}
-
-	if schedCfg.Blocks[0].Name != "Config Block" {
-		t.Errorf("Expected block name 'Config Block', got '%s'", schedCfg.Blocks[0].Name)
-	}
-}
-
-func TestLoadSchedulerConfig_FromInlineConfig(t *testing.T) {
-	cfg := New()
-	cfg.Scheduler = scheduler.Config{
-		Blocks: []scheduler.Block{
-			{
-				Name:      "Inline Block",
-				Type:      "filter",
-				Cron:      "0 11 * * *",
-				Duration:  90,
-				ChannelID: "channel-3",
-				Priority:  15,
-			},
-		},
-	}
-
-	schedCfg, err := LoadSchedulerConfig(cfg, "")
-	if err != nil {
-		t.Fatalf("LoadSchedulerConfig failed: %v", err)
-	}
-
-	if len(schedCfg.Blocks) != 1 {
-		t.Fatalf("Expected 1 block, got %d", len(schedCfg.Blocks))
-	}
-
-	if schedCfg.Blocks[0].Name != "Inline Block" {
-		t.Errorf("Expected block name 'Inline Block', got '%s'", schedCfg.Blocks[0].Name)
-	}
-}
-
-func TestLoadSchedulerConfig_NoConfig(t *testing.T) {
-	cfg := New()
-
-	_, err := LoadSchedulerConfig(cfg, "")
-	if err == nil {
-		t.Error("Expected error when no scheduler config is found, got nil")
-	}
-
-	expectedMsg := "no scheduler configuration found"
-	if err.Error() != expectedMsg {
-		t.Errorf("Expected error message '%s', got '%s'", expectedMsg, err.Error())
-	}
-}
-
-func TestLoadSchedulerConfig_InvalidFile(t *testing.T) {
-	cfg := New()
-
-	_, err := LoadSchedulerConfig(cfg, "/nonexistent/file.yaml")
-	if err == nil {
-		t.Error("Expected error when loading nonexistent file, got nil")
-	}
-}
-
-func TestLoadSchedulerConfig_InvalidYAML(t *testing.T) {
-	tmpDir := t.TempDir()
-	schedulerFile := filepath.Join(tmpDir, "invalid.yaml")
-
-	// Write invalid YAML content
-	content := `blocks:
-  - name: "Test Block"
-    invalid_yaml: [unclosed bracket
-`
-
-	if err := os.WriteFile(schedulerFile, []byte(content), 0600); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	cfg := New()
-	_, err := LoadSchedulerConfig(cfg, schedulerFile)
-	if err == nil {
-		t.Error("Expected error when parsing invalid YAML, got nil")
-	}
-}
-
-func TestLoadSchedulerConfig_FromDefaultLocations(t *testing.T) {
-	// Create a temporary directory to act as home
-	tmpDir := t.TempDir()
-
-	// Create scheduler.yaml in the temp directory
 	schedulerFile := filepath.Join(tmpDir, "scheduler.yaml")
-	content := `blocks:
-  - name: "Default Block"
-    type: "filter"
-    cron: "0 12 * * *"
-    duration: 30
-    channel_id: "channel-default"
-    priority: 1
-`
-
-	if err := os.WriteFile(schedulerFile, []byte(content), 0600); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Change to temp directory so default location search finds it
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
-	}
-	defer os.Chdir(oldWd)
-
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change directory: %v", err)
-	}
-
-	cfg := New()
-	schedCfg, err := LoadSchedulerConfig(cfg, "")
-	if err != nil {
-		t.Fatalf("LoadSchedulerConfig failed: %v", err)
-	}
-
-	if len(schedCfg.Blocks) != 1 {
-		t.Fatalf("Expected 1 block, got %d", len(schedCfg.Blocks))
-	}
-
-	if schedCfg.Blocks[0].Name != "Default Block" {
-		t.Errorf("Expected block name 'Default Block', got '%s'", schedCfg.Blocks[0].Name)
-	}
-}
-
-func TestGetSchedulerConfig(t *testing.T) {
-	// Create a temporary scheduler file
-	tmpDir := t.TempDir()
-	schedulerFile := filepath.Join(tmpDir, "viper-scheduler.yaml")
 
 	content := `blocks:
-  - name: "Viper Block"
+  - name: "Morning Block"
     type: "filter"
-    cron: "0 13 * * *"
-    duration: 45
-    channel_id: "channel-viper"
-    priority: 20
-`
-
-	if err := os.WriteFile(schedulerFile, []byte(content), 0600); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Note: GetSchedulerConfig uses viper.Unmarshal which requires viper to be initialized
-	// This test verifies the function exists and handles the scheduler file parameter
-	// In a real scenario, viper would be initialized by the CLI
-	_, err := GetSchedulerConfig(schedulerFile)
-	// We expect an error here because viper isn't initialized in the test
-	// but we're testing that the function can be called
-	if err == nil {
-		// If viper happens to be initialized, verify the result
-		t.Log("GetSchedulerConfig succeeded (viper was initialized)")
-	} else {
-		// Expected case - viper not initialized in test
-		t.Logf("GetSchedulerConfig returned expected error: %v", err)
-	}
-}
-
-func TestMaintenanceConfig_GetCleanupInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		interval string
-		expected time.Duration
-	}{
-		{"valid 1h", "1h", 1 * time.Hour},
-		{"valid 24h", "24h", 24 * time.Hour},
-		{"valid 30m", "30m", 30 * time.Minute},
-		{"invalid format", "abc", 24 * time.Hour}, // Should default to 24h
-		{"empty string", "", 24 * time.Hour},      // Should default to 24h
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := &MaintenanceConfig{CleanupInterval: tt.interval}
-			actual := m.GetCleanupInterval()
-
-			if actual != tt.expected {
-				t.Errorf("For interval '%s', expected %v, got %v", tt.interval, tt.expected, actual)
-			}
-		})
-	}
-}
-
-func TestMaintenanceConfig_GetHistoryRetention(t *testing.T) {
-	tests := []struct {
-		name      string
-		retention string
-		expected  time.Duration
-	}{
-		{"valid 168h (7 days)", "168h", 168 * time.Hour},
-		{"valid 24h", "24h", 24 * time.Hour},
-		{"valid 720h (30 days)", "720h", 720 * time.Hour},
-		{"invalid format", "abc", 7 * 24 * time.Hour}, // Should default to 7 days
-		{"empty string", "", 7 * 24 * time.Hour},      // Should default to 7 days
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := &MaintenanceConfig{HistoryRetention: tt.retention}
-			actual := m.GetHistoryRetention()
-
-			if actual != tt.expected {
-				t.Errorf("For retention '%s', expected %v, got %v", tt.retention, tt.expected, actual)
-			}
-		})
-	}
-}
-
-func TestNew_MaintenanceDefaults(t *testing.T) {
-	cfg := New()
-
-	if cfg.Maintenance.CleanupInterval != "24h" {
-		t.Errorf("Expected default CleanupInterval '24h', got '%s'", cfg.Maintenance.CleanupInterval)
-	}
-
-	if cfg.Maintenance.HistoryRetention != "168h" {
-		t.Errorf("Expected default HistoryRetention '168h', got '%s'", cfg.Maintenance.HistoryRetention)
-	}
-
-	if !cfg.Maintenance.CleanupEnabled {
-		t.Error("Expected default CleanupEnabled to be true, got false")
-	}
-}
-
-func TestSaveSchedulerConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	schedCfg := &scheduler.Config{
-		Blocks: []scheduler.Block{
-			{
-				Name:      "Test Block",
-				Type:      "filter",
-				Cron:      "0 20 * * *",
-				Duration:  120,
-				ChannelID: "channel-1",
-				Priority:  10,
-			},
-		},
-	}
-
-	// Test saving to a file
-	path := tmpDir + "/test-scheduler.yaml"
-	err := SaveSchedulerConfig(schedCfg, path)
-	if err != nil {
-		t.Fatalf("SaveSchedulerConfig failed: %v", err)
-	}
-
-	// Verify the file was created and can be loaded
-	loadedCfg, err := LoadSchedulerConfig(&Config{}, path)
-	if err != nil {
-		t.Fatalf("Failed to load saved config: %v", err)
-	}
-
-	if len(loadedCfg.Blocks) != 1 {
-		t.Fatalf("Expected 1 block, got %d", len(loadedCfg.Blocks))
-	}
-
-	if loadedCfg.Blocks[0].Name != "Test Block" {
-		t.Errorf("Expected block name 'Test Block', got '%s'", loadedCfg.Blocks[0].Name)
-	}
-}
-
-func TestSaveSchedulerConfig_DefaultPath(t *testing.T) {
-	// Save the current working directory
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
-	}
-
-	// Change to a temp directory
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change directory: %v", err)
-	}
-	defer os.Chdir(oldWd)
-
-	schedCfg := &scheduler.Config{
-		Blocks: []scheduler.Block{
-			{Name: "Default Path Block", Cron: "0 6 * * *", Duration: 60, ChannelID: "ch-1"},
-		},
-	}
-
-	// Test saving with empty path (should use default scheduler.yaml)
-	err = SaveSchedulerConfig(schedCfg, "")
-	if err != nil {
-		t.Fatalf("SaveSchedulerConfig with default path failed: %v", err)
-	}
-
-	// Verify scheduler.yaml was created
-	if _, err := os.Stat("scheduler.yaml"); os.IsNotExist(err) {
-		t.Error("scheduler.yaml was not created")
-	}
-}
-
-func TestSaveSchedulerConfig_InvalidPath(t *testing.T) {
-	schedCfg := &scheduler.Config{
-		Blocks: []scheduler.Block{},
-	}
-
-	// Test saving to an invalid path
-	err := SaveSchedulerConfig(schedCfg, "/nonexistent/directory/file.yaml")
-	if err == nil {
-		t.Error("Expected error for invalid path, got nil")
-	}
-}
-
-func TestLoadSchedulerConfig_PriorityOrder(t *testing.T) {
-	// Test that explicit file parameter takes priority over config field
-	tmpDir := t.TempDir()
-
-	// Create two different scheduler files
-	explicitFile := filepath.Join(tmpDir, "explicit.yaml")
-	configFile := filepath.Join(tmpDir, "config.yaml")
-
-	explicitContent := `blocks:
-  - name: "Explicit Block"
-    type: "filter"
-    cron: "0 14 * * *"
-    duration: 60
-    channel_id: "channel-explicit"
-    priority: 10
-`
-
-	configContent := `blocks:
-  - name: "Config Block"
-    type: "filter"
-    cron: "0 15 * * *"
-    duration: 30
-    channel_id: "channel-config"
+    cron: "0 6 * * *"
+    duration: 180
+    channel_id: "ch-1"
     priority: 5
+    filter:
+      genres: ["Animation"]
+      min_duration: 20
+      max_duration: 30
 `
 
-	if err := os.WriteFile(explicitFile, []byte(explicitContent), 0600); err != nil {
-		t.Fatalf("Failed to create explicit file: %v", err)
+	if err := os.WriteFile(schedulerFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
 	}
+
+	schedCfg, err := LoadScheduler(schedulerFile)
+	if err != nil {
+		t.Fatalf("LoadScheduler failed: %v", err)
+	}
+
+	blocks := SchedulerBlocks(schedCfg)
+	if len(blocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(blocks))
+	}
+
+	block := blocks[0]
+	if block.Name != "Morning Block" {
+		t.Errorf("Expected block name 'Morning Block', got '%s'", block.Name)
+	}
+
+	if block.Duration != 180 {
+		t.Errorf("Expected duration 180, got %d", block.Duration)
+	}
+
+	if block.Priority != 5 {
+		t.Errorf("Expected priority 5, got %d", block.Priority)
+	}
+
+	if len(block.Filter.Genres) != 1 || block.Filter.Genres[0] != "Animation" {
+		t.Errorf("Expected filter genres [Animation], got %v", block.Filter.Genres)
+	}
+}
+
+func TestFindSchedulerConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create config file with scheduler_file reference
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	schedulerFile := filepath.Join(tmpDir, "my-scheduler.yaml")
+
+	configContent := `scheduler_file: "` + schedulerFile + `"
+`
+	schedulerContent := `blocks:
+  - name: "Found Block"
+    cron: "0 8 * * *"
+    duration: 60
+    channel_id: "ch-2"
+`
 
 	if err := os.WriteFile(configFile, []byte(configContent), 0600); err != nil {
 		t.Fatalf("Failed to create config file: %v", err)
 	}
 
-	cfg := New()
-	cfg.SchedulerFile = configFile
+	if err := os.WriteFile(schedulerFile, []byte(schedulerContent), 0600); err != nil {
+		t.Fatalf("Failed to create scheduler file: %v", err)
+	}
 
-	// Explicit file should take priority
-	schedCfg, err := LoadSchedulerConfig(cfg, explicitFile)
+	cfg, err := Load(configFile)
 	if err != nil {
-		t.Fatalf("LoadSchedulerConfig failed: %v", err)
+		t.Fatalf("Load failed: %v", err)
 	}
 
-	if len(schedCfg.Blocks) != 1 {
-		t.Fatalf("Expected 1 block, got %d", len(schedCfg.Blocks))
+	schedCfg, err := FindSchedulerConfig(cfg, "")
+	if err != nil {
+		t.Fatalf("FindSchedulerConfig failed: %v", err)
 	}
 
-	if schedCfg.Blocks[0].Name != "Explicit Block" {
-		t.Errorf("Expected 'Explicit Block' (from explicit file), got '%s'", schedCfg.Blocks[0].Name)
+	blocks := schedCfg.GetBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(blocks))
+	}
+
+	if name := blocks[0]["name"].(string); name != "Found Block" {
+		t.Errorf("Expected 'Found Block', got '%s'", name)
+	}
+}
+
+func TestFindSchedulerConfig_ExplicitFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	schedulerFile := filepath.Join(tmpDir, "explicit-scheduler.yaml")
+
+	configContent := `tunarr:
+  url: "http://localhost:8000"
+`
+	schedulerContent := `blocks:
+  - name: "Explicit Block"
+    cron: "0 9 * * *"
+    duration: 90
+    channel_id: "ch-3"
+`
+
+	if err := os.WriteFile(configFile, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	if err := os.WriteFile(schedulerFile, []byte(schedulerContent), 0600); err != nil {
+		t.Fatalf("Failed to create scheduler file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Explicit file should be used
+	schedCfg, err := FindSchedulerConfig(cfg, schedulerFile)
+	if err != nil {
+		t.Fatalf("FindSchedulerConfig failed: %v", err)
+	}
+
+	blocks := schedCfg.GetBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(blocks))
+	}
+
+	if name := blocks[0]["name"].(string); name != "Explicit Block" {
+		t.Errorf("Expected 'Explicit Block', got '%s'", name)
+	}
+}
+
+func TestSaveSchedulerBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "output-scheduler.yaml")
+
+	blocks := []scheduler.Block{
+		{
+			Name:      "Saved Block",
+			Type:      "filter",
+			Cron:      "0 10 * * *",
+			Duration:  120,
+			ChannelID: "ch-save",
+			Priority:  10,
+			Filter: scheduler.Filter{
+				Genres: []string{"Drama"},
+			},
+		},
+	}
+
+	if err := SaveSchedulerBlocks(blocks, outputPath); err != nil {
+		t.Fatalf("SaveSchedulerBlocks failed: %v", err)
+	}
+
+	// Verify by loading the saved file
+	schedCfg, err := LoadScheduler(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to load saved scheduler: %v", err)
+	}
+
+	loadedBlocks := SchedulerBlocks(schedCfg)
+	if len(loadedBlocks) != 1 {
+		t.Fatalf("Expected 1 block, got %d", len(loadedBlocks))
+	}
+
+	if loadedBlocks[0].Name != "Saved Block" {
+		t.Errorf("Expected 'Saved Block', got '%s'", loadedBlocks[0].Name)
+	}
+
+	if loadedBlocks[0].Duration != 120 {
+		t.Errorf("Expected duration 120, got %d", loadedBlocks[0].Duration)
+	}
+}
+
+func TestGenerateDefaultConfig(t *testing.T) {
+	validator := cueconfig.NewValidator()
+	data, err := validator.GenerateConfig("yaml")
+	if err != nil {
+		t.Fatalf("GenerateConfig failed: %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Error("Generated config is empty")
+	}
+
+	// Verify it's valid YAML by loading it
+	if err := validator.ValidateConfig(data, "yaml"); err != nil {
+		t.Errorf("Generated config is not valid: %v", err)
+	}
+}
+
+func TestGenerateDefaultScheduler(t *testing.T) {
+	validator := cueconfig.NewValidator()
+	data, err := validator.GenerateScheduler("yaml")
+	if err != nil {
+		t.Fatalf("GenerateScheduler failed: %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Error("Generated scheduler config is empty")
+	}
+}
+
+func TestCacheDuration(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `cache:
+  cache_duration: "2h"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	duration := CacheDuration(cfg)
+	if duration.Hours() != 2 {
+		t.Errorf("Expected cache duration 2h, got %v", duration)
+	}
+}
+
+func TestMaintenanceConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `maintenance:
+  cleanup_enabled: true
+  history_retention: "336h"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if !MaintenanceCleanupEnabled(cfg) {
+		t.Error("Expected cleanup_enabled to be true")
+	}
+
+	retention := MaintenanceHistoryRetention(cfg)
+	if retention.Hours() != 336 {
+		t.Errorf("Expected history retention 336h, got %v", retention)
 	}
 }

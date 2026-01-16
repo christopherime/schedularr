@@ -81,7 +81,7 @@ type Block struct {
 	MaxDurationOverflowMinutes int            `mapstructure:"max_duration_overflow_minutes" yaml:"max_duration_overflow_minutes" json:"max_duration_overflow_minutes,omitempty"` // Max minutes a block's actual duration can exceed its planned duration
 	Filler                     FillerConfig   `mapstructure:"filler" yaml:"filler" json:"filler,omitempty"`                                                                      // Filler content configuration
 	Series                     []SeriesConfig `mapstructure:"series" yaml:"series" json:"series,omitempty"`                                                                      // For BlockTypeSeries
-	Fallback                   SeriesFallback `mapstructure:"fallback" yaml:"fallback" json:"fallback,omitempty"`                                                                // For BlockTypeSeries
+	Fallback                   SeriesFallback `mapstructure:"fallback" yaml:"fallback,omitempty" json:"fallback,omitempty"`                                                      // For BlockTypeSeries
 }
 
 // Config holds the scheduling configuration

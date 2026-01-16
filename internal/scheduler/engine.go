@@ -64,43 +64,6 @@ func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *
 	}
 }
 
-// NewEngineWithOptions creates a new scheduling engine with optional configuration.
-func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStore, opts EngineOptions) *Engine {
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
-	if opts.Location == nil {
-		opts.Location = time.Local
-	}
-	historyWindow := opts.HistoryWindow
-	if historyWindow == 0 {
-		historyWindow = 7 * 24 * time.Hour // Default to 7 days
-	}
-	return &Engine{
-		client:         client,
-		blocks:         blocks,
-		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
-		location:       opts.Location,
-		history:        NewScheduleHistory(historyWindow),
-		store:          store,
-		pendingStates:  make(map[string]*SeriesState),
-		pendingHistory: nil,
-		logger:         opts.Logger,
-	}
-}
-
-// NewEngineWithHistory creates a new scheduling engine with a custom history window.
-// Deprecated: Use NewEngineWithOptions instead.
-//
-//nolint:revive // Deprecated function kept for backwards compatibility
-func NewEngineWithHistory(client *tunarr.Client, blocks []Block, historyWindow time.Duration, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
-	return NewEngineWithOptions(client, blocks, store, EngineOptions{
-		HistoryWindow: historyWindow,
-		Logger:        logger,
-		Location:      loc,
-	})
-}
-
 // GenerateForTimeRange generates a schedule for the given window with priority-based conflict resolution.
 // It returns a map of ChannelID -> []ScheduledSlot.
 func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []tunarr.Program) (map[string][]ScheduledSlot, error) {
@@ -263,9 +226,18 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	// If we filtered everything out, fall back to all candidates
 	// (better to repeat than have no content)
 	if len(candidates) == 0 {
+		metrics.ScheduleFallbacksTotal.WithLabelValues(block.ChannelID, block.Name, "history_exhausted").Inc()
 		e.logger.Warn("all candidates recently scheduled, allowing repeats",
-			"block_name", block.Name)
-		candidates, _ = FilterPrograms(availablePrograms, block.Filter)
+			"block_name", block.Name,
+			"original_count", originalCount)
+		var filterErr error
+		candidates, filterErr = FilterPrograms(availablePrograms, block.Filter)
+		if filterErr != nil {
+			e.logger.Error("failed to re-filter programs during fallback",
+				"block_name", block.Name,
+				"error", filterErr)
+			return nil, fmt.Errorf("history fallback failed for block %s: %w", block.Name, filterErr)
+		}
 	}
 
 	var playlist []tunarr.Program
@@ -523,7 +495,18 @@ func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Pro
 	}
 
 	candidates, err := FilterPrograms(availablePrograms, block.Fallback.FillerFilter)
-	if err != nil || len(candidates) == 0 {
+	if err != nil {
+		metrics.ScheduleFallbacksTotal.WithLabelValues(block.ChannelID, block.Name, "fallback_filter_error").Inc()
+		e.logger.Warn("series fallback filter failed",
+			"block_name", block.Name,
+			"error", err)
+		return playlist, currentDuration
+	}
+	if len(candidates) == 0 {
+		metrics.ScheduleFallbacksTotal.WithLabelValues(block.ChannelID, block.Name, "fallback_no_content").Inc()
+		e.logger.Debug("no content matches series fallback filter",
+			"block_name", block.Name,
+			"gap_minutes", int((targetDuration-currentDuration)/60000))
 		return playlist, currentDuration
 	}
 
@@ -552,7 +535,20 @@ func (e *Engine) applyBlockFiller(block Block, playlist []tunarr.Program, curren
 	}
 
 	fillerPrograms, err := e.getFiller(block, gapDuration)
-	if err != nil || len(fillerPrograms) == 0 {
+	if err != nil {
+		metrics.ScheduleFallbacksTotal.WithLabelValues(block.ChannelID, block.Name, "filler_fetch_error").Inc()
+		e.logger.Warn("failed to fetch filler content for series block",
+			"block_name", block.Name,
+			"filler_list_id", block.Filler.FillerListID,
+			"gap_minutes", gapMinutes,
+			"error", err)
+		return playlist, currentDuration
+	}
+	if len(fillerPrograms) == 0 {
+		metrics.ScheduleFallbacksTotal.WithLabelValues(block.ChannelID, block.Name, "filler_empty").Inc()
+		e.logger.Debug("no filler programs fit remaining gap",
+			"block_name", block.Name,
+			"gap_minutes", gapMinutes)
 		return playlist, currentDuration
 	}
 
