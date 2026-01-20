@@ -3,8 +3,10 @@ package cronbuilder
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/lnquy/cron"
 )
 
 // FieldPresets defines preset values for each cron field.
@@ -157,74 +159,28 @@ func (e *Expression) SetWildcard(ft FieldType) {
 	*e.Field(ft) = "*"
 }
 
+// cronDescriptor is a package-level descriptor for generating human-readable cron descriptions.
+var cronDescriptor, _ = cron.NewDescriptor()
+
 // Describe returns a human-readable description of the cron expression.
+// Uses github.com/lnquy/cron for natural language generation.
 func (e *Expression) Describe() string {
-	parts := make([]string, 0, 5)
-	parts = append(parts, describeMinute(e.Minute)...)
-	parts = append(parts, describeHour(e.Hour)...)
-	parts = append(parts, describeDayOfMonth(e.DayOfMonth)...)
-	parts = append(parts, describeMonth(e.Month)...)
-	parts = append(parts, describeDayOfWeek(e.DayOfWeek)...)
-
-	if len(parts) == 0 {
-		return "runs continuously"
+	desc, err := cronDescriptor.ToDescription(e.String(), cron.Locale_en)
+	if err != nil {
+		return "invalid cron expression"
 	}
-	return strings.Join(parts, ", ")
+	// Lowercase the first character for consistency with previous output style
+	return lowercaseFirst(desc)
 }
 
-func describeMinute(m string) []string {
-	if m == "*" {
-		return []string{"every minute"}
+// lowercaseFirst converts the first character of a string to lowercase.
+func lowercaseFirst(s string) string {
+	if s == "" {
+		return s
 	}
-	if strings.HasPrefix(m, "*/") {
-		return []string{"every " + strings.TrimPrefix(m, "*/") + " minutes"}
-	}
-	return []string{"at minute " + m}
-}
-
-func describeHour(h string) []string {
-	if h == "*" {
-		return nil
-	}
-	if strings.HasPrefix(h, "*/") {
-		return []string{"every " + strings.TrimPrefix(h, "*/") + " hours"}
-	}
-	return []string{"at hour " + h}
-}
-
-func describeDayOfMonth(d string) []string {
-	if d == "*" {
-		return nil
-	}
-	if strings.HasPrefix(d, "*/") {
-		return []string{"every " + strings.TrimPrefix(d, "*/") + " days"}
-	}
-	return []string{"on day " + d}
-}
-
-func describeMonth(m string) []string {
-	if m == "*" {
-		return nil
-	}
-	monthNames := []string{"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
-	if month, err := strconv.Atoi(m); err == nil && month >= 1 && month <= 12 {
-		return []string{"in " + monthNames[month]}
-	}
-	return []string{"in month " + m}
-}
-
-func describeDayOfWeek(d string) []string {
-	if d == "*" {
-		return nil
-	}
-	if d == "1-5" {
-		return []string{"on weekdays"}
-	}
-	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
-	if day, err := strconv.Atoi(d); err == nil && day >= 0 && day <= 6 {
-		return []string{"on " + dayNames[day]}
-	}
-	return []string{"on day " + d}
+	runes := []rune(s)
+	runes[0] = unicode.ToLower(runes[0])
+	return string(runes)
 }
 
 // CommonPresets returns common cron expression examples.

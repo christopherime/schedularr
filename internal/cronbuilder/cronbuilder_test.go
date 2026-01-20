@@ -278,30 +278,32 @@ func TestSetWildcard(t *testing.T) {
 }
 
 func TestDescribe(t *testing.T) {
+	// Tests use github.com/lnquy/cron for natural language descriptions.
+	// The library produces more readable output than the previous custom implementation.
 	tests := []struct {
 		name     string
 		expr     string
 		expected string
 	}{
 		{"every minute", "* * * * *", "every minute"},
-		{"specific minute", "30 * * * *", "at minute 30"},
+		{"specific minute", "30 * * * *", "at 30 minutes past the hour"},
 		{"every 5 minutes", "*/5 * * * *", "every 5 minutes"},
-		{"hourly at 0", "0 * * * *", "at minute 0"},
-		{"daily at 6am", "0 6 * * *", "at minute 0, at hour 6"},
-		{"every 2 hours", "0 */2 * * *", "at minute 0, every 2 hours"},
-		{"monthly on 1st", "0 0 1 * *", "at minute 0, at hour 0, on day 1"},
-		{"every 7 days", "0 0 */7 * *", "at minute 0, at hour 0, every 7 days"},
-		{"in january", "0 0 1 1 *", "at minute 0, at hour 0, on day 1, in Jan"},
-		{"in june", "0 0 1 6 *", "at minute 0, at hour 0, on day 1, in Jun"},
-		{"in december", "0 0 1 12 *", "at minute 0, at hour 0, on day 1, in Dec"},
-		{"invalid month", "0 0 1 13 *", "at minute 0, at hour 0, on day 1, in month 13"},
-		{"non-numeric month", "0 0 1 */3 *", "at minute 0, at hour 0, on day 1, in month */3"},
-		{"on sunday", "0 0 * * 0", "at minute 0, at hour 0, on Sun"},
-		{"on monday", "0 0 * * 1", "at minute 0, at hour 0, on Mon"},
-		{"on saturday", "0 0 * * 6", "at minute 0, at hour 0, on Sat"},
-		{"on weekdays", "0 9 * * 1-5", "at minute 0, at hour 9, on weekdays"},
-		{"invalid day", "0 0 * * 7", "at minute 0, at hour 0, on day 7"},
-		{"complex pattern", "30 9 15 6 1", "at minute 30, at hour 9, on day 15, in Jun, on Mon"},
+		{"hourly at 0", "0 * * * *", "every hour"},
+		{"daily at 6am", "0 6 * * *", "at 06:00 AM"},
+		{"every 2 hours", "0 */2 * * *", "at 0 minutes past the hour, every 2 hours"},
+		{"monthly on 1st", "0 0 1 * *", "at 12:00 AM, on day 1 of the month"},
+		{"every 7 days", "0 0 */7 * *", "at 12:00 AM, every 7 days"},
+		{"in january", "0 0 1 1 *", "at 12:00 AM, on day 1 of the month, only in January"},
+		{"in june", "0 0 1 6 *", "at 12:00 AM, on day 1 of the month, only in June"},
+		{"in december", "0 0 1 12 *", "at 12:00 AM, on day 1 of the month, only in December"},
+		{"month 13 treated as invalid", "0 0 1 13 *", "invalid cron expression"},
+		{"quarterly", "0 0 1 */3 *", "at 12:00 AM, on day 1 of the month, every 3 months"},
+		{"on sunday", "0 0 * * 0", "at 12:00 AM, only on Sunday"},
+		{"on monday", "0 0 * * 1", "at 12:00 AM, only on Monday"},
+		{"on saturday", "0 0 * * 6", "at 12:00 AM, only on Saturday"},
+		{"on weekdays", "0 9 * * 1-5", "at 09:00 AM, Monday through Friday"},
+		{"day 7 is Sunday", "0 0 * * 7", "at 12:00 AM, only on Sunday"},
+		{"complex pattern", "30 9 15 6 1", "at 09:30 AM, on day 15 of the month, and on Monday, only in June"},
 	}
 
 	for _, tt := range tests {
