@@ -33,62 +33,21 @@ func New(cacheDuration time.Duration) (*Cache, error) {
 	}, nil
 }
 
-// Get retrieves data from the cache. Returns (true, nil) if found,
-// (false, nil) if not found or expired.
-func (c *Cache) Get(key string, v interface{}) (bool, error) {
-	data, found := c.store.Get(key)
-	if !found {
-		return false, nil
-	}
-
-	// Type assertion to get the stored value
-	// The caller must ensure v is a pointer to the correct type
-	switch target := v.(type) {
-	case *interface{}:
-		*target = data
-	default:
-		// For typed pointers, we need to do a type-specific copy
-		// go-cache stores the actual value, so we can use type assertion
-		return copyValue(data, v)
-	}
-
-	return true, nil
-}
-
-// copyValue copies data to the target pointer using type assertion.
-func copyValue(data interface{}, target interface{}) (bool, error) {
-	// Use reflection-free approach for common types
-	// go-cache stores values directly, so we copy them
-	switch t := target.(type) {
-	case *[]interface{}:
-		if src, ok := data.([]interface{}); ok {
-			*t = src
-			return true, nil
-		}
-	case *map[string]interface{}:
-		if src, ok := data.(map[string]interface{}); ok {
-			*t = src
-			return true, nil
-		}
-	case *string:
-		if src, ok := data.(string); ok {
-			*t = src
-			return true, nil
-		}
-	case *int:
-		if src, ok := data.(int); ok {
-			*t = src
-			return true, nil
-		}
-	}
-
-	// For complex types, store as-is and let caller handle
-	// This works because go-cache stores the actual value
-	return true, nil
+// Get retrieves data from the cache.
+// Returns (value, true) if found, (nil, false) if not found or expired.
+// Callers should use type assertion on the returned value:
+//
+//	if data, found := cache.Get("key"); found {
+//	    if channels, ok := data.([]Channel); ok {
+//	        // use channels
+//	    }
+//	}
+func (c *Cache) Get(key string) (any, bool) {
+	return c.store.Get(key)
 }
 
 // Set stores data in the cache with the default expiration time.
-func (c *Cache) Set(key string, v interface{}) error {
+func (c *Cache) Set(key string, v any) error {
 	c.store.Set(key, v, gocache.DefaultExpiration)
 	return nil
 }

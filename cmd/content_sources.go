@@ -56,34 +56,32 @@ func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.
 }
 
 func fetchTunarrContent(client *tunarr.Client, contentCache *cache.Cache) []tunarr.Program {
-	var allPrograms []tunarr.Program
-
-	if tryLoadFromCache(contentCache, tunarrCacheKey, &allPrograms) {
-		return allPrograms
+	if programs := tryLoadTunarrFromCache(contentCache); programs != nil {
+		return programs
 	}
 
-	allPrograms = fetchLibraryPrograms(client)
+	allPrograms := fetchLibraryPrograms(client)
 	saveTunarrCache(contentCache, allPrograms)
 
 	return allPrograms
 }
 
-func tryLoadFromCache(contentCache *cache.Cache, key string, target interface{}) bool {
+func tryLoadTunarrFromCache(contentCache *cache.Cache) []tunarr.Program {
 	if contentCache == nil {
-		return false
+		return nil
 	}
-
-	found, err := contentCache.Get(key, target)
-	if err != nil {
-		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Tunarr programs from cache: %v. Refetching.", err)))
-		return false
+	data, found := contentCache.Get(tunarrCacheKey)
+	if !found {
+		return nil
 	}
-
-	if found && verbose {
+	programs, ok := data.([]tunarr.Program)
+	if !ok {
+		return nil
+	}
+	if verbose {
 		fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Tunarr programs from cache"))
 	}
-
-	return found
+	return programs
 }
 
 func fetchLibraryPrograms(client *tunarr.Client) []tunarr.Program {
@@ -209,38 +207,57 @@ func saveTunarrCache(contentCache *cache.Cache, allPrograms []tunarr.Program) {
 	}
 }
 
-func applyRadarrAvailability(radarrCfg radarr.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
-	var movies []radarr.Movie
-	var err error
-	radarrClient := radarr.NewClient(radarrCfg)
-
-	if contentCache != nil {
-		var found bool
-		found, err = contentCache.Get(radarrCacheKey, &movies)
-		if err != nil {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Radarr movies from cache: %v. Refetching.", err)))
-		} else if found {
-			if verbose {
-				fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Radarr movies from cache"))
-			}
-			goto ProcessRadarr
-		}
+func loadRadarrMovies(radarrCfg radarr.Config, contentCache *cache.Cache) []radarr.Movie {
+	if movies := tryLoadRadarrFromCache(contentCache); movies != nil {
+		return movies
 	}
 
+	// Fetch from Radarr API
 	fmt.Println(infoStyle.Render("🎬 Fetching movies from Radarr..."))
-	movies, err = radarrClient.GetMovies(context.Background())
+	radarrClient := radarr.NewClient(radarrCfg)
+	movies, err := radarrClient.GetMovies(context.Background())
 	if err != nil {
 		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch Radarr movies: %v", err)))
+		return nil
+	}
+
+	// Cache the result
+	saveRadarrCache(contentCache, movies)
+	return movies
+}
+
+func tryLoadRadarrFromCache(contentCache *cache.Cache) []radarr.Movie {
+	if contentCache == nil {
+		return nil
+	}
+	data, found := contentCache.Get(radarrCacheKey)
+	if !found {
+		return nil
+	}
+	movies, ok := data.([]radarr.Movie)
+	if !ok {
+		return nil
+	}
+	if verbose {
+		fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Radarr movies from cache"))
+	}
+	return movies
+}
+
+func saveRadarrCache(contentCache *cache.Cache, movies []radarr.Movie) {
+	if contentCache == nil {
+		return
+	}
+	if err := contentCache.Set(radarrCacheKey, movies); err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Radarr movies to cache: %v", err)))
+	}
+}
+
+func applyRadarrAvailability(radarrCfg radarr.Config, programs []tunarr.Program, contentCache *cache.Cache) []tunarr.Program {
+	movies := loadRadarrMovies(radarrCfg, contentCache)
+	if movies == nil {
 		return programs
 	}
-
-	if contentCache != nil {
-		if err := contentCache.Set(radarrCacheKey, movies); err != nil {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Radarr movies to cache: %v", err)))
-		}
-	}
-
-ProcessRadarr:
 	availableTitles := buildRadarrMovieIndex(movies, radarrCfg.ExcludeMissingFile)
 	if len(availableTitles.byTitle) == 0 && len(availableTitles.byTitleYear) == 0 {
 		return programs
@@ -277,10 +294,8 @@ type sonarrData struct {
 }
 
 func loadSonarrData(client *sonarr.Client, contentCache *cache.Cache) ([]sonarr.Series, []sonarr.Episode) {
-	if contentCache != nil {
-		if series, episodes, ok := tryLoadSonarrCache(contentCache); ok {
-			return series, episodes
-		}
+	if series, episodes := tryLoadSonarrFromCache(contentCache); series != nil {
+		return series, episodes
 	}
 
 	series, episodes := fetchSonarrData(client)
@@ -289,19 +304,22 @@ func loadSonarrData(client *sonarr.Client, contentCache *cache.Cache) ([]sonarr.
 	return series, episodes
 }
 
-func tryLoadSonarrCache(contentCache *cache.Cache) ([]sonarr.Series, []sonarr.Episode, bool) {
-	var cachedData sonarrData
-	found, err := contentCache.Get(sonarrCacheKey, &cachedData)
-	if err != nil {
-		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error reading Sonarr data from cache: %v. Refetching.", err)))
-		return nil, nil, false
+func tryLoadSonarrFromCache(contentCache *cache.Cache) ([]sonarr.Series, []sonarr.Episode) {
+	if contentCache == nil {
+		return nil, nil
 	}
-
-	if found && verbose {
+	data, found := contentCache.Get(sonarrCacheKey)
+	if !found {
+		return nil, nil
+	}
+	cachedData, ok := data.(sonarrData)
+	if !ok {
+		return nil, nil
+	}
+	if verbose {
 		fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Sonarr data from cache"))
 	}
-
-	return cachedData.Series, cachedData.Episodes, found
+	return cachedData.Series, cachedData.Episodes
 }
 
 func fetchSonarrData(client *sonarr.Client) ([]sonarr.Series, []sonarr.Episode) {
