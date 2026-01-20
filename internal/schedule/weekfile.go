@@ -9,6 +9,7 @@ import (
 // ProgramType represents the type of a program slot.
 type ProgramType string
 
+// Program type constants.
 const (
 	ProgramTypeMovie   ProgramType = "movie"
 	ProgramTypeEpisode ProgramType = "episode"

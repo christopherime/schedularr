@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"container/list"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -51,7 +52,11 @@ func (c *WeekCache) Get(weekID string) (*WeekSchedule, bool) {
 
 	if elem, ok := c.cache[weekID]; ok {
 		c.lru.MoveToFront(elem)
-		return elem.Value.(*cacheEntry).schedule, true
+		entry, ok := elem.Value.(*cacheEntry)
+		if !ok {
+			return nil, false
+		}
+		return entry.schedule, true
 	}
 	return nil, false
 }
@@ -63,7 +68,9 @@ func (c *WeekCache) Put(weekID string, schedule *WeekSchedule) {
 
 	if elem, ok := c.cache[weekID]; ok {
 		c.lru.MoveToFront(elem)
-		elem.Value.(*cacheEntry).schedule = schedule
+		if entry, ok := elem.Value.(*cacheEntry); ok {
+			entry.schedule = schedule
+		}
 		return
 	}
 
@@ -72,7 +79,9 @@ func (c *WeekCache) Put(weekID string, schedule *WeekSchedule) {
 		oldest := c.lru.Back()
 		if oldest != nil {
 			c.lru.Remove(oldest)
-			delete(c.cache, oldest.Value.(*cacheEntry).weekID)
+			if entry, ok := oldest.Value.(*cacheEntry); ok {
+				delete(c.cache, entry.weekID)
+			}
 		}
 	}
 
@@ -198,7 +207,7 @@ func (m *Manager) loadFromDisk(weekID string) (*WeekSchedule, error) {
 // SaveWeek persists a week schedule to disk and updates the cache.
 func (m *Manager) SaveWeek(schedule *WeekSchedule) error {
 	if schedule == nil {
-		return fmt.Errorf("cannot save nil schedule")
+		return errors.New("cannot save nil schedule")
 	}
 
 	m.mu.Lock()

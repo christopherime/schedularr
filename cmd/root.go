@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -111,7 +112,7 @@ func getConfig() *config.Config {
 func runTUI() error {
 	cfg := getConfig()
 	if cfg == nil {
-		return fmt.Errorf("config not loaded - ensure config.yaml exists")
+		return errors.New("config not loaded - ensure config.yaml exists")
 	}
 
 	// Load scheduler config

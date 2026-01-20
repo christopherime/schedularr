@@ -168,7 +168,8 @@ func (m Model) renderCalendarWeek() string {
 		if isSelected {
 			dayHeaders[i] = calWeekDaySelectedStyle.Render(headerText)
 		} else if isToday {
-			dayHeaders[i] = calWeekDayHeaderStyle.Copy().Background(lipgloss.Color("214")).Render(headerText)
+			todayStyle := calWeekDayHeaderStyle.Background(lipgloss.Color("214"))
+			dayHeaders[i] = todayStyle.Render(headerText)
 		} else {
 			dayHeaders[i] = calWeekDayHeaderStyle.Render(headerText)
 		}
