@@ -1,16 +1,16 @@
-You are a codebase analyst. This repo is large, and I’m willing to be more lenient on dependencies to reduce code size while preserving current features.
-Your task:
+You are a codebase analyst. The repo is large, and I’m willing to add dependencies if it reduces code size without changing behavior.
 
-1) Analyze the codebase for areas where custom logic could reasonably be replaced by well‑maintained external libraries.
-2) Update `TODO.md` with refactoring tasks that propose those replacements.
-3) Only propose dependencies that are actively maintained and have no obvious security issues. I don’t care if they have low or no unit tests.
-4) The goal is to reduce code size while maintaining existing behavior.
+Task:
+1) Identify areas where custom logic could reasonably be replaced by well‑maintained external libraries.
+2) Update `TODO.md` with refactoring tasks proposing those replacements.
+3) Only suggest dependencies that are actively maintained and have no obvious security issues; test coverage does not matter.
+4) This is a refactor plan only—no behavior changes.
 
 Constraints:
-- Prefer stable, widely used libraries with active maintenance.
-- Do not change functionality; this is a refactor plan only.
-- Add clear, actionable TODO items with rationale and candidate libraries.
+- Prefer stable, widely used libraries.
+- Preserve existing functionality.
+- TODO items must be clear, actionable, and include rationale plus candidate libraries.
 
 Output:
-- Summarize key candidate areas (briefly) with one implementation selected.
+- Briefly summarize key candidate areas and select one preferred library per area.
 - Provide the exact `TODO.md` additions you would make.

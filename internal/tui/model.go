@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/geekxflood/schedularr/internal/config"
 	"github.com/geekxflood/schedularr/internal/cronbuilder"
+	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/geekxflood/schedularr/internal/schedule"
 	"github.com/geekxflood/schedularr/internal/scheduler"
 	"github.com/geekxflood/schedularr/internal/store"
 	"github.com/robfig/cron/v3"
@@ -27,7 +30,8 @@ import (
 type sessionState int
 
 const (
-	stateListView sessionState = iota
+	stateChannelView sessionState = iota // Channel-centric view
+	stateListView                        // Block list view (legacy/editor)
 	stateEditBlock
 	stateConfirmDelete
 	stateHelp
@@ -38,7 +42,31 @@ const (
 	stateFileBrowser
 	stateSeriesEdit
 	stateBlockTimeline
+	statePreview        // Preview schedule changes
+	stateApplying       // Applying changes in progress
+	stateGenerateWizard // Pre-generation wizard showing analysis
+	stateCreateBlock    // Interactive block creation
+	stateCalendarMonth  // Calendar month grid view (NEW DEFAULT)
+	stateCalendarWeek   // Calendar week detail view
+	stateCalendarDay    // Calendar day timeline view
+	stateCalendarEdit   // Edit program slot modal
 )
+
+// CalendarViewMode represents the current calendar view type.
+type CalendarViewMode int
+
+const (
+	CalendarViewMonth CalendarViewMode = iota
+	CalendarViewWeek
+	CalendarViewDay
+)
+
+// CalendarSelection tracks the current selection within a calendar view.
+type CalendarSelection struct {
+	Day       int // Day within the month (1-31)
+	Hour      int // Hour of day (0-23)
+	SlotIndex int // Index of selected slot in day view
+}
 
 type item struct {
 	block scheduler.Block
@@ -53,10 +81,92 @@ type timelineSlot struct {
 	Priority  int
 }
 
-func (i item) Title() string { return i.block.Name }
-func (i item) Description() string {
-	return fmt.Sprintf("%s | %d min | %s | pri:%d", i.block.Cron, i.block.Duration, i.block.ChannelID, i.block.Priority)
+func (i item) Title() string {
+	// Show block type indicator
+	typeIcon := "🎬" // filter
+	if i.block.Type == scheduler.BlockTypeSeries {
+		typeIcon = "📺"
+	}
+	return fmt.Sprintf("%s %s", typeIcon, i.block.Name)
 }
+
+func (i item) Description() string {
+	var parts []string
+
+	// Cron with human-readable description
+	cronDesc := cronbuilder.Parse(i.block.Cron).Describe()
+	parts = append(parts, cronDesc)
+
+	// Duration
+	parts = append(parts, fmt.Sprintf("%d min", i.block.Duration))
+
+	// Channel ID (truncate if long)
+	chanID := i.block.ChannelID
+	if chanID == "" {
+		chanID = "(no channel)"
+	} else if len(chanID) > 12 {
+		chanID = chanID[:12] + "..."
+	}
+	parts = append(parts, chanID)
+
+	// Priority
+	parts = append(parts, fmt.Sprintf("pri:%d", i.block.Priority))
+
+	// Build filter/series summary for second line
+	var details []string
+
+	if i.block.Type == scheduler.BlockTypeSeries && len(i.block.Series) > 0 {
+		// Series info
+		var seriesTitles []string
+		for _, s := range i.block.Series {
+			seriesTitles = append(seriesTitles, s.ShowTitle)
+		}
+		if len(seriesTitles) > 2 {
+			details = append(details, fmt.Sprintf("Series: %s +%d more", strings.Join(seriesTitles[:2], ", "), len(seriesTitles)-2))
+		} else {
+			details = append(details, fmt.Sprintf("Series: %s", strings.Join(seriesTitles, ", ")))
+		}
+	} else {
+		// Filter info
+		f := i.block.Filter
+		if len(f.Genres) > 0 {
+			if len(f.Genres) > 2 {
+				details = append(details, fmt.Sprintf("Genres: %s +%d", strings.Join(f.Genres[:2], ","), len(f.Genres)-2))
+			} else {
+				details = append(details, fmt.Sprintf("Genres: %s", strings.Join(f.Genres, ",")))
+			}
+		}
+		if len(f.Ratings) > 0 {
+			details = append(details, fmt.Sprintf("Ratings: %s", strings.Join(f.Ratings, ",")))
+		}
+		if f.YearFrom > 0 || f.YearTo > 0 {
+			if f.YearFrom > 0 && f.YearTo > 0 {
+				details = append(details, fmt.Sprintf("Years: %d-%d", f.YearFrom, f.YearTo))
+			} else if f.YearFrom > 0 {
+				details = append(details, fmt.Sprintf("Years: %d+", f.YearFrom))
+			} else {
+				details = append(details, fmt.Sprintf("Years: -%d", f.YearTo))
+			}
+		}
+		if f.MinDuration > 0 || f.MaxDuration > 0 {
+			if f.MinDuration > 0 && f.MaxDuration > 0 {
+				details = append(details, fmt.Sprintf("Len: %d-%dmin", f.MinDuration, f.MaxDuration))
+			} else if f.MaxDuration > 0 {
+				details = append(details, fmt.Sprintf("Len: ≤%dmin", f.MaxDuration))
+			} else {
+				details = append(details, fmt.Sprintf("Len: ≥%dmin", f.MinDuration))
+			}
+		}
+	}
+
+	// Combine lines
+	line1 := strings.Join(parts, " | ")
+	if len(details) > 0 {
+		return line1 + "\n    " + strings.Join(details, " | ")
+	}
+	return line1
+}
+
 func (i item) FilterValue() string { return i.block.Name }
 
 // Model is the Bubble Tea model for the TUI.
@@ -70,6 +180,27 @@ type Model struct {
 	schedulerFile     string       // path to scheduler file for saving
 	statusMessage     string       // status message to display
 	hasUnsavedChanges bool         // track if there are unsaved changes
+
+	// Tunarr client and channel state
+	tunarrClient     *tunarr.Client
+	channels         []ChannelView    // Channels with programming
+	channelSelected  int              // Selected channel index
+	connectionStatus ConnectionStatus // Connection status to Tunarr
+	connectionError  error            // Last connection error
+	autoRefresh      bool             // Auto-refresh enabled
+	refreshInterval  time.Duration    // Refresh interval (default 30s)
+
+	// Schedule generation dependencies
+	appConfig         *config.Config   // App configuration
+	logger            *slog.Logger     // Structured logger for debug output
+	timezone          *time.Location   // Timezone for schedule generation
+	availablePrograms []tunarr.Program // Cached programs for schedule generation
+	isGenerating      bool             // True while generating schedule
+
+	// Apply state
+	applyResults  []ApplyResult // Results of applying changes
+	applyComplete bool          // Apply operation complete
+
 	// Block edit form (huh)
 	blockForm     *huh.Form
 	formName      string
@@ -109,11 +240,43 @@ type Model struct {
 	// Block Timeline state
 	timelineSlots  []timelineSlot // Scheduled slots for next 24 hours
 	timelineScroll int            // Current scroll position
+
+	// Generate Wizard state
+	contentAnalysis   *ContentAnalysis // Analysis of available content
+	blockAnalysis     []BlockAnalysis  // Analysis of each block's viability
+	wizardSelectedIdx int              // Selected item in wizard
+
+	// Block Creation state
+	newBlock          scheduler.Block // Block being created
+	newBlockStep      int             // Current step in block creation (0-4)
+	newBlockGenres    []bool          // Selected genres (toggle state)
+	newBlockRatings   []bool          // Selected ratings (toggle state)
+
+	// Calendar state
+	calendarDate       time.Time              // Currently focused date
+	calendarViewMode   CalendarViewMode       // month, week, day
+	calendarSelection  CalendarSelection      // Current selection within view
+	scheduleManager    *schedule.Manager      // Week file manager with LRU cache
+	loadedWeeks        map[string]*schedule.WeekSchedule // Currently loaded weeks
+	editingSlot        *schedule.ProgramSlot  // Slot being edited in modal
+	editingSlotChannel string                 // Channel ID for slot being edited
+	windowWidth        int                    // Terminal width
+	windowHeight       int                    // Terminal height
+}
+
+// ModelOptions contains optional dependencies for the TUI model.
+type ModelOptions struct {
+	TunarrClient *tunarr.Client
+	AppConfig    *config.Config
+	Logger       *slog.Logger
+	Timezone     *time.Location
+	SchedulesDir string // Directory for week schedule files
 }
 
 // NewModel creates a new TUI model with the given blocks and optional store.
 // The schedulerFile parameter is the path to save scheduler config changes.
-func NewModel(blocks []scheduler.Block, st *store.Store, schedulerFile string) Model {
+// The opts parameter provides optional dependencies for channel view and schedule generation.
+func NewModel(blocks []scheduler.Block, st *store.Store, schedulerFile string, opts ModelOptions) Model {
 	items := make([]list.Item, len(blocks))
 	for i, b := range blocks {
 		items[i] = item{block: b}
@@ -123,12 +286,51 @@ func NewModel(blocks []scheduler.Block, st *store.Store, schedulerFile string) M
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "Scheduling Blocks"
 
+	// Use default timezone if not provided
+	tz := opts.Timezone
+	if tz == nil {
+		tz = time.Local
+	}
+
+	// Use default logger if not provided
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	}
+
+	// Create schedule manager if schedules dir is provided
+	var schedMgr *schedule.Manager
+	if opts.SchedulesDir != "" {
+		schedMgr = schedule.NewManager(opts.SchedulesDir, tz, logger)
+	}
+
+	// Determine initial state based on available features
+	// Priority: Calendar (default) > Channel view > List view
+	initialState := stateListView
+	if schedMgr != nil {
+		initialState = stateCalendarMonth // Calendar is the new default
+	} else if opts.TunarrClient != nil {
+		initialState = stateChannelView
+	}
+
 	return Model{
-		blocks:        blocks,
-		store:         st,
-		list:          l,
-		state:         stateListView,
-		schedulerFile: schedulerFile,
+		blocks:           blocks,
+		store:            st,
+		list:             l,
+		state:            initialState,
+		schedulerFile:    schedulerFile,
+		tunarrClient:     opts.TunarrClient,
+		appConfig:        opts.AppConfig,
+		logger:           logger,
+		timezone:         tz,
+		refreshInterval:  30 * time.Second,
+		autoRefresh:      true,
+		connectionStatus: StatusDisconnected,
+		// Calendar state
+		scheduleManager:   schedMgr,
+		calendarDate:      time.Now().In(tz),
+		calendarViewMode:  CalendarViewMonth,
+		loadedWeeks:       make(map[string]*schedule.WeekSchedule),
 	}
 }
 
@@ -192,9 +394,92 @@ func (m *Model) createBlockForm() {
 	).WithTheme(huh.ThemeDracula())
 }
 
+// Message types for async operations
+type channelsLoadedMsg struct {
+	channels []ChannelView
+	err      error
+}
+
+type tickMsg time.Time
+
+type applyCompleteMsg struct {
+	results []ApplyResult
+}
+
+type programsLoadedMsg struct {
+	programs []tunarr.Program
+	err      error
+}
+
+type scheduleGeneratedMsg struct {
+	plan map[string][]scheduler.ScheduledSlot
+	err  error
+}
+
 // Init initializes the TUI model.
 func (m Model) Init() tea.Cmd {
+	if m.tunarrClient != nil && m.state == stateChannelView {
+		return tea.Batch(
+			m.fetchChannelsCmd(),
+			m.tickCmd(),
+		)
+	}
 	return nil
+}
+
+// fetchChannelsCmd returns a command that fetches channels and their programming.
+func (m Model) fetchChannelsCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.tunarrClient == nil {
+			m.logger.Debug("fetchChannels: no Tunarr client configured")
+			return channelsLoadedMsg{err: errors.New("no Tunarr client configured")}
+		}
+
+		m.logger.Debug("fetchChannels: starting channel fetch")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Fetch channels
+		tunarrChannels, err := m.tunarrClient.GetChannels(ctx)
+		if err != nil {
+			m.logger.Error("fetchChannels: failed to get channels", "error", err)
+			return channelsLoadedMsg{err: err}
+		}
+
+		m.logger.Debug("fetchChannels: got channels", "count", len(tunarrChannels))
+
+		// Fetch programming for each channel
+		channelViews := make([]ChannelView, 0, len(tunarrChannels))
+		for _, ch := range tunarrChannels {
+			cv := ChannelView{
+				Channel:     ch,
+				LastUpdated: time.Now(),
+			}
+
+			// Fetch programming (non-blocking per channel)
+			programs, err := m.tunarrClient.GetChannelProgramming(ctx, ch.ID)
+			if err != nil {
+				m.logger.Debug("fetchChannels: failed to get programming", "channel_id", ch.ID, "error", err)
+				cv.Error = err
+			} else {
+				cv.CurrentPrograms = convertTunarrProgramming(programs)
+				m.logger.Debug("fetchChannels: got programming", "channel_id", ch.ID, "programs", len(programs))
+			}
+
+			channelViews = append(channelViews, cv)
+		}
+
+		m.logger.Debug("fetchChannels: completed", "channels", len(channelViews))
+		return channelsLoadedMsg{channels: channelViews}
+	}
+}
+
+// tickCmd returns a command that sends a tick message after the refresh interval.
+func (m Model) tickCmd() tea.Cmd {
+	return tea.Tick(m.refreshInterval, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // Update handles Bubble Tea messages and updates the model.
@@ -203,6 +488,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.updateWindowSize(msg)
 		return m, nil
+
+	case channelsLoadedMsg:
+		m.logger.Debug("channels loaded", "count", len(msg.channels), "error", msg.err)
+		if msg.err != nil {
+			m.connectionStatus = StatusError
+			m.connectionError = msg.err
+		} else {
+			m.connectionStatus = StatusConnected
+			m.connectionError = nil
+			m.channels = msg.channels
+		}
+		return m, nil
+
+	case programsLoadedMsg:
+		m.logger.Debug("programs loaded", "count", len(msg.programs), "error", msg.err)
+		if msg.err != nil {
+			m.statusMessage = "Failed to load programs: " + msg.err.Error()
+			m.isGenerating = false
+		} else {
+			m.availablePrograms = msg.programs
+			m.statusMessage = fmt.Sprintf("Loaded %d programs, generating schedule...", len(msg.programs))
+			// Now generate the schedule
+			return m, m.generateScheduleFromProgramsCmd()
+		}
+		return m, nil
+
+	case wizardAnalysisMsg:
+		m.logger.Debug("wizard analysis complete", "programs", len(msg.programs), "blocks", len(msg.blockAnalysis), "error", msg.err)
+		if msg.err != nil {
+			m.statusMessage = "Failed to analyze: " + msg.err.Error()
+		} else {
+			m.availablePrograms = msg.programs
+			m.contentAnalysis = msg.contentAnalysis
+			m.blockAnalysis = msg.blockAnalysis
+			m.wizardSelectedIdx = 0
+			m.state = stateGenerateWizard
+			m.statusMessage = ""
+		}
+		return m, nil
+
+	case scheduleGeneratedMsg:
+		m.isGenerating = false
+		m.logger.Debug("schedule generated", "channels", len(msg.plan), "error", msg.err)
+		if msg.err != nil {
+			m.statusMessage = "Failed to generate schedule: " + msg.err.Error()
+		} else {
+			m.applySchedulePlanToChannels(msg.plan)
+			totalChanges := 0
+			for _, cv := range m.channels {
+				totalChanges += cv.PendingChanges
+			}
+			m.statusMessage = fmt.Sprintf("Generated schedule: %d changes across %d channels", totalChanges, len(msg.plan))
+		}
+		return m, nil
+
+	case tickMsg:
+		// Auto-refresh if enabled and in channel view
+		if m.autoRefresh && m.state == stateChannelView && m.tunarrClient != nil {
+			m.connectionStatus = StatusConnecting
+			return m, tea.Batch(m.fetchChannelsCmd(), m.tickCmd())
+		}
+		// Keep ticking even if not refreshing, so we can resume
+		return m, m.tickCmd()
+
+	case applyCompleteMsg:
+		m.applyResults = msg.results
+		m.applyComplete = true
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	}
@@ -213,6 +567,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) updateWindowSize(msg tea.WindowSizeMsg) {
 	h, v := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()
 	m.list.SetSize(msg.Width-h, msg.Height-v)
+	// Track window size for calendar views
+	m.windowWidth = msg.Width
+	m.windowHeight = msg.Height
 }
 
 func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -223,32 +580,42 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch m.state {
-	case stateListView:
-		return m.updateListView(msg)
-	case stateEditBlock:
-		return m.updateEditBlock(msg)
-	case stateConfirmDelete:
-		return m.updateConfirmDelete(msg)
-	case stateHelp:
-		return m.updateHelp(msg)
-	case stateSeriesProgress:
-		return m.updateSeriesProgress(msg)
-	case stateCronBuilder:
-		return m.updateCronBuilder(msg)
-	case stateSeriesSelector:
-		return m.updateSeriesSelector(msg)
-	case stateFilterBuilder:
-		return m.updateFilterBuilder(msg)
-	case stateFileBrowser:
-		return m.updateFileBrowser(msg)
-	case stateSeriesEdit:
-		return m.updateSeriesEdit(msg)
-	case stateBlockTimeline:
-		return m.updateBlockTimeline(msg)
-	default:
-		return m, nil
+	return m.dispatchKeyMsg(msg)
+}
+
+// keyHandler is a function type for state-specific key handlers.
+type keyHandler func(Model, tea.KeyMsg) (tea.Model, tea.Cmd)
+
+// dispatchKeyMsg routes key messages to state-specific handlers.
+func (m Model) dispatchKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	handlers := map[sessionState]keyHandler{
+		stateChannelView:    Model.updateChannelView,
+		stateListView:       Model.updateListView,
+		stateEditBlock:      Model.updateEditBlock,
+		stateConfirmDelete:  Model.updateConfirmDelete,
+		stateHelp:           Model.updateHelp,
+		stateSeriesProgress: Model.updateSeriesProgress,
+		stateCronBuilder:    Model.updateCronBuilder,
+		stateSeriesSelector: Model.updateSeriesSelector,
+		stateFilterBuilder:  Model.updateFilterBuilder,
+		stateFileBrowser:    Model.updateFileBrowser,
+		stateSeriesEdit:     Model.updateSeriesEdit,
+		stateBlockTimeline:  Model.updateBlockTimeline,
+		statePreview:        Model.updatePreviewView,
+		stateApplying:       Model.updateApplyingView,
+		stateGenerateWizard: Model.updateGenerateWizard,
+		stateCreateBlock:    Model.updateCreateBlock,
+		// Calendar views
+		stateCalendarMonth: Model.updateCalendarMonth,
+		stateCalendarWeek:  Model.updateCalendarWeek,
+		stateCalendarDay:   Model.updateCalendarDay,
+		stateCalendarEdit:  Model.updateCalendarEdit,
 	}
+
+	if handler, ok := handlers[m.state]; ok {
+		return handler(m, msg)
+	}
+	return m, nil
 }
 
 func (m Model) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -314,6 +681,13 @@ func (m Model) handleBlockOperations(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) 
 // Returns (handled, model) - cmd is always nil for view switches.
 func (m Model) handleViewSwitch(msg tea.KeyMsg) (bool, tea.Model) {
 	switch msg.String() {
+	case "c", "C":
+		// Switch to channel view (if Tunarr client is available)
+		if m.tunarrClient != nil {
+			m.state = stateChannelView
+			return true, m
+		}
+		return true, m
 	case "s":
 		if m.store != nil {
 			m.loadSeriesStates()
@@ -592,32 +966,39 @@ func (m Model) updateSeriesProgress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // View renders the TUI.
 func (m Model) View() string {
-	switch m.state {
-	case stateListView:
-		return m.renderListView()
-	case stateEditBlock:
-		return m.renderEditBlock()
-	case stateConfirmDelete:
-		return m.renderConfirmDelete()
-	case stateSeriesProgress:
-		return m.renderSeriesProgress()
-	case stateCronBuilder:
-		return m.renderCronBuilder()
-	case stateSeriesSelector:
-		return m.renderSeriesSelector()
-	case stateFilterBuilder:
-		return m.renderFilterBuilder()
-	case stateFileBrowser:
-		return m.renderFileBrowser()
-	case stateSeriesEdit:
-		return m.renderSeriesEdit()
-	case stateBlockTimeline:
-		return m.renderBlockTimeline()
-	case stateHelp:
-		return m.renderHelp()
-	default:
-		return "Unknown state"
+	return m.renderState()
+}
+
+// renderState dispatches to the appropriate render function based on state.
+func (m Model) renderState() string {
+	renderers := map[sessionState]func() string{
+		stateChannelView:    m.renderChannelView,
+		stateListView:       m.renderListView,
+		stateEditBlock:      m.renderEditBlock,
+		stateConfirmDelete:  m.renderConfirmDelete,
+		stateSeriesProgress: m.renderSeriesProgress,
+		stateCronBuilder:    m.renderCronBuilder,
+		stateSeriesSelector: m.renderSeriesSelector,
+		stateFilterBuilder:  m.renderFilterBuilder,
+		stateFileBrowser:    m.renderFileBrowser,
+		stateSeriesEdit:     m.renderSeriesEdit,
+		stateBlockTimeline:  m.renderBlockTimeline,
+		statePreview:        m.renderPreviewView,
+		stateApplying:       m.renderApplyingView,
+		stateHelp:           m.renderHelp,
+		stateGenerateWizard: m.renderGenerateWizard,
+		stateCreateBlock:    m.renderCreateBlock,
+		// Calendar views
+		stateCalendarMonth: m.renderCalendarMonth,
+		stateCalendarWeek:  m.renderCalendarWeek,
+		stateCalendarDay:   m.renderCalendarDay,
+		stateCalendarEdit:  m.renderCalendarEdit,
 	}
+
+	if render, ok := renderers[m.state]; ok {
+		return render()
+	}
+	return "Unknown state"
 }
 
 func (m Model) renderListView() string {
@@ -638,9 +1019,14 @@ func (m Model) renderListView() string {
 		builder.WriteString(unsavedStyle.Render("[unsaved changes - ctrl+s to save]"))
 	}
 
-	helpText := "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 't' timeline | ctrl+s save | '?' help | 'q' quit"
-	if m.store != nil {
+	// Build help text based on available features
+	var helpText string
+	if m.tunarrClient != nil {
+		helpText = "\n\n'c' channels | 'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 't' timeline | ctrl+s save | '?' help | 'q' quit"
+	} else if m.store != nil {
 		helpText = "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 's' series | 't' timeline | ctrl+s save | '?' help | 'q' quit"
+	} else {
+		helpText = "\n\n'n' new | 'D' dup | 'd' del | enter edit | +/- pri | 't' timeline | ctrl+s save | '?' help | 'q' quit"
 	}
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(helpText)
 	builder.WriteString(help)
@@ -2135,4 +2521,432 @@ func (m Model) renderFileBrowser() string {
 	builder.WriteString(helpStyle.Render("↑/↓, j/k: Navigate | enter: Select | r: Refresh | esc/q: Cancel | ?: Help"))
 
 	return lipgloss.NewStyle().Margin(1, 2).Render(builder.String())
+}
+
+// ============================================================================
+// Channel View Update Handler
+// ============================================================================
+
+// updateChannelView handles key events in the channel view state.
+func (m Model) updateChannelView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+
+	case "up", "k":
+		if m.channelSelected > 0 {
+			m.channelSelected--
+		}
+		return m, nil
+
+	case "down", "j":
+		if m.channelSelected < len(m.channels)-1 {
+			m.channelSelected++
+		}
+		return m, nil
+
+	case "enter":
+		// View channel detail (could expand to show more info)
+		return m, nil
+
+	case "p", "P":
+		// Preview changes
+		m.state = statePreview
+		return m, nil
+
+	case "a", "A":
+		// Apply changes
+		return m.startApply()
+
+	case "g", "G":
+		// Open generate wizard with content/block analysis
+		if m.isGenerating {
+			m.statusMessage = "Generation already in progress..."
+			return m, nil
+		}
+		m.statusMessage = "Analyzing content..."
+		m.logger.Info("opening generate wizard")
+		return m, m.prepareGenerateWizardCmd()
+
+	case "b", "B":
+		// Switch to blocks view
+		m.state = stateListView
+		return m, nil
+
+	case "r", "R":
+		// Manual refresh
+		m.connectionStatus = StatusConnecting
+		return m, m.fetchChannelsCmd()
+
+	case "t", "T":
+		// Toggle auto-refresh
+		m.autoRefresh = !m.autoRefresh
+		if m.autoRefresh {
+			m.statusMessage = "Auto-refresh enabled"
+		} else {
+			m.statusMessage = "Auto-refresh disabled"
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// updatePreviewView handles key events in the preview state.
+func (m Model) updatePreviewView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.state = stateChannelView
+		return m, nil
+
+	case "a", "A":
+		// Apply the previewed changes
+		return m.startApply()
+	}
+
+	return m, nil
+}
+
+// updateApplyingView handles key events while applying changes.
+func (m Model) updateApplyingView(_ tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.applyComplete {
+		// Any key returns to channel view after apply completes
+		m.state = stateChannelView
+		m.applyComplete = false
+		m.applyResults = nil
+		// Refresh channels to show updated state
+		return m, m.fetchChannelsCmd()
+	}
+	return m, nil
+}
+
+// startApply initiates the apply process.
+func (m Model) startApply() (tea.Model, tea.Cmd) {
+	// Check if there are any changes to apply
+	hasChanges := false
+	for _, cv := range m.channels {
+		if cv.HasChanges() {
+			hasChanges = true
+			break
+		}
+	}
+
+	if !hasChanges {
+		m.statusMessage = "No changes to apply"
+		return m, nil
+	}
+
+	m.state = stateApplying
+	m.applyComplete = false
+	m.applyResults = nil
+
+	return m, m.applyChangesCmd()
+}
+
+// applyChangesCmd returns a command that applies changes to Tunarr.
+func (m Model) applyChangesCmd() tea.Cmd {
+	return func() tea.Msg {
+		results := make([]ApplyResult, 0)
+
+		for _, cv := range m.channels {
+			if !cv.HasChanges() || len(cv.PlannedPrograms) == 0 {
+				continue
+			}
+
+			result := m.applyChannelChanges(cv)
+			results = append(results, result)
+		}
+
+		return applyCompleteMsg{results: results}
+	}
+}
+
+// applyChannelChanges applies planned changes to a single channel.
+func (m Model) applyChannelChanges(cv ChannelView) ApplyResult {
+	result := ApplyResult{
+		ChannelID:   cv.Channel.ID,
+		ChannelName: cv.Channel.Name,
+	}
+
+	programs := convertPlannedToTunarrPrograms(cv.PlannedPrograms)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err := m.tunarrClient.UpdateSchedule(ctx, cv.Channel.ID, programs)
+	cancel()
+
+	if err != nil {
+		result.Error = err
+	} else {
+		result.Success = true
+	}
+
+	return result
+}
+
+// convertPlannedToTunarrPrograms converts ProgramSlots to Tunarr Programs.
+func convertPlannedToTunarrPrograms(slots []ProgramSlot) []tunarr.Program {
+	programs := make([]tunarr.Program, 0, len(slots))
+	for _, slot := range slots {
+		prog := tunarr.Program{
+			Title:    slot.Title,
+			Duration: float64(slot.Duration.Milliseconds()),
+			Type:     slot.Type,
+			Rating:   slot.Rating,
+		}
+		if slot.Type == "episode" {
+			prog.ShowTitle = slot.ShowTitle
+			prog.SeasonNumber = slot.SeasonNumber
+			prog.EpisodeNumber = slot.EpisodeNumber
+		}
+		if slot.Year > 0 {
+			year := slot.Year
+			prog.Year = &year
+		}
+		programs = append(programs, prog)
+	}
+	return programs
+}
+
+// generateScheduleCmd starts the schedule generation process by first fetching programs.
+func (m Model) generateScheduleCmd() tea.Cmd {
+	return m.fetchProgramsCmd()
+}
+
+// wizardAnalysisMsg is sent when wizard content/block analysis is complete.
+type wizardAnalysisMsg struct {
+	programs        []tunarr.Program
+	contentAnalysis *ContentAnalysis
+	blockAnalysis   []BlockAnalysis
+	err             error
+}
+
+// prepareGenerateWizardCmd fetches programs and analyzes content/blocks for the wizard.
+func (m Model) prepareGenerateWizardCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.tunarrClient == nil {
+			return wizardAnalysisMsg{err: errors.New("no Tunarr client configured")}
+		}
+
+		m.logger.Debug("fetching programs for wizard analysis")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		// Fetch programs from libraries
+		programs, err := m.fetchProgramsFromLibraries(ctx)
+		if err != nil {
+			m.logger.Warn("failed to fetch from libraries, trying search", "error", err)
+			programs, err = m.fetchProgramsViaSearch(ctx)
+			if err != nil {
+				m.logger.Error("failed to search programs", "error", err)
+				return wizardAnalysisMsg{err: fmt.Errorf("failed to fetch programs: %w", err)}
+			}
+		}
+
+		m.logger.Debug("fetched programs for analysis", "count", len(programs))
+
+		// Analyze content
+		contentAnalysis := analyzeContent(programs)
+
+		// Analyze blocks
+		blockAnalysis := m.analyzeBlocks(programs)
+
+		return wizardAnalysisMsg{
+			programs:        programs,
+			contentAnalysis: contentAnalysis,
+			blockAnalysis:   blockAnalysis,
+		}
+	}
+}
+
+// fetchProgramsCmd fetches all available programs from Tunarr.
+func (m Model) fetchProgramsCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.tunarrClient == nil {
+			return programsLoadedMsg{err: errors.New("no Tunarr client configured")}
+		}
+
+		m.logger.Debug("fetching programs from Tunarr")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		// First try to get programs via media sources and libraries
+		programs, err := m.fetchProgramsFromLibraries(ctx)
+		if err != nil {
+			m.logger.Warn("failed to fetch from libraries, trying search", "error", err)
+			// Fallback to search API with proper query object
+			programs, err = m.fetchProgramsViaSearch(ctx)
+			if err != nil {
+				m.logger.Error("failed to search programs", "error", err)
+				return programsLoadedMsg{err: fmt.Errorf("failed to fetch programs: %w", err)}
+			}
+		}
+
+		m.logger.Debug("fetched programs", "count", len(programs))
+		return programsLoadedMsg{programs: programs}
+	}
+}
+
+// fetchProgramsFromLibraries fetches programs from all media source libraries.
+func (m Model) fetchProgramsFromLibraries(ctx context.Context) ([]tunarr.Program, error) {
+	// Get all media sources
+	sources, err := m.tunarrClient.GetMediaSources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get media sources: %w", err)
+	}
+
+	m.logger.Debug("found media sources", "count", len(sources))
+
+	if len(sources) == 0 {
+		return nil, errors.New("no media sources configured in Tunarr")
+	}
+
+	var allPrograms []tunarr.Program
+
+	// For each source, get libraries and their programs
+	for _, source := range sources {
+		m.logger.Debug("fetching libraries for source", "source_id", source.ID, "source_name", source.Name)
+
+		libraries, err := m.tunarrClient.GetLibraries(ctx, source.ID)
+		if err != nil {
+			m.logger.Warn("failed to get libraries for source", "source_id", source.ID, "error", err)
+			continue
+		}
+
+		for _, lib := range libraries {
+			m.logger.Debug("fetching programs from library", "library_id", lib.ID, "library_name", lib.Name)
+
+			// Search for programs in this library
+			req := tunarr.ProgramSearchRequest{
+				MediaSourceID: source.ID,
+				LibraryID:     lib.ID,
+				Query:         &tunarr.ProgramSearchQuery{},
+				Limit:         5000,
+			}
+
+			resp, err := m.tunarrClient.SearchPrograms(ctx, req)
+			if err != nil {
+				m.logger.Warn("failed to search library", "library_id", lib.ID, "error", err)
+				continue
+			}
+
+			m.logger.Debug("found programs in library", "library_id", lib.ID, "count", len(resp.Results))
+			allPrograms = append(allPrograms, resp.Results...)
+		}
+	}
+
+	if len(allPrograms) == 0 {
+		return nil, errors.New("no programs found in any library")
+	}
+
+	return allPrograms, nil
+}
+
+// fetchProgramsViaSearch fetches programs using the search API as fallback.
+func (m Model) fetchProgramsViaSearch(ctx context.Context) ([]tunarr.Program, error) {
+	// Use search with an empty query to get all programs
+	req := tunarr.ProgramSearchRequest{
+		Query: &tunarr.ProgramSearchQuery{},
+		Limit: 10000,
+	}
+
+	resp, err := m.tunarrClient.SearchPrograms(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Results, nil
+}
+
+// generateScheduleFromProgramsCmd generates a schedule using the scheduler engine.
+func (m Model) generateScheduleFromProgramsCmd() tea.Cmd {
+	return func() tea.Msg {
+		if len(m.availablePrograms) == 0 {
+			return scheduleGeneratedMsg{err: errors.New("no programs available")}
+		}
+
+		if len(m.blocks) == 0 {
+			return scheduleGeneratedMsg{err: errors.New("no scheduling blocks configured")}
+		}
+
+		m.logger.Debug("creating scheduler engine", "blocks", len(m.blocks))
+
+		// Create the scheduler engine
+		engine := scheduler.NewEngine(m.tunarrClient, m.blocks, m.store, m.logger, m.timezone)
+
+		// Generate schedule for the next 24 hours
+		start := time.Now()
+		end := start.Add(24 * time.Hour)
+
+		m.logger.Debug("generating schedule", "start", start.Format(time.RFC3339), "end", end.Format(time.RFC3339))
+
+		plan, err := engine.GenerateForTimeRange(start, end, m.availablePrograms)
+		if err != nil {
+			m.logger.Error("failed to generate schedule", "error", err)
+			return scheduleGeneratedMsg{err: fmt.Errorf("failed to generate schedule: %w", err)}
+		}
+
+		m.logger.Debug("schedule generated", "channels", len(plan))
+
+		// Commit state changes (series progress, etc.)
+		if err := engine.Commit(); err != nil {
+			m.logger.Warn("failed to commit state changes", "error", err)
+			// Don't fail the generation for this
+		}
+
+		return scheduleGeneratedMsg{plan: plan}
+	}
+}
+
+// applySchedulePlanToChannels converts the scheduler plan to ChannelView planned programs.
+func (m *Model) applySchedulePlanToChannels(plan map[string][]scheduler.ScheduledSlot) {
+	// Create a map of channel ID to index for quick lookup
+	channelIndex := make(map[string]int)
+	for i, cv := range m.channels {
+		channelIndex[cv.Channel.ID] = i
+	}
+
+	// Apply the plan to each channel
+	for channelID, slots := range plan {
+		idx, exists := channelIndex[channelID]
+		if !exists {
+			m.logger.Warn("channel not found in view", "channel_id", channelID)
+			continue
+		}
+
+		// Convert ScheduledSlots to ProgramSlots
+		var plannedPrograms []ProgramSlot
+		for _, slot := range slots {
+			currentTime := slot.StartTime
+			for _, prog := range slot.Programs {
+				duration := time.Duration(prog.GetDurationMs()) * time.Millisecond
+				endTime := currentTime.Add(duration)
+
+				ps := ProgramSlot{
+					Title:         prog.Title,
+					ShowTitle:     prog.ShowTitle,
+					Type:          prog.Type,
+					StartTime:     currentTime,
+					EndTime:       endTime,
+					Duration:      duration,
+					BlockName:     slot.Block.Name,
+					SeasonNumber:  prog.SeasonNumber,
+					EpisodeNumber: prog.EpisodeNumber,
+					Rating:        prog.Rating,
+					Year:          prog.GetYear(),
+				}
+				plannedPrograms = append(plannedPrograms, ps)
+				currentTime = endTime
+			}
+		}
+
+		m.channels[idx].PlannedPrograms = plannedPrograms
+		m.channels[idx].PendingChanges = len(plannedPrograms)
+
+		m.logger.Debug("applied plan to channel",
+			"channel_id", channelID,
+			"channel_name", m.channels[idx].Channel.Name,
+			"programs", len(plannedPrograms))
+	}
 }

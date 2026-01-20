@@ -199,3 +199,49 @@ func (c *Client) UpdateSchedule(ctx context.Context, channelID string, programs 
 
 	return nil
 }
+
+// ChannelProgrammingResponse represents the response from GET /api/channels/{id}/programming.
+type ChannelProgrammingResponse struct {
+	Programs []ChannelProgram `json:"programs"`
+}
+
+// ChannelProgram represents a scheduled program in a channel's programming.
+type ChannelProgram struct {
+	// Program data
+	Title         string  `json:"title"`
+	Duration      float64 `json:"duration"` // milliseconds
+	Type          string  `json:"type"`     // movie, episode, flex, redirect, custom
+	Year          *int    `json:"year,omitempty"`
+	Rating        string  `json:"rating,omitempty"`
+	SeasonNumber  int     `json:"seasonNumber,omitempty"`
+	EpisodeNumber int     `json:"episodeNumber,omitempty"`
+	ShowTitle     string  `json:"showTitle,omitempty"`
+
+	// Scheduling info
+	StartTimeMs int64 `json:"startTime"` // Unix timestamp in milliseconds
+}
+
+// GetChannelProgramming retrieves the current programming for a channel.
+// GET /api/channels/{id}/programming
+func (c *Client) GetChannelProgramming(ctx context.Context, channelID string) ([]ChannelProgram, error) {
+	const endpoint = "/api/channels/{id}/programming"
+	const method = http.MethodGet
+
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
+	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
+	defer timer.ObserveDuration()
+
+	if channelID == "" {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_channel_id").Inc()
+		return nil, errors.New("channel ID cannot be empty")
+	}
+
+	path := "/api/channels/" + channelID + "/programming"
+	var programs []ChannelProgram
+	if err := c.http.Get(ctx, path, &programs); err != nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
+		return nil, fmt.Errorf("failed to get programming for channel %s: %w", channelID, err)
+	}
+
+	return programs, nil
+}

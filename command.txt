@@ -1,35 +1,28 @@
-Continue developing the project by implementing the tasks listed in TODO.md, prioritizing them in logical order. Follow these specific requirements:
+You are implementing the tasks in `TODO.md` for this Go project. Work in a clear, logical order: core functionality first, then operational features.
 
-**Development Process:**
+Development process:
+1) Triage and sequence TODO items; execute them one by one.
+2) After each task, update `TODO.md` by checking completed items `[x]` and adding new follow-up tasks you discover.
+3) Make small, focused, atomic commits with conventional commit messages. Reference the TODO item when relevant.
+4) Push to `main` regularly (every few commits or at logical milestones).
 
-1. Work through TODO.md items systematically, starting with core functionality before moving to operational features
-2. Update TODO.md after completing each task by marking items as complete [x] and adding new tasks as they emerge
-3. Make frequent, small, focused commits with descriptive messages following conventional commit format
-4. Push commits regularly to maintain backup and enable collaboration
+Code quality standards:
+- Follow Go best practices:
+  - Standard project layout and package naming
+  - Godoc comments for all exported identifiers
+  - Prefer standard library over third-party dependencies
+  - Provide contextual error wrapping where helpful
+- No legacy code: remove deprecated/unused paths when replaced.
+- Maintain tests for new functionality and keep coverage reasonable.
+- Before each commit, run and fix issues from:
+  - `golangci-lint run` (per `.golangci.yml`)
+  - `gosec ./...`
+  - `govulncheck ./...`
+  - `deadcode ./...`
+- Ensure all tests pass with `go test ./...`.
 
-**Code Quality Standards:**
+Git workflow:
+- Commits must be atomic and descriptive (conventional commit format).
+- Push to `main` regularly.
 
-1. Follow Go best practices including:
-   - Proper package organization and naming conventions
-   - Exported functions/types must have godoc comments
-   - Use standard Go project layout
-   - Handle errors appropriately with context
-   - Use standard library when possible over third-party dependencies
-
-2. Run these linting tools before each commit and fix all issues:
-   - `golangci-lint run` (using the existing .golangci.yml configuration)
-   - `gosec ./...` for security vulnerability scanning
-   - `govulncheck ./...` for known vulnerability detection
-   - `deadcode ./...` for detecting unused code
-
-3. Maintain test coverage for new functionality and ensure all tests pass with `go test ./...`
-
-4. Do not keep legacy code.
-
-**Git Workflow:**
-
-- Commit messages should be descriptive and reference TODO items when applicable
-- Push to the main branch regularly (every few commits or at logical stopping points)
-- Keep commits atomic - each commit should represent one logical change
-
-Focus must be on completing the TODO.md tasks in a logical order, ensuring the project architecture aligns with the project patterns.
+Primary goal: complete `TODO.md` tasks in logical order while keeping architecture consistent with existing patterns.
