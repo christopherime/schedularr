@@ -55,7 +55,7 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 
 ### Prerequisites
 
-- **Go 1.25.5+** - [Download](https://go.dev/dl/)
+- **Go 1.25+** - [Download](https://go.dev/dl/)
 - **Tunarr Instance** - [Setup Guide](https://tunarr.com/api-docs.html#latest)
 
 ### Installation
