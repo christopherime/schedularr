@@ -29,30 +29,8 @@ func NewHandlers(d Deps) *Handlers {
 
 var _ gen.ServerInterface = (*Handlers)(nil)
 
-// ListBlocks implements gen.ServerInterface.
-func (h *Handlers) ListBlocks(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "listBlocks pending")
-}
-
-// CreateBlock implements gen.ServerInterface.
-func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "createBlock pending")
-}
-
-// GetBlock implements gen.ServerInterface.
-func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, _ string) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "getBlock pending")
-}
-
-// UpdateBlock implements gen.ServerInterface.
-func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, _ string) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "updateBlock pending")
-}
-
-// DeleteBlock implements gen.ServerInterface.
-func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, _ string) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "deleteBlock pending")
-}
+// ListBlocks, CreateBlock, GetBlock, UpdateBlock, and DeleteBlock implement
+// gen.ServerInterface. See blocks.go.
 
 // ImportBlocks implements gen.ServerInterface.
 func (h *Handlers) ImportBlocks(w http.ResponseWriter, r *http.Request, _ gen.ImportBlocksParams) {

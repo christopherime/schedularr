@@ -396,6 +396,33 @@ body (`internal/api/problem.go`).
 The API is not yet wired to an HTTP server; that lands in a later task,
 which will also serve the contract itself at `/openapi.json`.
 
+### Blocks Endpoints
+
+Blocks CRUD (`internal/api/blocks.go`) is implemented against
+`gen.ServerInterface` and backed by the sqlite block store
+(`internal/store`). Every write path (`POST`/`PUT`) validates the block
+spec against the CUE scheduler schema via `blockio.ValidateBlocks` before
+touching the store, and every response body is `application/json` (or
+`application/problem+json` for errors).
+
+| Method | Path           | Success | Error codes   |
+| ------ | -------------- | ------- | ------------- |
+| GET    | `/blocks`      | 200     | —             |
+| POST   | `/blocks`      | 201     | 400, 409      |
+| GET    | `/blocks/{id}` | 200     | 404           |
+| PUT    | `/blocks/{id}` | 200     | 400, 404, 409 |
+| DELETE | `/blocks/{id}` | 204     | 404           |
+
+Notes:
+
+- `POST`/`PUT` return `400` for a spec that fails CUE validation (e.g. a
+  missing `cron` or a non-positive `duration`) or a malformed JSON body.
+- `POST` returns `409` for a duplicate block name; `PUT` returns `409` if
+  the request body's `spec.name` differs from the existing block's name
+  and collides with another block. A `PUT` whose `spec.name` differs from
+  the current name without colliding renames the block.
+- `blocks/import` and `blocks/export` remain `501` pending a later task.
+
 ### Middleware
 
 `internal/api/middleware` provides the four pieces of middleware every
