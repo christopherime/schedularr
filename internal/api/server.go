@@ -2,7 +2,6 @@ package api
 
 import (
 	"log/slog"
-	"net/http"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
 	"github.com/christopherime/schedularr/internal/service"
@@ -45,15 +44,8 @@ var _ gen.ServerInterface = (*Handlers)(nil)
 // ListBlocks, CreateBlock, GetBlock, UpdateBlock, and DeleteBlock implement
 // gen.ServerInterface. See blocks.go.
 
-// ImportBlocks implements gen.ServerInterface.
-func (h *Handlers) ImportBlocks(w http.ResponseWriter, r *http.Request, _ gen.ImportBlocksParams) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "importBlocks pending")
-}
-
-// ExportBlocks implements gen.ServerInterface.
-func (h *Handlers) ExportBlocks(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "exportBlocks pending")
-}
+// ImportBlocks and ExportBlocks implement gen.ServerInterface. See
+// importexport.go.
 
 // GenerateSchedule, ApplySchedule, and GetSchedule implement
 // gen.ServerInterface. See schedule.go.

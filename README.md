@@ -421,7 +421,46 @@ Notes:
   the request body's `spec.name` differs from the existing block's name
   and collides with another block. A `PUT` whose `spec.name` differs from
   the current name without colliding renames the block.
-- `blocks/import` and `blocks/export` remain `501` pending a later task.
+- `POST`/`PUT` also return `400` for a series block (`spec.type: series`)
+  whose `series[].show_title` is empty. The CUE scheduler schema types
+  `show_title` as a bare `string` with no non-empty constraint, so this
+  case would otherwise pass CUE validation; the check is applied in Go on
+  both block-ingestion paths (blocks CRUD here, and `blocks/import` below).
+
+### Import/Export Endpoints
+
+Block import/export (`internal/api/importexport.go`) round-trips the same
+sqlite-backed blocks through `blockio.ParseYAML`/`blockio.RenderYAML`
+(`internal/blockio`) used for the on-disk `scheduler.yaml` bootstrap path.
+Both endpoints exchange raw YAML text, not JSON: oapi-codegen does not
+generate a Go type for an `application/yaml` request or response body, so
+the handlers read/write `[]byte` directly.
+
+| Method | Path             | Success | Error codes |
+| ------ | ---------------- | ------- | ----------- |
+| POST   | `/blocks/import` | 200     | 400, 409    |
+| GET    | `/blocks/export` | 200     | —           |
+
+Notes:
+
+- `POST /blocks/import` takes an `application/yaml` body (capped at 1MiB
+  via `http.MaxBytesReader`; an oversized body gets `413`) and an optional
+  `?dry_run=true` query parameter (default `false`). The body is strictly
+  decoded and CUE-validated by `blockio.ParseYAML`, including duplicate
+  block-name and empty-`show_title` rejection -- any failure there is
+  `400` with the CUE detail included. Every parsed block's name is then
+  checked against every block already in the store; any collision is
+  `409` (listing the colliding name(s)) with **zero writes**, even for the
+  non-colliding blocks in the same batch. `dry_run=true` stops after that
+  check and reports what would have been imported (`{imported, dry_run,
+  names}`) without writing anything; otherwise every block is created with
+  a fresh UUID and `enabled: true`.
+- `GET /blocks/export` renders every stored block's spec as YAML via
+  `blockio.RenderYAML` -- **including disabled blocks**, since export
+  doubles as a backup mechanism and silently dropping disabled blocks
+  would make a restored import lossy. The response has no `enabled` state
+  of its own (that lives on the store record, not the spec); re-importing
+  an exported file creates every block as enabled.
 
 ### Schedule Endpoints
 

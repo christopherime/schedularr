@@ -44,6 +44,10 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	spec := fromGen(body.Spec)
+	if err := validateSeriesShowTitles(spec); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
+		return
+	}
 	if err := blockio.ValidateBlocks([]scheduler.Block{spec}); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
@@ -102,6 +106,10 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 	}
 
 	spec := fromGen(body.Spec)
+	if err := validateSeriesShowTitles(spec); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
+		return
+	}
 	if err := blockio.ValidateBlocks([]scheduler.Block{spec}); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
@@ -222,9 +230,38 @@ func validateRequiredSpecFields(spec gen.BlockSpec) error {
 	return nil
 }
 
+// validateSeriesShowTitles closes a deferred CUE-validation gap (tracked
+// since Task 9, closed here): cmd/schema/config.cue types show_title as a
+// bare `string` with no non-empty constraint, so a series block whose
+// SeriesConfig.ShowTitle is "" round-trips through blockio.RenderYAML and
+// passes blockio.ValidateBlocks/ParseYAML cleanly -- CUE has no way to
+// express "non-empty" on that field today. An empty show_title is useless
+// downstream (scheduler.Engine looks up series state and episodes by show
+// title, see internal/scheduler/engine.go), so both places that hand a
+// scheduler.Block to the store reject it explicitly:
+//   - blocks CRUD (CreateBlock/UpdateBlock in this file), on the block
+//     fromGen produces from the request body, alongside
+//     validateRequiredSpecFields.
+//   - YAML import (ImportBlocks, importexport.go), on each block
+//     blockio.ParseYAML returns.
+//
+// Non-series blocks (b.Type != scheduler.BlockTypeSeries) are unaffected;
+// their Series slice is expected to be empty and is not inspected.
+func validateSeriesShowTitles(b scheduler.Block) error {
+	if b.Type != scheduler.BlockTypeSeries {
+		return nil
+	}
+	for _, sc := range b.Series {
+		if sc.ShowTitle == "" {
+			return fmt.Errorf("failed to validate blocks: series block %q has a series entry with an empty show_title", b.Name)
+		}
+	}
+	return nil
+}
+
 // fromGen converts a gen.BlockSpec (the API wire shape) into a
 // scheduler.Block (the domain type persisted by the store and validated by
-// blockio.ValidateBlocks). It is reused by Task 15 (import/export).
+// blockio.ValidateBlocks). It is reused by Task 14 (import/export).
 //
 // # CUE-default normalization
 //
@@ -382,7 +419,7 @@ func fallbackFromGen(f gen.SeriesFallback) scheduler.SeriesFallback {
 }
 
 // toGen converts a store.BlockRecord (the persisted domain representation)
-// into a gen.BlockRecord (the API wire shape). It is reused by Task 15
+// into a gen.BlockRecord (the API wire shape). It is reused by Task 14
 // (import/export). Unlike fromGen, toGen has no CUE-default concerns -- it
 // only ever reads already-valid, already-stored data -- so it simply
 // presents every populated (non-zero) optional field as a pointer and

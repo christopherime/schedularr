@@ -187,6 +187,30 @@ func TestCreateBlock_InvalidSpec_ZeroDuration(t *testing.T) {
 	assert.Contains(t, strings.ToLower(p.Detail), "duration")
 }
 
+// TestCreateBlock_SeriesEmptyShowTitle_Returns400 covers the deferred
+// CUE-validation gap validateSeriesShowTitles closes (see its doc comment
+// in blocks.go): cmd/schema/config.cue types show_title as a bare `string`
+// with no non-empty constraint, so a series block with an empty
+// show_title would otherwise pass blockio.ValidateBlocks cleanly. This is
+// the blocks-CRUD half of the two required ingestion-path tests; see
+// TestImportBlocks_SeriesEmptyShowTitle_Returns400 (importexport_test.go)
+// for the import half.
+func TestCreateBlock_SeriesEmptyShowTitle_Returns400(t *testing.T) {
+	h := newTestServer(t)
+
+	body := seriesBlockWrite("empty-show-title-block")
+	series := *body.Spec.Series
+	series[0].ShowTitle = ""
+	body.Spec.Series = &series
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", body)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	p := decodeProblem(t, w)
+	assert.Equal(t, http.StatusBadRequest, p.Status)
+	assert.Contains(t, strings.ToLower(p.Detail), "show_title")
+}
+
 func TestCreateBlock_InvalidBody(t *testing.T) {
 	h := newTestServer(t)
 
