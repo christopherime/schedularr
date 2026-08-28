@@ -184,3 +184,30 @@ func TestParseYAML_EmptyBlocksIsValid(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, blocks)
 }
+
+// TestParseYAML_RejectsDuplicateBlockNames confirms two otherwise-valid
+// blocks sharing a name are rejected. CUE validates each block against
+// #Block independently and has no notion of "unique across the list," so a
+// file with two same-named blocks would otherwise sail through CUE
+// validation, and then hit store.ErrConflict partway through Bootstrap's
+// CreateBlock loop -- after the first of the two had already been written.
+// Catching it here, before any store write is attempted, keeps imports
+// all-or-nothing without needing store-level transactions.
+func TestParseYAML_RejectsDuplicateBlockNames(t *testing.T) {
+	data := []byte(`blocks:
+  - type: filter
+    name: Same Name
+    cron: "0 6 * * *"
+    duration: 60
+    channel_id: channel-1
+  - type: filter
+    name: Same Name
+    cron: "0 7 * * *"
+    duration: 60
+    channel_id: channel-2
+`)
+
+	_, err := blockio.ParseYAML(data)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Same Name", "error should name the duplicate block")
+}

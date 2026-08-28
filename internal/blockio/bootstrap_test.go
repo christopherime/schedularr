@@ -64,6 +64,19 @@ const invalidScheduler = `blocks:
     channel_id: channel-2
 `
 
+const duplicateNameScheduler = `blocks:
+  - type: filter
+    name: Repeated Block
+    cron: "0 6 * * *"
+    duration: 120
+    channel_id: channel-1
+  - type: filter
+    name: Repeated Block
+    cron: "0 7 * * *"
+    duration: 90
+    channel_id: channel-2
+`
+
 func writeFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -158,6 +171,27 @@ func TestBootstrap_InvalidFileErrorsWithoutPartialImport(t *testing.T) {
 	dbCount, err := s.CountBlocks(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), dbCount, "no blocks should be imported when the file is invalid")
+}
+
+// TestBootstrap_DuplicateNamesErrorsWithoutPartialImport covers the
+// half-import scenario CUE cannot catch on its own: two blocks in the same
+// file sharing a name. Without a pre-write duplicate check, the first
+// CreateBlock would succeed and the second would fail with
+// store.ErrConflict, leaving one of the two blocks silently imported.
+func TestBootstrap_DuplicateNamesErrorsWithoutPartialImport(t *testing.T) {
+	s := newBootstrapTestStore(t)
+	ctx := context.Background()
+	path := writeFile(t, t.TempDir(), "scheduler.yaml", duplicateNameScheduler)
+
+	var buf bytes.Buffer
+	count, err := blockio.Bootstrap(ctx, s, path, testLogger(&buf))
+	require.Error(t, err, "duplicate block names must fail bootstrap")
+	assert.Equal(t, 0, count)
+	assert.Contains(t, err.Error(), "Repeated Block", "error should name the duplicate block")
+
+	dbCount, err := s.CountBlocks(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), dbCount, "neither block should be imported")
 }
 
 func TestBootstrap_NilLoggerDoesNotPanic(t *testing.T) {
