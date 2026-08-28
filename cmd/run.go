@@ -33,7 +33,6 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().DurationVarP(&runInterval, "interval", "i", 6*time.Hour, "Interval between schedule updates")
 	runCmd.Flags().BoolVar(&runOnce, "once", false, "Run once and exit")
-	runCmd.Flags().StringVar(&schedulerFile, "scheduler", "", "Path to scheduler config file (default: scheduler.yaml)")
 }
 
 func runDaemon() {
@@ -120,7 +119,7 @@ func runJob(cfg *config.Config) {
 	appLogger := newLogger(config.LogLevel(cfg), config.LogFormat(cfg))
 	appLogger.Info("Running schedule update...")
 	// Always apply in daemon mode
-	if err := ProcessSchedule(cfg, schedulerFile, true, false); err != nil {
+	if err := ProcessSchedule(cfg, true, false); err != nil {
 		appLogger.Error("Job failed", "error", err)
 	} else {
 		appLogger.Info("Job completed successfully")

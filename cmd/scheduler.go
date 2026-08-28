@@ -119,8 +119,10 @@ You can override default block values using flags, e.g., --name "My TV Show"`,
 
 		fmt.Printf("Created scheduler configuration file: %s\n", filename)
 		fmt.Printf("Format: %s\n", format)
-		fmt.Printf("\nEdit this file to configure your scheduling blocks, then use:\n")
-		fmt.Printf("  schedularr generate --scheduler %s\n", filename)
+		fmt.Printf("\nEdit this file to configure your scheduling blocks, then place it at your\n")
+		fmt.Printf("scheduler_file path (default: scheduler.yaml) and run:\n")
+		fmt.Printf("  schedularr generate\n")
+		fmt.Printf("It will be imported into the block store on first run.\n")
 	},
 }
 

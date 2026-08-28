@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/christopherime/schedularr/internal/blockio"
 	"github.com/christopherime/schedularr/internal/cache"
 	"github.com/christopherime/schedularr/internal/config"
 	"github.com/christopherime/schedularr/internal/cueconfig"
@@ -22,11 +23,10 @@ import (
 )
 
 var (
-	apply         bool
-	assumeYes     bool
-	schedulerFile string
-	dryRun        bool
-	verbose       bool
+	apply     bool
+	assumeYes bool
+	dryRun    bool
+	verbose   bool
 
 	// Flags for generate config subcommand
 	configOutputPath string
@@ -108,7 +108,7 @@ Use --verbose for detailed output including filtering and history.`,
 			os.Exit(1)
 		}
 
-		if err := ProcessSchedule(cfg, schedulerFile, apply, dryRun); err != nil {
+		if err := ProcessSchedule(cfg, apply, dryRun); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%s %v\n", errorStyle.Render("✗ Error:"), err)
 			os.Exit(1)
 		}
@@ -204,8 +204,8 @@ func buildConfigOverrides() map[string]interface{} {
 }
 
 // ProcessSchedule generates and optionally applies the schedule.
-func ProcessSchedule(cfg *config.Config, schedFile string, applyFlag bool, dryRunFlag bool) error {
-	schedCfg, st, err := initializeScheduler(cfg, schedFile)
+func ProcessSchedule(cfg *config.Config, applyFlag bool, dryRunFlag bool) error {
+	blocks, st, err := initializeScheduler(cfg)
 	if err != nil {
 		return err
 	}
@@ -217,7 +217,6 @@ func ProcessSchedule(cfg *config.Config, schedFile string, applyFlag bool, dryRu
 		return err
 	}
 
-	blocks := config.SchedulerBlocks(schedCfg)
 	engine, err := createEngine(cfg, client, blocks, st)
 	if err != nil {
 		return err
@@ -268,25 +267,62 @@ func runScheduleHistoryCleanup(cfg *config.Config, st *store.Store) {
 	}
 }
 
-func initializeScheduler(cfg *config.Config, schedFile string) (*config.SchedulerConfig, *store.Store, error) {
-	schedCfg, err := config.FindSchedulerConfig(cfg, schedFile)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load scheduler config: %w", err)
-	}
-
-	blocks := schedCfg.GetBlocks()
-	if len(blocks) == 0 {
-		return nil, nil, errors.New("no scheduling blocks configured")
-	}
-
-	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(blocks))))
-
+// initializeScheduler opens the store, imports scheduler.yaml into it on
+// first run (see blockio.Bootstrap), and returns the currently active
+// blocks. scheduler.yaml is import-only from here on: the store is the
+// engine's source of truth.
+func initializeScheduler(cfg *config.Config) ([]scheduler.Block, *store.Store, error) {
 	st, err := store.New(config.DatabasePath(cfg))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	return schedCfg, st, nil
+	ctx := context.Background()
+	logger := newLogger(config.LogLevel(cfg), config.LogFormat(cfg))
+	schedFile := config.SchedulerFilePath(cfg)
+
+	imported, err := blockio.Bootstrap(ctx, st, schedFile, logger)
+	if err != nil {
+		_ = st.Close()
+		return nil, nil, fmt.Errorf("failed to bootstrap blocks from %s: %w", schedFile, err)
+	}
+	if imported > 0 {
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📥 Imported %d scheduling block(s) from %s", imported, schedFile)))
+	}
+
+	blocks, err := loadActiveBlocks(ctx, st)
+	if err != nil {
+		_ = st.Close()
+		return nil, nil, fmt.Errorf("failed to load scheduling blocks: %w", err)
+	}
+	if len(blocks) == 0 {
+		_ = st.Close()
+		return nil, nil, errors.New("no scheduling blocks configured")
+	}
+
+	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(blocks))))
+
+	return blocks, st, nil
+}
+
+// loadActiveBlocks returns the Spec of every enabled block in the store.
+// scheduler.yaml is import-only (see blockio.Bootstrap): the store is the
+// engine's live source of scheduling truth, and disabled blocks stay
+// defined but out of schedule generation.
+func loadActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error) {
+	records, err := s.ListBlocks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list blocks from store: %w", err)
+	}
+
+	blocks := make([]scheduler.Block, 0, len(records))
+	for _, rec := range records {
+		if !rec.Enabled {
+			continue
+		}
+		blocks = append(blocks, rec.Spec)
+	}
+	return blocks, nil
 }
 
 func fetchAndValidateContent(cfg *config.Config, client *tunarr.Client) ([]tunarr.Program, error) {
@@ -789,7 +825,6 @@ func init() {
 	// Flags for schedule generation (default behavior)
 	generateCmd.Flags().BoolVar(&apply, "apply", false, "Apply generated schedule to Tunarr channels")
 	generateCmd.Flags().BoolVar(&assumeYes, "yes", false, "Skip confirmation and allow --apply to run non-interactively")
-	generateCmd.Flags().StringVar(&schedulerFile, "scheduler", "", "Path to scheduler config file (default: scheduler.yaml)")
 	generateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview schedule without applying changes")
 	generateCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output including filtering and history")
 

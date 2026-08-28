@@ -27,14 +27,14 @@ Features:
   • CUE schema validation for configurations
   • Series-based sequential episode progression`,
 
-	Example: `# Generate a new scheduler configuration
-  schedularr scheduler init my-schedule.yaml
+	Example: `# Generate a new scheduler configuration (imported into the store on first run)
+  schedularr scheduler init scheduler.yaml
 
   # Validate configuration files
   schedularr validate config.yaml
 
   # Generate and apply schedules
-  schedularr generate --scheduler my-schedule.yaml --apply --yes`,
+  schedularr generate --apply --yes`,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

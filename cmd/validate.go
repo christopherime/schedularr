@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/christopherime/schedularr/internal/blockio"
 	"github.com/christopherime/schedularr/internal/config"
 	"github.com/christopherime/schedularr/internal/cueconfig"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/spf13/cobra"
 )
 
@@ -57,48 +59,53 @@ func validateFile(filePath string) error {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	// Determine format from extension
+	// Determine which schema to use based on filename
+	baseName := filepath.Base(cleanPath)
+	if strings.Contains(baseName, "scheduler") {
+		return validateSchedulerFile(data)
+	}
+
+	return validateAppConfigFile(data, cleanPath)
+}
+
+// validateSchedulerFile validates data as a block import file: strict
+// decode, duplicate-name check, and CUE schema validation (see
+// blockio.ParseYAML), plus the additional Tunarr channel-ID check. This is
+// the same validation Bootstrap and any future import API run, so
+// `schedularr validate` proves a file is safe to import before it ever
+// reaches the store.
+func validateSchedulerFile(data []byte) error {
+	blocks, err := blockio.ParseYAML(data)
+	if err != nil {
+		return fmt.Errorf("scheduler validation error: %w", err)
+	}
+
+	if err := validateSchedulerSemantics(blocks); err != nil {
+		return fmt.Errorf("scheduler semantic validation error: %w", err)
+	}
+
+	return nil
+}
+
+// validateAppConfigFile validates data as an application config file
+// against the CUE config schema. Format (YAML/JSON) is determined by
+// cleanPath's extension.
+func validateAppConfigFile(data []byte, cleanPath string) error {
 	ext := strings.ToLower(filepath.Ext(cleanPath))
 	format := "yaml"
 	if ext == ".json" {
 		format = "json"
 	}
 
-	// Create validator
 	validator := cueconfig.NewValidator()
-
-	// Determine which schema to use based on filename
-	baseName := filepath.Base(cleanPath)
-	isScheduler := strings.Contains(baseName, "scheduler")
-
-	if isScheduler {
-		// Validate as scheduler config
-		if err := validator.ValidateScheduler(data, format); err != nil {
-			return fmt.Errorf("scheduler validation error: %w", err)
-		}
-
-		// Additional semantic validation
-		if err := validateSchedulerSemantics(data); err != nil {
-			return fmt.Errorf("scheduler semantic validation error: %w", err)
-		}
-	} else {
-		// Validate as application config
-		if err := validator.ValidateConfig(data, format); err != nil {
-			return fmt.Errorf("config validation error: %w", err)
-		}
+	if err := validator.ValidateConfig(data, format); err != nil {
+		return fmt.Errorf("config validation error: %w", err)
 	}
 
 	return nil
 }
 
-func validateSchedulerSemantics(data []byte) error {
-	// Load scheduler config using CUE
-	validator := cueconfig.NewValidator()
-	schedCfg, err := validator.LoadSchedulerConfig(data, "yaml")
-	if err != nil {
-		return fmt.Errorf("failed to parse scheduler config for semantic validation: %w", err)
-	}
-
+func validateSchedulerSemantics(blocks []scheduler.Block) error {
 	// Get app config if available
 	appCfg := getConfig()
 	if appCfg == nil {
@@ -134,12 +141,9 @@ func validateSchedulerSemantics(data []byte) error {
 
 	// Check blocks
 	var invalidChannels []string
-	blocks := schedCfg.GetBlocks()
 	for _, block := range blocks {
-		name, _ := block["name"].(string)
-		channelID, _ := block["channel_id"].(string)
-		if channelID != "" && !channelMap[channelID] {
-			invalidChannels = append(invalidChannels, fmt.Sprintf("Block '%s' references unknown channel '%s'", name, channelID))
+		if block.ChannelID != "" && !channelMap[block.ChannelID] {
+			invalidChannels = append(invalidChannels, fmt.Sprintf("Block '%s' references unknown channel '%s'", block.Name, block.ChannelID))
 		}
 	}
 

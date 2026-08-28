@@ -1,8 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/christopherime/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/store"
 )
 
 // TestHandleScheduleOutput_RequiresYesToApply verifies that apply is refused
@@ -76,6 +81,62 @@ func TestColorEnabled(t *testing.T) {
 			t.Fatalf("Render on non-TTY stdout: got %q, want unstyled %q", got, "x")
 		}
 	})
+}
+
+// TestLoadActiveBlocks verifies that loadActiveBlocks returns only the
+// Specs of enabled block records from the store -- disabled blocks are the
+// mechanism for keeping a block defined but out of schedule generation, so
+// the engine must never see one.
+func TestLoadActiveBlocks(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("failed to create test store: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+
+	enabled := &store.BlockRecord{
+		ID:      "enabled-1",
+		Name:    "Enabled Block",
+		Enabled: true,
+		Spec: scheduler.Block{
+			Name:      "Enabled Block",
+			Cron:      "0 6 * * *",
+			Duration:  60,
+			ChannelID: "channel-1",
+		},
+	}
+	disabled := &store.BlockRecord{
+		ID:      "disabled-1",
+		Name:    "Disabled Block",
+		Enabled: false,
+		Spec: scheduler.Block{
+			Name:      "Disabled Block",
+			Cron:      "0 7 * * *",
+			Duration:  30,
+			ChannelID: "channel-2",
+		},
+	}
+
+	if err := s.CreateBlock(ctx, enabled); err != nil {
+		t.Fatalf("failed to create enabled block: %v", err)
+	}
+	if err := s.CreateBlock(ctx, disabled); err != nil {
+		t.Fatalf("failed to create disabled block: %v", err)
+	}
+
+	blocks, err := loadActiveBlocks(ctx, s)
+	if err != nil {
+		t.Fatalf("loadActiveBlocks failed: %v", err)
+	}
+
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 active block, got %d: %+v", len(blocks), blocks)
+	}
+	if blocks[0].Name != "Enabled Block" {
+		t.Errorf("expected active block named 'Enabled Block', got %q", blocks[0].Name)
+	}
 }
 
 // unsetEnv removes key from the environment for the duration of the test,
