@@ -23,6 +23,13 @@ temp/
 vendor/
 node_modules/
 
+# Hugo build output (web/public/index.html is force-added once as a
+# committed placeholder so `go build` embeds something before `make web`
+# has run; `make web-build` overwrites it on disk but the committed blob
+# stays the placeholder unless someone re-adds it)
+web/public/
+web/.hugo_build.lock
+
 # IDE and editor files
 # .idea/
 # .zed/

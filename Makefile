@@ -1,4 +1,4 @@
-.PHONY: build test lint clean validate e2e-up e2e-down e2e-test e2e-clean docker-build generate help
+.PHONY: build test lint clean validate e2e-up e2e-down e2e-test e2e-clean docker-build generate help web-presence web-types web-check web-build web
 
 # Variables
 BINARY_NAME=schedularr
@@ -6,6 +6,7 @@ BUILD_DIR=./bin
 MAIN_PATH=./main.go
 DOCKER_IMAGE=schedularr
 DOCKER_TAG=latest
+HUGO_MIN_VERSION=0.120
 
 # Go build flags
 LDFLAGS=-ldflags="-s -w"
@@ -17,7 +18,13 @@ help: ## Show this help message
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Build binary to ./bin/schedularr
+web-presence: ## Verify web/public is non-empty (placeholder or hugo output) so go:embed builds
+	@if [ ! -d web/public ] || [ -z "$$(ls -A web/public 2>/dev/null)" ]; then \
+		echo "web/public is empty -- run 'make web' (or 'make web-build'), or restore the committed placeholder at web/public/index.html"; \
+		exit 1; \
+	fi
+
+build: web-presence ## Build binary to ./bin/schedularr
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
 	@CGO_ENABLED=$(CGO_ENABLED) go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
@@ -34,6 +41,11 @@ lint: ## Run golangci-lint
 	@gosec ./...
 	@echo "Running govulncheck..."
 	@govulncheck ./...
+	@if command -v npm >/dev/null 2>&1; then \
+		$(MAKE) web-check; \
+	else \
+		echo "npm not found -- skipping web-check"; \
+	fi
 
 clean: ## Remove build artifacts
 	@echo "Cleaning build artifacts..."
@@ -122,3 +134,36 @@ generate: ## Regenerate OpenAPI server code
 	@echo "Regenerating OpenAPI server code..."
 	@go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
 	@echo "Codegen complete"
+
+web-types: ## Regenerate web/assets/ts/gen/types.d.ts from api/openapi.yaml
+	@echo "Generating TypeScript types from api/openapi.yaml..."
+	@npm run types --prefix web
+
+web-check: ## Type-check the web TS sources (skips with a notice if node is absent)
+	@if command -v npm >/dev/null 2>&1; then \
+		echo "Type-checking web/assets/ts..."; \
+		npm run check --prefix web; \
+	else \
+		echo "npm not found -- skipping web-check"; \
+	fi
+
+web-build: ## Build the Hugo site into web/public
+	@command -v hugo >/dev/null 2>&1 || { \
+		echo "hugo not found -- install it: brew install hugo (see https://gohugo.io/installation/)"; \
+		exit 1; \
+	}
+	@hugo_ver=$$(hugo version | sed -n 's/.*hugo v\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p'); \
+	if [ -z "$$hugo_ver" ]; then \
+		echo "could not parse hugo version from 'hugo version'"; \
+		exit 1; \
+	fi; \
+	oldest=$$(printf '%s\n%s\n' "$(HUGO_MIN_VERSION)" "$$hugo_ver" | sort -V | head -n1); \
+	if [ "$$oldest" != "$(HUGO_MIN_VERSION)" ]; then \
+		echo "hugo $$hugo_ver found, but >= $(HUGO_MIN_VERSION) is required -- upgrade: brew upgrade hugo"; \
+		exit 1; \
+	fi
+	@echo "Building Hugo site..."
+	@hugo --minify -s web
+	@echo "Hugo build complete: web/public"
+
+web: web-types web-check web-build ## Regenerate types, type-check, and build the web UI

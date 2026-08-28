@@ -9,7 +9,7 @@
 
 ## Project Structure & Module Organization
 
-Entry point sits in `main.go` with Cobra commands in `cmd/`, while `internal/scheduler`, `internal/store`, `internal/blockio`, `internal/external/tunarr`, and `internal/config` hold scheduling logic, SQLite persistence, YAML import/export, the Tunarr client, and configuration plumbing. `internal/api` (router, handlers, generated `gen.ServerInterface`) and `internal/service` (the generate/apply workflow shared by the CLI and the API) back the `schedularr serve` HTTP server. Config samples live in `configs/` with CUE schemas in `cmd/schema/`; deterministic fixtures belong in `testdata/`, docs in `docs/`, and dockerized acceptance assets in `e2e/`.
+Entry point sits in `main.go` with Cobra commands in `cmd/`, while `internal/scheduler`, `internal/store`, `internal/blockio`, `internal/external/tunarr`, and `internal/config` hold scheduling logic, SQLite persistence, YAML import/export, the Tunarr client, and configuration plumbing. `internal/api` (router, handlers, generated `gen.ServerInterface`) and `internal/service` (the generate/apply workflow shared by the CLI and the API) back the `schedularr serve` HTTP server. Config samples live in `configs/` with CUE schemas in `cmd/schema/`; deterministic fixtures belong in `testdata/`, docs in `docs/`, and dockerized acceptance assets in `e2e/`. `web/` holds a Hugo-built web UI (`hugo.toml`, `layouts/`, `assets/ts/`) embedded into the binary by `web/embed.go` (`package web`, `go:embed all:public`, `web.Site()`); `web/public/` is Hugo's gitignored build output with a committed placeholder, and `make build` requires it to be non-empty. It is not yet mounted by the router.
 
 ## Build, Test, and Development Commands
 
@@ -18,6 +18,7 @@ Entry point sits in `main.go` with Cobra commands in `cmd/`, while `internal/sch
 - `make lint`: run `golangci-lint`, `gosec`, and `govulncheck`.
 - `make validate`: `cue vet` the files in `configs/` to keep published samples legal.
 - `make e2e-up && make e2e-test && make e2e-down`: start docker-compose, execute `e2e/test.sh`, then tear down; `make e2e-clean` wipes volumes.
+- `make web`: regenerate `web/assets/ts/gen/types.d.ts` from `api/openapi.yaml`, type-check with `tsc --noEmit`, then build the Hugo site into `web/public`; `make web-types`/`web-check`/`web-build` run the individual steps. Requires Hugo `>= 0.120` and Node/npm; `web-check` (and its use inside `make lint`) is skipped with a notice when npm is absent.
 
 ## Coding Style & Naming Conventions
 
