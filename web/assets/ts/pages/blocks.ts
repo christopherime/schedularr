@@ -650,6 +650,14 @@ document.addEventListener("alpine:init", () => {
         });
       },
 
+      // Deliberately non-destructive: switching the type selector away
+      // from "series" and back does NOT clear editor.form.series or
+      // seriesRowErrors, only adds a first empty row the first time the
+      // operator switches into series. This preserves already-entered
+      // series data across an accidental (or exploratory) type toggle.
+      // submit() is responsible for making sure that leftover series-row
+      // state can never block a filter-type submit -- see submit()'s own
+      // comment.
       ensureSeriesRow() {
         if (this.editor.form.type === "series" && this.editor.form.series.length === 0) {
           this.editor.form.series.push(emptySeriesRow());
@@ -680,7 +688,14 @@ document.addEventListener("alpine:init", () => {
       async submit() {
         this.editor.error = null;
         this.editor.nameConflict = null;
-        if (!this.validateSeriesRows()) return;
+        // Scoped to type === "series": switching the type selector away
+        // from series deliberately leaves editor.form.series/
+        // seriesRowErrors alone (non-destructive toggling -- see
+        // ensureSeriesRow's comment), so a filter-type submit must never
+        // be blocked by a leftover invalid series row from an earlier
+        // series-type edit in the same session. A series-type submit
+        // still validates every row, with inline errors, as before.
+        if (this.editor.form.type === "series" && !this.validateSeriesRows()) return;
 
         const spec = buildSpec(this.editor.form);
         const body: BlockWrite = { enabled: this.editor.form.enabled, spec };
