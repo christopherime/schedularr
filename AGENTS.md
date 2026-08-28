@@ -9,7 +9,7 @@
 
 ## Project Structure & Module Organization
 
-Entry point sits in `main.go` with Cobra commands in `cmd/`, while `internal/scheduler`, `internal/store`, `internal/blockio`, `internal/external/tunarr`, and `internal/config` hold scheduling logic, SQLite persistence, YAML import/export, the Tunarr client, and configuration plumbing. Config samples live in `configs/` with CUE schemas in `cmd/schema/`; deterministic fixtures belong in `testdata/`, docs in `docs/`, and dockerized acceptance assets in `e2e/`.
+Entry point sits in `main.go` with Cobra commands in `cmd/`, while `internal/scheduler`, `internal/store`, `internal/blockio`, `internal/external/tunarr`, and `internal/config` hold scheduling logic, SQLite persistence, YAML import/export, the Tunarr client, and configuration plumbing. `internal/api` (router, handlers, generated `gen.ServerInterface`) and `internal/service` (the generate/apply workflow shared by the CLI and the API) back the `schedularr serve` HTTP server. Config samples live in `configs/` with CUE schemas in `cmd/schema/`; deterministic fixtures belong in `testdata/`, docs in `docs/`, and dockerized acceptance assets in `e2e/`.
 
 ## Build, Test, and Development Commands
 
@@ -29,7 +29,7 @@ Place unit tests beside their package in `*_test.go` files with `TestComponent_S
 
 ## Commit & Pull Request Guidelines
 
-History favors `type(scope): imperative summary` (e.g., `feat(tui): …`), so keep commits single-purpose and reference issues with `Fixes #ID` or `Refs #ID`, noting migrations or schema updates in the body. Pull requests should outline the problem, solution, and validation steps (commands, screenshots, config diffs) and mention new dependencies or config keys. Run `make build`, `make test`, and `make lint` before requesting review.
+History favors `type(scope): imperative summary` (e.g., `feat(api): …`), so keep commits single-purpose and reference issues with `Fixes #ID` or `Refs #ID`, noting migrations or schema updates in the body. Pull requests should outline the problem, solution, and validation steps (commands, screenshots, config diffs) and mention new dependencies or config keys. Run `make build`, `make test`, and `make lint` before requesting review.
 
 ## Security & Configuration Tips
 

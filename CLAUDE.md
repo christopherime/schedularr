@@ -43,7 +43,7 @@ cmd/                          # CLI commands (Cobra)
 ├── serve.go                  # HTTP API server + cron scheduling loop
 ├── validate.go               # Config validation
 ├── state.go                  # Series state management
-├── scheduler.go              # scheduler.yaml authoring/import subcommands
+├── scheduler.go              # scheduler.yaml import-file authoring (`scheduler init`)
 └── schema/                   # CUE schemas for validation
     ├── config.cue
     └── scheduler.cue
@@ -118,10 +118,11 @@ server: `listen`, `token`, `insecure_no_auth` -- see `cmd/serve.go`,
 file.** `scheduler.yaml` is a first-run **import** format only: on startup,
 if the block store is still empty, `internal/blockio.Bootstrap` imports
 its blocks into the store once; after that the file is never read again --
-editing it post-bootstrap has no effect. Manage blocks going forward via
-`schedularr scheduler` CLI subcommands (`init`/`validate`/`list`) or the
-`/api/v1/blocks` HTTP API (`schedularr serve`), not by hand-editing
-`scheduler.yaml`.
+editing it post-bootstrap has no effect. `schedularr scheduler init`
+authors a new `scheduler.yaml` import file (validate it with `schedularr
+validate` before deploying); it does not read or manage existing store
+state. Manage blocks going forward via the `/api/v1/blocks` HTTP API
+(`schedularr serve`), not by hand-editing `scheduler.yaml`.
 
 **Scheduling Block Structure** (as authored for `scheduler.yaml` import, or
 the JSON body of `POST /api/v1/blocks`):

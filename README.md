@@ -3,15 +3,15 @@
 
 # Schedularr
 
-## Intelligent Content Scheduling for Tunarr
+## Content Scheduling for Tunarr
 
-[![Go Version](https://img.shields.io/badge/Go-1.25.5+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/christopherime/schedularr/pulls)
 
-**Automate your TV channel programming with powerful rule-based scheduling, advanced content filtering, and seamless Tunarr integration.**
+**Cron-based content scheduling for [Tunarr](https://tunarr.com) TV channels, driven by rule-based blocks and content filters.**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [Contributing](#-contributing)
+[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [API](#-api) • [Serve](#-serve-api-server--cron) • [Contributing](#-contributing)
 
 </div>
 
@@ -19,15 +19,15 @@
 
 ## 🎯 Overview
 
-Schedularr is a sophisticated Go application that transforms how you manage content scheduling for [Tunarr](https://tunarr.com). Say goodbye to manual programming and hello to intelligent, automated channel management with cron-based recurring blocks and multi-criteria content filtering.
+Schedularr generates and applies TV channel schedules for [Tunarr](https://tunarr.com). Scheduling rules ("blocks") define a time slot, a cron expression, a target channel, and a content filter; Schedularr resolves each block against Tunarr's library and pushes the result back to Tunarr.
 
-### Why Schedularr?
+### What it does
 
-- 🤖 **Set It and Forget It**: Define your programming rules once, let Schedularr handle the rest
-- 🎨 **Smart Filtering**: Match content by title patterns, genres, ratings, release years, and duration
-- ⏰ **Flexible Scheduling**: Use familiar cron syntax for daily, weekly, or custom recurring blocks
-- 🔍 **Dry Run Mode**: Preview schedules before applying them to your channels
-- 🚀 **Lightweight & Fast**: Built in Go for performance and reliability
+- Defines programming rules as blocks: cron expression, duration, target channel, priority.
+- Filters content by title pattern (regex), genre, rating, release year range, and duration.
+- Tracks per-show season/episode progression for series-based blocks.
+- Previews a schedule (`generate`, no `--apply`) before pushing it to Tunarr.
+- Runs as a one-shot CLI command or as a long-lived process (`serve`) exposing an HTTP API and a cron-driven schedule cycle.
 
 ---
 
@@ -35,15 +35,16 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 
 ### Core Capabilities
 
-| Feature                      | Description                                                                   |
-| ---------------------------- | ----------------------------------------------------------------------------- |
-| **🔌 Tunarr Integration**   | Seamless API communication with your Tunarr instance                          |
-| **🎯 Advanced Filtering**   | Regex title matching, genre/rating filters, year ranges, duration constraints |
-| **📅 Cron Scheduling**      | Standard cron expressions for flexible recurring programming                  |
-| **⚡ CLI Commands**          | Powerful command-line tools for automation and scripting                      |
-| **🔍 Dry Run Mode**         | Test and preview schedules before applying changes                            |
-| **📊 Priority System**      | Handle overlapping blocks with configurable priorities                        |
-| **🏷️ Tag Support**        | Organize and filter content using custom tags                                 |
+| Feature               | Description                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| **Tunarr integration** | Reads channels and library content from Tunarr, pushes schedules back            |
+| **Content filtering**  | Regex title matching, genre/rating filters, year ranges, duration constraints    |
+| **Cron scheduling**    | Standard cron expressions for recurring blocks                                   |
+| **Series blocks**      | Sequential episode progression per show, with season/episode state persisted     |
+| **HTTP API**           | Blocks CRUD, generate/apply, history, series state, channels, status             |
+| **Dry run**            | `generate` without `--apply` previews a schedule without pushing it to Tunarr    |
+| **Priority system**    | Resolves overlapping blocks by configurable priority                             |
+| **Tag support**        | Filter content by custom tags                                                    |
 
 ---
 
@@ -51,7 +52,8 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 
 ### Prerequisites
 
-- **Go 1.25+** - [Download](https://go.dev/dl/)
+- **Go 1.27+** - [Download](https://go.dev/dl/)
+- **A C toolchain** - the SQLite driver (`mattn/go-sqlite3`) is cgo-based; `CGO_ENABLED=1` (the default when a C compiler is on `PATH`) is required to build
 - **Tunarr Instance** - [Setup Guide](https://tunarr.com/api-docs.html#latest)
 
 ### Installation
@@ -90,12 +92,19 @@ schedularr scheduler init scheduler.yaml
 
 1. **Configure Tunarr connection:**
 
-Edit `config.yaml` and set your Tunarr instance details:
+`config generate` writes `tunarr.url`/`tunarr.api_key` as literal
+`${SCHEDULARR_TUNARR_URL}`/`${SCHEDULARR_TUNARR_API_KEY}` placeholders
+(CUE-loaded config files support `${VAR}` env interpolation -- see
+[Configuration](#️-configuration)). Either export those two environment
+variables, or edit `config.yaml` directly and replace both with literal
+values -- an unset `${VAR}` placeholder left in the file expands to an
+empty, *unquoted* YAML value, which parses as `null` rather than `""` and
+fails config loading:
 
 ```yaml
 tunarr:
   url: "http://localhost:8000"
-  api_key: "your-api-key-here"  # Optional, if authentication is enabled
+  api_key: ""  # quote it explicitly, even when empty
 log:
   level: "info"
   format: "text"
@@ -119,56 +128,98 @@ schedularr --config config.yaml channels
 
 ## ⚙️ Configuration
 
-Schedularr uses a YAML configuration file located at:
+`schedularr` resolves the app config file path in this order:
 
-- `~/.schedularr.yaml` (user-level)
-- `./.schedularr.yaml` (project-level)
+1. `--config <file>` (global flag)
+2. `SCHEDULARR_CONFIG` environment variable
+3. Legacy locations, in order: `./config.yaml`, `./.schedularr.yaml`,
+   `~/.config/.schedularr.yaml`, `~/.schedularr.yaml`
+4. `~/.schedularr/config.yaml` (default)
+
+The file is validated against the CUE schema in `cmd/schema/config.cue`
+(also embedded in the binary as `internal/cueconfig`). String values
+support `${VAR}` environment variable interpolation.
 
 ### Configuration Reference
 
-#### Tunarr Connection
+Full key list, with CUE defaults:
 
 ```yaml
 tunarr:
-  url: "http://localhost:8000"  # Tunarr API endpoint
-  api_key: ""                   # Optional API key for authentication
-```
+  url: ""                  # Tunarr API endpoint (required)
+  api_key: ""               # Optional API key
+  timeout: "30s"
 
-#### Logging
-
-```yaml
 log:
-  level: "info"    # Options: debug, info, warn, error
-  format: "text"   # Options: text, json
+  level: "info"              # debug, info, warn, error
+  format: "text"             # text, json
+  timezone: "Local"          # IANA time zone name
+
+metrics_port: 9090           # Prometheus metrics endpoint (schedularr health uses a separate port)
+database: "schedularr.db"    # SQLite database path
+scheduler_file: "scheduler.yaml"  # First-run block import file, see below
+cron_interval: "6h"          # `serve`'s cron loop cadence; `serve --interval`/`-i` overrides it
+
+cache:
+  cache_dir: "/tmp/schedularr_cache"
+  cache_duration: "1h"
+
+maintenance:
+  cleanup_interval: "24h"
+  history_retention: "168h"  # how long schedule_history rows are kept
+  cleanup_enabled: true
+
+api:                          # the `serve` command's HTTP server
+  listen: ":8484"
+  token: ""                  # bearer token for /api/v1/*; SCHEDULARR_API_TOKEN env var wins when set
+  insecure_no_auth: false     # skip bearer auth entirely -- local development only
 ```
 
 #### Scheduling Blocks
 
-```yaml
-scheduler:
-  blocks:
-    - name: "Morning Cartoons"
-      cron: "0 6 * * *"           # Daily at 6:00 AM
-      duration: 240               # 4 hours (in minutes)
-      channel_id: "channel-1"     # Target channel
-      priority: 10                # Higher = more important
-      filter:
-        genres: ["Animation", "Family"]
-        max_duration: 30          # Max 30 min per show
-        ratings: ["TV-Y", "TV-G"]
-        year_from: 2000
+Blocks live in the SQLite store (`database` above), not in a config file.
+`scheduler_file` (default `scheduler.yaml`) is a **first-run import
+format only**: the first time the store is empty, its blocks are imported
+once; editing the file after that has no effect. Generate one with
+`schedularr scheduler init`, then either let it bootstrap on the next
+`generate`/`serve` run, or manage blocks going forward through the
+`/api/v1/blocks` HTTP API (see [API](#-api)):
 
-    - name: "Prime Time Movies"
-      cron: "0 20 * * *"          # Daily at 8:00 PM
-      duration: 180               # 3 hours
-      channel_id: "channel-1"
-      priority: 20
-      filter:
-        genres: ["Action", "Drama"]
-        min_duration: 90          # Feature-length films
-        year_from: 2010
-        ratings: ["PG-13", "R"]
+```yaml
+blocks:
+  - name: "Morning Cartoons"
+    type: filter                 # required in scheduler.yaml -- see note below
+    cron: "0 6 * * *"           # Daily at 6:00 AM
+    duration: 240                # 4 hours (in minutes)
+    channel_id: "channel-1"      # Target channel
+    priority: 10                 # Higher = more important
+    filter:
+      genres: ["Animation", "Family"]
+      max_duration: 30           # Max 30 min per show
+      ratings: ["TV-Y", "TV-G"]
+      year_from: 2000
+
+  - name: "Prime Time Movies"
+    type: filter
+    cron: "0 20 * * *"          # Daily at 8:00 PM
+    duration: 180                # 3 hours
+    channel_id: "channel-1"
+    priority: 20
+    filter:
+      genres: ["Action", "Drama"]
+      min_duration: 90           # Feature-length films
+      year_from: 2010
+      ratings: ["PG-13", "R"]
 ```
+
+`type` (`filter` or `series`) has a schema default in `cmd/schema/scheduler.cue`,
+but `schedularr validate`/the `scheduler.yaml` import path decodes each
+block into a Go struct before CUE-validating it, which turns an omitted
+`type` into an explicit empty string rather than an absent field -- CUE
+only applies the default to a genuinely absent field, so an empty string
+fails the `"filter" | "series"` check. Always set `type` explicitly in
+`scheduler.yaml`. `POST /api/v1/blocks`'s JSON body does not have this
+problem; `type` there can be omitted.
 
 ### Filter Options
 
@@ -193,78 +244,66 @@ scheduler:
 schedularr [command] [flags]
 ```
 
-**📚 For complete CLI documentation, see [CLI Reference](docs/CLI_REFERENCE.md)**
+**For per-command flags and a full walkthrough, see [CLI Reference](docs/CLI_REFERENCE.md).**
 
 ### Available Commands
 
-#### ⚙️ Configuration Management
+| Command | Purpose |
+| --- | --- |
+| `config generate [file]` | Write an app config file from the CUE schema defaults (`--tunarr-url`, `--log-level`, ... override individual keys) |
+| `config dump` | Print the currently loaded effective config as YAML |
+| `scheduler init [file]` | Write a `scheduler.yaml` block-import file from the CUE schema defaults |
+| `validate <file>` | Validate an app config or `scheduler.yaml` file against its CUE schema (file type is inferred: a filename containing `scheduler` is validated as a block-import file) |
+| `channels` | List Tunarr channels |
+| `generate [--apply] [--yes] [--dry-run] [-v]` | Generate (and optionally apply) the next schedule cycle |
+| `generate config --output <file>` | Same config generation as `config generate`, under `generate` instead |
+| `state export/import/reset/set/list/backup` | Manage series progression state (`internal/store`) |
+| `health [--port 9600]` | Standalone `/healthz`/`/livez` probe server (unrelated to `serve`'s own health endpoints) |
+| `serve [--listen] [--insecure-no-auth] [--interval/-i]` | Run the HTTP API and the cron scheduling loop -- see [Serve](#-serve-api-server--cron) |
 
-Generate and validate configuration files:
-
-```bash
-# Generate application config
-schedularr config generate [filename]
-
-# Generate scheduler config
-schedularr scheduler init [filename]
-
-# Validate any config file
-schedularr validate <file>
-
-# List scheduler blocks
-schedularr scheduler list [filename]
-```
-
-#### 📋 List Channels
-
-View all available channels from your Tunarr instance:
+#### List Channels
 
 ```bash
 schedularr channels
 ```
 
-**Output:**
+Output (`ID`/`Number`/`Name`/`Group`, from a live Tunarr instance):
 
 ```txt
-ID              Number  Name                    Enabled
-channel-1       1       Classic Movies          true
-channel-2       2       Kids Programming        true
-channel-3       3       Sports & News           false
+┌───────────┬────────┬──────────────────┬────────┐
+│ ID        │ NUMBER │ NAME             │ GROUP  │
+├───────────┼────────┼──────────────────┼────────┤
+│ channel-1 │      1 │ Classic Movies   │ Movies │
+│ channel-2 │      2 │ Kids Programming │ Kids   │
+└───────────┴────────┴──────────────────┴────────┘
 ```
 
-#### 🎬 Generate Schedule
+#### Generate Schedule
 
-Generate a schedule for the next 24 hours based on your configuration:
+Generates a schedule from the enabled blocks in the store (bootstrapping
+`scheduler_file` into the store first, on an empty store):
 
 ```bash
-# Dry run (preview only)
+# Dry run (preview only, never mutates the store or Tunarr)
 schedularr generate
 
 # Apply to Tunarr (requires --yes; there is no interactive confirmation)
 schedularr generate --apply --yes
 ```
 
-**Example Output:**
+`generate` prints a per-channel table (start/end time, block, program,
+duration, type, show/season/episode) followed by a totals summary; see
+`displaySchedule`/`displayChannelSchedule` in `cmd/generate.go`.
 
-```txt
-Channel channel-1: 12 items scheduled
- - The Incredibles (115 min)
- - Finding Nemo (100 min)
- - Toy Story (81 min)
- ...
-```
-
-#### 🔧 Configuration Management
+#### Series State
 
 ```bash
-# Validate configuration
-schedularr validate
-
-# Show current configuration
-schedularr config show
-
-# Edit configuration in $EDITOR
-schedularr config edit
+schedularr state list                                    # table of all tracked series
+schedularr state set "My Show" --season 2 --episode 5     # jump to S02E05
+schedularr state reset "My Show"                          # back to S01E01
+schedularr state export backup.json                       # all series states to JSON
+schedularr state import backup.json                       # restore from JSON
+schedularr state backup full-backup.db                    # whole-database SQLite backup (VACUUM INTO)
 ```
 
 ---
@@ -274,62 +313,62 @@ schedularr config edit
 ### Example 1: Weekend Movie Marathon
 
 ```yaml
-scheduler:
-  blocks:
-    - name: "Saturday Night Sci-Fi"
-      cron: "0 20 * * 6"  # Saturdays at 8 PM
-      duration: 360       # 6 hours
-      channel_id: "channel-1"
-      filter:
-        genres: ["Science Fiction"]
-        min_duration: 90
-        year_from: 1980
+blocks:
+  - name: "Saturday Night Sci-Fi"
+    type: filter
+    cron: "0 20 * * 6"  # Saturdays at 8 PM
+    duration: 360       # 6 hours
+    channel_id: "channel-1"
+    filter:
+      genres: ["Science Fiction"]
+      min_duration: 90
+      year_from: 1980
 ```
 
 ### Example 2: Weekday Morning Kids Block
 
 ```yaml
-scheduler:
-  blocks:
-    - name: "Weekday Morning Cartoons"
-      cron: "0 7 * * 1-5"  # Monday-Friday at 7 AM
-      duration: 120
-      channel_id: "channel-2"
-      filter:
-        genres: ["Animation"]
-        ratings: ["TV-Y", "TV-Y7"]
-        max_duration: 30
+blocks:
+  - name: "Weekday Morning Cartoons"
+    type: filter
+    cron: "0 7 * * 1-5"  # Monday-Friday at 7 AM
+    duration: 120
+    channel_id: "channel-2"
+    filter:
+      genres: ["Animation"]
+      ratings: ["TV-Y", "TV-Y7"]
+      max_duration: 30
 ```
 
 ### Example 3: Classic Film Noir Night
 
 ```yaml
-scheduler:
-  blocks:
-    - name: "Film Noir Fridays"
-      cron: "0 22 * * 5"  # Fridays at 10 PM
-      duration: 240
-      channel_id: "channel-1"
-      filter:
-        title_pattern: ".*Noir.*|.*Detective.*"
-        year_from: 1940
-        year_to: 1959
-        genres: ["Crime", "Mystery"]
+blocks:
+  - name: "Film Noir Fridays"
+    type: filter
+    cron: "0 22 * * 5"  # Fridays at 10 PM
+    duration: 240
+    channel_id: "channel-1"
+    filter:
+      title_pattern: ".*Noir.*|.*Detective.*"
+      year_from: 1940
+      year_to: 1959
+      genres: ["Crime", "Mystery"]
 ```
 
 ### Example 4: Holiday Special Programming
 
 ```yaml
-scheduler:
-  blocks:
-    - name: "Christmas Movies"
-      cron: "0 18 1-25 12 *"  # Dec 1-25 at 6 PM
-      duration: 180
-      channel_id: "channel-1"
-      priority: 100  # Override other blocks
-      filter:
-        title_pattern: ".*Christmas.*|.*Holiday.*"
-        genres: ["Family", "Comedy"]
+blocks:
+  - name: "Christmas Movies"
+    type: filter
+    cron: "0 18 1-25 12 *"  # Dec 1-25 at 6 PM
+    duration: 180
+    channel_id: "channel-1"
+    priority: 100  # Override other blocks
+    filter:
+      title_pattern: ".*Christmas.*|.*Holiday.*"
+      genres: ["Family", "Comedy"]
 ```
 
 ---
@@ -340,25 +379,45 @@ scheduler:
 
 ```txt
 schedularr/
-├── cmd/
-│   └── schedularr/          # Application entry point
-│       └── main.go
+├── main.go                    # Entry point
+├── api/
+│   └── openapi.yaml           # OpenAPI 3.0.3 contract (source of truth for internal/api/gen)
+├── cmd/                        # CLI commands (Cobra)
+│   ├── root.go
+│   ├── channels.go             # List Tunarr channels
+│   ├── generate.go             # Generate & apply schedules
+│   ├── serve.go                # HTTP API server + cron scheduling loop
+│   ├── validate.go             # Config validation
+│   ├── state.go                # Series state management
+│   ├── config.go               # App config generation/dump
+│   ├── health.go               # Standalone healthz/livez probe server
+│   ├── scheduler.go            # scheduler.yaml import-file authoring
+│   └── schema/                 # CUE schemas for validation
+│       ├── config.cue
+│       └── scheduler.cue
 ├── internal/
-│   ├── cli/                 # CLI commands (Cobra)
-│   │   ├── root.go
-│   │   ├── channels.go
-│   │   └── generate.go
-│   ├── config/              # Configuration management (Viper)
-│   │   └── config.go
-│   ├── scheduler/           # Core scheduling engine
-│   │   ├── engine.go
-│   │   ├── filter.go
+│   ├── config/                 # CUE-based config loading (see internal/cueconfig)
+│   ├── cueconfig/               # CUE schema compilation, validation, generation
+│   ├── scheduler/                # Core scheduling engine
+│   │   ├── engine.go             # GenerateForTimeRange, PlanBlock, PlanSeriesBlock
+│   │   ├── filter.go             # Genre/rating/year/duration/title filters
+│   │   ├── history.go            # Schedule history (prevent repeats)
 │   │   └── types.go
-│   └── tunarr/              # Tunarr API client
-│       ├── client.go
-│       └── types.go
+│   ├── external/tunarr/          # Tunarr REST API client
+│   ├── store/                    # SQLite persistence (blocks, series state, history)
+│   │   └── migrations/
+│   ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
+│   │   └── gen/                  # server.gen.go -- generated, do not hand-edit
+│   ├── service/                   # Schedule generate/apply workflow (shared by CLI + API)
+│   ├── blockio/                   # scheduler.yaml parse/render + first-run store import
+│   ├── problem/                   # RFC 7807 application/problem+json helpers
+│   ├── metrics/                   # Prometheus metrics registration
+│   ├── cache/                     # In-memory caching
+│   ├── cronbuilder/               # Cron expression builder
+│   └── httpclient/                # HTTP client with retry
 ├── configs/
-│   └── config.yaml          # Example configuration
+│   └── config.yaml              # Example configuration
+├── e2e/                          # Docker-based acceptance tests against a real Tunarr
 └── docs/
     ├── ARCHITECTURE.md
     └── SPECIFICATIONS.md
@@ -366,10 +425,12 @@ schedularr/
 
 ### Key Technologies
 
-- **Language**: Go 1.25.5
-- **CLI Framework**: [Cobra](https://github.com/spf13/cobra)
-- **Configuration**: [Viper](https://github.com/spf13/viper)
-- **Cron Parsing**: [robfig/cron](https://github.com/robfig/cron)
+- **Language**: Go 1.27
+- **CLI framework**: [Cobra](https://github.com/spf13/cobra)
+- **Configuration**: [CUE](https://cuelang.org/) schemas (`cmd/schema/`, `internal/cueconfig`), not Viper
+- **HTTP API**: [chi](https://github.com/go-chi/chi) router, generated from `api/openapi.yaml` via [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen)
+- **Persistence**: SQLite (`mattn/go-sqlite3`), migrated with [golang-migrate](https://github.com/golang-migrate/migrate)
+- **Cron parsing**: [robfig/cron](https://github.com/robfig/cron)
 
 ---
 
@@ -438,7 +499,7 @@ the handlers read/write `[]byte` directly.
 
 | Method | Path             | Success | Error codes |
 | ------ | ---------------- | ------- | ----------- |
-| POST   | `/blocks/import` | 200     | 400, 409    |
+| POST   | `/blocks/import` | 200     | 400, 409, 413 |
 | GET    | `/blocks/export` | 200     | —           |
 
 Notes:
@@ -627,10 +688,11 @@ SCHEDULARR_API_TOKEN=$(openssl rand -hex 32) schedularr serve --listen :8484
 
 ### Flags
 
-| Flag                 | Default   | Description                                                       |
-| -------------------- | --------- | ------------------------------------------------------------------- |
-| `--listen`            | `:8484`    | Address the HTTP API server listens on                              |
-| `--insecure-no-auth` | `false`    | Skip bearer-token auth on `/api/v1/*` — local development only, never a real deployment (logs a `WARN` at startup when set) |
+| Flag                    | Default | Description                                                       |
+| ------------------------ | ------- | --------------------------------------------------------------------- |
+| `--listen`                | `:8484`  | Address the HTTP API server listens on                              |
+| `--insecure-no-auth`     | `false`  | Skip bearer-token auth on `/api/v1/*` — local development only, never a real deployment (logs a `WARN` at startup when set) |
+| `--interval`/`-i`         | `6h`     | Interval between cron-driven schedule generate-and-apply cycles     |
 
 ### Environment and config keys
 
@@ -639,6 +701,7 @@ SCHEDULARR_API_TOKEN=$(openssl rand -hex 32) schedularr serve --listen :8484
 | `api.listen`              | —                          | `:8484`  | Same as `--listen`; the flag wins when explicitly passed              |
 | `api.token`                | `SCHEDULARR_API_TOKEN` | `""`     | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set |
 | `api.insecure_no_auth` | —                          | `false`  | Same as `--insecure-no-auth`; either source turning it on disables auth |
+| `cron_interval`            | —                          | `6h`     | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` -- it governs the cron loop, not the HTTP server |
 
 `schedularr serve` refuses to start if the effective token is empty (or
 shorter than 32 characters) and `--insecure-no-auth`/`api.insecure_no_auth`
@@ -656,11 +719,13 @@ is not set.
 
 ### Cron loop
 
-Every 6 hours (and once immediately at startup), `serve` regenerates and
-applies the next day's schedule — the same `service.Runner.Run(ctx,
-Options{Days: 1, Apply: true})` call `schedularr generate --apply --yes`
-makes, just on a timer instead of a one-shot CLI invocation. A failed tick
-is logged and does not stop the server; the next tick tries again.
+On an interval (`--interval`/`-i`, or the `cron_interval` config key,
+default `6h` either way -- flag wins when passed explicitly) and once
+immediately at startup, `serve` regenerates and applies the next day's
+schedule — the same `service.Runner.Run(ctx, Options{Days: 1, Apply:
+true})` call `schedularr generate --apply --yes` makes, just on a timer
+instead of a one-shot CLI invocation. A failed tick is logged and does not
+stop the server; the next tick tries again.
 
 ### Shutdown
 
@@ -699,14 +764,16 @@ go test ./internal/scheduler/...
 
 ```bash
 # Development build
-go build -o schedularr cmd/schedularr/main.go
+go build -o schedularr main.go
 
-# Production build with optimizations
-go build -ldflags="-s -w" -o schedularr cmd/schedularr/main.go
+# Stripped build with a version stamp (reported by GET /api/v1/status)
+go build -ldflags="-s -w -X github.com/christopherime/schedularr/cmd.Version=1.2.3" -o schedularr main.go
 
 # Cross-compilation
-GOOS=linux GOARCH=amd64 go build -o schedularr-linux cmd/schedularr/main.go
+GOOS=linux GOARCH=amd64 go build -o schedularr-linux main.go
 ```
+
+`make build` runs the equivalent of the first form (see `Makefile`).
 
 ### Code Quality
 
@@ -752,8 +819,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- [Tunarr](https://tunarr.com) - The amazing TV channel management platform
-- [Cobra](https://github.com/spf13/cobra) - Powerful CLI framework
+- [Tunarr](https://tunarr.com) - the TV channel management platform this project schedules for
+- [Cobra](https://github.com/spf13/cobra) - CLI framework
 
 ---
 

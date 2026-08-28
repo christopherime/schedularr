@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - 2026-08-28
+
+#### HTTP API Server
+
+- **`schedularr serve`**: new command running the HTTP API and the cron
+  scheduling loop in one long-lived process, replacing the old daemon
+  loop (see "Removed" below). Endpoints: blocks CRUD, block
+  import/export, schedule generate/apply, schedule history, series
+  state, channels, status, plus unauthenticated `/healthz`, `/readyz`,
+  `/metrics`, and `/openapi.json`.
+- **Contract-first API**: `api/openapi.yaml` (OpenAPI 3.0.3) is the
+  source of truth; `internal/api/gen/server.gen.go` is generated from it
+  via `make generate` (oapi-codegen) and must not be hand-edited.
+- **Bearer-token auth**: `/api/v1/*` requires `Authorization: Bearer
+  <token>`, constant-time compared. Token comes from
+  `SCHEDULARR_API_TOKEN` (wins when set) or the `api.token` config key;
+  `serve` refuses to start with a token under 32 characters unless
+  `--insecure-no-auth`/`api.insecure_no_auth` is set.
+- **`internal/service`**: extracted the generate/apply workflow out of
+  the CLI so `cmd/generate.go` and the API's schedule endpoints share one
+  implementation (`service.Runner`).
+- **`internal/store`**: SQLite-backed persistence for blocks, series
+  state, and schedule history (see "Changed" below).
+
+### Changed - 2026-08-28
+
+#### Module rename
+
+- Module path changed from `github.com/geekxflood/schedularr` to
+  `github.com/christopherime/schedularr` (repository transferred to a
+  new owner). Every import path was rewritten in the same change;
+  `schema.json`'s `$id` was missed at the time and corrected later in
+  this same sub-project.
+
+#### Blocks moved into the SQLite store
+
+- Scheduling blocks now live in `internal/store`, not in a config file.
+  `scheduler.yaml` is a **first-run import format only**: on an empty
+  store, `internal/blockio.Bootstrap` imports its blocks once; the file
+  is never read again afterward, and editing it post-bootstrap has no
+  effect. Manage blocks going forward through `/api/v1/blocks`.
+- `schedularr scheduler init` still authors a `scheduler.yaml` import
+  file; `config.yaml`'s inline `scheduler:` block (legacy support) is no
+  longer consulted by any code path -- config.cue documents the field but
+  nothing reads it (flagged for cleanup, not yet removed).
+
+#### `serve` replaces `run`
+
+- The `run` daemon command (interval-based generate-and-apply loop,
+  SIGHUP config reload) is gone; `serve` runs the same generate-and-apply
+  cycle on a cron timer alongside the HTTP API, sharing one store
+  connection and one graceful-shutdown path. SIGHUP reload and `--once`
+  were not carried over -- `serve` has no config-reload story and is
+  always long-running.
+- Cadence is controlled by the `cron_interval` config key (default `6h`,
+  a top-level key since it governs the scheduler, not the HTTP server) or
+  `serve --interval`/`-i`, which overrides it when passed explicitly.
+
+### Removed - 2026-08-28
+
+#### Interactive TUI
+
+- Deleted entirely: `internal/tui/`, `cmd/tui.go`, and the
+  `charmbracelet/bubbletea`/`lipgloss`/`huh` dependencies. No deprecated
+  alias was kept.
+- `generate --apply` now requires an explicit `--yes` flag -- the
+  `charmbracelet/huh` confirmation prompt it used to show is gone, and
+  there is no other interactive confirmation. `--apply` without `--yes`
+  fails fast with an error instead of running.
+
+#### Jellyfin, Sonarr, and Radarr integrations
+
+- Removed `internal/external/jellyfin/`, `internal/external/sonarr/`,
+  `internal/external/radarr/`, `cmd/content_sources.go`, and their config
+  sections in `cmd/schema/config.cue`. Tunarr is now the sole runtime
+  integration; content availability filtering and the Jellyfin
+  guide-refresh hook were removed along with the clients, not ported.
+
+#### `run` command
+
+- The interval-based daemon command is gone; see "`serve` replaces
+  `run`" above.
+
 ### Added - 2026-01-12
 
 #### CUE Schema Integration
