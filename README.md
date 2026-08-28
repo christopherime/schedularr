@@ -19,14 +19,13 @@
 
 ## 🎯 Overview
 
-Schedularr is a sophisticated Go application that transforms how you manage content scheduling for [Tunarr](https://tunarr.com). Say goodbye to manual programming and hello to intelligent, automated channel management with cron-based recurring blocks, multi-criteria content filtering, and a beautiful terminal UI.
+Schedularr is a sophisticated Go application that transforms how you manage content scheduling for [Tunarr](https://tunarr.com). Say goodbye to manual programming and hello to intelligent, automated channel management with cron-based recurring blocks and multi-criteria content filtering.
 
 ### Why Schedularr?
 
 - 🤖 **Set It and Forget It**: Define your programming rules once, let Schedularr handle the rest
 - 🎨 **Smart Filtering**: Match content by title patterns, genres, ratings, release years, and duration
 - ⏰ **Flexible Scheduling**: Use familiar cron syntax for daily, weekly, or custom recurring blocks
-- 🖥️ **Interactive TUI**: Manage your schedules with an intuitive terminal interface
 - 🔍 **Dry Run Mode**: Preview schedules before applying them to your channels
 - 🚀 **Lightweight & Fast**: Built in Go for performance and reliability
 
@@ -41,7 +40,6 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 | **🔌 Tunarr Integration**   | Seamless API communication with your Tunarr instance                          |
 | **🎯 Advanced Filtering**   | Regex title matching, genre/rating filters, year ranges, duration constraints |
 | **📅 Cron Scheduling**      | Standard cron expressions for flexible recurring programming                  |
-| **🎨 Terminal UI**          | Beautiful interactive interface built with Bubble Tea                         |
 | **⚡ CLI Commands**          | Powerful command-line tools for automation and scripting                      |
 | **🔍 Dry Run Mode**         | Test and preview schedules before applying changes                            |
 | **📊 Priority System**      | Handle overlapping blocks with configurable priorities                        |
@@ -271,8 +269,8 @@ Generate a schedule for the next 24 hours based on your configuration:
 # Dry run (preview only)
 schedularr generate
 
-# Apply to Tunarr
-schedularr generate --apply
+# Apply to Tunarr (requires --yes; there is no interactive confirmation)
+schedularr generate --apply --yes
 ```
 
 **Example Output:**
@@ -284,21 +282,6 @@ Channel channel-1: 12 items scheduled
  - Toy Story (81 min)
  ...
 ```
-
-#### 🖥️ Interactive TUI
-
-Launch the beautiful terminal user interface:
-
-```bash
-schedularr tui
-```
-
-**Features:**
-
-- ✏️ Create and edit scheduling blocks
-- 📊 View current configuration
-- 💾 Save changes directly to config file
-- 🎨 Syntax highlighting and validation
 
 #### 🔧 Configuration Management
 
@@ -393,19 +376,16 @@ schedularr/
 │   ├── cli/                 # CLI commands (Cobra)
 │   │   ├── root.go
 │   │   ├── channels.go
-│   │   ├── generate.go
-│   │   └── tui.go
+│   │   └── generate.go
 │   ├── config/              # Configuration management (Viper)
 │   │   └── config.go
 │   ├── scheduler/           # Core scheduling engine
 │   │   ├── engine.go
 │   │   ├── filter.go
 │   │   └── types.go
-│   ├── tunarr/              # Tunarr API client
-│   │   ├── client.go
-│   │   └── types.go
-│   └── tui/                 # Terminal UI (Bubble Tea)
-│       └── model.go
+│   └── tunarr/              # Tunarr API client
+│       ├── client.go
+│       └── types.go
 ├── configs/
 │   └── config.yaml          # Example configuration
 └── docs/
@@ -419,7 +399,6 @@ schedularr/
 - **CLI Framework**: [Cobra](https://github.com/spf13/cobra)
 - **Configuration**: [Viper](https://github.com/spf13/viper)
 - **Cron Parsing**: [robfig/cron](https://github.com/robfig/cron)
-- **Terminal UI**: [Bubble Tea](https://github.com/charmbracelet/bubbletea)
 
 ---
 
@@ -497,7 +476,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [Tunarr](https://tunarr.com) - The amazing TV channel management platform
 - [Cobra](https://github.com/spf13/cobra) - Powerful CLI framework
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - Delightful TUI framework
 
 ---
 

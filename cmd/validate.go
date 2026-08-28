@@ -8,14 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/christopherime/schedularr/internal/config"
 	"github.com/christopherime/schedularr/internal/cueconfig"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/spf13/cobra"
 )
 
-var warningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+var warningStyle = style{code: "1;33"} // Bold yellow
 
 var validateCmd = &cobra.Command{
 	Use:   "validate [file]",

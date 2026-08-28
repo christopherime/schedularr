@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/christopherime/schedularr/internal/config"
 	"github.com/christopherime/schedularr/internal/cueconfig"
 	"github.com/christopherime/schedularr/internal/external/jellyfin"
@@ -25,6 +24,7 @@ import (
 
 var (
 	apply         bool
+	assumeYes     bool
 	schedulerFile string
 	dryRun        bool
 	verbose       bool
@@ -40,19 +40,32 @@ var (
 	genJellyfinSyncLiveTV bool
 )
 
+// style is a minimal ANSI text-color helper for CLI output. It replaces the
+// former charmbracelet/lipgloss dependency: the TUI (lipgloss's only other
+// consumer) is gone, so this package keeps colored terminal output without
+// pulling in the library.
+type style struct {
+	code string
+}
+
+// Render wraps text in the style's ANSI escape sequence.
+func (s style) Render(text string) string {
+	return "\x1b[" + s.code + "m" + text + "\x1b[0m"
+}
+
 // Color styles
 var (
-	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	successStyle = style{code: "1;32"} // Bold green
+	errorStyle   = style{code: "1;31"} // Bold red
+	infoStyle    = style{code: "36"}   // Cyan
+	warnStyle    = style{code: "33"}   // Yellow
 
 	// Program type colors
-	movieStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))            // Magenta
-	episodeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))            // Blue
-	trackStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))            // Cyan
-	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Bold(true) // White/Bold
-	channelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true) // Green/Bold
+	movieStyle   = style{code: "35"}   // Magenta
+	episodeStyle = style{code: "34"}   // Blue
+	trackStyle   = style{code: "36"}   // Cyan
+	headerStyle  = style{code: "1;37"} // White/Bold
+	channelStyle = style{code: "1;32"} // Green/Bold
 )
 
 var generateCmd = &cobra.Command{
@@ -332,6 +345,9 @@ type scheduleOutputOptions struct {
 
 func handleScheduleOutput(cfg *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program, opts scheduleOutputOptions) error {
 	if opts.apply && !opts.dryRun {
+		if !assumeYes {
+			return errors.New("refusing to apply without --yes (interactive prompts were removed)")
+		}
 		return applyScheduleAndSync(cfg, client, engine, flattenedPlan)
 	}
 
@@ -394,7 +410,7 @@ type channelStats struct {
 	tracks        int
 }
 
-func (cs *channelStats) incrementType(programType string) lipgloss.Style {
+func (cs *channelStats) incrementType(programType string) style {
 	switch programType {
 	case "movie":
 		cs.movies++
@@ -537,7 +553,7 @@ func displayDryRunSummary(plan map[string][]tunarr.Program) {
 			fmt.Println("     Preview:")
 			for i := 0; i < previewCount; i++ {
 				p := programs[i]
-				var typeStyle lipgloss.Style
+				var typeStyle style
 				switch p.Type {
 				case "movie":
 					typeStyle = movieStyle
@@ -618,6 +634,7 @@ func init() {
 
 	// Flags for schedule generation (default behavior)
 	generateCmd.Flags().BoolVar(&apply, "apply", false, "Apply generated schedule to Tunarr channels")
+	generateCmd.Flags().BoolVar(&assumeYes, "yes", false, "Skip confirmation and allow --apply to run non-interactively")
 	generateCmd.Flags().StringVar(&schedulerFile, "scheduler", "", "Path to scheduler config file (default: scheduler.yaml)")
 	generateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview schedule without applying changes")
 	generateCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output including filtering and history")
