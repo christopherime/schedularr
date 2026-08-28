@@ -2,21 +2,6 @@
 tunarr:
   url: ${SCHEDULARR_BASE_URL_TUNARR}
 
-radarr:
-  url: ${SCHEDULARR_BASE_URL_RADARR}
-  api_key: ${SCHEDULARR_API_KEY_RADARR}
-  exclude_missing_file: true
-
-sonarr:
-  url: ${SCHEDULARR_BASE_URL_SONARR}
-  api_key: ${SCHEDULARR_API_KEY_SONARR}
-  exclude_missing_file: true
-
-jellyfin:
-  url: ${SCHEDULARR_BASE_URL_JELLYFIN}
-  api_key: ${SCHEDULARR_API_KEY_JELLYFIN}
-  sync_live_tv: true
-
 log:
   level: info
   format: text

@@ -8,15 +8,6 @@
     "tunarr": {
       "$ref": "#/$defs/TunarrConfig"
     },
-    "radarr": {
-      "$ref": "#/$defs/RadarrConfig"
-    },
-    "sonarr": {
-      "$ref": "#/$defs/SonarrConfig"
-    },
-    "jellyfin": {
-      "$ref": "#/$defs/JellyfinConfig"
-    },
     "log": {
       "$ref": "#/$defs/LogConfig"
     },
@@ -66,77 +57,6 @@
           "description": "Request timeout duration (e.g., \"30s\", \"1m\")",
           "default": "30s",
           "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
-        }
-      },
-      "additionalProperties": false
-    },
-    "RadarrConfig": {
-      "type": "object",
-      "description": "Radarr API connection settings",
-      "properties": {
-        "url": {
-          "type": "string",
-          "description": "Radarr API base URL",
-          "default": "${SCHEDULARR_RADARR_URL}"
-        },
-        "api_key": {
-          "type": "string",
-          "description": "API key for authentication",
-          "default": "${SCHEDULARR_RADARR_API_KEY}"
-        },
-        "exclude_missing_file": {
-          "type": "boolean",
-          "description": "Exclude movies that are missing files on disk",
-          "default": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "SonarrConfig": {
-      "type": "object",
-      "description": "Sonarr API connection settings",
-      "properties": {
-        "url": {
-          "type": "string",
-          "description": "Sonarr API base URL",
-          "default": "${SCHEDULARR_SONARR_URL}"
-        },
-        "api_key": {
-          "type": "string",
-          "description": "API key for authentication",
-          "default": "${SCHEDULARR_SONARR_API_KEY}"
-        },
-        "exclude_missing_file": {
-          "type": "boolean",
-          "description": "Exclude episodes that are missing files on disk",
-          "default": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "JellyfinConfig": {
-      "type": "object",
-      "description": "Jellyfin API connection settings",
-      "properties": {
-        "url": {
-          "type": "string",
-          "description": "Jellyfin API base URL",
-          "default": "${SCHEDULARR_JELLYFIN_URL}"
-        },
-        "api_key": {
-          "type": "string",
-          "description": "API key for authentication",
-          "default": "${SCHEDULARR_JELLYFIN_API_KEY}"
-        },
-        "user_id": {
-          "type": "string",
-          "description": "User ID for user-scoped endpoints",
-          "default": ""
-        },
-        "sync_live_tv": {
-          "type": "boolean",
-          "description": "Whether to refresh the Live TV guide after schedule apply",
-          "default": true
         }
       },
       "additionalProperties": false

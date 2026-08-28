@@ -11,9 +11,6 @@ import (
 	"time"
 
 	"github.com/christopherime/schedularr/internal/cueconfig"
-	"github.com/christopherime/schedularr/internal/external/jellyfin"
-	"github.com/christopherime/schedularr/internal/external/radarr"
-	"github.com/christopherime/schedularr/internal/external/sonarr"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"gopkg.in/yaml.v3"
@@ -93,37 +90,6 @@ func TunarrConfig(cfg *Config) tunarr.Config {
 	return tunarr.Config{
 		URL:    getStringFromMap(m, "url"),
 		APIKey: getStringFromMap(m, "api_key"),
-	}
-}
-
-// JellyfinConfig extracts Jellyfin client configuration from the loaded config.
-func JellyfinConfig(cfg *Config) jellyfin.Config {
-	m := cfg.GetMap("jellyfin")
-	return jellyfin.Config{
-		URL:        getStringFromMap(m, "url"),
-		APIKey:     getStringFromMap(m, "api_key"),
-		UserID:     getStringFromMap(m, "user_id"),
-		SyncLiveTV: getBoolFromMap(m, "sync_live_tv"),
-	}
-}
-
-// RadarrConfig extracts Radarr client configuration from the loaded config.
-func RadarrConfig(cfg *Config) radarr.Config {
-	m := cfg.GetMap("radarr")
-	return radarr.Config{
-		URL:                getStringFromMap(m, "url"),
-		APIKey:             getStringFromMap(m, "api_key"),
-		ExcludeMissingFile: getBoolFromMap(m, "exclude_missing_file"),
-	}
-}
-
-// SonarrConfig extracts Sonarr client configuration from the loaded config.
-func SonarrConfig(cfg *Config) sonarr.Config {
-	m := cfg.GetMap("sonarr")
-	return sonarr.Config{
-		URL:                getStringFromMap(m, "url"),
-		APIKey:             getStringFromMap(m, "api_key"),
-		ExcludeMissingFile: getBoolFromMap(m, "exclude_missing_file"),
 	}
 }
 

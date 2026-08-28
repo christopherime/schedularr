@@ -6,15 +6,6 @@ package schema
 	// Tunarr connection configuration (required)
 	tunarr: #TunarrConfig
 
-	// Radarr connection configuration
-	radarr: #RadarrConfig
-
-	// Sonarr connection configuration
-	sonarr: #SonarrConfig
-
-	// Jellyfin connection configuration
-	jellyfin: #JellyfinConfig
-
 	// Logging configuration
 	log: #LogConfig
 
@@ -56,45 +47,6 @@ package schema
 
 	// How long cached entries are considered valid (e.g., "1h", "24h")
 	cache_duration: string | *"1h"
-}
-
-// RadarrConfig defines the Radarr API connection settings
-#RadarrConfig: {
-	// Radarr API base URL
-	url: string | *"${SCHEDULARR_RADARR_URL}"
-
-	// API key for authentication
-	api_key: string | *"${SCHEDULARR_RADARR_API_KEY}"
-
-	// Exclude movies that are missing files on disk
-	exclude_missing_file: bool | *true
-}
-
-// SonarrConfig defines the Sonarr API connection settings
-#SonarrConfig: {
-	// Sonarr API base URL
-	url: string | *"${SCHEDULARR_SONARR_URL}"
-
-	// API key for authentication
-	api_key: string | *"${SCHEDULARR_SONARR_API_KEY}"
-
-	// Exclude episodes that are missing files on disk
-	exclude_missing_file: bool | *true
-}
-
-// JellyfinConfig defines the Jellyfin API connection settings
-#JellyfinConfig: {
-	// Jellyfin API base URL
-	url: string | *"${SCHEDULARR_JELLYFIN_URL}"
-
-	// API key for authentication
-	api_key: string | *"${SCHEDULARR_JELLYFIN_API_KEY}"
-
-	// User ID for user-scoped endpoints
-	user_id: string | *""
-
-	// Whether to refresh the Live TV guide after schedule apply
-	sync_live_tv: bool | *true
 }
 
 // LogConfig defines logging settings

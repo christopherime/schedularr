@@ -29,9 +29,6 @@ services:
     networks:
       - schedularr-e2e
 
-  # Optional: Add a Plex/Jellyfin mock server for testing content sources
-  # This can be added later if needed for more comprehensive E2E tests
-
 volumes:
   tunarr-data:
     driver: local

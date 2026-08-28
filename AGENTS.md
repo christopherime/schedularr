@@ -26,4 +26,4 @@ History favors `type(scope): imperative summary` (e.g., `feat(tui): …`), so ke
 
 ## Security & Configuration Tips
 
-Never commit real Tunarr/Radarr/Sonarr credentials — keep examples redacted in `configs/` and store machine-specific overrides in `~/.schedularr.yaml`. Run `make validate` around schema changes so CUE stays synced with the samples. Docker resources assume localhost; if you expose ports externally, audit `docker-compose.yml` env values, rotate keys, and delete stray environment files before merging.
+Never commit real Tunarr credentials — keep examples redacted in `configs/` and store machine-specific overrides in `~/.schedularr.yaml`. Run `make validate` around schema changes so CUE stays synced with the samples. Docker resources assume localhost; if you expose ports externally, audit `docker-compose.yml` env values, rotate keys, and delete stray environment files before merging.

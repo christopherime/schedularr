@@ -4,7 +4,6 @@ go 1.27
 
 require (
 	cuelang.org/go v0.15.3
-	github.com/avast/retry-go/v4 v4.7.0
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/go-resty/resty/v2 v2.17.1
 	github.com/golang-migrate/migrate/v4 v4.19.1

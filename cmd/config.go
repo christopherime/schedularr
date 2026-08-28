@@ -13,13 +13,10 @@ import (
 )
 
 var (
-	tunarrURL          string
-	tunarrAPIKey       string
-	logLevel           string
-	logFormat          string
-	jellyfinURL        string
-	jellyfinAPIKey     string
-	jellyfinSyncLiveTV bool
+	tunarrURL    string
+	tunarrAPIKey string
+	logLevel     string
+	logFormat    string
 )
 
 var configCmd = &cobra.Command{
@@ -42,7 +39,7 @@ You can override default values using flags, e.g., --tunarr-url.
 Examples:
   schedularr config generate
   schedularr config generate my-config.yaml --tunarr-url "http://my-tunarr:8000"
-  schedularr config generate config.json --log-level debug --jellyfin-sync-livetv`,
+  schedularr config generate config.json --log-level debug`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(_ *cobra.Command, args []string) {
 		filename := "config.yaml"
@@ -162,20 +159,6 @@ func applyConfigOverrides(cfg map[string]any) {
 			log["format"] = logFormat
 		}
 	}
-
-	// Apply Jellyfin overrides
-	if jellyfinURL != "" || jellyfinAPIKey != "" || jellyfinSyncLiveTV {
-		jellyfin := ensureMap(cfg, "jellyfin")
-		if jellyfinURL != "" {
-			jellyfin["url"] = jellyfinURL
-		}
-		if jellyfinAPIKey != "" {
-			jellyfin["api_key"] = jellyfinAPIKey
-		}
-		if jellyfinSyncLiveTV {
-			jellyfin["sync_live_tv"] = jellyfinSyncLiveTV
-		}
-	}
 }
 
 func init() {
@@ -188,7 +171,4 @@ func init() {
 	configGenerateCmd.Flags().StringVar(&tunarrAPIKey, "tunarr-api-key", "", "Override default Tunarr API Key")
 	configGenerateCmd.Flags().StringVar(&logLevel, "log-level", "", "Override default log level (debug, info, warn, error)")
 	configGenerateCmd.Flags().StringVar(&logFormat, "log-format", "", "Override default log format (text, json)")
-	configGenerateCmd.Flags().StringVar(&jellyfinURL, "jellyfin-url", "", "Override default Jellyfin API URL")
-	configGenerateCmd.Flags().StringVar(&jellyfinAPIKey, "jellyfin-api-key", "", "Override default Jellyfin API Key")
-	configGenerateCmd.Flags().BoolVar(&jellyfinSyncLiveTV, "jellyfin-sync-livetv", false, "Override default Jellyfin Live TV sync (set to true)")
 }

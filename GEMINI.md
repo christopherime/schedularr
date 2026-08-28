@@ -4,7 +4,7 @@
 
 **Schedularr** is an intelligent automation tool for scheduling programming on [Tunarr](https://tunarr.com) TV channels. It enables users to define complex scheduling rules using cron syntax, filter content based on metadata (genres, ratings, years, etc.), and manage series progression (e.g., sequential episode scheduling) using a local SQLite database.
 
-The project allows for "Set It and Forget It" channel management, ensuring fresh content rotation without manual intervention. It supports integration with Radarr, Sonarr, and Jellyfin for advanced filtering and metadata synchronization.
+The project allows for "Set It and Forget It" channel management, ensuring fresh content rotation without manual intervention. Tunarr is the sole integration; content availability filtering is driven entirely by Tunarr's own library data.
 
 ## Technology Stack
 

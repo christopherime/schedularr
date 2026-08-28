@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/avast/retry-go/v4"
+	"github.com/christopherime/schedularr/internal/cache"
 	"github.com/christopherime/schedularr/internal/config"
 	"github.com/christopherime/schedularr/internal/cueconfig"
-	"github.com/christopherime/schedularr/internal/external/jellyfin"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
@@ -30,14 +29,11 @@ var (
 	verbose       bool
 
 	// Flags for generate config subcommand
-	configOutputPath      string
-	genTunarrURL          string
-	genTunarrAPIKey       string
-	genLogLevel           string
-	genLogFormat          string
-	genJellyfinURL        string
-	genJellyfinAPIKey     string
-	genJellyfinSyncLiveTV bool
+	configOutputPath string
+	genTunarrURL     string
+	genTunarrAPIKey  string
+	genLogLevel      string
+	genLogFormat     string
 )
 
 // colorEnabled reports whether ANSI color codes should be emitted. It mirrors
@@ -204,21 +200,6 @@ func buildConfigOverrides() map[string]interface{} {
 		overrides["log"] = logOverrides
 	}
 
-	// Jellyfin overrides
-	jellyfinOverrides := make(map[string]interface{})
-	if genJellyfinURL != "" {
-		jellyfinOverrides["url"] = genJellyfinURL
-	}
-	if genJellyfinAPIKey != "" {
-		jellyfinOverrides["api_key"] = genJellyfinAPIKey
-	}
-	if genJellyfinSyncLiveTV {
-		jellyfinOverrides["sync_livetv"] = genJellyfinSyncLiveTV
-	}
-	if len(jellyfinOverrides) > 0 {
-		overrides["jellyfin"] = jellyfinOverrides
-	}
-
 	return overrides
 }
 
@@ -318,6 +299,189 @@ func fetchAndValidateContent(cfg *config.Config, client *tunarr.Client) ([]tunar
 	return programs, nil
 }
 
+const tunarrCacheKey = "tunarr_programs.json"
+
+// fetchAllContent fetches all schedulable content from Tunarr's libraries,
+// caching the result for the configured cache duration. Falls back to
+// SearchPrograms() when no library content is available.
+func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.Program, error) {
+	fmt.Println(infoStyle.Render("📡 Fetching content..."))
+
+	cacheDuration := config.CacheDuration(cfg)
+	contentCache, err := cache.New(cacheDuration)
+	if err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not initialize content cache: %v. Proceeding without cache.", err)))
+		contentCache = nil // Disable caching if initialization failed
+	} else {
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗄️  Using in-memory cache (duration %s)", cacheDuration)))
+	}
+
+	programs := fetchTunarrContent(tunarrClient, contentCache)
+
+	if len(programs) == 0 {
+		fmt.Println(warnStyle.Render("⚠ No content available from libraries - using fallback SearchPrograms()"))
+		var err error
+		programs, err = fetchAllProgramsViaSearch(tunarrClient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch programs: %w", err)
+		}
+	}
+
+	return programs, nil
+}
+
+func fetchTunarrContent(client *tunarr.Client, contentCache *cache.Cache) []tunarr.Program {
+	if programs := tryLoadTunarrFromCache(contentCache); programs != nil {
+		return programs
+	}
+
+	allPrograms := fetchLibraryPrograms(client)
+	saveTunarrCache(contentCache, allPrograms)
+
+	return allPrograms
+}
+
+func tryLoadTunarrFromCache(contentCache *cache.Cache) []tunarr.Program {
+	if contentCache == nil {
+		return nil
+	}
+	data, found := contentCache.Get(tunarrCacheKey)
+	if !found {
+		return nil
+	}
+	programs, ok := data.([]tunarr.Program)
+	if !ok {
+		return nil
+	}
+	if verbose {
+		fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Tunarr programs from cache"))
+	}
+	return programs
+}
+
+func fetchLibraryPrograms(client *tunarr.Client) []tunarr.Program {
+	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
+
+	// First, get all media sources
+	sources, err := client.GetMediaSources(context.Background())
+	if err != nil {
+		if verbose {
+			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch media sources: %v", err)))
+		}
+		return nil
+	}
+
+	if verbose {
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📡 Found %d media source(s)", len(sources))))
+	}
+
+	// Collect libraries from all media sources
+	var allLibraries []tunarr.Library
+	for _, source := range sources {
+		libraries, err := client.GetLibraries(context.Background(), source.ID)
+		if err != nil {
+			if verbose {
+				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries for %s: %v", source.Name, err)))
+			}
+			continue
+		}
+		allLibraries = append(allLibraries, libraries...)
+	}
+
+	if verbose {
+		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📚 Found %d librar(y/ies)", len(allLibraries))))
+	}
+
+	var allPrograms []tunarr.Program
+	for _, lib := range allLibraries {
+		programs := fetchSingleLibrary(client, lib)
+		allPrograms = append(allPrograms, programs...)
+	}
+
+	return allPrograms
+}
+
+func fetchSingleLibrary(client *tunarr.Client, lib tunarr.Library) []tunarr.Program {
+	if verbose {
+		fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
+	}
+
+	// Use SearchPrograms with library ID to get programs from this library
+	var allPrograms []tunarr.Program
+	page := 1
+	limit := 100
+
+	for {
+		req := tunarr.ProgramSearchRequest{
+			Query:     &tunarr.ProgramSearchQuery{}, // API requires query object
+			LibraryID: lib.ID,
+			Page:      page,
+			Limit:     limit,
+		}
+
+		resp, err := client.SearchPrograms(context.Background(), req)
+		if err != nil {
+			if verbose {
+				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
+			}
+			return nil
+		}
+
+		allPrograms = append(allPrograms, resp.Results...)
+
+		// Check if we've fetched all programs
+		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
+			break
+		}
+		page++
+	}
+
+	if verbose {
+		fmt.Printf("    ✓ %d programs\n", len(allPrograms))
+	}
+
+	return allPrograms
+}
+
+func fetchAllProgramsViaSearch(client *tunarr.Client) ([]tunarr.Program, error) {
+	var allPrograms []tunarr.Program
+	page := 1
+	limit := 100
+
+	for {
+		req := tunarr.ProgramSearchRequest{
+			Query: &tunarr.ProgramSearchQuery{}, // API requires query object
+			Page:  page,
+			Limit: limit,
+		}
+
+		resp, err := client.SearchPrograms(context.Background(), req)
+		if err != nil {
+			return nil, err
+		}
+
+		allPrograms = append(allPrograms, resp.Results...)
+
+		// Check if we've fetched all programs
+		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
+			break
+		}
+		page++
+	}
+
+	return allPrograms, nil
+}
+
+func saveTunarrCache(contentCache *cache.Cache, allPrograms []tunarr.Program) {
+	if contentCache == nil {
+		return
+	}
+
+	if err := contentCache.Set(tunarrCacheKey, allPrograms); err != nil {
+		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Tunarr programs to cache: %v", err)))
+	}
+}
+
 func createEngine(cfg *config.Config, client *tunarr.Client, blocks []scheduler.Block, st *store.Store) (*scheduler.Engine, error) {
 	logger := newLogger(config.LogLevel(cfg), config.LogFormat(cfg))
 
@@ -380,7 +544,7 @@ func handleScheduleOutput(cfg *config.Config, client *tunarr.Client, engine *sch
 	return nil
 }
 
-func applyScheduleAndSync(cfg *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program) error {
+func applyScheduleAndSync(_ *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program) error {
 	if err := applySchedule(client, flattenedPlan); err != nil {
 		return err
 	}
@@ -389,36 +553,7 @@ func applyScheduleAndSync(cfg *config.Config, client *tunarr.Client, engine *sch
 		return fmt.Errorf("failed to commit state: %w", err)
 	}
 
-	jellyfinCfg := config.JellyfinConfig(cfg)
-	if jellyfinCfg.URL != "" && jellyfinCfg.SyncLiveTV {
-		syncJellyfinLiveTV(jellyfinCfg)
-	}
-
 	return nil
-}
-
-func syncJellyfinLiveTV(jellyfinCfg jellyfin.Config) {
-	fmt.Println(infoStyle.Render("📺 Refreshing Jellyfin Live TV guide..."))
-	jellyfinClient := jellyfin.NewClient(jellyfinCfg)
-	if err := refreshJellyfinWithRetries(jellyfinClient); err != nil {
-		fmt.Printf("%s %v\n", warnStyle.Render("⚠ Failed to refresh Jellyfin Live TV guide (non-fatal):"), err)
-	} else {
-		fmt.Printf("%s\n", successStyle.Render("✓ Jellyfin Live TV guide refreshed"))
-	}
-}
-
-func refreshJellyfinWithRetries(client *jellyfin.Client) error {
-	return retry.Do(
-		func() error {
-			return client.RefreshLiveTVGuide(context.Background())
-		},
-		retry.Attempts(3),
-		retry.Delay(2*time.Second),
-		retry.DelayType(retry.BackOffDelay),
-		retry.OnRetry(func(n uint, err error) {
-			fmt.Printf("   %s %v (attempt %d)...\n", warnStyle.Render("⚠ Refresh failed:"), err, n+1)
-		}),
-	)
 }
 
 type channelStats struct {
@@ -667,8 +802,5 @@ func init() {
 	generateConfigCmd.Flags().StringVar(&genTunarrAPIKey, "tunarr-api-key", "", "Override default Tunarr API Key")
 	generateConfigCmd.Flags().StringVar(&genLogLevel, "log-level", "", "Override default log level (debug, info, warn, error)")
 	generateConfigCmd.Flags().StringVar(&genLogFormat, "log-format", "", "Override default log format (text, json)")
-	generateConfigCmd.Flags().StringVar(&genJellyfinURL, "jellyfin-url", "", "Override default Jellyfin API URL")
-	generateConfigCmd.Flags().StringVar(&genJellyfinAPIKey, "jellyfin-api-key", "", "Override default Jellyfin API Key")
-	generateConfigCmd.Flags().BoolVar(&genJellyfinSyncLiveTV, "jellyfin-sync-livetv", false, "Enable Jellyfin Live TV sync")
 	_ = generateConfigCmd.MarkFlagRequired("output")
 }

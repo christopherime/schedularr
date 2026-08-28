@@ -32,7 +32,6 @@ go test -race -v ./internal/external/tunarr/...
 ```txt
 cmd/                          # CLI commands (Cobra)
 ├── channels.go               # List Tunarr channels
-├── content_sources.go        # Manage Radarr/Sonarr/Jellyfin
 ├── generate.go               # Generate & apply schedules
 ├── run.go                    # Daemon mode with cron
 ├── tui.go                    # Launch terminal UI
@@ -49,10 +48,7 @@ internal/
 │   ├── history.go            # 7-day schedule history (prevent repeats)
 │   └── types.go
 ├── external/                 # API clients
-│   ├── tunarr/               # Tunarr REST API client
-│   ├── radarr/               # Radarr client (movies)
-│   ├── sonarr/               # Sonarr client (TV)
-│   └── jellyfin/             # Jellyfin sync
+│   └── tunarr/               # Tunarr REST API client
 ├── store/                    # SQLite state persistence
 │   └── migrations/           # DB migrations
 ├── tui/                      # Terminal UI (Bubble Tea)
@@ -65,9 +61,7 @@ internal/
 
 **Key Integration Points:**
 
-- **Tunarr:** Primary target - channels, programs, libraries
-- **Radarr/Sonarr:** Optional - filter by content availability
-- **Jellyfin:** Optional - refresh Live TV guide after schedule updates
+- **Tunarr:** Sole integration - channels, programs, libraries
 
 ## CLI Commands
 
