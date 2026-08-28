@@ -1,29 +1,123 @@
 {{ define "main" }}
-<div class="hero-panel graticule">
-  <h1>No Signal &mdash; Instrument Idle</h1>
-  <p>
-    Schedularr schedules Tunarr channels from cron-triggered content
-    blocks. This dashboard will read out Tunarr reachability, block
-    count, and recent history once the live readout is wired up.
-  </p>
-  <p>
-    Until then: arm your API token from the header, then use
-    <a href="/blocks/">Blocks</a> to define what airs, or
-    <a href="/schedule/">Schedule</a> to preview and apply it.
-  </p>
-  <dl class="hero-panel__meta">
-    <div>
-      <dt>Blocks</dt>
-      <dd>Filter and series content rules on a cron trigger</dd>
+<div x-data="dashboard" x-init="init()">
+  <div class="page-head">
+    <h1>Dashboard</h1>
+    <p>
+      Live readout from this instance's own API: Tunarr signal, block
+      count, and what has aired in the last 7 days.
+    </p>
+  </div>
+
+  <section class="hero-panel graticule status-card" aria-labelledby="status-card-title">
+    <h2 id="status-card-title" class="visually-hidden">System status</h2>
+
+    <template x-if="statusLoading">
+      <div class="skeleton-row" aria-hidden="true">
+        <span class="skeleton-bar" style="width: 6rem"></span>
+        <span class="skeleton-bar" style="width: 8rem"></span>
+        <span class="skeleton-bar" style="width: 4rem"></span>
+      </div>
+    </template>
+
+    <template x-if="!statusLoading && statusError">
+      <div class="problem" role="alert">
+        <p class="problem__title">Status unavailable</p>
+        <p class="problem__detail" x-text="statusError"></p>
+        <button type="button" class="btn btn--ghost btn--sm" @click="loadStatus()">Retry</button>
+      </div>
+    </template>
+
+    <template x-if="!statusLoading && !statusError && status">
+      <dl class="hero-panel__meta status-card__grid">
+        <div>
+          <dt>Version</dt>
+          <dd><code x-text="status.version"></code></dd>
+        </div>
+        <div>
+          <dt>Tunarr</dt>
+          <dd class="status-card__tunarr">
+            <span class="status-line">
+              <span
+                class="status-dot"
+                :data-state="status.tunarr_reachable ? 'ok' : 'down'"
+                aria-hidden="true"
+              ></span>
+              <span x-text="status.tunarr_reachable ? 'Signal' : 'No Signal'"></span>
+            </span>
+            <span
+              class="status-card__tunarr-detail"
+              x-show="!status.tunarr_reachable && status.tunarr_error"
+              x-text="status.tunarr_error"
+            ></span>
+          </dd>
+        </div>
+        <div>
+          <dt>Blocks</dt>
+          <dd x-text="status.blocks ?? '—'"></dd>
+        </div>
+      </dl>
+    </template>
+  </section>
+
+  <section class="history-section" aria-labelledby="history-title">
+    <div class="section-head">
+      <h2 id="history-title">Recent History</h2>
+      <p>Programs Schedularr has scheduled onto Tunarr channels in the last 7 days.</p>
     </div>
-    <div>
-      <dt>Schedule</dt>
-      <dd>Dry-run preview, then apply per channel</dd>
-    </div>
-    <div>
-      <dt>Series</dt>
-      <dd>Per-show season and episode cursor</dd>
-    </div>
-  </dl>
+
+    <template x-if="historyLoading">
+      <div class="skeleton-stack" aria-hidden="true">
+        <span class="skeleton-bar"></span>
+        <span class="skeleton-bar"></span>
+        <span class="skeleton-bar"></span>
+      </div>
+    </template>
+
+    <template x-if="!historyLoading && historyError">
+      <div class="problem" role="alert">
+        <p class="problem__title">History unavailable</p>
+        <p class="problem__detail" x-text="historyError"></p>
+        <button type="button" class="btn btn--ghost btn--sm" @click="loadHistory()">Retry</button>
+      </div>
+    </template>
+
+    <template x-if="!historyLoading && !historyError && history.length === 0">
+      <p class="empty-state graticule">
+        Nothing has aired yet. Once a block's schedule runs against Tunarr,
+        entries will show up here.
+      </p>
+    </template>
+
+    <template x-if="!historyLoading && !historyError && history.length > 0">
+      <div class="table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th scope="col">Scheduled</th>
+              <th scope="col">Channel</th>
+              <th scope="col">Block</th>
+              <th scope="col">Program ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(entry, index) in history" :key="index">
+              <tr>
+                <td x-text="formatLocal(entry.scheduled_at)"></td>
+                <td x-text="entry.channel_id ?? '—'"></td>
+                <td x-text="entry.block_name ?? '—'"></td>
+                <td class="history-table__id" x-text="entry.program_id ?? '—'"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </template>
+  </section>
 </div>
+{{ end }}
+
+{{ define "page_js" }}
+{{- $js := resources.Get "ts/pages/dashboard.ts" | js.Build (dict "targetPath" "js/dashboard.js") }}
+{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
+<script src="{{ $js.RelPermalink }}" defer></script>
 {{ end }}

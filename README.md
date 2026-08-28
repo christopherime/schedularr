@@ -886,6 +886,33 @@ every API request; it is never embedded in the served HTML/JS.
    **not** retry the action that failed — repeat it once the token is
    updated.
 
+### Page Tour
+
+#### Dashboard (`/`)
+
+The landing page. Two sections, each fetched independently on load
+(`web/assets/ts/pages/dashboard.ts`, bundled separately from the shell via
+the `page_js` template hook):
+
+- **System status** — reads `GET /api/v1/status`: the server `version`,
+  a Tunarr signal indicator, and the current block count. A Tunarr that
+  can't be reached renders as a normal instrument reading, not an error:
+  the status dot flips to "No Signal" and the server's own `tunarr_error`
+  text prints inline underneath it. `/status` reports this as a state, and
+  Tunarr being down doesn't mean Schedularr itself is broken.
+- **Recent History** — reads `GET /api/v1/history?days=7`: a table of
+  what has aired (scheduled time in the browser's local timezone, not the
+  UTC wire value, plus channel, block, and program ID). An empty result
+  renders an explanatory empty state ("Nothing has aired yet...") rather
+  than an empty table shell.
+
+Both sections load, error, and empty-state independently: a failed
+`/status` call doesn't block history from rendering, and vice versa. A
+failure renders the API's `problem+json` `title`/`detail` inline, next to
+the section that failed, with a **Retry** button — never a toast. Alpine's
+`x-text` sets `textContent`, so a `detail` string containing HTML stays
+literal text; nothing on this page goes through `innerHTML`.
+
 ---
 
 ## 🧪 Development

@@ -440,6 +440,17 @@ p {
   background: var(--color-danger);
 }
 
+/* Same coded-legend vocabulary, reused for a live reading rather than the
+   token's armed/unarmed state (dashboard's Tunarr-reachability dot). */
+.status-dot[data-state="ok"] {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.status-dot[data-state="down"] {
+  background: var(--color-danger);
+}
+
 /* -- token panel (native <dialog>) ---------------------------------------- */
 
 dialog.panel {
@@ -595,9 +606,10 @@ dialog.panel::backdrop {
   }
 }
 
-/* -- landing placeholder --------------------------------------------------
-   Task 4 replaces this with the real dashboard; the shell and world are
-   final, the content is honestly a placeholder. */
+/* -- panel: the bordered instrument surface --------------------------------
+   Originally the Task 3 landing placeholder; the dashboard's status card
+   (below) reuses it as-is rather than inventing a second panel primitive --
+   same border, radius, background, padding. */
 
 .hero-panel {
   border: var(--border-width) solid var(--color-border);
@@ -646,5 +658,199 @@ dialog.panel::backdrop {
 @media (max-width: 640px) {
   .hero-panel {
     padding: var(--space-6) var(--space-4);
+  }
+}
+
+/* -- dashboard: status card ------------------------------------------------
+   Content wrapper only -- chrome (border/radius/background/graticule) comes
+   from .hero-panel/.graticule above. status-card__grid is .hero-panel__meta
+   with the top rule removed: the card *is* the readout, there's no lede
+   paragraph pushing it down. */
+
+.status-card__grid {
+  margin: 0;
+  padding: 0;
+  border-top: none;
+}
+
+.status-card__tunarr {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Deliberately muted, not --color-danger: the brief is explicit that a
+   down Tunarr is a legitimate instrument reading, not an error toast. The
+   status-dot above already carries the severity signal; this line is the
+   reading's own text, same tone as any other secondary value on the page. */
+.status-card__tunarr-detail {
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+/* -- dashboard: section head (sits below the page-level h1) --------------- */
+
+.section-head {
+  margin-bottom: var(--space-4);
+}
+
+.section-head h2 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-lg);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.section-head p {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+.history-section {
+  margin-top: var(--space-7);
+}
+
+/* -- skeleton loading states ------------------------------------------------
+   A muted pulsing block, not a spinner -- operate.md's "skeleton states for
+   loading, not spinners in the middle of content." Freezes to a static
+   muted block under prefers-reduced-motion via the global animation-duration
+   override already set on * in the reset above. */
+
+.skeleton-bar {
+  display: block;
+  height: 1em;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-inset);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.skeleton-row {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.skeleton-stack .skeleton-bar {
+  height: 2.25rem;
+}
+
+/* -- inline problem panel (ApiError, network failure) ----------------------
+   Near the section that failed, not a toast -- PRODUCT.md's "No silent
+   failures: API errors surface inline, near the action that caused them." */
+
+.problem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-inset);
+}
+
+.problem__title {
+  margin: 0;
+  font-weight: 700;
+  color: var(--color-danger);
+}
+
+.problem__detail {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+/* -- history: empty state --------------------------------------------------- */
+
+.empty-state {
+  margin: 0;
+  padding: var(--space-6);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  max-width: 68ch;
+}
+
+/* -- history: table ----------------------------------------------------------
+   As-run log styling: heavier rule under the header (like an instrument
+   readout separator), tabular numerals on the timestamp column, horizontal
+   scroll on its own axis rather than the page (craft-floor's responsive
+   composition check). */
+
+.table-wrap {
+  overflow-x: auto;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.history-table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+  background: var(--color-bg-raised);
+}
+
+.history-table th {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-muted);
+  border-bottom: var(--border-width-thick) solid var(--color-border-interactive);
+  white-space: nowrap;
+}
+
+.history-table td {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.history-table tbody tr:hover td {
+  background: var(--color-bg-inset);
+}
+
+.history-table__id {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .empty-state {
+    padding: var(--space-5) var(--space-4);
   }
 }
