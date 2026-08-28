@@ -59,12 +59,14 @@ type ScheduleRunner interface {
 // stored under.
 const tunarrCacheKey = "tunarr_programs.json"
 
-// contentCacheDuration mirrors cmd/schema/config.cue's cache.cache_duration
-// default ("1h"). The CLI sourced this from *config.Config, but NewRunner's
-// signature has no config parameter -- a Runner now lives for the lifetime
-// of an API server process and serves many Run calls, rather than the
-// CLI's one-shot-per-process use, so a fixed Runner-scoped duration
-// replaces the config-driven one.
+// contentCacheDuration is how long a Runner caches the fetched Tunarr
+// program list before refetching. There used to be a config-driven
+// cache.cache_duration CUE key mirroring this value, but nothing ever
+// actually read it into a Runner (the CLI's old fetch path was
+// per-invocation and therefore always cache-cold regardless), so it was
+// removed as dead config; a Runner now lives for the lifetime of an API
+// server process and serves many Run calls, so this fixed, Runner-scoped
+// duration is what actually governs cache behavior.
 const contentCacheDuration = time.Hour
 
 // Runner executes the schedule-generation workflow against a store and a

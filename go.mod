@@ -12,7 +12,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jedib0t/go-pretty/v6 v6.7.8
 	github.com/jmoiron/sqlx v1.4.0
-	github.com/lnquy/cron v1.1.1
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0
 	github.com/oapi-codegen/runtime v1.7.0

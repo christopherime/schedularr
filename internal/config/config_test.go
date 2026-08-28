@@ -254,29 +254,6 @@ func TestGenerateDefaultScheduler(t *testing.T) {
 	}
 }
 
-func TestCacheDuration(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "config.yaml")
-
-	content := `cache:
-  cache_duration: "2h"
-`
-
-	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	cfg, err := Load(configFile)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-
-	duration := CacheDuration(cfg)
-	if duration.Hours() != 2 {
-		t.Errorf("Expected cache duration 2h, got %v", duration)
-	}
-}
-
 func TestMaintenanceConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")

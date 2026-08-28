@@ -4,9 +4,6 @@ package schema
 #SchedulerFile: {
 	// List of scheduling blocks
 	blocks: [...#Block]
-
-	// Optional global settings
-	settings?: #SchedulerSettings
 }
 
 // Example scheduler configuration with defaults
@@ -27,9 +24,4 @@ scheduler: #SchedulerFile & {
 			}
 		},
 	]
-	settings: {
-		rotation_window_days: 7
-		min_gap_minutes:      5
-		max_filler_minutes:   30
-	}
 }

@@ -19,9 +19,12 @@ log:
   level: string        # Optional: "debug", "info", "warn", "error" (default: "info")
   format: string       # Optional: "json", "text" (default: "text")
   timezone: string     # Optional: IANA Time Zone name (e.g., "America/New_York", default: "Local")
-
-metrics_port: int      # Optional: Port for Prometheus metrics and health check endpoints (default: 9090)
 ```
+
+Prometheus metrics are exposed at `GET /metrics` on the `schedularr serve`
+command's own HTTP listener (`api.listen`, default `:8484`) -- there is no
+separate `metrics_port` config key. See [README.md's Serve
+section](../README.md#-serve-api-server--cron).
 
 **Example:**
 
@@ -34,8 +37,6 @@ log:
   level: "info"
   format: "json"
   timezone: "Europe/London"
-
-metrics_port: 9091
 ```
 
 ### Scheduler Configuration (`scheduler.yaml`)
@@ -657,8 +658,6 @@ log:
   level: "info"
   format: "json"
   timezone: "America/New_York" # New: Example timezone
-
-metrics_port: 9090 # New: Example metrics port
 ```
 
 **scheduler.yaml:**

@@ -7,8 +7,4 @@ log:
   level: "info"
   format: "text"
 
-cache:
-  cache_dir: "/tmp/schedularr_test_cache"
-  cache_duration: "1h"
-
 database: "/tmp/schedularr_test.db"

@@ -11,11 +11,6 @@
     "log": {
       "$ref": "#/$defs/LogConfig"
     },
-    "metrics_port": {
-      "type": "integer",
-      "description": "Port for Prometheus metrics endpoint",
-      "default": 9090
-    },
     "database": {
       "type": "string",
       "description": "Path to SQLite database file",
@@ -31,12 +26,6 @@
       "description": "Interval between cron-driven schedule regenerate-and-apply cycles (the `serve` command). `serve --interval`/`-i` overrides this when passed explicitly.",
       "default": "6h",
       "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
-    },
-    "scheduler": {
-      "$ref": "#/$defs/SchedulerConfig"
-    },
-    "cache": {
-      "$ref": "#/$defs/CacheConfig"
     },
     "maintenance": {
       "$ref": "#/$defs/MaintenanceConfig"
@@ -102,34 +91,10 @@
       },
       "additionalProperties": false
     },
-    "CacheConfig": {
-      "type": "object",
-      "description": "Content caching settings",
-      "properties": {
-        "cache_dir": {
-          "type": "string",
-          "description": "Directory to store cached content metadata",
-          "default": "/tmp/schedularr_cache"
-        },
-        "cache_duration": {
-          "type": "string",
-          "description": "How long cached entries are considered valid (e.g., \"1h\", \"24h\")",
-          "default": "1h",
-          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
-        }
-      },
-      "additionalProperties": false
-    },
     "MaintenanceConfig": {
       "type": "object",
       "description": "Background maintenance task settings",
       "properties": {
-        "cleanup_interval": {
-          "type": "string",
-          "description": "How often to run cleanup tasks (e.g., \"24h\")",
-          "default": "24h",
-          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
-        },
         "history_retention": {
           "type": "string",
           "description": "How long to keep schedule history (e.g., \"168h\" for 7 days)",
@@ -162,45 +127,6 @@
           "type": "boolean",
           "description": "Skip bearer-token auth on /api/v1/* entirely. Local development only.",
           "default": false
-        }
-      },
-      "additionalProperties": false
-    },
-    "SchedulerConfig": {
-      "type": "object",
-      "description": "Scheduling configuration (inline, legacy support)",
-      "properties": {
-        "blocks": {
-          "type": "array",
-          "description": "List of scheduling blocks",
-          "items": {
-            "$ref": "#/$defs/Block"
-          }
-        },
-        "settings": {
-          "$ref": "#/$defs/SchedulerSettings"
-        }
-      },
-      "additionalProperties": false
-    },
-    "SchedulerSettings": {
-      "type": "object",
-      "description": "Global scheduler settings",
-      "properties": {
-        "rotation_window_days": {
-          "type": "integer",
-          "description": "Default rotation window in days (prevent re-scheduling within X days)",
-          "default": 7
-        },
-        "min_gap_minutes": {
-          "type": "integer",
-          "description": "Minimum gap time in minutes to trigger filler content",
-          "default": 5
-        },
-        "max_filler_minutes": {
-          "type": "integer",
-          "description": "Maximum filler duration in minutes",
-          "default": 30
         }
       },
       "additionalProperties": false

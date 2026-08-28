@@ -33,8 +33,3 @@ blocks:
       genres: ["Action", "Adventure"]
       ratings: ["PG-13", "R"]
       min_duration: 90
-
-settings:
-  rotation_window_days: 7
-  min_gap_minutes: 5
-  max_filler_minutes: 30

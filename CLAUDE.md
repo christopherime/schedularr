@@ -62,7 +62,6 @@ internal/
 ├── service/                  # Schedule generate/apply workflow (shared by CLI + API)
 ├── blockio/                  # scheduler.yaml parse/render + first-run store import
 ├── cache/                    # In-memory caching
-├── cronbuilder/              # Cron expression builder
 └── httpclient/               # HTTP client with retry
 ```
 

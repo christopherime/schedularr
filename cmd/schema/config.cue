@@ -9,9 +9,6 @@ package schema
 	// Logging configuration
 	log: #LogConfig
 
-	// Port for Prometheus metrics endpoint
-	metrics_port: int | *9090
-
 	// Path to SQLite database file
 	database: string | *"schedularr.db"
 
@@ -23,12 +20,6 @@ package schema
 	// the scheduler, not the HTTP server -- `serve --interval` overrides
 	// this value when explicitly passed.
 	cron_interval: string | *"6h"
-
-	// Inline scheduler configuration (legacy support)
-	scheduler?: #SchedulerConfig
-
-	// Content caching configuration
-	cache: #CacheConfig
 
 	// Maintenance configuration for background tasks
 	maintenance: #MaintenanceConfig
@@ -65,15 +56,6 @@ package schema
 	timeout: string | *"30s"
 }
 
-// CacheConfig defines content caching settings
-#CacheConfig: {
-	// Directory to store cached content metadata
-	cache_dir: string | *"/tmp/schedularr_cache"
-
-	// How long cached entries are considered valid (e.g., "1h", "24h")
-	cache_duration: string | *"1h"
-}
-
 // LogConfig defines logging settings
 #LogConfig: {
 	// Log level: debug, info, warn, error
@@ -88,35 +70,14 @@ package schema
 
 // MaintenanceConfig defines background maintenance task settings
 #MaintenanceConfig: {
-	// How often to run cleanup tasks (e.g., "24h")
-	cleanup_interval: string | *"24h"
-
-	// How long to keep schedule history (e.g., "168h" for 7 days)
+	// How long to keep schedule history (e.g., "168h" for 7 days). Also
+	// governs how much of the persisted schedule_history table GET
+	// /history?days=N (api/openapi.yaml, 1..90) can actually return -- see
+	// internal/service/schedule.go's NewRunner doc comment.
 	history_retention: string | *"168h"
 
 	// Whether to enable automatic cleanup
 	cleanup_enabled: bool | *true
-}
-
-// SchedulerConfig defines the scheduling configuration
-#SchedulerConfig: {
-	// List of scheduling blocks
-	blocks: [...#Block]
-
-	// Optional global settings
-	settings?: #SchedulerSettings
-}
-
-// SchedulerSettings defines global scheduler settings
-#SchedulerSettings: {
-	// Default rotation window in days (prevent re-scheduling within X days)
-	rotation_window_days: int | *7
-
-	// Minimum gap time in minutes to trigger filler content
-	min_gap_minutes: int | *5
-
-	// Maximum filler duration in minutes
-	max_filler_minutes: int | *30
 }
 
 // Block defines a scheduling block (filter-based or series-based)

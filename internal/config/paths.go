@@ -29,24 +29,19 @@ const (
 
 	// DefaultLogsDir is the default logs directory name.
 	DefaultLogsDir = "logs"
-
-	// DefaultSchedulesDir is the default schedules directory name.
-	DefaultSchedulesDir = "schedules"
 )
 
 // Paths holds resolved paths for Schedularr directories and files.
 type Paths struct {
-	ConfigFile   string
-	ConfigDir    string
-	LogsDir      string
-	SchedulesDir string
-	DataDir      string
+	ConfigFile string
+	ConfigDir  string
+	LogsDir    string
+	DataDir    string
 }
 
 // DefaultPaths returns OS-agnostic default paths based on user home directory.
 // Config: $HOME/.schedularr/config.yaml
 // Logs: $HOME/schedularr/logs/
-// Schedules: $HOME/schedularr/schedules/
 func DefaultPaths() (*Paths, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -57,11 +52,10 @@ func DefaultPaths() (*Paths, error) {
 	dataDir := filepath.Join(home, DefaultDataDir)
 
 	return &Paths{
-		ConfigFile:   filepath.Join(configDir, DefaultConfigFile),
-		ConfigDir:    configDir,
-		DataDir:      dataDir,
-		LogsDir:      filepath.Join(dataDir, DefaultLogsDir),
-		SchedulesDir: filepath.Join(dataDir, DefaultSchedulesDir),
+		ConfigFile: filepath.Join(configDir, DefaultConfigFile),
+		ConfigDir:  configDir,
+		DataDir:    dataDir,
+		LogsDir:    filepath.Join(dataDir, DefaultLogsDir),
 	}, nil
 }
 
@@ -128,7 +122,6 @@ func EnsureDirectories(p *Paths) error {
 		p.ConfigDir,
 		p.DataDir,
 		p.LogsDir,
-		p.SchedulesDir,
 	}
 
 	for _, dir := range dirs {
@@ -139,22 +132,6 @@ func EnsureDirectories(p *Paths) error {
 	}
 
 	return nil
-}
-
-// SchedulesDir returns the configured schedules directory from the app config,
-// or the default path if not configured.
-func SchedulesDir(cfg *Config) string {
-	if cfg != nil {
-		if dir := cfg.GetString("schedules_dir"); dir != "" {
-			return dir
-		}
-	}
-
-	defaults, err := DefaultPaths()
-	if err != nil {
-		return filepath.Join(".", DefaultSchedulesDir)
-	}
-	return defaults.SchedulesDir
 }
 
 // LogsDir returns the configured logs directory from the app config,

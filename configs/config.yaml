@@ -8,19 +8,15 @@ log:
   timezone: Local
   file: schedularr.log
 
-metrics_port: 9090
 database: schedularr.db
 scheduler_file: scheduler.yaml
 # How often `schedularr serve`'s cron loop regenerates and applies the
 # schedule. `serve --interval`/`-i` overrides this when passed explicitly.
 cron_interval: 6h
 
-cache:
-  cache_dir: /tmp/schedularr_cache
-  cache_duration: 1h
-
+# how long schedule_history rows are kept -- also bounds how far back
+# GET /history?days=N can query (see README.md's History Endpoint section)
 maintenance:
-  cleanup_interval: 24h
   history_retention: 168h
   cleanup_enabled: true
 

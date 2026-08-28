@@ -155,18 +155,13 @@ log:
   format: "text"             # text, json
   timezone: "Local"          # IANA time zone name
 
-metrics_port: 9090           # Prometheus metrics endpoint (schedularr health uses a separate port)
 database: "schedularr.db"    # SQLite database path
 scheduler_file: "scheduler.yaml"  # First-run block import file, see below
 cron_interval: "6h"          # `serve`'s cron loop cadence; `serve --interval`/`-i` overrides it
 
-cache:
-  cache_dir: "/tmp/schedularr_cache"
-  cache_duration: "1h"
-
 maintenance:
-  cleanup_interval: "24h"
-  history_retention: "168h"  # how long schedule_history rows are kept
+  history_retention: "168h"  # how long schedule_history rows are kept; also bounds
+                              # GET /history?days=N -- see the History Endpoint section
   cleanup_enabled: true
 
 api:                          # the `serve` command's HTTP server
@@ -174,6 +169,11 @@ api:                          # the `serve` command's HTTP server
   token: ""                  # bearer token for /api/v1/*; SCHEDULARR_API_TOKEN env var wins when set
   insecure_no_auth: false     # skip bearer auth entirely -- local development only
 ```
+
+There is no `metrics_port` config key: `schedularr serve` exposes Prometheus
+metrics at `GET /metrics` on the same listener as everything else
+(`--listen`/`api.listen`, default `:8484`) -- see [Serve](#-serve-api-server--cron)
+below.
 
 #### Scheduling Blocks
 
@@ -413,7 +413,6 @@ schedularr/
 │   ├── problem/                   # RFC 7807 application/problem+json helpers
 │   ├── metrics/                   # Prometheus metrics registration
 │   ├── cache/                     # In-memory caching
-│   ├── cronbuilder/               # Cron expression builder
 │   └── httpclient/                # HTTP client with retry
 ├── configs/
 │   └── config.yaml              # Example configuration

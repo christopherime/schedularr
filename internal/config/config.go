@@ -68,19 +68,9 @@ func LogTimezone(cfg *Config) string {
 	return cfg.GetString("log.timezone")
 }
 
-// MetricsPort returns the configured metrics port.
-func MetricsPort(cfg *Config) int {
-	return cfg.GetInt("metrics_port")
-}
-
 // DatabasePath returns the configured database path.
 func DatabasePath(cfg *Config) string {
 	return cfg.GetString("database")
-}
-
-// CacheDuration returns the configured cache duration.
-func CacheDuration(cfg *Config) time.Duration {
-	return cfg.GetDuration("cache.cache_duration")
 }
 
 // MaintenanceCleanupEnabled returns whether cleanup is enabled.
