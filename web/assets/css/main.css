@@ -729,6 +729,10 @@ dialog.panel::backdrop {
   height: 1em;
   border-radius: var(--radius-sm);
   background: var(--color-bg-inset);
+  /* 1.2s is deliberately off the --duration-fast/--duration-base tokens:
+     those time discrete state transitions (open, hover), not an ambient
+     idle-loading loop -- a transition-speed duration here would read as
+     nervous, not calm. */
   animation: skeleton-pulse 1.2s ease-in-out infinite;
 }
 

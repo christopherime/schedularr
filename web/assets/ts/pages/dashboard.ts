@@ -23,15 +23,18 @@ declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
 };
 
-// Guards against a double x-init call firing two redundant sets of fetches
-// on the same page load. Module-level (not per-component-instance state)
-// because it needs to hold even if something re-runs the Alpine.data
-// factory itself, not just re-invokes init() on the same instance -- found
-// empirically via a jsdom-based verification harness (two full
-// status+history fetch pairs landed within 1ms of each other on load); a
-// real browser may or may not hit the same path, but the guard is correct
-// and cheap either way: one dashboard load should mean one status fetch and
-// one history fetch, never two.
+// Root cause of an earlier double-fetch bug, for the record: Alpine
+// auto-invokes a data object's own init() method as part of component
+// initialization (documented magic behavior -- see
+// https://alpinejs.dev/globals/alpine-data). The dashboard root element
+// ALSO had x-init="init()" on it, so the same method ran twice per page
+// load, every time, in any real browser -- not a jsdom artifact. Fixed by
+// deleting x-init from web/layouts/index.html; the rule going forward is
+// never wire x-init to a method that Alpine.data() already names init().
+//
+// This guard stays as defense-in-depth, not as the fix: cheap insurance
+// against a future accidental double-wire (someone re-adding x-init, a
+// second component instance, etc.), not a mystery workaround.
 let started = false;
 
 interface DashboardState {
