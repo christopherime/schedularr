@@ -40,6 +40,21 @@ var (
 	genJellyfinSyncLiveTV bool
 )
 
+// colorEnabled reports whether ANSI color codes should be emitted. It mirrors
+// the auto-detection lipgloss used to do: honor NO_COLOR
+// (https://no-color.org/) and only colorize when stdout is an actual
+// terminal, so piped, redirected, cron, and CI output (this task's own
+// --yes-driven scripting use case included) stays escape-code free.
+// Evaluated lazily (not cached) so it always reflects the current
+// environment/redirection state, which also keeps it directly testable.
+func colorEnabled() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
 // style is a minimal ANSI text-color helper for CLI output. It replaces the
 // former charmbracelet/lipgloss dependency: the TUI (lipgloss's only other
 // consumer) is gone, so this package keeps colored terminal output without
@@ -48,9 +63,13 @@ type style struct {
 	code string
 }
 
-// Render wraps text in the style's ANSI escape sequence.
-func (s style) Render(text string) string {
-	return "\x1b[" + s.code + "m" + text + "\x1b[0m"
+// Render wraps str in the style's ANSI escape sequence, or returns it
+// unstyled when color output is disabled (see colorEnabled).
+func (s style) Render(str string) string {
+	if !colorEnabled() {
+		return str
+	}
+	return "\x1b[" + s.code + "m" + str + "\x1b[0m"
 }
 
 // Color styles
