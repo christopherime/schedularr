@@ -396,6 +396,30 @@ body (`internal/api/problem.go`).
 The API is not yet wired to an HTTP server; that lands in a later task,
 which will also serve the contract itself at `/openapi.json`.
 
+### Middleware
+
+`internal/api/middleware` provides the four pieces of middleware every
+`/api/v1/*` route will run through once the router is wired up:
+
+- **Request ID** — generates a fresh identifier for every request (an
+  inbound `X-Request-Id` header is never trusted), returns it on the
+  response as `X-Request-Id`, and makes it available to
+  `api.WriteProblem` so every problem+json body includes the same id.
+- **Logging** — writes one structured `slog` line per request with the
+  keys `method`, `path`, `status`, `duration_ms`, `request_id`.
+- **Recovery** — turns a panic in a handler into a `500`
+  `application/problem+json` response and logs it with a stack trace,
+  instead of crashing the process.
+- **Bearer auth** — requires `Authorization: Bearer <token>` on protected
+  routes. The token is compared as a SHA-256 digest via
+  `crypto/subtle.ConstantTimeCompare`, and a token under 32 characters is
+  rejected when the middleware is constructed. A missing or wrong token
+  gets a `401` problem+json response.
+
+System endpoints served outside `internal/api` — `/healthz`, `/livez`
+(from `schedularr health`), and `/metrics` (from `schedularr run`) — are
+not part of the OpenAPI contract and do not go through bearer auth.
+
 ---
 
 ## 🧪 Development
