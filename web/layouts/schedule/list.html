@@ -155,11 +155,12 @@
     class="panel"
     x-ref="confirmDialog"
     aria-labelledby="apply-confirm-title"
-    @click="if ($event.target === $refs.confirmDialog) cancelApply()"
+    @click="if ($event.target === $refs.confirmDialog && !applying) cancelApply()"
+    @cancel="if (applying) $event.preventDefault()"
   >
     <div class="panel__head">
       <h2 id="apply-confirm-title" x-text="'Apply ' + applyScopeLabel()"></h2>
-      <button type="button" class="btn btn--icon" @click="cancelApply()" aria-label="Close">
+      <button type="button" class="btn btn--icon" :disabled="applying" @click="cancelApply()" aria-label="Close">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
           <path d="M6 6l12 12M18 6L6 18"></path>
         </svg>
@@ -169,7 +170,7 @@
       <p class="panel__hint" x-text="applyConfirmBody()"></p>
     </div>
     <div class="panel__actions">
-      <button type="button" class="btn btn--ghost" @click="cancelApply()">Cancel</button>
+      <button type="button" class="btn btn--ghost" :disabled="applying" @click="cancelApply()">Cancel</button>
       <div class="panel__actions-right">
         <button
           type="button"

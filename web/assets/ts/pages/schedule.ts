@@ -153,7 +153,7 @@ interface ScheduleState {
 
   preview(): Promise<void>;
   requestApply(): void;
-  cancelApply(): void;
+  cancelApply(force?: boolean): void;
   confirmApply(): Promise<void>;
 
   channelEntries(): ChannelEntry[];
@@ -281,7 +281,20 @@ document.addEventListener("alpine:init", () => {
         this.$refs.confirmDialog.showModal();
       },
 
-      cancelApply() {
+      // State-level guard, not just the view layer's :disabled/backdrop
+      // checks in list.html: refuses to close the dialog while an apply is
+      // in flight, same "explicit re-entrancy guard" convention blocks.ts
+      // uses for pendingId (toggleEnabled/performDelete). This is the last
+      // line of defense against a dismissed-but-still-mutating dialog --
+      // :disabled on Cancel/close-X and the backdrop handler's `!applying`
+      // check exist too, but neither is trustworthy on its own (a disabled
+      // attribute is a browser-enforced UI convention, not a guarantee this
+      // method itself can rely on). confirmApply() passes force:true for
+      // its own two closes, both of which happen deliberately while
+      // `applying` is still true (it flips false in the `finally` clause
+      // that runs after).
+      cancelApply(force = false) {
+        if (this.applying && !force) return;
         this.$refs.confirmDialog.close();
       },
 
@@ -311,19 +324,33 @@ document.addEventListener("alpine:init", () => {
           // controls -- an applied plan is a past action, not a standing
           // offer to repeat it with one more click.
           this.previewedRequest = null;
-          this.cancelApply();
+          this.cancelApply(true);
         } catch (err) {
           this.applyError = toProblem(err);
-          this.cancelApply();
+          this.cancelApply(true);
         } finally {
           this.applying = false;
         }
       },
 
+      // Server order is per-block, not per-channel: the engine concatenates
+      // each block's own occurrences (internal/scheduler/engine.go's
+      // GenerateForTimeRange iterates blocks, appending each one's slots to
+      // its channel's list), so a channel fed by two blocks (e.g. a morning
+      // block and an evening block) arrives grouped by block, not sorted by
+      // time. The binding contract calls for "slots chronological", so each
+      // channel's slots are sorted here -- start_time is an RFC 3339
+      // date-time (api/openapi.yaml's ScheduledSlot.start_time), and RFC
+      // 3339's fixed field widths make its string form sort identically to
+      // its chronological order, so a plain lexicographic compare is exact,
+      // not an approximation.
       channelEntries() {
         if (!this.plan) return [];
         return Object.entries(this.plan.channels)
-          .map(([id, slots]) => ({ id, slots }))
+          .map(([id, slots]) => ({
+            id,
+            slots: [...slots].sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? "")),
+          }))
           .sort((a, b) => a.id.localeCompare(b.id));
       },
 
