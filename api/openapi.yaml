@@ -80,6 +80,10 @@ paths:
                 $ref: "#/components/schemas/ImportResult"
         "400":
           $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
   /blocks/export:
     get:
       operationId: exportBlocks
@@ -198,6 +202,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SeriesState"
+        "400":
+          $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
   /channels:
