@@ -18,12 +18,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/geekxflood/schedularr/internal/config"
-	"github.com/geekxflood/schedularr/internal/cronbuilder"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
-	"github.com/geekxflood/schedularr/internal/schedule"
-	"github.com/geekxflood/schedularr/internal/scheduler"
-	"github.com/geekxflood/schedularr/internal/store"
+	"github.com/christopherime/schedularr/internal/config"
+	"github.com/christopherime/schedularr/internal/cronbuilder"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/schedule"
+	"github.com/christopherime/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/store"
 	"github.com/robfig/cron/v3"
 )
 

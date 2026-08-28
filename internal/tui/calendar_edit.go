@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/geekxflood/schedularr/internal/schedule"
+	"github.com/christopherime/schedularr/internal/schedule"
 )
 
 // Edit modal field indices

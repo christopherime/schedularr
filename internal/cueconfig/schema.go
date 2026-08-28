@@ -13,7 +13,7 @@ import (
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
-	"github.com/geekxflood/schedularr/cmd/schema"
+	"github.com/christopherime/schedularr/cmd/schema"
 	"gopkg.in/yaml.v3"
 )
 

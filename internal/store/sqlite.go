@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )

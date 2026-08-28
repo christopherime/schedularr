@@ -7,10 +7,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/geekxflood/schedularr/internal/config"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
-	"github.com/geekxflood/schedularr/internal/store"
-	"github.com/geekxflood/schedularr/internal/tui"
+	"github.com/christopherime/schedularr/internal/config"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/store"
+	"github.com/christopherime/schedularr/internal/tui"
 	"github.com/spf13/cobra"
 )
 

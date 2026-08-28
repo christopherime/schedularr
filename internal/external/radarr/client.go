@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/geekxflood/schedularr/internal/httpclient"
+	"github.com/christopherime/schedularr/internal/httpclient"
 )
 
 // Client is a Radarr API client.

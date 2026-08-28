@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

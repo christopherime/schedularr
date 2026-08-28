@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/geekxflood/schedularr/internal/cueconfig"
-	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/cueconfig"
+	"github.com/christopherime/schedularr/internal/scheduler"
 )
 
 func TestLoad(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 )
 
 // ScheduleHistoryEntry represents a single program that was scheduled.

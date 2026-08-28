@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 )
 
 func TestScheduleHistory_RecordAndCheck(t *testing.T) {

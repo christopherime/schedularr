@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/geekxflood/schedularr/internal/config"
-	"github.com/geekxflood/schedularr/internal/scheduler"
-	"github.com/geekxflood/schedularr/internal/store"
+	"github.com/christopherime/schedularr/internal/config"
+	"github.com/christopherime/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/store"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"

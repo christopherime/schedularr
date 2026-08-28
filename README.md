@@ -7,7 +7,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.25.5+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/geekxflood/schedularr/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/christopherime/schedularr/pulls)
 
 **Automate your TV channel programming with powerful rule-based scheduling, advanced content filtering, and seamless Tunarr integration.**
 
@@ -64,7 +64,7 @@ Schedularr is a sophisticated Go application that transforms how you manage cont
 
 ```bash
 # Clone the repository
-git clone https://github.com/geekxflood/schedularr.git
+git clone https://github.com/christopherime/schedularr.git
 cd schedularr
 
 # Build the binary
@@ -77,7 +77,7 @@ sudo mv schedularr /usr/local/bin/
 #### Option 2: Using Go Install
 
 ```bash
-go install github.com/geekxflood/schedularr@latest
+go install github.com/christopherime/schedularr@latest
 ```
 
 ### Initial Setup
@@ -503,15 +503,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 🐛 **Issues**: [GitHub Issues](https://github.com/geekxflood/schedularr/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/geekxflood/schedularr/discussions)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/christopherime/schedularr/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/christopherime/schedularr/discussions)
 - 📧 **Email**: [Contact](mailto:christopherime@me.com)
 
 ---
 
 <div align="center">
 
-**Made with ❤️ by [Geekxflood](https://github.com/geekxflood)**
+**Made with ❤️ by [christopherime](https://github.com/christopherime)**
 
 ⭐ Star this repo if you find it useful!
 

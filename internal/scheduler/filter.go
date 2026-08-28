@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/samber/lo"
 )
 

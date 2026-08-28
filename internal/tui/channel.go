@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 )
 
 // ConnectionStatus represents the connection state to Tunarr.

@@ -3,9 +3,9 @@ package cmd
 import (
 	"testing"
 
-	"github.com/geekxflood/schedularr/internal/external/radarr"
-	"github.com/geekxflood/schedularr/internal/external/sonarr"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/external/radarr"
+	"github.com/christopherime/schedularr/internal/external/sonarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 )
 
 func TestNormalizeTitle(t *testing.T) {

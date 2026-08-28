@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/geekxflood/schedularr/internal/cache"
-	"github.com/geekxflood/schedularr/internal/config"
-	"github.com/geekxflood/schedularr/internal/external/radarr"
-	"github.com/geekxflood/schedularr/internal/external/sonarr"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/cache"
+	"github.com/christopherime/schedularr/internal/config"
+	"github.com/christopherime/schedularr/internal/external/radarr"
+	"github.com/christopherime/schedularr/internal/external/sonarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 )
 
 const (

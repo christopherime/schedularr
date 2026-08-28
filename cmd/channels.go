@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/geekxflood/schedularr/internal/config"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/config"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 )

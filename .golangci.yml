@@ -153,7 +153,7 @@ linters:
               desc: "Deprecated: use another package"
           allow:
             - $gostd
-            - github.com/geekxflood/schedularr
+            - github.com/christopherime/schedularr
             - github.com/rs/zerolog
             - github.com/go-chi/chi/v5
             - cuelang.org/go

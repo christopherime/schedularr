@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/geekxflood/schedularr/internal/httpclient"
-	"github.com/geekxflood/schedularr/internal/metrics"
+	"github.com/christopherime/schedularr/internal/httpclient"
+	"github.com/christopherime/schedularr/internal/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

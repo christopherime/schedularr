@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/geekxflood/schedularr/internal/cueconfig"
+	"github.com/christopherime/schedularr/internal/cueconfig"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

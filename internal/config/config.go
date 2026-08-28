@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/cueconfig"
-	"github.com/geekxflood/schedularr/internal/external/jellyfin"
-	"github.com/geekxflood/schedularr/internal/external/radarr"
-	"github.com/geekxflood/schedularr/internal/external/sonarr"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
-	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/cueconfig"
+	"github.com/christopherime/schedularr/internal/external/jellyfin"
+	"github.com/christopherime/schedularr/internal/external/radarr"
+	"github.com/christopherime/schedularr/internal/external/sonarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/scheduler"
 	"gopkg.in/yaml.v3"
 )
 

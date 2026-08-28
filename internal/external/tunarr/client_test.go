@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/geekxflood/schedularr/internal/httpclient"
+	"github.com/christopherime/schedularr/internal/httpclient"
 )
 
 func TestClient_GetChannels(t *testing.T) {

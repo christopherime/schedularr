@@ -8,9 +8,9 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/geekxflood/schedularr/internal/cronbuilder"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
-	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/cronbuilder"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/scheduler"
 )
 
 // ContentAnalysis contains analysis of available content in Tunarr.

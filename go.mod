@@ -1,6 +1,6 @@
-module github.com/geekxflood/schedularr
+module github.com/christopherime/schedularr
 
-go 1.25.5
+go 1.27
 
 require (
 	cuelang.org/go v0.15.3

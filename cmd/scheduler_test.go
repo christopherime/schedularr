@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/geekxflood/schedularr/internal/config"
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
-	"github.com/geekxflood/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/config"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/scheduler"
 )
 
 func TestValidateChannelIDs(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/geekxflood/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 )
 
 // TestIntegration_FullSchedulingWorkflow tests the complete scheduling workflow
