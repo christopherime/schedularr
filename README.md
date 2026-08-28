@@ -766,11 +766,26 @@ restarts and logging, the same way you'd run any other Go server binary.
 ## 🖥️ Web UI
 
 A Hugo-built web UI lives in `web/` and is embedded into the `schedularr`
-binary via `go:embed` (`web/embed.go`, `package web`, `web.Site()`). The UI
-build is source-only right now — `internal/api/router.go` does not yet
-mount it, so `schedularr serve` does not serve these pages. A committed
-placeholder (`web/public/index.html`) keeps `go build ./...` working
-without Hugo installed.
+binary via `go:embed` (`web/embed.go`, `package web`, `web.Site()`). A
+committed placeholder (`web/public/index.html`, `web/public/404.html`)
+keeps `go build ./...` working without Hugo installed.
+
+`schedularr serve` mounts `web.Site()` as `internal/api.Config.UI` and
+serves it from the router's catch-all `NotFound` handler: the four system
+routes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`) and `/api/v1/*`
+still win first, and everything else falls through to the embedded site.
+A directory request resolves to that directory's `index.html` (`/` →
+`index.html`, `/blocks/` → `blocks/index.html`); the same request without
+its trailing slash (`/blocks`) gets a 301 redirect to the slash form, like
+`net/http.FileServer`. A path that matches no file serves `404.html` with
+HTTP 404 (falling back to a plain-text 404 if the embedded site has no
+`404.html`); non-GET/HEAD requests get a 405. Every response the UI
+handler serves carries `X-Content-Type-Options: nosniff` and
+`Referrer-Policy: same-origin`, and Content-Type comes from the resolved
+file's extension via `http.ServeContent`. An unmatched `/api/v1/*` path
+still answers its own JSON `problem+json` 404 rather than the UI's HTML
+page (`internal/api/router.go`'s `apiNotFoundHandler`). See
+`internal/api/ui.go` for the implementation.
 
 ### Prerequisites
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -186,4 +187,151 @@ func TestRouter_ReadyzPanicIsRecoveredNotConnectionDrop(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	assert.Equal(t, "application/problem+json", resp.Header.Get("Content-Type"))
+}
+
+// --- Embedded UI serving (Config.UI) ---
+
+// testUIFS is a small fstest.MapFS standing in for web.Site()'s real
+// embedded output: a root index.html, a 404.html, and a "blocks" section
+// with its own index.html -- enough to exercise directory-index
+// resolution without depending on `make web` having run.
+func testUIFS() fstest.MapFS {
+	return fstest.MapFS{
+		"index.html":        &fstest.MapFile{Data: []byte("<html><body>schedularr ui</body></html>")},
+		"404.html":          &fstest.MapFile{Data: []byte("<html><body>not found</body></html>")},
+		"blocks/index.html": &fstest.MapFile{Data: []byte("<html><body>blocks</body></html>")},
+	}
+}
+
+func newUIRouterTest(t *testing.T) http.Handler {
+	t.Helper()
+	r, err := NewRouter(Config{InsecureNoAuth: true, UI: testUIFS()}, Deps{Store: newRouterTestStore(t), Logger: slog.Default()})
+	require.NoError(t, err)
+	return r
+}
+
+func TestRouter_UIServesIndexAtRoot(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "text/html; charset=utf-8", w.Header().Get("Content-Type"))
+	assert.Contains(t, w.Body.String(), "schedularr ui")
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "same-origin", w.Header().Get("Referrer-Policy"))
+}
+
+func TestRouter_UIServesDirectoryIndex(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/blocks/", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "text/html; charset=utf-8", w.Header().Get("Content-Type"))
+	assert.Contains(t, w.Body.String(), "blocks")
+}
+
+// TestRouter_UIRedirectsDirectoryWithoutTrailingSlash documents this
+// package's chosen resolution for "/blocks" (no trailing slash): a 301
+// redirect to "/blocks/", matching net/http.FileServer's own behavior for
+// a directory request missing its slash.
+func TestRouter_UIRedirectsDirectoryWithoutTrailingSlash(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/blocks", nil))
+	assert.Equal(t, http.StatusMovedPermanently, w.Code)
+	assert.Equal(t, "/blocks/", w.Header().Get("Location"))
+}
+
+func TestRouter_UIUnknownPathServes404Page(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nope", nil))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "not found")
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+}
+
+func TestRouter_UIPostToUnknownPathIsMethodNotAllowed(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/anything", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestRouter_UITraversalAttemptRejected confirms a ".." path segment in
+// the request never escapes the embedded UI filesystem -- it's treated
+// identically to an unknown path (the 404 page), not served as some other
+// file (e.g. the module's real embed.go) and not a 500.
+func TestRouter_UITraversalAttemptRejected(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/../embed.go", nil))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "not found")
+}
+
+// TestRouter_UIAPIv1StillRequiresBearerToken confirms mounting the UI
+// doesn't change /api/v1/*'s existing auth gating.
+func TestRouter_UIAPIv1StillRequiresBearerToken(t *testing.T) {
+	r, err := NewRouter(Config{Token: routerTestToken, UI: testUIFS()}, Deps{Store: newRouterTestStore(t), Logger: slog.Default()})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/blocks", nil))
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
+}
+
+// TestRouter_UIAPIv1UnknownPathStaysJSON is the key route-precedence
+// check: with the UI mounted, an unmatched /api/v1/* path must still get
+// the API's own JSON 404 (apiNotFoundHandler), not the UI's HTML 404 page.
+// Without router.go explicitly setting sr.NotFound(apiNotFoundHandler)
+// before mounting /api/v1, chi.Mux.NotFound would push the HTML handler
+// down onto the /api/v1 sub-router too, since it propagates onto any
+// mounted sub-router whose own NotFound handler is still nil at the time
+// r.NotFound(...) is called on the parent.
+func TestRouter_UIAPIv1UnknownPathStaysJSON(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/nonexistent", nil))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
+	assert.NotContains(t, w.Body.String(), "<html")
+}
+
+// TestRouter_UIHealthzStillWorks confirms mounting the UI doesn't shadow
+// the four system routes (chi matches exact/registered routes before ever
+// falling through to NotFound).
+func TestRouter_UIHealthzStillWorks(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestRouter_NilUIKeepsPreviousNotFoundBehavior confirms Config.UI == nil
+// (the zero value) leaves chi's own default 404 in place, exactly as
+// before this package could serve a UI at all -- no behavior change for
+// any caller that doesn't set UI.
+func TestRouter_NilUIKeepsPreviousNotFoundBehavior(t *testing.T) {
+	r, err := NewRouter(Config{InsecureNoAuth: true}, Deps{Store: newRouterTestStore(t), Logger: slog.Default()})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nope", nil))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "404 page not found\n", w.Body.String())
+	// Referrer-Policy, unlike X-Content-Type-Options, isn't something
+	// net/http.Error sets on its own -- so its absence here is the useful
+	// discriminator that nil UI really did skip newUIHandler entirely
+	// rather than merely producing a similar-looking 404.
+	assert.Empty(t, w.Header().Get("Referrer-Policy"), "nil UI must not add the UI-only Referrer-Policy header")
 }

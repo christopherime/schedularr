@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
@@ -34,6 +35,15 @@ type Config struct {
 	// anyone who can reach the listener. Meant for local development only,
 	// never a real deployment.
 	InsecureNoAuth bool
+
+	// UI is the embedded web UI's filesystem (web.Site(), rooted so
+	// "index.html" and "404.html" are top-level entries). When set,
+	// NewRouter installs it as the router's catch-all r.NotFound handler
+	// (see newUIHandler) so any GET/HEAD that doesn't match a system route
+	// or /api/v1/* serves a file from it, falling back to 404.html. When
+	// nil, NewRouter leaves chi's default 404 behavior untouched -- the
+	// previous behavior, before the UI existed.
+	UI fs.FS
 }
 
 // NewRouter builds the full HTTP handler for the Schedularr API server.
@@ -65,6 +75,13 @@ type Config struct {
 // and Logging must wrap Recovery so a recovered panic's 500 still gets
 // logged with the right status). BearerAuth is the innermost layer, right
 // before the real handler; it's included unless cfg.InsecureNoAuth is set.
+// An unmatched /api/v1/* path answers 404 problem+json (apiNotFoundHandler),
+// not the UI's HTML 404 page.
+//
+// Finally, when cfg.UI is set, every other GET/HEAD (i.e. anything that
+// isn't one of the four system routes or under /api/v1) is served from it
+// as a static site -- see newUIHandler. cfg.UI == nil skips this entirely,
+// leaving chi's own default 404 for unmatched paths.
 //
 // NewRouter itself performs no I/O and never blocks. Constructing
 // middleware.BearerAuth is its only fallible step, so -- with
@@ -107,10 +124,39 @@ func NewRouter(cfg Config, d Deps) (http.Handler, error) {
 		if authMW != nil {
 			sr.Use(authMW)
 		}
+		// Set explicitly, and before gen.HandlerFromMux populates the rest
+		// of the tree, so this sub-router's own notFoundHandler is already
+		// non-nil by the time r.Route's caller (chi.Mux.Mount) runs, and
+		// stays that way regardless of what r.NotFound(...) is called with
+		// below. chi.Mux.NotFound only pushes a router's NotFound handler
+		// down onto an already-mounted sub-router when that sub-router's
+		// own handler is still nil -- without this, an unmatched
+		// /api/v1/* path would fall through to the UI's HTML 404 page
+		// instead of staying JSON. See apiNotFoundHandler's doc comment.
+		sr.NotFound(apiNotFoundHandler)
 		gen.HandlerFromMux(h, sr)
 	})
 
+	// Config.UI == nil keeps chi's own default 404 (http.NotFound) for
+	// every unmatched path -- the behavior before the UI existed. Only
+	// install the UI's catch-all handler when there's an embedded site to
+	// serve.
+	if cfg.UI != nil {
+		r.NotFound(newUIHandler(cfg.UI))
+	}
+
 	return r, nil
+}
+
+// apiNotFoundHandler is the 404 handler for the /api/v1 sub-router. It
+// keeps an unmatched /api/v1/* path answering with the same RFC 7807
+// problem+json body every other API error uses, instead of silently
+// falling through to whatever the top-level router's NotFound handler is
+// (the UI's HTML 404 page, once Config.UI is set) -- see where NewRouter
+// registers it on sr, above, for why it has to be set before r.Route's
+// Mount call completes.
+func apiNotFoundHandler(w http.ResponseWriter, r *http.Request) {
+	WriteProblem(w, r, http.StatusNotFound, "not found", "no such /api/v1 endpoint")
 }
 
 // healthzHandler reports process liveness only -- no dependency checks --

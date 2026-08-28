@@ -20,6 +20,7 @@ import (
 	"github.com/christopherime/schedularr/internal/metrics"
 	"github.com/christopherime/schedularr/internal/service"
 	"github.com/christopherime/schedularr/internal/store"
+	"github.com/christopherime/schedularr/web"
 )
 
 // Version is the build version reported by GET /api/v1/status
@@ -139,8 +140,13 @@ func runServe(cmd *cobra.Command) error {
 
 	metrics.RegisterMetrics()
 
+	site, err := web.Site()
+	if err != nil {
+		return fmt.Errorf("failed to load embedded web UI: %w", err)
+	}
+
 	router, err := api.NewRouter(
-		api.Config{Token: config.APIToken(cfg), InsecureNoAuth: insecureNoAuth},
+		api.Config{Token: config.APIToken(cfg), InsecureNoAuth: insecureNoAuth, UI: site},
 		api.Deps{Store: st, Tunarr: client, Sched: runner, Logger: logger, Version: Version},
 	)
 	if err != nil {

@@ -73,10 +73,13 @@ web/                           # Hugo web UI, embedded into the binary via go:em
 └── public/                      # Hugo build output -- gitignored; placeholder committed via git add -f
 ```
 
-Not yet wired into `internal/api/router.go` / `cmd/serve.go` -- that lands
-in a later web-UI task. `make build` requires `web/public` to be non-empty
-(the committed placeholder satisfies this); Hugo and Node are only needed
-to run `make web`, never to build the Go binary itself.
+`cmd/serve.go` passes `web.Site()` into `internal/api.Config.UI`;
+`internal/api/router.go` mounts it as the router's catch-all `NotFound`
+handler (`internal/api/ui.go`) so `schedularr serve` serves it directly --
+system routes and `/api/v1/*` still win first. `make build` requires
+`web/public` to be non-empty (the committed placeholder satisfies this);
+Hugo and Node are only needed to run `make web`, never to build the Go
+binary itself.
 
 **Data Flow:** Config + SQLite block store → Scheduling Engine → Tunarr API → Channel Programming
 
