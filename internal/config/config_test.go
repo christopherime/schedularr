@@ -143,6 +143,36 @@ func TestSchedulerFilePath(t *testing.T) {
 	}
 }
 
+// TestSchedulerFilePath_DefaultsWhenOmitted verifies the CUE schema default
+// for scheduler_file (cmd/schema/config.cue: `scheduler_file: string |
+// *"scheduler.yaml"`) actually reaches SchedulerFilePath when a config file
+// doesn't set the key. SchedulerFilePath dropped the old $HOME-search
+// fallback that FindSchedulerConfig used to have when scheduler_file was
+// unset; this test is the guarantee that the CUE default (not an empty
+// string) is what blockio.Bootstrap gets instead.
+func TestSchedulerFilePath_DefaultsWhenOmitted(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	// No scheduler_file key at all.
+	content := `tunarr:
+  url: "http://localhost:8000"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if got := SchedulerFilePath(cfg); got != "scheduler.yaml" {
+		t.Errorf("Expected CUE-schema default 'scheduler.yaml' when scheduler_file is omitted, got %q", got)
+	}
+}
+
 func TestGenerateDefaultConfig(t *testing.T) {
 	validator := cueconfig.NewValidator()
 	data, err := validator.GenerateConfig("yaml")
