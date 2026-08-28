@@ -913,6 +913,65 @@ the section that failed, with a **Retry** button — never a toast. Alpine's
 `x-text` sets `textContent`, so a `detail` string containing HTML stays
 literal text; nothing on this page goes through `innerHTML`.
 
+#### Blocks (`/blocks/`)
+
+List every stored block and create/edit/delete them, backed entirely by
+`GET/POST/PUT/DELETE /api/v1/blocks[/{id}]` (`web/assets/ts/pages/blocks.ts`).
+One page, no routing between list and editor: a **+ New Block** button and
+each row's **Edit** open an inline panel above the list (not a native
+`<dialog>` — this form is a multi-minute task, long enough that
+interrupting the page for it isn't worth it), which auto-scrolls into view
+and focuses the name field when it opens.
+
+**List** — name, a type badge (`filter`/`series`), the raw cron plus a
+plain-language hint underneath it when the pattern is recognized (see
+"Cron hint" below), `channel_id`, an **Enabled/Disabled** toggle, and
+**Edit**/**Delete**. Delete requires a second click ("Delete" → inline
+**Confirm**/**Cancel**, not a native `confirm()` dialog) before anything is
+sent. Both the toggle and every editor save use `PUT
+/api/v1/blocks/{id}` with the **full** `BlockWrite` body — `enabled` is
+always sent explicitly (the API defaults an omitted `enabled` to `true` on
+write, and this UI never relies on that default) and the toggle sends the
+block's own stored `spec` back byte-for-byte unchanged, since PUT has no
+partial-update form.
+
+**Editor — common fields**: name, cron, duration (minutes), channel,
+priority, max duration overflow (minutes), and enabled. `channel_id` is a
+`<select>` populated from `GET /api/v1/channels` when Tunarr answers with
+at least one channel; it falls back to a free-text input (with an inline
+reason) when the call fails or returns nothing — same "legitimate reading,
+not an error" treatment as the dashboard's Tunarr status. Editing a block
+whose stored `channel_id` isn't in that list keeps it selectable (labeled
+"not in Tunarr's channel list") instead of silently swapping the channel
+out from under the operator on save.
+
+**Editor — type**: `filter` shows genres/ratings/title-pattern(regex)/year
+range/duration range/tags (comma-separated inputs map to arrays; an empty
+input omits the field, it is never sent as `[]`). `series` shows repeating
+rows (show title, episodes per block, start season/episode, on-complete,
+skip-episodes, max runs — add/remove freely) plus a fallback section
+(redistribute/filler, with a nested filter subset when filler is chosen).
+A **Filler** section (enabled, filler list ID, max filler time, min gap
+time) is available for either type, since `BlockSpec.filler` isn't gated
+by `type` in the schema. Every section maps 1:1 onto `BlockSpec` — nothing
+is invented, and the submitted JSON only ever contains fields the operator
+actually filled in, plus `type` and `enabled` (always explicit).
+
+**Cron hint** — a small hand-rolled reader for common 5-field patterns
+(fixed time, optionally restricted to specific weekdays: `"0 20 * * 6"` →
+"Saturdays at 20:00", `"0 6 * * *"` → "Daily at 06:00", weekday/weekend
+groups collapse to "Weekdays"/"Weekends"), not a cron-parsing dependency.
+Anything outside that shape (a day-of-month/month restriction, a list on
+minute/hour) shows no hint — only the raw cron — rather than guessing
+wrong.
+
+**Validation** — `skip_episodes` is checked client-side against `SxxExx`
+(e.g. `S01E05`) before submit, with the exact invalid token(s) named
+inline; everything else (missing/invalid required fields, a duplicate
+name) is left to the API. A `400` renders its `title`/`detail` inline near
+the submit button; a `409` (duplicate name) renders under the **name**
+field specifically, not mixed in with the generic error.
+
 ---
 
 ## 🧪 Development

@@ -1,0 +1,347 @@
+{{ define "main" }}
+<div x-data="blocks">
+  <div class="page-head">
+    <h1>Blocks</h1>
+    <p>
+      Scheduling rules that generate programs for Tunarr channels. Toggle,
+      edit, or remove a block below, or arm a new one.
+    </p>
+  </div>
+
+  <div class="blocks-toolbar">
+    <button type="button" id="new-block-btn" class="btn btn--primary" @click="openCreate()">+ New Block</button>
+  </div>
+
+  <section id="block-editor" class="editor-panel graticule" x-show="editor.open" x-cloak aria-labelledby="editor-title">
+    <form @submit.prevent="submit()" novalidate>
+      <div class="panel__head">
+        <h2 id="editor-title" x-text="editor.mode === 'create' ? 'New Block' : 'Edit Block'"></h2>
+        <button type="button" class="btn btn--icon" @click="closeEditor()" aria-label="Close editor">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="panel__body">
+        <div class="form-section">
+          <div class="form-grid">
+            <div class="form-field">
+              <label for="editor-name">Name</label>
+              <input type="text" id="editor-name" x-model="editor.form.name" autocomplete="off">
+              <p class="form-field__error" x-show="editor.nameConflict" x-text="editor.nameConflict"></p>
+            </div>
+            <div class="form-field">
+              <label for="editor-type">Type</label>
+              <select id="editor-type" x-model="editor.form.type" @change="ensureSeriesRow()">
+                <option value="filter">Filter</option>
+                <option value="series">Series</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label for="editor-cron">Cron</label>
+              <input type="text" id="editor-cron" x-model="editor.form.cron" placeholder="0 20 * * 6" autocomplete="off">
+              <p class="form-field__hint" x-show="cronHint(editor.form.cron)" x-text="cronHint(editor.form.cron)"></p>
+            </div>
+            <div class="form-field">
+              <label for="editor-duration">Duration (minutes)</label>
+              <input type="number" min="1" id="editor-duration" x-model="editor.form.duration">
+            </div>
+            <div class="form-field">
+              <label for="editor-channel">Channel</label>
+              <template x-if="!channelsLoading && !channelsError && channels.length > 0">
+                <select id="editor-channel" x-model="editor.form.channel_id">
+                  <option value="">— select a channel —</option>
+                  <template x-for="c in channelSelectOptions()" :key="c.id">
+                    <option :value="c.id" x-text="channelLabel(c)"></option>
+                  </template>
+                </select>
+              </template>
+              <template x-if="channelsLoading || channelsError || channels.length === 0">
+                <input type="text" id="editor-channel" x-model="editor.form.channel_id" placeholder="channel-1" autocomplete="off">
+              </template>
+              <p class="form-field__hint" x-show="channelHint()" x-text="channelHint()"></p>
+            </div>
+            <div class="form-field">
+              <label for="editor-priority">Priority</label>
+              <input type="number" id="editor-priority" x-model="editor.form.priority" placeholder="10">
+            </div>
+            <div class="form-field">
+              <label for="editor-overflow">Max duration overflow (minutes)</label>
+              <input type="number" id="editor-overflow" x-model="editor.form.max_duration_overflow_minutes" placeholder="0">
+            </div>
+            <div class="form-field form-field--checkbox">
+              <label class="checkbox-field">
+                <input type="checkbox" x-model="editor.form.enabled">
+                <span>Enabled</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <template x-if="editor.form.type === 'filter'">
+          <div class="form-section">
+            <h3 class="form-section__title">Filter</h3>
+            <div class="form-grid">
+              <div class="form-field form-field--wide">
+                <label for="filter-title-pattern">Title pattern (regex)</label>
+                <input type="text" id="filter-title-pattern" x-model="editor.form.filter.title_pattern" placeholder="^Star.*">
+              </div>
+              <div class="form-field">
+                <label for="filter-genres">Genres</label>
+                <input type="text" id="filter-genres" x-model="editor.form.filter.genres" placeholder="Comedy, Drama">
+              </div>
+              <div class="form-field">
+                <label for="filter-ratings">Ratings</label>
+                <input type="text" id="filter-ratings" x-model="editor.form.filter.ratings" placeholder="PG, PG-13">
+              </div>
+              <div class="form-field">
+                <label for="filter-year-from">Year from</label>
+                <input type="number" id="filter-year-from" x-model="editor.form.filter.year_from">
+              </div>
+              <div class="form-field">
+                <label for="filter-year-to">Year to</label>
+                <input type="number" id="filter-year-to" x-model="editor.form.filter.year_to">
+              </div>
+              <div class="form-field">
+                <label for="filter-min-duration">Min duration (minutes)</label>
+                <input type="number" id="filter-min-duration" x-model="editor.form.filter.min_duration">
+              </div>
+              <div class="form-field">
+                <label for="filter-max-duration">Max duration (minutes)</label>
+                <input type="number" id="filter-max-duration" x-model="editor.form.filter.max_duration">
+              </div>
+              <div class="form-field">
+                <label for="filter-tags">Tags</label>
+                <input type="text" id="filter-tags" x-model="editor.form.filter.tags" placeholder="favorite, classic">
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="editor.form.type === 'series'">
+          <div class="form-section">
+            <h3 class="form-section__title">Series</h3>
+            <div class="series-rows">
+              <template x-for="(row, index) in editor.form.series" :key="index">
+                <div class="series-row">
+                  <div class="series-row__head">
+                    <span class="series-row__index" x-text="'Series ' + (index + 1)"></span>
+                    <button type="button" class="btn btn--danger-ghost btn--sm" @click="removeSeriesRow(index)">Remove</button>
+                  </div>
+                  <div class="form-grid">
+                    <div class="form-field form-field--wide">
+                      <label :for="'series-title-' + index">Show title</label>
+                      <input type="text" :id="'series-title-' + index" x-model="row.show_title">
+                    </div>
+                    <div class="form-field">
+                      <label :for="'series-episodes-' + index">Episodes per block</label>
+                      <input type="number" min="1" :id="'series-episodes-' + index" x-model="row.episodes_per_block">
+                    </div>
+                    <div class="form-field">
+                      <label :for="'series-start-season-' + index">Start season</label>
+                      <input type="number" min="1" :id="'series-start-season-' + index" x-model="row.start_season">
+                    </div>
+                    <div class="form-field">
+                      <label :for="'series-start-episode-' + index">Start episode</label>
+                      <input type="number" min="1" :id="'series-start-episode-' + index" x-model="row.start_episode">
+                    </div>
+                    <div class="form-field">
+                      <label :for="'series-on-complete-' + index">On complete</label>
+                      <select :id="'series-on-complete-' + index" x-model="row.on_complete">
+                        <option value="continue">Continue</option>
+                        <option value="restart">Restart</option>
+                        <option value="disable">Disable</option>
+                      </select>
+                    </div>
+                    <div class="form-field">
+                      <label :for="'series-max-runs-' + index">Max runs</label>
+                      <input type="number" min="0" :id="'series-max-runs-' + index" x-model="row.max_runs" placeholder="0 = unlimited">
+                    </div>
+                    <div class="form-field form-field--wide">
+                      <label :for="'series-skip-' + index">Skip episodes</label>
+                      <input type="text" :id="'series-skip-' + index" x-model="row.skip_episodes" placeholder="S01E02, S01E04">
+                      <p class="form-field__error" x-show="editor.seriesRowErrors[index]" x-text="editor.seriesRowErrors[index]"></p>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <button type="button" id="add-series-row-btn" class="btn btn--ghost btn--sm" @click="addSeriesRow()">+ Add series</button>
+          </div>
+        </template>
+
+        <template x-if="editor.form.type === 'series'">
+          <div class="form-section">
+            <h3 class="form-section__title">Fallback</h3>
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="fallback-mode">When the series completes</label>
+                <select id="fallback-mode" x-model="editor.form.fallback.mode">
+                  <option value="">— none —</option>
+                  <option value="redistribute">Redistribute</option>
+                  <option value="filler">Filler</option>
+                </select>
+              </div>
+            </div>
+            <template x-if="editor.form.fallback.mode === 'filler'">
+              <div class="form-grid form-grid--follows">
+                <div class="form-field form-field--wide">
+                  <label for="fallback-title-pattern">Fallback title pattern (regex)</label>
+                  <input type="text" id="fallback-title-pattern" x-model="editor.form.fallback.fillerFilter.title_pattern">
+                </div>
+                <div class="form-field">
+                  <label for="fallback-genres">Fallback genres</label>
+                  <input type="text" id="fallback-genres" x-model="editor.form.fallback.fillerFilter.genres" placeholder="Comedy, Drama">
+                </div>
+                <div class="form-field">
+                  <label for="fallback-ratings">Fallback ratings</label>
+                  <input type="text" id="fallback-ratings" x-model="editor.form.fallback.fillerFilter.ratings" placeholder="PG, PG-13">
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <div class="form-section">
+          <h3 class="form-section__title">Filler <span class="form-section__note">(optional gap filler, either block type)</span></h3>
+          <div class="form-grid">
+            <div class="form-field form-field--checkbox">
+              <label class="checkbox-field">
+                <input type="checkbox" x-model="editor.form.filler.enabled">
+                <span>Enabled</span>
+              </label>
+            </div>
+            <div class="form-field">
+              <label for="filler-list-id">Filler list ID</label>
+              <input type="text" id="filler-list-id" x-model="editor.form.filler.filler_list_id">
+            </div>
+            <div class="form-field">
+              <label for="filler-max-time">Max filler time (minutes)</label>
+              <input type="number" id="filler-max-time" x-model="editor.form.filler.max_filler_time">
+            </div>
+            <div class="form-field">
+              <label for="filler-min-gap">Min gap time (minutes)</label>
+              <input type="number" id="filler-min-gap" x-model="editor.form.filler.min_gap_time">
+            </div>
+          </div>
+        </div>
+
+        <p class="panel__status" data-tone="error" x-show="editor.error" x-text="editor.error" role="alert"></p>
+      </div>
+
+      <div class="panel__actions">
+        <div class="panel__actions-right">
+          <button type="button" class="btn btn--ghost" @click="closeEditor()">Cancel</button>
+          <button
+            type="submit"
+            class="btn btn--primary"
+            :disabled="editor.submitting"
+            x-text="editor.submitting ? 'Saving…' : (editor.mode === 'create' ? 'Create' : 'Save')"
+          ></button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <section class="blocks-section" aria-labelledby="blocks-title">
+    <div class="section-head">
+      <h2 id="blocks-title">All Blocks</h2>
+      <p>Every scheduling rule currently stored, enabled or not.</p>
+    </div>
+
+    <p class="panel__status" data-tone="error" x-show="listError" x-text="listError" role="alert"></p>
+
+    <template x-if="blocksLoading">
+      <div class="skeleton-stack" aria-hidden="true">
+        <span class="skeleton-bar"></span>
+        <span class="skeleton-bar"></span>
+        <span class="skeleton-bar"></span>
+      </div>
+    </template>
+
+    <template x-if="!blocksLoading && blocksError">
+      <div class="problem" role="alert">
+        <p class="problem__title">Blocks unavailable</p>
+        <p class="problem__detail" x-text="blocksError"></p>
+        <button type="button" class="btn btn--ghost btn--sm" @click="loadBlocks()">Retry</button>
+      </div>
+    </template>
+
+    <template x-if="!blocksLoading && !blocksError && blocks.length === 0">
+      <p class="empty-state graticule">No blocks yet. Arm one with "+ New Block" above.</p>
+    </template>
+
+    <template x-if="!blocksLoading && !blocksError && blocks.length > 0">
+      <div class="table-wrap">
+        <table class="history-table blocks-table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Type</th>
+              <th scope="col">Cron</th>
+              <th scope="col">Channel</th>
+              <th scope="col">Status</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="block in blocks" :key="block.id">
+              <tr>
+                <td x-text="block.name"></td>
+                <td><span class="badge" :data-type="block.spec.type" x-text="block.spec.type"></span></td>
+                <td>
+                  <div class="blocks-table__cron">
+                    <code x-text="block.spec.cron"></code>
+                    <span class="blocks-table__cron-hint" x-show="cronHint(block.spec.cron)" x-text="cronHint(block.spec.cron)"></span>
+                  </div>
+                </td>
+                <td x-text="block.spec.channel_id"></td>
+                <td>
+                  <button
+                    type="button"
+                    class="toggle"
+                    role="switch"
+                    :aria-checked="block.enabled"
+                    :disabled="pendingId === block.id"
+                    @click="toggleEnabled(block)"
+                  >
+                    <span class="toggle__track"><span class="toggle__thumb"></span></span>
+                    <span class="toggle__label" x-text="block.enabled ? 'Enabled' : 'Disabled'"></span>
+                  </button>
+                </td>
+                <td class="blocks-table__actions">
+                  <template x-if="confirmDeleteId !== block.id">
+                    <div class="row-actions">
+                      <button type="button" class="btn btn--ghost btn--sm" @click="openEdit(block)">Edit</button>
+                      <button type="button" class="btn btn--danger-ghost btn--sm" @click="requestDelete(block.id)">Delete</button>
+                    </div>
+                  </template>
+                  <template x-if="confirmDeleteId === block.id">
+                    <div class="row-actions row-actions--confirm">
+                      <span class="row-actions__prompt">Delete this block?</span>
+                      <button
+                        type="button"
+                        class="btn btn--danger-ghost btn--sm"
+                        :disabled="pendingId === block.id"
+                        @click="performDelete(block.id)"
+                      >Confirm</button>
+                      <button type="button" class="btn btn--ghost btn--sm" @click="cancelDelete()">Cancel</button>
+                    </div>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </template>
+  </section>
+</div>
+{{ end }}
+
+{{ define "page_js" }}
+{{- $js := resources.Get "ts/pages/blocks.ts" | js.Build (dict "targetPath" "js/blocks.js") }}
+{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
+<script src="{{ $js.RelPermalink }}" defer></script>
+{{ end }}
