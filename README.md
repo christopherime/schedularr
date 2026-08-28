@@ -453,10 +453,16 @@ Notes:
 - `POST /generate` always runs a dry run (`applied: false` in the response)
   regardless of the request body -- it never mutates the store or Tunarr.
   Only `POST /apply` (`applied: true` on success) pushes anything.
-- `channel_id`, when set, narrows the returned `channels` map to that one
-  channel and, for `POST /apply`, restricts which channel's schedule is
-  actually pushed via `UpdateSchedule` -- a channel-scoped apply request
-  never touches a channel the caller didn't ask about.
+- `channel_id`, when set, restricts *which blocks get planned at all* --
+  not just which channels appear in the response or get pushed via
+  `UpdateSchedule`. `Runner.Run` filters the active blocks down to that
+  channel's before handing them to `scheduler.Engine`, so a channel-scoped
+  `POST /apply` never touches Tunarr, schedule history, or series-cursor
+  state for any other channel: `scheduler.Engine` mutates pending
+  series-state and history for every block it plans, so filtering only the
+  result map after planning (an earlier version of this behavior) would
+  still have let `Engine.Commit()` persist state for channels the request
+  never asked about, even though nothing was pushed to Tunarr for them.
 - A `Runner.Run` failure (loading blocks, fetching Tunarr content,
   generating the schedule, or -- on apply -- `UpdateSchedule`/`Commit`)
   returns `502` (`title: "schedule generation failed"`) with a short, fixed

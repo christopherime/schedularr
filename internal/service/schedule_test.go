@@ -203,9 +203,12 @@ func TestRunner_Run_Apply_PushesToTunarrAndCommits(t *testing.T) {
 // TestRunner_Run_ChannelIDNarrowsResultAndApply verifies the extraction's
 // resolution of an ambiguity the task brief left open ("ChannelID filters
 // the result map when set" without specifying whether that happens before
-// or after the apply push): narrowing happens first, so a channel-scoped
-// apply request only ever pushes to that channel, never to others the
-// generated plan also covered.
+// or after the apply push): scoping happens to the *blocks*, before
+// planning (blocksForChannel, called from Run), so a channel-scoped apply
+// request only ever pushes to that channel, never to others. See
+// TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched below
+// for the deeper regression test proving planning itself -- not just the
+// returned/pushed result -- stays scoped.
 func TestRunner_Run_ChannelIDNarrowsResultAndApply(t *testing.T) {
 	server, fake := newFakeTunarr(t, canonicalPrograms())
 	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
@@ -235,6 +238,129 @@ func TestRunner_Run_ChannelIDNarrowsResultAndApply(t *testing.T) {
 	updates := fake.updatedChannels()
 	assert.Contains(t, updates, "channel-1")
 	assert.NotContains(t, updates, "channel-2", "apply must not push to a channel outside the requested scope")
+}
+
+// TestBlocksForChannel proves the mechanism Run relies on to keep planning
+// itself scoped to o.ChannelID (see Run's doc comment for why narrowing
+// only the *result* isn't enough: scheduler.Engine mutates pending state
+// for every block it's given to plan, regardless of channel). Exercised
+// directly at the Go-value level -- not through the HTTP-mediated
+// fetch/plan pipeline the other tests in this file use -- so a series
+// block's ShowTitle can be asserted on freely; see
+// TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched below
+// for why that isn't possible end-to-end through Run.
+func TestBlocksForChannel(t *testing.T) {
+	blocks := []scheduler.Block{
+		{Name: "Channel One Filter", ChannelID: "channel-1"},
+		{
+			Name: "Channel Two Series", ChannelID: "channel-2",
+			Type:   scheduler.BlockTypeSeries,
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Some Show", EpisodesPerBlock: 1}},
+		},
+		{Name: "Channel One Second Block", ChannelID: "channel-1"},
+	}
+
+	got := blocksForChannel(blocks, "channel-1")
+
+	require.Len(t, got, 2)
+	assert.Equal(t, "Channel One Filter", got[0].Name)
+	assert.Equal(t, "Channel One Second Block", got[1].Name)
+	for _, b := range got {
+		assert.Equal(t, "channel-1", b.ChannelID)
+	}
+
+	assert.Empty(t, blocksForChannel(blocks, "channel-3"), "a channel with no matching block returns empty, not nil-panicking or all blocks")
+}
+
+// programsForChannelScopeTest returns canonicalPrograms() plus one
+// "episode" program that
+// TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched uses
+// to make channel-2's series block actually match and advance state when
+// planned -- so that test can prove state advancement is *suppressed* by
+// channel scoping, rather than merely observing an always-empty result
+// that would pass whether or not the scoping fix actually works. See that
+// test's doc comment for why the series block's ShowTitle is deliberately
+// "".
+func programsForChannelScopeTest() []tunarr.Program {
+	return append(canonicalPrograms(), tunarr.Program{
+		ID: "ep-1", Title: "Pilot", Type: "episode",
+		SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000,
+	})
+}
+
+// TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched is
+// the end-to-end regression test for the bug this package's Run fixes:
+// before the fix, Run planned every enabled block regardless of
+// o.ChannelID and only narrowed the *returned* map afterward, so
+// Engine.Commit() on a channel-scoped apply still persisted series-cursor
+// advances and "aired" history for every other channel's blocks too, even
+// though nothing was pushed to Tunarr for them.
+//
+// The fixture: channel-1 has a filter block (applied); channel-2 has a
+// series block that is never applied. The series block's SeriesConfig
+// ShowTitle is deliberately "" -- matching a canned "episode" program
+// whose ShowTitle is also, unavoidably, "" after the HTTP round trip:
+// tunarr.Program.ShowTitle is tagged `json:"-"`
+// (internal/external/tunarr/models.go) and so is never actually populated
+// by SearchPrograms over HTTP in this codebase today, for any show title
+// -- a separate, pre-existing gap outside this fix's scope. Using "" on
+// both sides is what makes findEpisode's match succeed despite that gap,
+// which is what makes this a *discriminating* regression test: without
+// the blocksForChannel pre-filter in Run, channel-2's series state would
+// visibly start advancing (and get committed) here; with it, this test
+// fails loudly if that guarantee ever regresses, rather than passing
+// vacuously regardless of whether scoping works.
+func TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched(t *testing.T) {
+	server, fake := newFakeTunarr(t, programsForChannelScopeTest())
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Channel One Filter", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Channel One Filter", Cron: "0 * * * *", Duration: 60, ChannelID: "channel-1",
+		},
+	}))
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-2", Name: "Channel Two Series", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Channel Two Series", Cron: "0 * * * *", Duration: 30, ChannelID: "channel-2",
+			Type:   scheduler.BlockTypeSeries,
+			Series: []scheduler.SeriesConfig{{ShowTitle: "", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC)
+
+	result, err := r.Run(ctx, Options{Days: 1, Apply: true, ChannelID: "channel-1"})
+	require.NoError(t, err)
+	assert.True(t, result.Applied)
+	assert.Len(t, result.Channels, 1, "result must only ever contain the requested channel")
+	assert.Contains(t, result.Channels, "channel-1")
+
+	updates := fake.updatedChannels()
+	assert.Contains(t, updates, "channel-1")
+	assert.NotContains(t, updates, "channel-2", "apply must never push to a channel outside the requested scope")
+
+	// Store-side purity, part 1: schedule history was recorded only for
+	// the applied channel.
+	history, err := st.ListScheduleHistory(ctx, time.Time{})
+	require.NoError(t, err)
+	require.NotEmpty(t, history, "channel-1's filter block should have recorded history on apply")
+	for _, entry := range history {
+		assert.Equal(t, "channel-1", entry.ChannelID,
+			"no history entry should exist for the untouched channel-2 block")
+	}
+
+	// Store-side purity, part 2: channel-2's series block was never
+	// planned at all, so no series_state row was ever created for it --
+	// not "created but left unchanged", genuinely never written.
+	_, err = st.GetPersistedSeriesState(ctx, "")
+	assert.ErrorIs(t, err, store.ErrNotFound,
+		"channel-2's series block must never be planned, let alone committed, by a channel-1-scoped apply")
 }
 
 // TestActiveBlocks_ExcludesDisabled verifies that ActiveBlocks (moved from

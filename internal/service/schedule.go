@@ -30,10 +30,11 @@ import (
 // Options configures a single Run. Days is the number of 24h days ahead of
 // now to generate a schedule for; callers (the API's handlers, cmd/generate.go)
 // are responsible for validating it (the API restricts it to 1..30) --
-// Run does not re-validate it. ChannelID, when non-empty, narrows both the
-// returned result and (when Apply is set) which channels get pushed to
-// Tunarr, to that one channel. Apply gates whether Run mutates anything:
-// false is a pure dry-run (no UpdateSchedule calls, no Engine.Commit()).
+// Run does not re-validate it. ChannelID, when non-empty, restricts which
+// blocks are planned at all -- see Run's doc comment for why that matters
+// beyond just narrowing the returned/pushed result. Apply gates whether Run
+// mutates anything: false is a pure dry-run (no UpdateSchedule calls, no
+// Engine.Commit()).
 type Options struct {
 	Days      int
 	ChannelID string
@@ -121,16 +122,48 @@ func ActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error
 }
 
 // Run executes one generate-(and-maybe-apply) cycle: load the active
-// blocks, fetch available Tunarr content, run the scheduling engine over
-// [now, now+o.Days days), narrow the result to o.ChannelID when set, and --
-// only when o.Apply is set -- push the (possibly narrowed) result to
+// blocks (restricted to o.ChannelID's blocks when set -- see below), fetch
+// available Tunarr content, run the scheduling engine over [now,
+// now+o.Days days), and -- only when o.Apply is set -- push the result to
 // Tunarr per channel and commit the engine's pending state. A dry run
 // (o.Apply == false) never calls UpdateSchedule or Commit, so it cannot
 // mutate the store or Tunarr.
+//
+// o.ChannelID filtering happens to the *blocks*, before scheduler.Engine
+// ever sees them -- not just to the result map after planning. This
+// matters because Engine plans every block it's given: for each one it
+// mutates in-memory pending state (series-cursor advances in
+// pendingStates, "aired" rows in pendingHistory -- see
+// planSeriesForConfig/recordHistory in engine.go) regardless of whether
+// that block's channel ends up in the caller's requested scope. If
+// filtering were applied only to Run's *return value* (as an earlier
+// version of this function did), a channel-scoped Apply would still plan
+// -- and Engine.Commit() would still persist -- every other channel's
+// series cursors and history, even though nothing was pushed to Tunarr
+// for them: series scheduling on untouched channels would silently skip
+// episodes or wrongly dedup against history it never actually aired.
+// Pre-filtering the blocks slice keeps planning itself scoped, so
+// pendingStates/pendingHistory can only ever contain entries for blocks
+// on the requested channel.
+//
+// A ChannelID that matches no enabled block (typo, disabled, unknown
+// channel) is not an error: blocks ends up empty, Engine plans nothing,
+// and Run returns Result{Applied: o.Apply, Channels: <empty map>} with
+// nothing planned or committed -- the same "well-formed request, nothing
+// to schedule" treatment an empty result gets for any other reason. An
+// error was considered (an unrecognized channel_id could reasonably be a
+// caller mistake worth surfacing loudly), but Run has no channel registry
+// to validate against here -- only Tunarr does, via GetChannels, which
+// Run never calls -- so rejecting it would mean guessing at "known
+// channels" from a source Run doesn't otherwise consult.
 func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	blocks, err := ActiveBlocks(ctx, r.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load scheduling blocks: %w", err)
+	}
+
+	if o.ChannelID != "" {
+		blocks = blocksForChannel(blocks, o.ChannelID)
 	}
 
 	programs, err := r.fetchPrograms(ctx)
@@ -149,12 +182,15 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	// out of scope for this task's extraction (see the package doc
 	// comment: engine logic itself is unchanged), so ctx can't actually be
 	// propagated any further than here.
-	plan, err := engine.GenerateForTimeRange(start, end, programs) //nolint:contextcheck
+	//
+	// channels is already scoped to o.ChannelID by construction here: every
+	// block fed to NewEngine above has ChannelID == o.ChannelID (when set),
+	// and GenerateForTimeRange keys its result by each block's ChannelID,
+	// so no separate "narrow the result map" step is needed anymore.
+	channels, err := engine.GenerateForTimeRange(start, end, programs) //nolint:contextcheck
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate schedule: %w", err)
 	}
-
-	channels := narrowToChannel(plan, o.ChannelID)
 
 	if o.Apply {
 		if err := r.applyChannels(ctx, channels); err != nil {
@@ -168,30 +204,37 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	return &Result{Applied: o.Apply, Channels: channels}, nil
 }
 
-// narrowToChannel returns plan unchanged when channelID is empty, or a map
-// containing only that channel's slots (empty if the channel has none)
-// otherwise. Run applies this before the optional apply step, so a
-// channel-scoped request (POST /apply with channel_id set) only ever
-// touches that one channel's Tunarr schedule -- it never pushes to
-// channels the caller didn't ask about, and the returned Result.Channels
-// always matches exactly what Apply (if set) pushed.
-func narrowToChannel(plan map[string][]scheduler.ScheduledSlot, channelID string) map[string][]scheduler.ScheduledSlot {
-	if channelID == "" {
-		return plan
+// blocksForChannel returns only the blocks whose ChannelID matches
+// channelID -- the mechanism behind Run's channel-scoping guarantee (see
+// Run's doc comment). Called only when channelID is non-empty; an empty
+// result (no block targets that channel) is valid and handled by Run, not
+// here.
+func blocksForChannel(blocks []scheduler.Block, channelID string) []scheduler.Block {
+	filtered := make([]scheduler.Block, 0, len(blocks))
+	for _, b := range blocks {
+		if b.ChannelID == channelID {
+			filtered = append(filtered, b)
+		}
 	}
-	narrowed := make(map[string][]scheduler.ScheduledSlot)
-	if slots, ok := plan[channelID]; ok {
-		narrowed[channelID] = slots
-	}
-	return narrowed
+	return filtered
 }
 
 // applyChannels pushes each channel's flattened program list to Tunarr via
 // UpdateSchedule, best-effort across channels (mirroring cmd/generate.go's
 // former applySchedule): every channel is attempted even if an earlier one
 // failed. If any channel failed, it returns an aggregate error and Run
-// skips Engine.Commit() -- state is only committed once every channel in
-// the (possibly narrowed) result was successfully pushed.
+// skips Engine.Commit() entirely -- pre-existing partial-failure behavior,
+// unchanged by this package's extraction. Two consequences worth being
+// explicit about: (1) Commit is all-or-nothing across the *whole* result,
+// not per-channel -- one failing channel means series-cursor advances and
+// history for every other (successfully pushed) channel in this same Run
+// are discarded too, not just the failed one; and (2) a channel that *did*
+// successfully receive UpdateSchedule before a later channel failed is not
+// rolled back on Tunarr's side -- Run has no compensating action for that,
+// so Tunarr and Schedularr's own commit state can end up disagreeing about
+// that channel until the next successful Run. Neither is new: the old
+// cmd/generate.go applyScheduleAndSync/applySchedule pair had the same
+// shape (loop every channel, then Commit() once only if none failed).
 func (r *Runner) applyChannels(ctx context.Context, channels map[string][]scheduler.ScheduledSlot) error {
 	failCount := 0
 	for channelID, slots := range channels {
