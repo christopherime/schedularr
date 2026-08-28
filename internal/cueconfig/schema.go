@@ -23,11 +23,6 @@ type Config struct {
 	data map[string]any
 }
 
-// SchedulerConfig represents the scheduler configuration loaded from CUE.
-type SchedulerConfig struct {
-	data map[string]any
-}
-
 // SchemaValidator provides CUE schema validation and config loading
 type SchemaValidator struct {
 	ctx *cue.Context
@@ -109,55 +104,6 @@ func (v *SchemaValidator) LoadConfigWithEnvInterpolation(path string) (*Config, 
 	}
 
 	return v.LoadConfig([]byte(expanded), format)
-}
-
-// LoadSchedulerConfig loads scheduler configuration from YAML/JSON data
-func (v *SchemaValidator) LoadSchedulerConfig(data []byte, format string) (*SchedulerConfig, error) {
-	// Compile the combined schema (strip package declaration from scheduler to avoid duplicate)
-	combinedSchema := combineSchemas(schema.ConfigSchema, schema.SchedulerSchema)
-	schemaValue := v.ctx.CompileString(combinedSchema)
-	if schemaValue.Err() != nil {
-		return nil, fmt.Errorf("failed to compile scheduler schema: %w", schemaValue.Err())
-	}
-
-	// Get the #SchedulerFile definition
-	schedulerDef := schemaValue.LookupPath(cue.ParsePath("#SchedulerFile"))
-	if schedulerDef.Err() != nil {
-		return nil, fmt.Errorf("failed to get #SchedulerFile definition: %w", schedulerDef.Err())
-	}
-
-	// Parse the input data
-	var inputData map[string]any
-	switch format {
-	case "yaml", "yml":
-		if err := yaml.Unmarshal(data, &inputData); err != nil {
-			return nil, fmt.Errorf("failed to parse YAML: %w", err)
-		}
-	case "json":
-		if err := json.Unmarshal(data, &inputData); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON: %w", err)
-		}
-	default:
-		return nil, fmt.Errorf("unsupported format: %s", format)
-	}
-
-	// Encode and unify
-	inputValue := v.ctx.Encode(inputData)
-	if inputValue.Err() != nil {
-		return nil, fmt.Errorf("failed to encode input data: %w", inputValue.Err())
-	}
-
-	unified := schedulerDef.Unify(inputValue)
-	if err := unified.Validate(cue.Concrete(true)); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
-	}
-
-	var schedulerData map[string]any
-	if err := unified.Decode(&schedulerData); err != nil {
-		return nil, fmt.Errorf("failed to decode scheduler config: %w", err)
-	}
-
-	return &SchedulerConfig{data: schedulerData}, nil
 }
 
 // ValidateConfig validates configuration data against the schema without loading
@@ -429,26 +375,6 @@ func (c *Config) GetMap(path string) map[string]any {
 // ToYAML serializes the config to YAML
 func (c *Config) ToYAML() ([]byte, error) {
 	return yaml.Marshal(c.data)
-}
-
-// ============================================================================
-// SchedulerConfig accessor methods
-// ============================================================================
-
-// GetBlocks returns the blocks slice
-func (s *SchedulerConfig) GetBlocks() []map[string]any {
-	if v, ok := s.data["blocks"]; ok {
-		if blocks, ok := v.([]any); ok {
-			result := make([]map[string]any, 0, len(blocks))
-			for _, b := range blocks {
-				if block, ok := b.(map[string]any); ok {
-					result = append(result, block)
-				}
-			}
-			return result
-		}
-	}
-	return nil
 }
 
 // ============================================================================
