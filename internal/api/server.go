@@ -9,11 +9,19 @@ import (
 )
 
 // Deps holds the dependencies Handlers needs to serve requests. It starts
-// minimal; Tasks 12 and 13 add Tunarr and schedule-runner interfaces here.
+// minimal; Task 13 adds a schedule-runner interface here.
 type Deps struct {
 	Store   *store.Store
 	Logger  *slog.Logger
 	Version string
+
+	// Tunarr is the Tunarr API boundary used by ListChannels and GetStatus
+	// (see tunarr.go). Production wiring passes a *tunarr.Client, which
+	// satisfies TunarrAPI as-is; tests pass a fake. A nil Tunarr means
+	// "Tunarr integration not configured" -- both handlers treat that as a
+	// normal, expected state rather than a programming error, since a
+	// Schedularr deployment need not run Tunarr at all.
+	Tunarr TunarrAPI
 }
 
 // Handlers implements gen.ServerInterface. Every operation currently
@@ -62,12 +70,4 @@ func (h *Handlers) GetSchedule(w http.ResponseWriter, r *http.Request, _ gen.Get
 // ListSeriesState and PatchSeriesState implement gen.ServerInterface. See
 // state.go.
 
-// ListChannels implements gen.ServerInterface.
-func (h *Handlers) ListChannels(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "listChannels pending")
-}
-
-// GetStatus implements gen.ServerInterface.
-func (h *Handlers) GetStatus(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "getStatus pending")
-}
+// ListChannels and GetStatus implement gen.ServerInterface. See tunarr.go.

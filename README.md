@@ -467,6 +467,38 @@ Notes:
   `store.GetPersistedSeriesState`, added alongside it, which returns
   `ErrNotFound` when no row exists.
 
+### Channels and Status Endpoints
+
+Channels and status (`internal/api/tunarr.go`) are the Tunarr boundary:
+`ListChannels` proxies `GET /api/channels` on the configured Tunarr instance
+via a `TunarrAPI` interface (`GetChannels(ctx) ([]tunarr.Channel, error)`)
+added to `Deps`, and `GetStatus` reports overall service health, probing
+Tunarr reachability through the same interface. Production wiring passes a
+`*tunarr.Client` (it satisfies `TunarrAPI` unmodified); `Deps.Tunarr` may
+also be `nil`, meaning "no Tunarr integration configured" -- both handlers
+treat that the same as a Tunarr connectivity failure, not a programming
+error.
+
+| Method | Path        | Success | Error codes |
+| ------ | ----------- | ------- | ----------- |
+| GET    | `/channels` | 200     | 502         |
+| GET    | `/status`   | 200     | —           |
+
+Notes:
+
+- `GET /channels` returns `502` (`title: "tunarr unreachable"`) both when
+  `Deps.Tunarr` is `nil` (`detail: "tunarr not configured"`) and when the
+  configured client's `GetChannels` call fails (`detail` carries the
+  wrapped connectivity error, e.g. a dial failure -- an upstream
+  reachability message, not an internal leak).
+- `GET /status` never returns a `5xx`. It always responds `200` with
+  `version` (`Deps.Version`), `tunarr_reachable` (a live probe via
+  `GetChannels`), `tunarr_error` (set whenever `tunarr_reachable` is
+  `false`, whether from a nil client or a failed probe), and `blocks`
+  (`store.CountBlocks`). A `CountBlocks` failure is logged server-side and
+  `blocks` is simply omitted from the response rather than failing the
+  request.
+
 ### Middleware
 
 `internal/api/middleware` provides the four pieces of middleware every
