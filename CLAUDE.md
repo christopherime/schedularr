@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Schedularr is a Go application that automates TV channel programming for [Tunarr](https://tunarr.com). It uses cron-based scheduling to generate and apply content schedules based on user-defined rules (blocks), with advanced filtering by genre, rating, year, duration, and title patterns.
 
+## Development Principles (operator rules — non-negotiable)
+
+1. **Lean and clean codebase.** Only code the project uses right now. Superseded code is deleted outright — commands, config keys, schema sections, and dependencies in the same change. No deprecation aliases, no transition shims, no commented-out remnants.
+2. **Feature first — never block on tests.** Implementation leads; tests accompany the feature and `make test` must be green before every commit, but no test-ceremony (strict TDD ritual) may stall delivery.
+3. **Bespoke, up-to-date documentation — always.** README, this file, AGENTS.md, and `docs/` are updated in the SAME commit as the code they describe. Documentation drift is a defect.
+4. **Use the configured skills.** Front-end/UI work (the Hugo web UI) goes through the `impeccable` skill; generated prose (docs, READMEs, release notes) gets cleaned with `stop-slop`.
+
 ## Development Commands
 
 ```bash

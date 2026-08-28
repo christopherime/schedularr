@@ -1,8 +1,15 @@
 # Repository Guidelines
 
+## Operator Rules (non-negotiable)
+
+- **Lean codebase:** only live code; superseded code, config, and deps are deleted in the same change — no legacy, no aliases, no dead exports.
+- **Feature first:** implementation leads; tests accompany it and `make test` stays green before commit, but test ceremony never blocks delivery.
+- **Docs always current:** README/CLAUDE.md/AGENTS.md/`docs/` change in the same commit as the code they describe.
+- **Skills:** use `impeccable` for front-end/UI work and `stop-slop` to clean generated prose.
+
 ## Project Structure & Module Organization
 
-Entry point sits in `cmd/schedularr` and `main.go`, while `internal/scheduler`, `cli`, `tui`, `tunarr`, and `config` hold scheduling logic, user surfaces, API bindings, and configuration plumbing. Config samples live in `configs/` with CUE schemas in `cmd/schema/`; deterministic fixtures belong in `testdata/`, docs in `docs/`, and dockerized acceptance assets in `e2e/`.
+Entry point sits in `main.go` with Cobra commands in `cmd/`, while `internal/scheduler`, `internal/store`, `internal/blockio`, `internal/external/tunarr`, and `internal/config` hold scheduling logic, SQLite persistence, YAML import/export, the Tunarr client, and configuration plumbing. Config samples live in `configs/` with CUE schemas in `cmd/schema/`; deterministic fixtures belong in `testdata/`, docs in `docs/`, and dockerized acceptance assets in `e2e/`.
 
 ## Build, Test, and Development Commands
 
@@ -14,7 +21,7 @@ Entry point sits in `cmd/schedularr` and `main.go`, while `internal/scheduler`, 
 
 ## Coding Style & Naming Conventions
 
-Target Go 1.25.5; run `go fmt ./...` (or `make fmt`) before committing. Use Go's default tabs, CamelCase exported identifiers, and doc comments whose first word matches the symbol. Keep file names role-based (`engine.go`, `filter.go`, `model.go`) and align new ones with their siblings. YAML configs use kebab-case keys, mirrored by CLI flags, so keep casing consistent across both surfaces.
+Target Go 1.27; run `go fmt ./...` (or `make fmt`) before committing. Use Go's default tabs, CamelCase exported identifiers, and doc comments whose first word matches the symbol. Keep file names role-based (`engine.go`, `filter.go`, `model.go`) and align new ones with their siblings. YAML configs use kebab-case keys, mirrored by CLI flags, so keep casing consistent across both surfaces.
 
 ## Testing Guidelines
 
