@@ -135,7 +135,7 @@ func newTestRunner(t *testing.T, tunarrURL string) (*Runner, *store.Store) {
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: tunarrURL})
-	r := NewRunner(st, client, discardLogger(), time.UTC)
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
 	return r, st
 }
 
@@ -226,7 +226,7 @@ func TestRunner_Run_ChannelIDNarrowsResultAndApply(t *testing.T) {
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC)
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
 
 	result, err := r.Run(ctx, Options{Days: 1, Apply: true, ChannelID: "channel-1"})
 	require.NoError(t, err)
@@ -333,7 +333,7 @@ func TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched(t *testi
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC)
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
 
 	result, err := r.Run(ctx, Options{Days: 1, Apply: true, ChannelID: "channel-1"})
 	require.NoError(t, err)
@@ -405,4 +405,58 @@ func TestActiveBlocks_ExcludesDisabled(t *testing.T) {
 
 	require.Len(t, blocks, 1)
 	assert.Equal(t, "Enabled Block", blocks[0].Name)
+}
+
+// TestRunner_Run_Apply_UsesConfiguredHistoryWindowForCleanup pins the
+// history-retention plumbing fix: NewRunner's historyWindow parameter
+// reaches scheduler.Engine.Commit()'s CleanupScheduleHistory call (via
+// scheduler.NewEngineWithOptions/EngineOptions.HistoryWindow), rather than
+// the engine's own hardcoded 7-day default that Commit used before this
+// fix regardless of what config.MaintenanceHistoryRetention said.
+//
+// The fixture seeds two schedule_history rows directly (bypassing the
+// scheduling engine): one 10 days old and one 40 days old. A Runner built
+// with a 30-day (720h) historyWindow -- wider than the engine's old
+// hardcoded 168h/7-day default -- must, on Apply's Engine.Commit(), keep
+// the 10-day-old row (it falls inside the configured 30-day window; the
+// old hardcoded default would have pruned it, since 10 days > 7 days) and
+// still prune the 40-day-old row (it falls outside even the configured
+// window, proving cleanup itself still works and this isn't just "nothing
+// ever gets pruned now").
+func TestRunner_Run_Apply_UsesConfiguredHistoryWindowForCleanup(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Hourly Movies", Enabled: true,
+		Spec: scheduler.Block{Name: "Hourly Movies", Cron: "0 * * * *", Duration: 60, ChannelID: "channel-1"},
+	}))
+
+	now := time.Now()
+	require.NoError(t, st.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{
+		{ProgramID: "kept-10d", ChannelID: "channel-1", BlockName: "seed", ScheduledAt: now.Add(-10 * 24 * time.Hour)},
+		{ProgramID: "pruned-40d", ChannelID: "channel-1", BlockName: "seed", ScheduledAt: now.Add(-40 * 24 * time.Hour)},
+	}))
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	const thirtyDays = 30 * 24 * time.Hour
+	r := NewRunner(st, client, discardLogger(), time.UTC, thirtyDays)
+
+	_, err = r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+
+	history, err := st.ListScheduleHistory(ctx, time.Time{})
+	require.NoError(t, err)
+
+	ids := make([]string, 0, len(history))
+	for _, entry := range history {
+		ids = append(ids, entry.ProgramID)
+	}
+	assert.Contains(t, ids, "kept-10d",
+		"a 10-day-old entry must survive Commit's cleanup when history_retention is configured to 30 days -- the engine's old hardcoded 7-day default would have pruned it")
+	assert.NotContains(t, ids, "pruned-40d",
+		"a 40-day-old entry must still be pruned even under the wider configured 30-day window")
 }

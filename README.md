@@ -588,6 +588,16 @@ Notes:
   binding layer -- it only type-checks the raw query value. The handler
   applies the default and range check itself, returning `400` for any
   `days` outside `[1, 90]`.
+- `days` only has data to return as far back as `maintenance.history_retention`
+  (default `168h`/7 days) allows: `service.NewRunner` threads that config
+  value into every `scheduler.Engine` it builds
+  (`scheduler.EngineOptions.HistoryWindow`), and `Engine.Commit()` prunes
+  `schedule_history` to that same window on every apply. Requesting
+  `?days=90` when `history_retention` is still at its 7-day default returns
+  only the last 7 days' worth of rows -- set `history_retention` to at
+  least the widest `days` value you intend to query (e.g. `2160h` for a
+  full 90-day window) for `GET /history?days=90` to actually have 90 days
+  of data available.
 
 ### Series State Endpoints
 

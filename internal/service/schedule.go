@@ -70,19 +70,28 @@ const contentCacheDuration = time.Hour
 // Runner executes the schedule-generation workflow against a store and a
 // Tunarr client held for its lifetime.
 type Runner struct {
-	store  *store.Store
-	tunarr *tunarr.Client
-	logger *slog.Logger
-	loc    *time.Location
-	cache  *cache.Cache // nil if cache.New failed; fetch then always hits Tunarr
+	store         *store.Store
+	tunarr        *tunarr.Client
+	logger        *slog.Logger
+	loc           *time.Location
+	cache         *cache.Cache // nil if cache.New failed; fetch then always hits Tunarr
+	historyWindow time.Duration
 }
 
 var _ ScheduleRunner = (*Runner)(nil)
 
 // NewRunner builds a Runner backed by st and tc. l and loc default to
 // slog.Default() and time.Local respectively when nil, matching
-// scheduler.NewEngine's own nil-handling.
-func NewRunner(st *store.Store, tc *tunarr.Client, l *slog.Logger, loc *time.Location) *Runner {
+// scheduler.NewEngine's own nil-handling. historyWindow is forwarded
+// unchanged to every scheduler.Engine Run builds
+// (scheduler.EngineOptions.HistoryWindow) -- callers pass
+// config.MaintenanceHistoryRetention(cfg) here (see cmd/generate.go,
+// cmd/serve.go) so the engine's in-memory dedup window and its
+// Commit-time schedule_history pruning both honor the configured
+// maintenance.history_retention value instead of a hardcoded 7 days. Zero
+// falls back to scheduler's own default (7 days) -- see
+// scheduler.NewEngineWithOptions.
+func NewRunner(st *store.Store, tc *tunarr.Client, l *slog.Logger, loc *time.Location, historyWindow time.Duration) *Runner {
 	if l == nil {
 		l = slog.Default()
 	}
@@ -96,7 +105,7 @@ func NewRunner(st *store.Store, tc *tunarr.Client, l *slog.Logger, loc *time.Loc
 		c = nil
 	}
 
-	return &Runner{store: st, tunarr: tc, logger: l, loc: loc, cache: c}
+	return &Runner{store: st, tunarr: tc, logger: l, loc: loc, cache: c, historyWindow: historyWindow}
 }
 
 // ActiveBlocks returns the Spec of every enabled block in the store.
@@ -171,7 +180,11 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 		return nil, fmt.Errorf("failed to fetch programs: %w", err)
 	}
 
-	engine := scheduler.NewEngine(r.tunarr, blocks, r.store, r.logger, r.loc)
+	engine := scheduler.NewEngineWithOptions(r.tunarr, blocks, r.store, scheduler.EngineOptions{
+		Logger:        r.logger,
+		Location:      r.loc,
+		HistoryWindow: r.historyWindow,
+	})
 
 	start := time.Now()
 	end := start.Add(time.Duration(o.Days) * 24 * time.Hour)

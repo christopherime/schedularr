@@ -129,7 +129,13 @@ func runServe(cmd *cobra.Command) error {
 	}
 
 	client := tunarr.NewClient(config.TunarrConfig(cfg))
-	runner := service.NewRunner(st, client, logger, loc)
+	// maintenance.history_retention governs both the engine's in-memory
+	// dedup window and how much schedule_history survives each apply's
+	// cleanup -- see service.NewRunner's doc comment. This is what makes
+	// GET /history?days=N (up to 90, api/openapi.yaml) actually return data
+	// beyond the engine's old hardcoded 7-day default when retention is
+	// configured wider.
+	runner := service.NewRunner(st, client, logger, loc, config.MaintenanceHistoryRetention(cfg))
 
 	metrics.RegisterMetrics()
 

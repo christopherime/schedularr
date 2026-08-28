@@ -10,36 +10,9 @@ import (
 	"time"
 
 	"github.com/christopherime/schedularr/internal/external/tunarr"
-	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// NewEngineWithOptions creates a new scheduling engine with optional configuration.
-// This is a test helper function.
-func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStore, opts EngineOptions) *Engine {
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
-	if opts.Location == nil {
-		opts.Location = time.Local
-	}
-	historyWindow := opts.HistoryWindow
-	if historyWindow == 0 {
-		historyWindow = 7 * 24 * time.Hour // Default to 7 days
-	}
-	return &Engine{
-		client:         client,
-		blocks:         blocks,
-		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
-		location:       opts.Location,
-		history:        NewScheduleHistory(historyWindow),
-		store:          store,
-		pendingStates:  make(map[string]*SeriesState),
-		pendingHistory: nil,
-		logger:         opts.Logger,
-	}
-}
 
 func TestSlotsOverlap(t *testing.T) {
 	tests := []struct {

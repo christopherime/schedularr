@@ -38,25 +38,56 @@ type ScheduledSlot struct {
 
 // EngineOptions contains optional configuration for the scheduling engine.
 type EngineOptions struct {
+	// HistoryWindow bounds both the in-memory dedup check (filterByHistory)
+	// and, via Commit's CleanupScheduleHistory call, how much of the
+	// persisted schedule_history table survives each apply. service.Runner
+	// sets this from the maintenance.history_retention config key so the
+	// two stay coherent: GET /history?days=N (api/openapi.yaml, 1..90) can
+	// only ever return data as far back as this window allows -- a wider
+	// history_retention is required to actually query a wider days range.
+	// Zero uses defaultHistoryWindow (7 days).
 	HistoryWindow time.Duration
 	Logger        *slog.Logger
 	Location      *time.Location
 }
 
-// NewEngine creates a new scheduling engine with the given Tunarr client and scheduling blocks.
+// defaultHistoryWindow is the schedule-history retention/dedup window used
+// when neither NewEngine's caller nor EngineOptions.HistoryWindow specify
+// one. It matches cmd/schema/config.cue's maintenance.history_retention
+// CUE default (168h / 7 days) -- see EngineOptions's doc comment.
+const defaultHistoryWindow = 7 * 24 * time.Hour
+
+// NewEngine creates a new scheduling engine with the given Tunarr client and
+// scheduling blocks, using the default 7-day history window. Callers that
+// need a configured window (e.g. service.NewRunner, which threads through
+// maintenance.history_retention) should use NewEngineWithOptions instead.
 func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
+	return NewEngineWithOptions(client, blocks, store, EngineOptions{Logger: logger, Location: loc})
+}
+
+// NewEngineWithOptions creates a new scheduling engine with optional
+// configuration. Any zero-valued field in opts falls back to the same
+// default NewEngine uses: opts.Logger -> slog.Default(), opts.Location ->
+// time.Local, opts.HistoryWindow -> defaultHistoryWindow (7 days).
+func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStore, opts EngineOptions) *Engine {
+	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
+	loc := opts.Location
 	if loc == nil {
 		loc = time.Local
+	}
+	historyWindow := opts.HistoryWindow
+	if historyWindow == 0 {
+		historyWindow = defaultHistoryWindow
 	}
 	return &Engine{
 		client:         client,
 		blocks:         blocks,
 		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 		location:       loc,
-		history:        NewScheduleHistory(7 * 24 * time.Hour), // Track last 7 days by default
+		history:        NewScheduleHistory(historyWindow),
 		store:          store,
 		pendingStates:  make(map[string]*SeriesState),
 		pendingHistory: nil,

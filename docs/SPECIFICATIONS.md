@@ -560,26 +560,26 @@ blocks:
 
 ## Schedule History
 
-Schedule history prevents content repetition by tracking recently scheduled programs.
+Schedule history prevents content repetition by tracking recently scheduled programs. It is both an in-memory dedup check during a single generate/apply cycle and a persisted `schedule_history` SQLite table (queryable via `GET /history?days=N`, see the API docs) that survives restarts.
 
 ### Configuration
 
-- **Window**: 7 days (168 hours) by default
-- **Storage**: In-memory map (cleared on restart)
-- **Key Format**: `channel_id:program_id`
+- **Window**: `maintenance.history_retention` (default `"168h"`, i.e. 7 days) -- see `config.yaml`'s `maintenance` section
+- **Storage**: Both an in-memory map, scoped to the current `scheduler.Engine` instance (cleared on restart), and the persisted `schedule_history` table (survives restarts, pruned to the retention window on every apply)
+- **Key Format**: `channel_id:program_id` (in-memory); `(program_id, channel_id, scheduled_at)` rows in the `schedule_history` table
 
 ### Behavior
 
-1. **Before Scheduling**: Check if program scheduled recently
+1. **Before Scheduling**: Check if program scheduled recently (in-memory check, then a `schedule_history` lookup via `store.WasRecentlyScheduled`)
 2. **Exclusion**: Remove recently played programs from candidates
-3. **Recording**: After scheduling, record program + timestamp
-4. **Cleanup**: Automatically remove entries older than window
+3. **Recording**: After scheduling, record program + timestamp (in-memory and, on `Engine.Commit()`, persisted to `schedule_history`)
+4. **Cleanup**: `Engine.Commit()` deletes `schedule_history` rows older than `maintenance.history_retention` on every successful apply
 
 ### Example
 
 ```text
 Current Time: 2026-01-12 10:00
-History Window: 7 days
+History Window: 7 days (maintenance.history_retention: "168h")
 
 History Entries:
   channel-1:prog-123 → 2026-01-10 14:00 (keep, within window)
@@ -595,9 +595,7 @@ Scheduling Block for channel-1:
 ### Limitations
 
 - **Per-Channel**: Programs tracked separately per channel
-- **In-Memory**: History lost on application restart
-- **Fixed Window**: 7-day window not currently configurable
-- **Future Enhancement**: Configurable window duration
+- **Configurable Window**: Set `maintenance.history_retention` to widen or narrow the window. `GET /history?days=N` (`api/openapi.yaml`, `1..90`) can only ever return data as far back as `history_retention` allows -- e.g. `?days=90` needs `history_retention` set to at least `2160h` to actually have 90 days of persisted rows to return; the default `168h` limits queries to the last 7 days regardless of what `days` the caller requests. See [README.md's History Endpoint section](../README.md#history-endpoint).
 
 ## Validation
 

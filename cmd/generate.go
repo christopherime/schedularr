@@ -236,7 +236,7 @@ func ProcessSchedule(cfg *config.Config, applyFlag bool, dryRunFlag bool) error 
 		return fmt.Errorf("invalid timezone '%s' in app config: %w", timezone, err)
 	}
 
-	runner := service.NewRunner(st, client, logger, loc)
+	runner := service.NewRunner(st, client, logger, loc, config.MaintenanceHistoryRetention(cfg))
 
 	applyNow := applyFlag && !dryRunFlag
 	result, err := runner.Run(context.Background(), service.Options{Days: 1, Apply: applyNow})
