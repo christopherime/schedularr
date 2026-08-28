@@ -24,8 +24,12 @@ sub-project 4.
 - Blocks stored in SQLite as the source of truth; YAML import/export
   retained for bootstrap, backup, and GitOps-style workflows.
 - App-level bearer-token authentication; portable beyond this cluster.
-- Truly media-server agnostic: **Jellyfin integration removed entirely.**
+- Truly agnostic: **Tunarr is the only runtime integration.** Jellyfin,
+  Sonarr, and Radarr integrations are removed entirely; content
+  metadata will come from online sources (TMDB/TVDB — sub-project 3).
 - Foundation the web UI (sub-project 2) can generate a typed client from.
+- Built on the current Go toolchain (1.27); module path renamed to the
+  transferred repo.
 
 ## Non-goals (deferred to later sub-projects)
 
@@ -49,13 +53,24 @@ sub-project 4.
    The same spec later generates the web UI's TypeScript client.
 4. **TUI:** deprecated now (startup warning, removed from README);
    deleted in sub-project 2 when the web UI MVP replaces it.
-5. **Jellyfin:** removed in this phase — `internal/external/jellyfin/`,
-   the Live-TV guide-refresh hook, config keys, CLI/content-source
-   references, and docs. Jellyfin refreshes its guide on its own
-   schedule from Tunarr's XMLTV; that is outside schedularr's scope.
-6. **Credentials** (Tunarr/Sonarr/Radarr API keys) remain env/file
-   configuration only. No API endpoint reads or writes them; the
-   content-sources endpoint reports name + configured/health only.
+5. **Integration removals:** Jellyfin (`internal/external/jellyfin/`,
+   the Live-TV guide-refresh hook), Sonarr, and Radarr
+   (`internal/external/sonarr/`, `internal/external/radarr/`, the
+   availability-filter code paths in the engine, and
+   `cmd/content_sources.go`) are all removed in this phase, along with
+   their config keys and docs. Jellyfin refreshes its guide on its own
+   schedule from Tunarr's XMLTV; per-title availability filtering via
+   *arr apps is retired — future enrichment comes from online metadata
+   sources (sub-project 3).
+6. **Credentials** (Tunarr API key) remain env/file configuration only.
+   No API endpoint reads or writes them; the status endpoint reports
+   connectivity/health only.
+7. **Toolchain and module path:** `go 1.27` in `go.mod` (current
+   stable); module renamed `github.com/geekxflood/schedularr` →
+   `github.com/christopherime/schedularr` with all imports rewritten.
+8. **Web UI frontend preference (recorded for sub-project 2):** Hugo —
+   a static Hugo-built frontend embedded in the binary via `go:embed`,
+   with JavaScript consuming this API.
 
 ## Architecture
 
@@ -92,7 +107,7 @@ All routes under `/api/v1`, bearer-token auth unless noted.
 | Blocks | `GET/POST /blocks`, `GET/PUT/DELETE /blocks/{id}` | CUE-validated writes; `enabled` toggle |
 | Schedule | `POST /generate` (dry-run, returns plan), `POST /apply`, `GET /schedule`, `GET /history` | mirrors existing CLI semantics |
 | Series state | `GET /state/series`, `PATCH /state/series/{id}` | adjust cursor / start episode / skips |
-| Integrations | `GET /channels` (Tunarr), `GET /content-sources` | health + configured only; never credentials |
+| Integrations | `GET /channels` (Tunarr), `GET /status` | Tunarr connectivity/version/health; never credentials |
 | Import/export | `POST /blocks/import` (YAML, `dry_run` flag), `GET /blocks/export` (YAML) | GitOps escape hatch |
 | System | `GET /healthz`, `GET /readyz`, `GET /metrics`, `GET /openapi.json` | unauthenticated |
 
@@ -117,8 +132,8 @@ All routes under `/api/v1`, bearer-token auth unless noted.
 - Constant-time token comparison; 401 with `problem+json` body.
 - TLS terminates at the ingress/gateway; app serves plain HTTP.
 - CORS: same-origin only (UI will be embedded in the binary).
-- No secrets in logs; content-source responses carry no credential
-  material in any form.
+- No secrets in logs; API responses carry no credential material in
+  any form.
 - `make lint` (golangci-lint + gosec + govulncheck) remains mandatory.
 
 ### Error handling
@@ -140,13 +155,16 @@ All routes under `/api/v1`, bearer-token auth unless noted.
 ## Housekeeping (this phase)
 
 - Repoint `origin` to `git@github.com:christopherime/schedularr.git`.
+- Module path rename + `go 1.27` bump land as the first implementation
+  commit (mechanical import rewrite, verified by `make build test lint`).
 - Operator commits or stashes the in-flight TUI WIP
   (`internal/tui/calendar_day.go`, `internal/tui/model.go`, untracked
   `schedules/`) before implementation starts.
 
 ## Out of scope, recorded for later
 
-- Sub-project 2: web UI (embedded via `go:embed`), typed TS client from
+- Sub-project 2: web UI — Hugo-built static frontend (operator
+  preference) embedded via `go:embed`, JS/typed client generated from
   `api/openapi.yaml`, TUI deletion.
 - Sub-project 3: tag engine (TMDB/TVDB; note IMDb has no official free
   API), tags as first-class filter criteria.
