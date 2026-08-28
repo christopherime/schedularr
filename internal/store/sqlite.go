@@ -155,6 +155,23 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 	return nil
 }
 
+// ListScheduleHistory returns schedule history entries scheduled at or after
+// since, ordered by scheduled_at DESC (most recent first). This backs the
+// GET /history API endpoint (internal/api/history.go), which maps a
+// caller-supplied days window to since = now - days.
+func (s *Store) ListScheduleHistory(ctx context.Context, since time.Time) ([]scheduler.ScheduleHistoryEntry, error) {
+	var entries []scheduler.ScheduleHistoryEntry
+	err := s.db.SelectContext(ctx, &entries, `
+		SELECT program_id, channel_id, block_name, scheduled_at
+		FROM schedule_history
+		WHERE scheduled_at >= ?
+		ORDER BY scheduled_at DESC`, since)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list schedule history: %w", err)
+	}
+	return entries, nil
+}
+
 // WasRecentlyScheduled returns true if a program was scheduled within the provided window.
 func (s *Store) WasRecentlyScheduled(ctx context.Context, programID, channelID string, window time.Duration) (bool, error) {
 	if programID == "" || channelID == "" {

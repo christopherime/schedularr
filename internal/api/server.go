@@ -57,10 +57,7 @@ func (h *Handlers) GetSchedule(w http.ResponseWriter, r *http.Request, _ gen.Get
 	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "getSchedule pending")
 }
 
-// GetHistory implements gen.ServerInterface.
-func (h *Handlers) GetHistory(w http.ResponseWriter, r *http.Request, _ gen.GetHistoryParams) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "getHistory pending")
-}
+// GetHistory implements gen.ServerInterface. See history.go.
 
 // ListSeriesState and PatchSeriesState implement gen.ServerInterface. See
 // state.go.

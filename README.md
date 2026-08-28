@@ -423,6 +423,25 @@ Notes:
   the current name without colliding renames the block.
 - `blocks/import` and `blocks/export` remain `501` pending a later task.
 
+### History Endpoint
+
+History (`internal/api/history.go`) lists `schedule_history` rows (backed
+by `store.ListScheduleHistory`, ordered by `scheduled_at` DESC) scheduled
+within the last `days` days.
+
+| Method | Path      | Success | Error codes |
+| ------ | --------- | ------- | ----------- |
+| GET    | `/history?days=N` | 200 | 400 |
+
+Notes:
+
+- `days` defaults to `7` when omitted. The OpenAPI schema declares
+  `minimum: 1` / `maximum: 90` for `days`, but oapi-codegen's chi-server
+  generator does not enforce a schema's default/minimum/maximum at the
+  binding layer -- it only type-checks the raw query value. The handler
+  applies the default and range check itself, returning `400` for any
+  `days` outside `[1, 90]`.
+
 ### Series State Endpoints
 
 Series state (`internal/api/state.go`) lists and patches the per-show
