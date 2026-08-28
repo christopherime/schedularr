@@ -1,0 +1,191 @@
+{{ define "main" }}
+<div x-data="schedule">
+  <div class="page-head">
+    <h1>Schedule</h1>
+    <p>
+      Preview scheduled slots per Tunarr channel before anything reaches
+      Tunarr, then apply once the reading looks right.
+    </p>
+  </div>
+
+  <section class="hero-panel graticule schedule-controls" aria-labelledby="schedule-controls-title">
+    <h2 id="schedule-controls-title" class="visually-hidden">Preview controls</h2>
+
+    <div class="form-grid">
+      <div class="form-field">
+        <label for="schedule-days">Days</label>
+        <input
+          type="number"
+          min="1"
+          max="30"
+          id="schedule-days"
+          x-model="controls.days"
+          :disabled="applying"
+        >
+        <p class="form-field__hint">1–30 days, defaults to 7</p>
+      </div>
+      <div class="form-field">
+        <label for="schedule-channel">Channel</label>
+        <template x-if="!channelsLoading && !channelsError && channels.length > 0">
+          <select id="schedule-channel" x-model="controls.channelId" :disabled="applying">
+            <option value="">All channels</option>
+            <template x-for="c in channels" :key="c.id">
+              <option :value="c.id" x-text="channelLabel(c)"></option>
+            </template>
+          </select>
+        </template>
+        <template x-if="channelsLoading || channelsError || channels.length === 0">
+          <input
+            type="text"
+            id="schedule-channel"
+            x-model="controls.channelId"
+            placeholder="Leave blank for all channels"
+            autocomplete="off"
+            :disabled="applying"
+          >
+        </template>
+        <p class="form-field__hint" x-show="channelHint()" x-text="channelHint()"></p>
+      </div>
+    </div>
+
+    <div class="schedule-controls__actions">
+      <div class="schedule-status" role="status" aria-live="polite">
+        <template x-if="plan">
+          <span class="status-dot" :data-state="plan.applied ? 'ok' : 'preview'" aria-hidden="true"></span>
+        </template>
+        <span x-text="plan ? (plan.applied ? 'Applied' : 'Preview — nothing applied') : 'No preview yet'"></span>
+      </div>
+      <div class="schedule-controls__buttons">
+        <button
+          type="button"
+          class="btn btn--primary"
+          :disabled="previewing || applying"
+          @click="preview()"
+          x-text="previewing ? 'Generating…' : 'Generate Preview'"
+        ></button>
+        <button type="button" class="btn btn--primary" :disabled="!canApply()" @click="requestApply()">Apply</button>
+      </div>
+    </div>
+
+    <p class="schedule-status__summary" x-show="plan && plan.applied" x-text="appliedSummary()"></p>
+    <p class="form-field__hint" x-show="plan && !plan.applied && !canApply() && !previewing && !applying">
+      Controls changed since this preview — run Preview again before applying.
+    </p>
+  </section>
+
+  <template x-if="applyError">
+    <div class="problem" role="alert">
+      <p class="problem__title" x-text="applyError.title"></p>
+      <p class="problem__detail" x-show="applyError.detail" x-text="applyError.detail"></p>
+    </div>
+  </template>
+
+  <template x-if="previewing">
+    <div class="skeleton-stack" aria-hidden="true">
+      <span class="skeleton-bar"></span>
+      <span class="skeleton-bar"></span>
+      <span class="skeleton-bar"></span>
+    </div>
+  </template>
+
+  <template x-if="!previewing && previewError">
+    <div class="problem" role="alert">
+      <p class="problem__title" x-text="previewError.title"></p>
+      <p class="problem__detail" x-show="previewError.detail" x-text="previewError.detail"></p>
+      <button type="button" class="btn btn--ghost btn--sm" @click="preview()">Retry</button>
+    </div>
+  </template>
+
+  <template x-if="!previewing && !previewError && !plan">
+    <p class="empty-state graticule">Run a preview to see the schedule for this scope before applying anything.</p>
+  </template>
+
+  <template x-if="!previewing && !previewError && plan && channelEntries().length === 0">
+    <p class="empty-state graticule">No channels matched this scope — nothing would be scheduled.</p>
+  </template>
+
+  <template x-if="!previewing && !previewError && plan && channelEntries().length > 0">
+    <div>
+      <template x-for="entry in channelEntries()" :key="entry.id">
+        <section class="schedule-channel" :aria-labelledby="'schedule-channel-' + entry.id">
+          <div class="section-head">
+            <h2 :id="'schedule-channel-' + entry.id" x-text="'Channel ' + entry.id"></h2>
+            <p x-text="entry.slots.length + ' slot(s)'"></p>
+          </div>
+          <div class="table-wrap">
+            <table class="history-table schedule-table">
+              <thead>
+                <tr>
+                  <th scope="col">Start</th>
+                  <th scope="col">End</th>
+                  <th scope="col">Block</th>
+                  <th scope="col">Programs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(slot, idx) in entry.slots" :key="idx">
+                  <tr>
+                    <td x-text="formatLocal(slot.start_time)"></td>
+                    <td x-text="formatLocal(slot.end_time)"></td>
+                    <td x-text="slot.block?.name ?? '—'"></td>
+                    <td>
+                      <template x-if="programCount(slot) > 0">
+                        <details class="schedule-programs">
+                          <summary x-text="programCount(slot) + ' program(s)'"></summary>
+                          <ul>
+                            <template x-for="(title, tidx) in programTitles(slot)" :key="tidx">
+                              <li x-text="title"></li>
+                            </template>
+                          </ul>
+                        </details>
+                      </template>
+                      <span class="schedule-programs__none" x-show="programCount(slot) === 0">0 programs</span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </template>
+    </div>
+  </template>
+
+  <dialog
+    class="panel"
+    x-ref="confirmDialog"
+    aria-labelledby="apply-confirm-title"
+    @click="if ($event.target === $refs.confirmDialog) cancelApply()"
+  >
+    <div class="panel__head">
+      <h2 id="apply-confirm-title" x-text="'Apply ' + applyScopeLabel()"></h2>
+      <button type="button" class="btn btn--icon" @click="cancelApply()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" x-text="applyConfirmBody()"></p>
+    </div>
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" @click="cancelApply()">Cancel</button>
+      <div class="panel__actions-right">
+        <button
+          type="button"
+          class="btn btn--primary"
+          :disabled="applying"
+          @click="confirmApply()"
+          x-text="applying ? 'Applying…' : 'Confirm Apply'"
+        ></button>
+      </div>
+    </div>
+  </dialog>
+</div>
+{{ end }}
+
+{{ define "page_js" }}
+{{- $js := resources.Get "ts/pages/schedule.ts" | js.Build (dict "targetPath" "js/schedule.js") }}
+{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
+<script src="{{ $js.RelPermalink }}" defer></script>
+{{ end }}

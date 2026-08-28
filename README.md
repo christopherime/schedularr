@@ -972,6 +972,64 @@ name) is left to the API. A `400` renders its `title`/`detail` inline near
 the submit button; a `409` (duplicate name) renders under the **name**
 field specifically, not mixed in with the generic error.
 
+#### Schedule (`/schedule/`)
+
+Preview a schedule, then apply it — a dry-run/apply pair backed by `POST
+/api/v1/generate` and `POST /api/v1/apply` (`web/assets/ts/pages/
+schedule.ts`), the same `GenerateRequest` body (`days`, optional
+`channel_id`) as the CLI's `generate`/`generate --apply`. No timeline
+graphic: a chronological list per channel, per the design's explicit v1
+non-goal ("no charts/graphics for the schedule timeline").
+
+**Controls** — a `days` number input (1–30, defaulting to 7, clamped
+client-side to that range before every request — matching `/generate`'s/
+`/apply`'s own server-side bounds — with the API's `400` as the backstop
+for anything the clamp doesn't catch) and a `channel_id` scope: a
+`<select>` (first option always **All channels**) populated from `GET
+/api/v1/channels` when Tunarr answers with at least one channel, falling
+back to free text (blank still means all channels) on the same
+"legitimate reading, not an error" terms as the dashboard's Tunarr status
+and the blocks editor's channel field.
+
+**Preview** — **Generate Preview** sends `POST /api/v1/generate`, which
+always dry-runs (`PlanResult.applied` is always `false`). Each channel in
+the response renders as its own section: slots listed chronologically
+with **start**/**end** in the browser's local timezone, the block name
+(`slot.block.name`), and a program count that expands (`<details>`) into
+the individual program titles when the slot has any — `ScheduledSlot.
+programs` is an untyped `additionalProperties: true` array in
+`api/openapi.yaml`, so a title is read defensively (a real Tunarr program
+always has one; a missing one renders as an em dash rather than being
+invented). A visible **Preview — nothing applied** readout (a status dot
++ text, same coded-legend convention as the Tunarr/token indicators)
+makes the dry-run state explicit. A scope with no matching channels
+renders its own empty state ("No channels matched this scope") rather
+than an empty table shell.
+
+**Apply** — disabled until a preview has run **for the exact controls
+currently on screen**: editing `days` or the channel scope after a
+preview invalidates it immediately (an inline hint explains why), and a
+fresh **Generate Preview** is required to re-arm it — the web equivalent
+of the CLI's `--yes` gate (`cmd/generate.go`'s `checkApplyGate`), applied
+per action rather than once per process. Clicking **Apply** opens a
+native `<dialog>` confirmation naming the scope exactly: **"Apply ALL
+channels"** or **"Apply channel `<id>`"**, plus a real slot/channel count
+summary — or, when the previewed plan has no channels, **"There is
+nothing to apply for this scope"** (applying an empty plan is allowed,
+it's just a no-op against Tunarr). Confirming sends `POST /api/v1/apply`
+with the *identical* body the preview used — note that `/apply` does not
+replay the previewed plan; it independently re-runs the same
+generate-and-push workflow server-side (`internal/service.Runner.Run`),
+so "the same body" means the same request, not a cached payload. A
+successful apply flips the readout to **Applied** with a summary line
+(slot/channel counts and a local timestamp) and immediately disables
+**Apply** again, even if the controls haven't changed — an applied plan
+is a past action, not a standing offer to repeat it with one more click.
+A `502` (`title: "schedule generation failed"`) from either `/generate`
+or `/apply` renders inline as a `.problem` panel with the API's own
+`title` *and* `detail` shown verbatim, not folded into one string like
+the dashboard's/blocks' generic error label.
+
 ---
 
 ## 🧪 Development
