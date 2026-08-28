@@ -423,6 +423,31 @@ Notes:
   the current name without colliding renames the block.
 - `blocks/import` and `blocks/export` remain `501` pending a later task.
 
+### Series State Endpoints
+
+Series state (`internal/api/state.go`) lists and patches the per-show
+`series_state` tracking rows (current season/episode, completion, and the
+disabled flag the scheduler sets once a non-restarting series runs out of
+episodes) backed by the same sqlite store as blocks.
+
+| Method | Path                         | Success | Error codes |
+| ------ | ---------------------------- | ------- | ----------- |
+| GET    | `/state/series`              | 200     | —           |
+| PATCH  | `/state/series/{show_title}` | 200     | 400, 404    |
+
+Notes:
+
+- `PATCH` applies a partial update: only fields present in the request body
+  (`current_season`, `current_episode`, `completed`, `disabled`) change,
+  and a body with none of them set returns `400`, as does a malformed JSON
+  body.
+- `PATCH` returns `404` for a `show_title` with no persisted `series_state`
+  row. This intentionally does not reuse `store.GetSeriesState`, which
+  fabricates a default S01E01 state for any show (tracked or not) as a
+  convenience for scheduling callers; the handler instead uses
+  `store.GetPersistedSeriesState`, added alongside it, which returns
+  `ErrNotFound` when no row exists.
+
 ### Middleware
 
 `internal/api/middleware` provides the four pieces of middleware every

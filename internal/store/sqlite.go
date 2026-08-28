@@ -47,15 +47,37 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// GetSeriesState retrieves the tracking state for a given show.
-// If no state exists, it returns a default starting state (S01E01).
-func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
+// seriesStateRow queries the raw persisted row for showTitle, returning
+// (nil, nil) if no row exists -- distinct from a query error. It backs both
+// GetSeriesState (which fabricates a default S01E01 state as a convenience
+// for scheduling callers that want a usable state for any show, tracked or
+// not) and GetPersistedSeriesState (which reports ErrNotFound instead, for
+// callers -- the state API's PatchSeriesState handler -- that need to
+// distinguish "no row for this show" from "row exists and is at S01E01").
+func (s *Store) seriesStateRow(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
 	var state scheduler.SeriesState
 	err := s.db.GetContext(ctx, &state, `
 		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled
 		FROM series_state WHERE show_title = ?`, showTitle)
 
 	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get series state: %w", err)
+	}
+
+	return &state, nil
+}
+
+// GetSeriesState retrieves the tracking state for a given show.
+// If no state exists, it returns a default starting state (S01E01).
+func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
+	state, err := s.seriesStateRow(ctx, showTitle)
+	if err != nil {
+		return nil, err
+	}
+	if state == nil {
 		return &scheduler.SeriesState{
 			ShowTitle:      showTitle,
 			CurrentSeason:  1,
@@ -65,11 +87,27 @@ func (s *Store) GetSeriesState(ctx context.Context, showTitle string) (*schedule
 			Disabled:       false,
 		}, nil
 	}
+
+	return state, nil
+}
+
+// GetPersistedSeriesState retrieves the tracking state for a given show,
+// returning ErrNotFound if no row is persisted for it. This is the
+// existence-aware counterpart to GetSeriesState: GetSeriesState always
+// succeeds with a fabricated S01E01 default for an untracked show (useful
+// for the scheduler engine, which needs a starting point regardless), which
+// makes it unsuitable for callers that must map "unknown show" to a 404 --
+// currently the state API's PatchSeriesState handler (internal/api/state.go).
+func (s *Store) GetPersistedSeriesState(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
+	state, err := s.seriesStateRow(ctx, showTitle)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get series state: %w", err)
+		return nil, err
+	}
+	if state == nil {
+		return nil, ErrNotFound
 	}
 
-	return &state, nil
+	return state, nil
 }
 
 // UpdateSeriesState updates or inserts the tracking state for a show.

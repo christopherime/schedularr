@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -52,6 +53,34 @@ func TestStore_SeriesState(t *testing.T) {
 	finalState, err := s.GetSeriesState(ctx, showTitle)
 	require.NoError(t, err, "GetSeriesState failed")
 	assert.True(t, finalState.Completed, "Expected completed to be true")
+}
+
+// TestStore_GetPersistedSeriesState covers the existence-aware counterpart
+// to GetSeriesState added for Task 10 (internal/api/state.go's
+// PatchSeriesState 404 semantics): unlike GetSeriesState, which fabricates
+// a default S01E01 state for any show, GetPersistedSeriesState must report
+// ErrNotFound for a show with no persisted row, and return the real row
+// once one exists.
+func TestStore_GetPersistedSeriesState(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	showTitle := "Untracked Show"
+
+	_, err = s.GetPersistedSeriesState(ctx, showTitle)
+	require.Error(t, err, "expected ErrNotFound for an untracked show")
+	assert.True(t, errors.Is(err, ErrNotFound), "want ErrNotFound, got %v", err)
+
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: showTitle, CurrentSeason: 4, CurrentEpisode: 9,
+	}))
+
+	state, err := s.GetPersistedSeriesState(ctx, showTitle)
+	require.NoError(t, err, "GetPersistedSeriesState failed after the show was tracked")
+	assert.Equal(t, 4, state.CurrentSeason)
+	assert.Equal(t, 9, state.CurrentEpisode)
 }
 
 func TestStore_ScheduleHistory(t *testing.T) {

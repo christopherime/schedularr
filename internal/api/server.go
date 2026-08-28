@@ -62,15 +62,8 @@ func (h *Handlers) GetHistory(w http.ResponseWriter, r *http.Request, _ gen.GetH
 	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "getHistory pending")
 }
 
-// ListSeriesState implements gen.ServerInterface.
-func (h *Handlers) ListSeriesState(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "listSeriesState pending")
-}
-
-// PatchSeriesState implements gen.ServerInterface.
-func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, _ string) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "patchSeriesState pending")
-}
+// ListSeriesState and PatchSeriesState implement gen.ServerInterface. See
+// state.go.
 
 // ListChannels implements gen.ServerInterface.
 func (h *Handlers) ListChannels(w http.ResponseWriter, r *http.Request) {
