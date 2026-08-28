@@ -1,4 +1,4 @@
-.PHONY: build test lint clean validate e2e-up e2e-down e2e-test e2e-clean docker-build help
+.PHONY: build test lint clean validate e2e-up e2e-down e2e-test e2e-clean docker-build generate help
 
 # Variables
 BINARY_NAME=schedularr
@@ -117,3 +117,8 @@ deps: ## Download dependencies
 	@go mod download
 	@go mod tidy
 	@echo "Dependencies updated"
+
+generate: ## Regenerate OpenAPI server code
+	@echo "Regenerating OpenAPI server code..."
+	@go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+	@echo "Codegen complete"

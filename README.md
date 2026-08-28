@@ -373,6 +373,31 @@ schedularr/
 
 ---
 
+## 🔌 API
+
+Schedularr exposes an HTTP API defined by an OpenAPI 3.0.3 contract at
+[`api/openapi.yaml`](api/openapi.yaml). The contract covers blocks CRUD,
+block import/export, schedule generation and application, history, series
+state, channels, and status.
+
+Server code is generated from the contract with
+[oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) v2:
+
+```bash
+make generate
+```
+
+This writes `internal/api/gen/server.gen.go`, which is committed and must
+not be edited by hand — change `api/openapi.yaml` and regenerate instead.
+Handlers live in `internal/api/` and implement the generated
+`gen.ServerInterface`. Errors use an RFC 7807 `application/problem+json`
+body (`internal/api/problem.go`).
+
+The API is not yet wired to an HTTP server; that lands in a later task,
+which will also serve the contract itself at `/openapi.json`.
+
+---
+
 ## 🧪 Development
 
 ### Running Tests

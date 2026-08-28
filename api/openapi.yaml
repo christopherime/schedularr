@@ -1,0 +1,514 @@
+openapi: 3.0.3
+info:
+  title: Schedularr API
+  version: 1.0.0
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /blocks:
+    get:
+      operationId: listBlocks
+      responses:
+        "200":
+          $ref: "#/components/responses/BlockList"
+    post:
+      operationId: createBlock
+      requestBody:
+        $ref: "#/components/requestBodies/BlockWrite"
+      responses:
+        "201":
+          $ref: "#/components/responses/BlockItem"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /blocks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getBlock
+      responses:
+        "200":
+          $ref: "#/components/responses/BlockItem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateBlock
+      requestBody:
+        $ref: "#/components/requestBodies/BlockWrite"
+      responses:
+        "200":
+          $ref: "#/components/responses/BlockItem"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteBlock
+      responses:
+        "204":
+          description: deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+  /blocks/import:
+    post:
+      operationId: importBlocks
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              type: string
+      parameters:
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+  /blocks/export:
+    get:
+      operationId: exportBlocks
+      responses:
+        "200":
+          description: yaml
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /generate:
+    post:
+      operationId: generateSchedule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+      responses:
+        "200":
+          description: plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanResult"
+        "502":
+          $ref: "#/components/responses/Problem"
+  /apply:
+    post:
+      operationId: applySchedule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+      responses:
+        "200":
+          description: applied plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanResult"
+        "502":
+          $ref: "#/components/responses/Problem"
+  /schedule:
+    get:
+      operationId: getSchedule
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+            minimum: 1
+            maximum: 30
+      responses:
+        "200":
+          description: plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanResult"
+        "502":
+          $ref: "#/components/responses/Problem"
+  /history:
+    get:
+      operationId: getHistory
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+            minimum: 1
+            maximum: 90
+      responses:
+        "200":
+          description: history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoryEntry"
+  /state/series:
+    get:
+      operationId: listSeriesState
+      responses:
+        "200":
+          description: states
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SeriesState"
+  /state/series/{show_title}:
+    parameters:
+      - name: show_title
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: patchSeriesState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SeriesStatePatch"
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesState"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /channels:
+    get:
+      operationId: listChannels
+      responses:
+        "200":
+          description: channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Channel"
+        "502":
+          $ref: "#/components/responses/Problem"
+  /status:
+    get:
+      operationId: getStatus
+      responses:
+        "200":
+          description: status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  requestBodies:
+    BlockWrite:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BlockWrite"
+  responses:
+    Problem:
+      description: error
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    BlockList:
+      description: blocks
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/BlockRecord"
+    BlockItem:
+      description: block
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BlockRecord"
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        request_id:
+          type: string
+    Filter:
+      type: object
+      properties:
+        title_pattern:
+          type: string
+        genres:
+          type: array
+          items:
+            type: string
+        ratings:
+          type: array
+          items:
+            type: string
+        year_from:
+          type: integer
+        year_to:
+          type: integer
+        min_duration:
+          type: integer
+        max_duration:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+    FillerConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        filler_list_id:
+          type: string
+        max_filler_time:
+          type: integer
+        min_gap_time:
+          type: integer
+    SeriesConfig:
+      type: object
+      required: [show_title, episodes_per_block]
+      properties:
+        show_title:
+          type: string
+        episodes_per_block:
+          type: integer
+          minimum: 1
+        start_season:
+          type: integer
+        start_episode:
+          type: integer
+        on_complete:
+          type: string
+          enum: [continue, restart, disable]
+        skip_episodes:
+          type: array
+          items:
+            type: string
+        max_runs:
+          type: integer
+    SeriesFallback:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [redistribute, filler]
+        filler_filter:
+          $ref: "#/components/schemas/Filter"
+    BlockSpec:
+      type: object
+      required: [name, cron, duration, channel_id]
+      properties:
+        type:
+          type: string
+          enum: [filter, series]
+          default: filter
+        name:
+          type: string
+        cron:
+          type: string
+        duration:
+          type: integer
+          minimum: 1
+        channel_id:
+          type: string
+        priority:
+          type: integer
+        max_duration_overflow_minutes:
+          type: integer
+        filter:
+          $ref: "#/components/schemas/Filter"
+        filler:
+          $ref: "#/components/schemas/FillerConfig"
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeriesConfig"
+        fallback:
+          $ref: "#/components/schemas/SeriesFallback"
+    BlockWrite:
+      type: object
+      required: [spec]
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        spec:
+          $ref: "#/components/schemas/BlockSpec"
+    BlockRecord:
+      type: object
+      required: [id, name, enabled, spec, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        spec:
+          $ref: "#/components/schemas/BlockSpec"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ImportResult:
+      type: object
+      required: [imported, dry_run]
+      properties:
+        imported:
+          type: integer
+        dry_run:
+          type: boolean
+        names:
+          type: array
+          items:
+            type: string
+    GenerateRequest:
+      type: object
+      properties:
+        days:
+          type: integer
+          default: 7
+          minimum: 1
+          maximum: 30
+        channel_id:
+          type: string
+    ScheduledSlot:
+      type: object
+      properties:
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        block:
+          $ref: "#/components/schemas/BlockSpec"
+        programs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    PlanResult:
+      type: object
+      required: [applied, channels]
+      properties:
+        applied:
+          type: boolean
+        channels:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/ScheduledSlot"
+    HistoryEntry:
+      type: object
+      properties:
+        program_id:
+          type: string
+        channel_id:
+          type: string
+        block_name:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+    SeriesState:
+      type: object
+      required: [show_title, current_season, current_episode]
+      properties:
+        show_title:
+          type: string
+        current_season:
+          type: integer
+        current_episode:
+          type: integer
+        completed:
+          type: boolean
+        disabled:
+          type: boolean
+        run_count:
+          type: integer
+        last_aired:
+          type: string
+          format: date-time
+          nullable: true
+    SeriesStatePatch:
+      type: object
+      properties:
+        current_season:
+          type: integer
+          minimum: 1
+        current_episode:
+          type: integer
+          minimum: 1
+        completed:
+          type: boolean
+        disabled:
+          type: boolean
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        number:
+          type: integer
+    Status:
+      type: object
+      required: [version, tunarr_reachable]
+      properties:
+        version:
+          type: string
+        tunarr_reachable:
+          type: boolean
+        tunarr_error:
+          type: string
+        blocks:
+          type: integer
