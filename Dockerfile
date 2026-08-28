@@ -2,12 +2,12 @@
 # Option 1: Auto-detect and build with:
 #   docker build --build-arg GO_VERSION=$(grep '^go ' go.mod | sed 's/go //' | sed 's/\.[0-9]*$//' | head -1) .
 # Option 2: Manual override:
-#   docker build --build-arg GO_VERSION=1.25 .
+#   docker build --build-arg GO_VERSION=1.27 .
 # Option 3: Use default (will show warning if mismatch)
 #
 # Build arguments with smart defaults
 ARG IMAGE_SOURCE
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.27
 ARG VERSION=dev
 ARG BUILD_DATE=""
 ARG GIT_COMMIT=""
