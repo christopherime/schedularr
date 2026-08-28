@@ -33,7 +33,7 @@ sub-project 4.
 
 ## Non-goals (deferred to later sub-projects)
 
-- Web UI (sub-project 2 — consumes this API; TUI deletion happens there).
+- Web UI (sub-project 2 — consumes this API).
 - Tag/metadata enrichment from TMDB/TVDB etc. (sub-project 3).
 - Dockerfile hardening, GitHub Actions, Helm chart, cluster deployment,
   oauth2-proxy/Keycloak SSO fronting (sub-project 4).
@@ -51,8 +51,11 @@ sub-project 4.
 3. **Contract-first (Approach B):** `api/openapi.yaml` is authoritative;
    `oapi-codegen` generates Go server interfaces/types; chi for routing.
    The same spec later generates the web UI's TypeScript client.
-4. **TUI:** deprecated now (startup warning, removed from README);
-   deleted in sub-project 2 when the web UI MVP replaces it.
+4. **TUI: deleted in this phase** (`internal/tui/`, `cmd/tui.go`,
+   Bubble Tea dependencies pruned from `go.mod`). Operator policy: no
+   legacy or deprecated code is kept — code is either used or removed.
+   Until the web UI ships (sub-project 2), editing happens via the API
+   and YAML import/export.
 5. **Integration removals:** Jellyfin (`internal/external/jellyfin/`,
    the Live-TV guide-refresh hook), Sonarr, and Radarr
    (`internal/external/sonarr/`, `internal/external/radarr/`, the
@@ -79,7 +82,9 @@ sub-project 4.
 - Single binary. New `schedularr serve` command runs the cron scheduler
   engine and the HTTP API (default `:8484`) with graceful shutdown
   (SIGTERM drains in-flight requests, stops cron).
-- `run --daemon` becomes a deprecated alias for `serve --no-api`.
+- The `run` and `tui` commands are removed (no deprecated aliases —
+  the no-legacy policy applies); `serve` is the only long-running
+  entry point.
 - Structured `slog` JSON logging as today; every request logged with a
   request ID (middleware-assigned, echoed in error responses).
 
@@ -157,15 +162,14 @@ All routes under `/api/v1`, bearer-token auth unless noted.
 - Repoint `origin` to `git@github.com:christopherime/schedularr.git`.
 - Module path rename + `go 1.27` bump land as the first implementation
   commit (mechanical import rewrite, verified by `make build test lint`).
-- Operator commits or stashes the in-flight TUI WIP
-  (`internal/tui/calendar_day.go`, `internal/tui/model.go`, untracked
-  `schedules/`) before implementation starts.
+- TUI WIP and the untracked test `schedules/` artifact were discarded
+  on operator instruction (2026-08-28); the working tree is clean.
 
 ## Out of scope, recorded for later
 
 - Sub-project 2: web UI — Hugo-built static frontend (operator
   preference) embedded via `go:embed`, JS/typed client generated from
-  `api/openapi.yaml`, TUI deletion.
+  `api/openapi.yaml`.
 - Sub-project 3: tag engine (TMDB/TVDB; note IMDb has no official free
   API), tags as first-class filter criteria.
 - Sub-project 4: hardened image, GitHub Actions (lint/test/security/
