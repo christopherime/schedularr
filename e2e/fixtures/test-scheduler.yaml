@@ -31,8 +31,3 @@ blocks:
       min_duration: 40
       max_duration: 60
 
-settings:
-  rotation_window_days: 7
-  min_gap_minutes: 5
-  max_filler_minutes: 30
-

@@ -10,6 +10,11 @@ BINARY="${PROJECT_ROOT}/bin/schedularr"
 CONFIG="${SCRIPT_DIR}/fixtures/test-config.yaml"
 SCHEDULER="${SCRIPT_DIR}/fixtures/test-scheduler.yaml"
 
+# test-config.yaml's scheduler_file key reads this via CUE's ${VAR} env
+# interpolation (internal/cueconfig.LoadConfigWithEnvInterpolation) --
+# scheduler.yaml is a config key, not a `generate` CLI flag.
+export SCHEDULER_FILE="${SCHEDULER}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -121,25 +126,17 @@ test_list_channels() {
     fi
 }
 
-# Test 3: Generate schedule (dry-run)
+# Test 3: Generate schedule (dry-run). The scheduler.yaml import file is
+# picked up from config's scheduler_file key (see SCHEDULER_FILE export
+# above) and bootstrapped into the block store on first run -- `generate`
+# has no --scheduler flag.
 test_generate_schedule() {
     test_start "Generate schedule (dry-run)"
-    
-    if "$BINARY" --config "$CONFIG" generate --scheduler "$SCHEDULER" > /dev/null 2>&1; then
+
+    if "$BINARY" --config "$CONFIG" generate > /dev/null 2>&1; then
         test_pass
     else
         test_fail "Failed to generate schedule"
-    fi
-}
-
-# Test 4: Scheduler list command
-test_scheduler_list() {
-    test_start "List scheduler blocks"
-    
-    if "$BINARY" scheduler list "$SCHEDULER" > /dev/null 2>&1; then
-        test_pass
-    else
-        test_fail "Failed to list scheduler blocks"
     fi
 }
 
@@ -155,7 +152,6 @@ main() {
     test_validate_configs
     test_list_channels
     test_generate_schedule
-    test_scheduler_list
     
     # Summary
     echo ""

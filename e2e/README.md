@@ -56,14 +56,16 @@ sleep 30
 # Generate a test config
 ./bin/schedularr config generate e2e/test-config.yaml
 
-# Edit the config to point to localhost:8000
+# Edit the config to point to localhost:8000, and set scheduler_file to
+# e2e/fixtures/test-scheduler.yaml (the import file is a config key, not a
+# `generate` flag -- it's bootstrapped into the block store on first run)
 vim e2e/test-config.yaml
 
 # Test channel listing
 ./bin/schedularr --config e2e/test-config.yaml channels
 
 # Test schedule generation
-./bin/schedularr --config e2e/test-config.yaml generate --scheduler e2e/fixtures/test-scheduler.yaml
+./bin/schedularr --config e2e/test-config.yaml generate
 
 # Clean up
 make e2e-down
