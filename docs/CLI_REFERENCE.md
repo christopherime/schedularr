@@ -160,33 +160,40 @@ schedularr generate --scheduler my-schedule.yaml --from "2026-01-15" --to "2026-
 
 ---
 
-### Daemon Mode
+### API Server + Cron
 
-#### `run`
+#### `serve`
 
-Start the scheduling daemon to automatically generate and apply schedules.
+Run the HTTP API server (blocks CRUD, schedule generate/apply, history,
+series state, channels, status, `/openapi.json`) and the cron scheduling
+loop together in one long-lived process.
 
 **Usage:**
 
 ```bash
-# Start daemon (runs continuously)
-schedularr run --scheduler my-schedule.yaml
+# Start the server (requires a bearer token -- via env or config)
+SCHEDULARR_API_TOKEN=$(openssl rand -hex 32) schedularr serve --listen :8484
 
-# Run once and exit
-schedularr run --scheduler my-schedule.yaml --once
+# Local development only -- disables bearer auth entirely
+schedularr serve --insecure-no-auth
 ```
 
 **Flags:**
 
-- `--scheduler <file>` - Path to scheduler configuration file
-- `--once` - Run once and exit (default: continuous)
-- `--daemon` - Run in background (default behavior)
+- `--listen <addr>` - Address for the HTTP API server to listen on (default: `:8484`)
+- `--insecure-no-auth` - Skip bearer-token auth on `/api/v1/*` (local development only)
+
+**Config keys:** `api.listen`, `api.token` (or the `SCHEDULARR_API_TOKEN`
+env var, which always wins), `api.insecure_no_auth`.
 
 **Features:**
 
-- Graceful shutdown on SIGTERM/SIGINT
-- Automatic schedule generation based on cron expressions
-- Continuous monitoring and updates
+- `/healthz`, `/readyz`, `/metrics`, `/openapi.json` served unauthenticated;
+  everything under `/api/v1/*` requires `Authorization: Bearer <token>`
+- Cron loop regenerates and applies the next day's schedule every 6 hours
+  (and once immediately at startup)
+- Graceful shutdown on SIGTERM/SIGINT: HTTP server drains (15s timeout),
+  then the cron loop stops, then the store closes
 
 ---
 
@@ -256,8 +263,8 @@ schedularr generate --scheduler scheduler.yaml
 # 7. Apply schedule to Tunarr
 schedularr generate --scheduler scheduler.yaml --apply
 
-# 8. Start daemon for continuous scheduling
-schedularr run --scheduler scheduler.yaml
+# 8. Start the API server + cron loop for continuous scheduling
+SCHEDULARR_API_TOKEN=$(openssl rand -hex 32) schedularr serve
 ```
 
 ### Validation Workflow

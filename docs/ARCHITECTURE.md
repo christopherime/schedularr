@@ -78,7 +78,7 @@ graph TB
 The CLI provides commands for all user interactions:
 
 - **`schedularr generate`** - Generate and optionally apply schedules
-- **`schedularr run`** - Start daemon mode with cron-based execution
+- **`schedularr serve`** - Run the HTTP API server + cron scheduling loop
 - **`schedularr channels`** - List available Tunarr channels
 - **`schedularr tui`** - Launch interactive block editor
 - **`schedularr validate`** - Validate configuration files
@@ -358,7 +358,7 @@ Schedularr adopts the following patterns from the athena project to improve code
 - **Root (no verb):** `./schedularr` - Default behavior launches TUI
 - **validate:** `./schedularr validate [file]` - Validate configuration files
 - **generate:** `./schedularr generate [options]` - Generate configuration templates
-- **run:** `./schedularr run [options]` - Start the scheduling daemon
+- **serve:** `./schedularr serve [options]` - Run the HTTP API server + cron loop
 
 **Benefits:**
 

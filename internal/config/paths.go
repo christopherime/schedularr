@@ -11,6 +11,13 @@ const (
 	// EnvConfigPath is the environment variable for config file path.
 	EnvConfigPath = "SCHEDULARR_CONFIG"
 
+	// EnvAPIToken is the *name* of the environment variable carrying the
+	// `serve` command's bearer token -- not a credential itself, just the
+	// key config.APIToken reads via os.Getenv. It always wins over the
+	// api.token config key -- see APIToken.
+	// #nosec G101 -- this is an env var name, not a hardcoded credential
+	EnvAPIToken = "SCHEDULARR_API_TOKEN"
+
 	// DefaultConfigDir is the default config directory name.
 	DefaultConfigDir = ".schedularr"
 

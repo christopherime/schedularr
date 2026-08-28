@@ -40,7 +40,7 @@ go test -race -v ./internal/external/tunarr/...
 cmd/                          # CLI commands (Cobra)
 ├── channels.go               # List Tunarr channels
 ├── generate.go               # Generate & apply schedules
-├── run.go                    # Daemon mode with cron
+├── serve.go                  # HTTP API server + cron scheduling loop
 ├── tui.go                    # Launch terminal UI
 ├── validate.go               # Config validation
 ├── state.go                  # Series state management
@@ -74,7 +74,7 @@ internal/
 
 ```bash
 schedularr generate [--apply]       # Generate schedule (--apply to push to Tunarr)
-schedularr run [--daemon]           # Start daemon with cron-based execution
+schedularr serve [--listen :8484]   # Run the HTTP API server + cron loop
 schedularr channels                 # List Tunarr channels
 schedularr tui                      # Launch interactive block editor
 schedularr validate <file>          # Validate config file

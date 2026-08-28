@@ -746,3 +746,20 @@ func TestStore_SetSeriesState_OnClosedStore(t *testing.T) {
 	err = s.SetSeriesState(ctx, "Test Show", 1, 1)
 	assert.Error(t, err, "SetSeriesState on closed store should error")
 }
+
+func TestStore_Ping(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	require.NoError(t, s.Ping(context.Background()), "Ping on a live store should succeed")
+}
+
+func TestStore_Ping_OnClosedStore(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	require.NoError(t, s.Close(), "Close failed")
+
+	err = s.Ping(context.Background())
+	assert.Error(t, err, "Ping on a closed store should error")
+}

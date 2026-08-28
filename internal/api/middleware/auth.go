@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/christopherime/schedularr/internal/api"
+	"github.com/christopherime/schedularr/internal/problem"
 )
 
 // minBearerTokenLength is the shortest token BearerAuth accepts. Anything
@@ -37,14 +37,14 @@ func BearerAuth(token string) (func(http.Handler) http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			if !strings.HasPrefix(header, bearerPrefix) {
-				api.WriteProblem(w, r, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+				problem.WriteProblem(w, r, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 				return
 			}
 
 			presented := strings.TrimPrefix(header, bearerPrefix)
 			got := sha256.Sum256([]byte(presented))
 			if subtle.ConstantTimeCompare(want[:], got[:]) != 1 {
-				api.WriteProblem(w, r, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
+				problem.WriteProblem(w, r, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
 				return
 			}
 

@@ -47,6 +47,20 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// Ping verifies the database connection is live by executing a trivial
+// `SELECT 1` round-trip, rather than sql.DB's own PingContext (which some
+// drivers implement as a no-op connection check rather than an actual
+// query). Used by the API server's /readyz endpoint
+// (internal/api/router.go) to report readiness -- distinct from process
+// liveness, which /healthz reports without touching the store at all.
+func (s *Store) Ping(ctx context.Context) error {
+	var v int
+	if err := s.db.GetContext(ctx, &v, "SELECT 1"); err != nil {
+		return fmt.Errorf("failed to ping database: %w", err)
+	}
+	return nil
+}
+
 // seriesStateRow queries the raw persisted row for showTitle, returning
 // (nil, nil) if no row exists -- distinct from a query error. It backs both
 // GetSeriesState (which fabricates a default S01E01 state as a convenience

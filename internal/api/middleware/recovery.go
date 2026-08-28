@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/christopherime/schedularr/internal/api"
+	"github.com/christopherime/schedularr/internal/problem"
 )
 
 // Recovery returns middleware that recovers from a panic anywhere in the
@@ -23,7 +23,7 @@ func Recovery(l *slog.Logger) func(http.Handler) http.Handler {
 						"stack", string(debug.Stack()),
 						"request_id", RequestIDFrom(ctx),
 					)
-					api.WriteProblem(w, r, http.StatusInternalServerError, "internal server error", "")
+					problem.WriteProblem(w, r, http.StatusInternalServerError, "internal server error", "")
 				}
 			}(r.Context())
 			next.ServeHTTP(w, r)

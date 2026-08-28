@@ -4,6 +4,7 @@
 package config
 
 import (
+	"os"
 	"time"
 
 	"github.com/christopherime/schedularr/internal/cueconfig"
@@ -80,6 +81,33 @@ func MaintenanceCleanupEnabled(cfg *Config) bool {
 // MaintenanceHistoryRetention returns the history retention duration.
 func MaintenanceHistoryRetention(cfg *Config) time.Duration {
 	return cfg.GetDuration("maintenance.history_retention")
+}
+
+// APIListen returns the configured address for the `serve` command's HTTP
+// API server to listen on (host:port, or :port for all interfaces).
+func APIListen(cfg *Config) string {
+	return cfg.GetString("api.listen")
+}
+
+// APIToken returns the bearer token the `serve` command's API server
+// requires on /api/v1/* requests. The SCHEDULARR_API_TOKEN environment
+// variable always wins over the api.token config key: operators rotate a
+// deployed token via the environment (a systemd unit's Environment=, a
+// Docker secret, ...) independently of whatever's checked into the config
+// file, and an env-var override is easier to keep out of version control
+// than a config value.
+func APIToken(cfg *Config) string {
+	if v := os.Getenv(EnvAPIToken); v != "" {
+		return v
+	}
+	return cfg.GetString("api.token")
+}
+
+// APIInsecureNoAuth returns whether the `serve` command's API server should
+// skip bearer-auth on /api/v1/* entirely (api.Config.InsecureNoAuth).
+// Local development only.
+func APIInsecureNoAuth(cfg *Config) bool {
+	return cfg.GetBool("api.insecure_no_auth")
 }
 
 // ============================================================================

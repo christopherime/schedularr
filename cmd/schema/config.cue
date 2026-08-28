@@ -26,6 +26,25 @@ package schema
 
 	// Maintenance configuration for background tasks
 	maintenance: #MaintenanceConfig
+
+	// HTTP API server configuration (the `serve` command)
+	api: #APIConfig
+}
+
+// APIConfig defines the HTTP API server settings used by `schedularr serve`
+#APIConfig: {
+	// Address the API server listens on (host:port, or :port for all interfaces)
+	listen: string | *":8484"
+
+	// Bearer token required on /api/v1/* requests. Also settable via the
+	// SCHEDULARR_API_TOKEN environment variable, which always takes
+	// precedence over this value. Must be at least 32 characters unless
+	// insecure_no_auth is true.
+	token: string | *""
+
+	// Skip bearer-token auth on /api/v1/* entirely. Local development only
+	// -- never set this in a real deployment.
+	insecure_no_auth: bool | *false
 }
 
 // TunarrConfig defines the Tunarr API connection settings

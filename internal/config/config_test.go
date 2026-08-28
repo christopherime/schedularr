@@ -252,3 +252,87 @@ func TestMaintenanceConfig(t *testing.T) {
 		t.Errorf("Expected history retention 336h, got %v", retention)
 	}
 }
+
+func TestAPIConfig_DefaultsWhenOmitted(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `tunarr:
+  url: "http://localhost:8000"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if got := APIListen(cfg); got != ":8484" {
+		t.Errorf("Expected CUE-schema default api.listen ':8484', got %q", got)
+	}
+	if got := APIToken(cfg); got != "" {
+		t.Errorf("Expected empty api.token when omitted, got %q", got)
+	}
+	if APIInsecureNoAuth(cfg) {
+		t.Error("Expected api.insecure_no_auth to default to false")
+	}
+}
+
+func TestAPIConfig_FromFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `api:
+  listen: "127.0.0.1:9999"
+  token: "configured-token-not-from-env-0123"
+  insecure_no_auth: true
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if got := APIListen(cfg); got != "127.0.0.1:9999" {
+		t.Errorf("Expected api.listen '127.0.0.1:9999', got %q", got)
+	}
+	if got := APIToken(cfg); got != "configured-token-not-from-env-0123" {
+		t.Errorf("Expected api.token from file, got %q", got)
+	}
+	if !APIInsecureNoAuth(cfg) {
+		t.Error("Expected api.insecure_no_auth to be true")
+	}
+}
+
+// TestAPIToken_EnvWinsOverConfig verifies SCHEDULARR_API_TOKEN always
+// overrides the api.token config key, even when the file sets one.
+func TestAPIToken_EnvWinsOverConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `api:
+  token: "from-config-file-not-the-environment-x"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	t.Setenv(EnvAPIToken, "from-the-environment-0123456789ab")
+
+	if got := APIToken(cfg); got != "from-the-environment-0123456789ab" {
+		t.Errorf("Expected SCHEDULARR_API_TOKEN to win over config, got %q", got)
+	}
+}

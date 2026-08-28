@@ -391,10 +391,10 @@ This writes `internal/api/gen/server.gen.go`, which is committed and must
 not be edited by hand — change `api/openapi.yaml` and regenerate instead.
 Handlers live in `internal/api/` and implement the generated
 `gen.ServerInterface`. Errors use an RFC 7807 `application/problem+json`
-body (`internal/api/problem.go`).
+body (`internal/api/problem.go`, backed by `internal/problem`).
 
-The API is not yet wired to an HTTP server; that lands in a later task,
-which will also serve the contract itself at `/openapi.json`.
+The API is served by `schedularr serve` (`internal/api/router.go`,
+`cmd/serve.go`) — see [Serve](#-serve-api-server--cron) below.
 
 ### Blocks Endpoints
 
@@ -605,9 +605,78 @@ Notes:
   rejected when the middleware is constructed. A missing or wrong token
   gets a `401` problem+json response.
 
-System endpoints served outside `internal/api` — `/healthz`, `/livez`
-(from `schedularr health`), and `/metrics` (from `schedularr run`) — are
-not part of the OpenAPI contract and do not go through bearer auth.
+`schedularr serve`'s own system endpoints — `/healthz`, `/readyz`,
+`/metrics`, `/openapi.json` — are not part of the OpenAPI contract and sit
+outside this middleware chain entirely (see [Serve](#-serve-api-server--cron)
+below). The separate `schedularr health` command's `/healthz`/`/livez`
+endpoints are a standalone, unrelated probe server, unaffected by this
+package.
+
+---
+
+## 🚀 Serve (API server + cron)
+
+`schedularr serve` runs the HTTP API and the cron scheduling loop in one
+long-lived process — the API server, the block store, and the periodic
+schedule generate-and-apply cycle all share one process and one graceful
+shutdown path (`internal/api/router.go`, `cmd/serve.go`).
+
+```bash
+SCHEDULARR_API_TOKEN=$(openssl rand -hex 32) schedularr serve --listen :8484
+```
+
+### Flags
+
+| Flag                 | Default   | Description                                                       |
+| -------------------- | --------- | ------------------------------------------------------------------- |
+| `--listen`            | `:8484`    | Address the HTTP API server listens on                              |
+| `--insecure-no-auth` | `false`    | Skip bearer-token auth on `/api/v1/*` — local development only, never a real deployment (logs a `WARN` at startup when set) |
+
+### Environment and config keys
+
+| Config key              | Env var                 | Default | Description                                                         |
+| ------------------------ | ------------------------ | ------- | --------------------------------------------------------------------- |
+| `api.listen`              | —                          | `:8484`  | Same as `--listen`; the flag wins when explicitly passed              |
+| `api.token`                | `SCHEDULARR_API_TOKEN` | `""`     | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set |
+| `api.insecure_no_auth` | —                          | `false`  | Same as `--insecure-no-auth`; either source turning it on disables auth |
+
+`schedularr serve` refuses to start if the effective token is empty (or
+shorter than 32 characters) and `--insecure-no-auth`/`api.insecure_no_auth`
+is not set.
+
+### Endpoints
+
+| Method | Path             | Auth | Description                                     |
+| ------ | ---------------- | ---- | ------------------------------------------------ |
+| GET    | `/healthz`         | none | Process liveness only, no dependency checks     |
+| GET    | `/readyz`           | none | Liveness plus a store round-trip (`SELECT 1`)    |
+| GET    | `/metrics`          | none | Prometheus text exposition                        |
+| GET    | `/openapi.json`    | none | The OpenAPI 3.0 contract as JSON                  |
+| \*      | `/api/v1/*`         | bearer | Blocks CRUD, import/export, generate/apply/schedule, history, series state, channels, status — see [API](#-api) above |
+
+### Cron loop
+
+Every 6 hours (and once immediately at startup), `serve` regenerates and
+applies the next day's schedule — the same `service.Runner.Run(ctx,
+Options{Days: 1, Apply: true})` call `schedularr generate --apply --yes`
+makes, just on a timer instead of a one-shot CLI invocation. A failed tick
+is logged and does not stop the server; the next tick tries again.
+
+### Shutdown
+
+`serve` listens for `SIGINT`/`SIGTERM`. On either, it stops accepting new
+HTTP connections, waits up to 15s for in-flight requests to finish
+(`http.Server.Shutdown`), then stops the cron loop and closes the store —
+in that order, so an in-progress schedule apply isn't cut off mid-write by
+the HTTP shutdown deadline.
+
+### Running it
+
+`serve` is a plain long-lived process: run it under whatever supervisor
+manages the rest of your deployment (a systemd unit with `Restart=on-failure`,
+a Docker/Podman container, a Kubernetes `Deployment`, ...). It has no
+built-in daemonization — foreground it and let the supervisor handle
+restarts and logging, the same way you'd run any other Go server binary.
 
 ---
 

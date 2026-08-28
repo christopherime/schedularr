@@ -20,3 +20,12 @@ maintenance:
   cleanup_interval: 24h
   history_retention: 168h
   cleanup_enabled: true
+
+api:
+  listen: :8484
+  # token is left empty here on purpose -- set it via the
+  # SCHEDULARR_API_TOKEN environment variable instead of committing a
+  # secret to this file. `schedularr serve` refuses to start with an empty
+  # token unless --insecure-no-auth is passed.
+  token: ""
+  insecure_no_auth: false
