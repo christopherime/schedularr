@@ -423,6 +423,47 @@ Notes:
   the current name without colliding renames the block.
 - `blocks/import` and `blocks/export` remain `501` pending a later task.
 
+### Schedule Endpoints
+
+Schedule generation and application (`internal/api/schedule.go`) delegate to
+`internal/service.Runner` (`Deps.Sched`, a `service.ScheduleRunner`), which
+is the extraction of what used to be `cmd/generate.go`'s inline
+generate/apply flow: load the enabled blocks (`service.ActiveBlocks`, moved
+from the CLI's former `loadActiveBlocks`), fetch available Tunarr content,
+run `scheduler.Engine.GenerateForTimeRange` over a `days`-wide window
+starting now, and -- only when applying -- push the result to Tunarr per
+channel via `UpdateSchedule` and commit the engine's pending state via
+`Engine.Commit()`. `cmd/generate.go` now calls the same `service.Runner`,
+so the CLI and the API share one implementation.
+
+| Method | Path               | Success | Error codes |
+| ------ | ------------------ | ------- | ----------- |
+| POST   | `/generate`        | 200     | 400, 502    |
+| POST   | `/apply`           | 200     | 400, 502    |
+| GET    | `/schedule?days=N` | 200     | 400, 502    |
+
+Notes:
+
+- `POST /generate` and `POST /apply` share the same optional
+  `GenerateRequest` body (`days`, `channel_id`); `GET /schedule` takes the
+  same `days` as a query parameter. `days` defaults to `7` and (matching
+  the `GetHistory` convention -- oapi-codegen's generated bindings don't
+  enforce the OpenAPI schema's default/minimum/maximum) is range-checked by
+  the handler itself against `[1, 30]`, returning `400` outside that range.
+- `POST /generate` always runs a dry run (`applied: false` in the response)
+  regardless of the request body -- it never mutates the store or Tunarr.
+  Only `POST /apply` (`applied: true` on success) pushes anything.
+- `channel_id`, when set, narrows the returned `channels` map to that one
+  channel and, for `POST /apply`, restricts which channel's schedule is
+  actually pushed via `UpdateSchedule` -- a channel-scoped apply request
+  never touches a channel the caller didn't ask about.
+- A `Runner.Run` failure (loading blocks, fetching Tunarr content,
+  generating the schedule, or -- on apply -- `UpdateSchedule`/`Commit`)
+  returns `502` (`title: "schedule generation failed"`) with a short, fixed
+  detail: the underlying error can wrap a raw store/driver error, so
+  (matching the internal-error convention used elsewhere in this package)
+  it's logged server-side only, never echoed in the response body.
+
 ### History Endpoint
 
 History (`internal/api/history.go`) lists `schedule_history` rows (backed

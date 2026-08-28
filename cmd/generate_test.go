@@ -1,27 +1,24 @@
 package cmd
 
 import (
-	"context"
 	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/christopherime/schedularr/internal/scheduler"
-	"github.com/christopherime/schedularr/internal/store"
 )
 
-// TestHandleScheduleOutput_RequiresYesToApply verifies that apply is refused
+// TestCheckApplyGate_RequiresYesToApply verifies that apply is refused
 // non-interactively unless --yes is set. This is the replacement for the
 // removed charmbracelet/huh confirmation prompt: since no interactive code
 // remains, an explicit --yes flag is now mandatory before any mutating
-// apply happens.
-func TestHandleScheduleOutput_RequiresYesToApply(t *testing.T) {
+// apply happens. checkApplyGate replaces handleScheduleOutput's gate check
+// now that schedule generation and apply live in internal/service --
+// ProcessSchedule calls it before ever touching the store or Tunarr.
+func TestCheckApplyGate_RequiresYesToApply(t *testing.T) {
 	t.Run("refuses apply without --yes", func(t *testing.T) {
 		origAssumeYes := assumeYes
 		assumeYes = false
 		defer func() { assumeYes = origAssumeYes }()
 
-		err := handleScheduleOutput(nil, nil, nil, nil, scheduleOutputOptions{apply: true, dryRun: false})
+		err := checkApplyGate(true, false)
 		if err == nil {
 			t.Fatal("expected error when applying without --yes, got nil")
 		}
@@ -36,7 +33,7 @@ func TestHandleScheduleOutput_RequiresYesToApply(t *testing.T) {
 		assumeYes = false
 		defer func() { assumeYes = origAssumeYes }()
 
-		err := handleScheduleOutput(nil, nil, nil, nil, scheduleOutputOptions{apply: true, dryRun: true})
+		err := checkApplyGate(true, true)
 		if err != nil {
 			t.Fatalf("dry-run should not require --yes, got error: %v", err)
 		}
@@ -83,61 +80,10 @@ func TestColorEnabled(t *testing.T) {
 	})
 }
 
-// TestLoadActiveBlocks verifies that loadActiveBlocks returns only the
-// Specs of enabled block records from the store -- disabled blocks are the
-// mechanism for keeping a block defined but out of schedule generation, so
-// the engine must never see one.
-func TestLoadActiveBlocks(t *testing.T) {
-	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("failed to create test store: %v", err)
-	}
-	defer func() { _ = s.Close() }()
-
-	ctx := context.Background()
-
-	enabled := &store.BlockRecord{
-		ID:      "enabled-1",
-		Name:    "Enabled Block",
-		Enabled: true,
-		Spec: scheduler.Block{
-			Name:      "Enabled Block",
-			Cron:      "0 6 * * *",
-			Duration:  60,
-			ChannelID: "channel-1",
-		},
-	}
-	disabled := &store.BlockRecord{
-		ID:      "disabled-1",
-		Name:    "Disabled Block",
-		Enabled: false,
-		Spec: scheduler.Block{
-			Name:      "Disabled Block",
-			Cron:      "0 7 * * *",
-			Duration:  30,
-			ChannelID: "channel-2",
-		},
-	}
-
-	if err := s.CreateBlock(ctx, enabled); err != nil {
-		t.Fatalf("failed to create enabled block: %v", err)
-	}
-	if err := s.CreateBlock(ctx, disabled); err != nil {
-		t.Fatalf("failed to create disabled block: %v", err)
-	}
-
-	blocks, err := loadActiveBlocks(ctx, s)
-	if err != nil {
-		t.Fatalf("loadActiveBlocks failed: %v", err)
-	}
-
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 active block, got %d: %+v", len(blocks), blocks)
-	}
-	if blocks[0].Name != "Enabled Block" {
-		t.Errorf("expected active block named 'Enabled Block', got %q", blocks[0].Name)
-	}
-}
+// loadActiveBlocks (the enabled-only block filter) moved to
+// internal/service as ActiveBlocks -- see
+// internal/service/schedule_test.go's TestActiveBlocks_ExcludesDisabled
+// for its test coverage.
 
 // unsetEnv removes key from the environment for the duration of the test,
 // restoring its previous value (or leaving it unset) on cleanup.

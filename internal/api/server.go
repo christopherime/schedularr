@@ -5,11 +5,11 @@ import (
 	"net/http"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
+	"github.com/christopherime/schedularr/internal/service"
 	"github.com/christopherime/schedularr/internal/store"
 )
 
-// Deps holds the dependencies Handlers needs to serve requests. It starts
-// minimal; Task 13 adds a schedule-runner interface here.
+// Deps holds the dependencies Handlers needs to serve requests.
 type Deps struct {
 	Store   *store.Store
 	Logger  *slog.Logger
@@ -22,10 +22,15 @@ type Deps struct {
 	// normal, expected state rather than a programming error, since a
 	// Schedularr deployment need not run Tunarr at all.
 	Tunarr TunarrAPI
+
+	// Sched is the schedule-generation boundary used by GenerateSchedule,
+	// ApplySchedule, and GetSchedule (see schedule.go). Production wiring
+	// passes a *service.Runner, which satisfies ScheduleRunner as-is;
+	// tests pass a fake.
+	Sched service.ScheduleRunner
 }
 
-// Handlers implements gen.ServerInterface. Every operation currently
-// returns 501 problem+json; Tasks 8-15 replace the stubs one group at a time.
+// Handlers implements gen.ServerInterface.
 type Handlers struct {
 	d Deps
 }
@@ -50,20 +55,8 @@ func (h *Handlers) ExportBlocks(w http.ResponseWriter, r *http.Request) {
 	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "exportBlocks pending")
 }
 
-// GenerateSchedule implements gen.ServerInterface.
-func (h *Handlers) GenerateSchedule(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "generateSchedule pending")
-}
-
-// ApplySchedule implements gen.ServerInterface.
-func (h *Handlers) ApplySchedule(w http.ResponseWriter, r *http.Request) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "applySchedule pending")
-}
-
-// GetSchedule implements gen.ServerInterface.
-func (h *Handlers) GetSchedule(w http.ResponseWriter, r *http.Request, _ gen.GetScheduleParams) {
-	WriteProblem(w, r, http.StatusNotImplemented, "not implemented", "getSchedule pending")
-}
+// GenerateSchedule, ApplySchedule, and GetSchedule implement
+// gen.ServerInterface. See schedule.go.
 
 // GetHistory implements gen.ServerInterface. See history.go.
 

@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/christopherime/schedularr/internal/blockio"
-	"github.com/christopherime/schedularr/internal/cache"
 	"github.com/christopherime/schedularr/internal/config"
 	"github.com/christopherime/schedularr/internal/cueconfig"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/scheduler"
+	"github.com/christopherime/schedularr/internal/service"
 	"github.com/christopherime/schedularr/internal/store"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -203,46 +203,79 @@ func buildConfigOverrides() map[string]interface{} {
 	return overrides
 }
 
-// ProcessSchedule generates and optionally applies the schedule.
+// ProcessSchedule generates and optionally applies the schedule. Schedule
+// generation, content fetching, and the apply-and-commit path all live in
+// internal/service (service.Runner.Run) -- this function's job is CLI
+// concerns only: opening/closing the store, the --yes gate, and rendering
+// the result.
 func ProcessSchedule(cfg *config.Config, applyFlag bool, dryRunFlag bool) error {
-	blocks, st, err := initializeScheduler(cfg)
+	if err := checkApplyGate(applyFlag, dryRunFlag); err != nil {
+		return err
+	}
+
+	st, err := initializeScheduler(cfg)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
 	client := tunarr.NewClient(config.TunarrConfig(cfg))
-	programs, err := fetchAndValidateContent(cfg, client)
+
+	logLevel := config.LogLevel(cfg)
+	if verbose {
+		// Verbose CLI output now rides on the service's slog calls (see
+		// internal/service/schedule.go) rather than its own fmt.Printf
+		// gating, so --verbose/-v raises the logger to debug instead.
+		logLevel = "debug"
+	}
+	logger := newLogger(logLevel, config.LogFormat(cfg))
+
+	timezone := config.LogTimezone(cfg)
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return fmt.Errorf("invalid timezone '%s' in app config: %w", timezone, err)
+	}
+
+	runner := service.NewRunner(st, client, logger, loc)
+
+	applyNow := applyFlag && !dryRunFlag
+	result, err := runner.Run(context.Background(), service.Options{Days: 1, Apply: applyNow})
 	if err != nil {
 		return err
 	}
 
-	engine, err := createEngine(cfg, client, blocks, st)
-	if err != nil {
-		return err
+	displaySchedule(result.Channels, verbose)
+	flattenedPlan := flattenSchedule(result.Channels)
+
+	switch {
+	case dryRunFlag:
+		displayDryRunSummary(flattenedPlan)
+	case result.Applied:
+		fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Successfully applied schedule to %d channel(s)", len(result.Channels))))
+	default:
+		fmt.Println(infoStyle.Render("\n💡 Use --apply to push schedule to Tunarr"))
+		fmt.Println(infoStyle.Render("   Use --dry-run to see what would be applied without making changes"))
 	}
 
-	plan, err := generateSchedulePlan(cfg, engine, programs)
-	if err != nil {
-		return err
-	}
-
-	displaySchedule(plan, verbose)
-	flattenedPlan := flattenSchedule(plan)
-
-	err = handleScheduleOutput(cfg, client, engine, flattenedPlan, scheduleOutputOptions{
-		apply:  applyFlag,
-		dryRun: dryRunFlag,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Run cleanup after successful apply if enabled
-	if applyFlag && !dryRunFlag && config.MaintenanceCleanupEnabled(cfg) {
+	// Run cleanup after a successful apply if enabled.
+	if result.Applied && config.MaintenanceCleanupEnabled(cfg) {
 		runScheduleHistoryCleanup(cfg, st)
 	}
 
+	return nil
+}
+
+// checkApplyGate refuses --apply without --yes (dry-run always bypasses
+// it, since dry-run never mutates anything regardless of --apply). This is
+// the replacement for the removed charmbracelet/huh confirmation prompt:
+// since no interactive code remains, an explicit --yes flag is mandatory
+// before any mutating apply happens. It runs before ProcessSchedule does
+// any work, so an invalid combination fails fast without a wasted
+// generate-and-fetch cycle.
+func checkApplyGate(applyFlag, dryRunFlag bool) error {
+	if applyFlag && !dryRunFlag && !assumeYes {
+		return errors.New("refusing to apply without --yes (interactive prompts were removed)")
+	}
 	return nil
 }
 
@@ -267,14 +300,17 @@ func runScheduleHistoryCleanup(cfg *config.Config, st *store.Store) {
 	}
 }
 
-// initializeScheduler opens the store, imports scheduler.yaml into it on
-// first run (see blockio.Bootstrap), and returns the currently active
-// blocks. scheduler.yaml is import-only from here on: the store is the
-// engine's source of truth.
-func initializeScheduler(cfg *config.Config) ([]scheduler.Block, *store.Store, error) {
+// initializeScheduler opens the store and imports scheduler.yaml into it on
+// first run (see blockio.Bootstrap). scheduler.yaml is import-only from
+// here on: the store is the engine's source of truth. It also performs a
+// preflight check via service.ActiveBlocks -- purely for the CLI's
+// "no scheduling blocks configured" early exit and block-count message;
+// service.Runner.Run repeats this same lookup internally when it actually
+// generates a schedule.
+func initializeScheduler(cfg *config.Config) (*store.Store, error) {
 	st, err := store.New(config.DatabasePath(cfg))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	ctx := context.Background()
@@ -284,267 +320,25 @@ func initializeScheduler(cfg *config.Config) ([]scheduler.Block, *store.Store, e
 	imported, err := blockio.Bootstrap(ctx, st, schedFile, logger)
 	if err != nil {
 		_ = st.Close()
-		return nil, nil, fmt.Errorf("failed to bootstrap blocks from %s: %w", schedFile, err)
+		return nil, fmt.Errorf("failed to bootstrap blocks from %s: %w", schedFile, err)
 	}
 	if imported > 0 {
 		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📥 Imported %d scheduling block(s) from %s", imported, schedFile)))
 	}
 
-	blocks, err := loadActiveBlocks(ctx, st)
+	blocks, err := service.ActiveBlocks(ctx, st)
 	if err != nil {
 		_ = st.Close()
-		return nil, nil, fmt.Errorf("failed to load scheduling blocks: %w", err)
+		return nil, fmt.Errorf("failed to load scheduling blocks: %w", err)
 	}
 	if len(blocks) == 0 {
 		_ = st.Close()
-		return nil, nil, errors.New("no scheduling blocks configured")
+		return nil, errors.New("no scheduling blocks configured")
 	}
 
 	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📋 Loaded %d scheduling block(s)", len(blocks))))
 
-	return blocks, st, nil
-}
-
-// loadActiveBlocks returns the Spec of every enabled block in the store.
-// scheduler.yaml is import-only (see blockio.Bootstrap): the store is the
-// engine's live source of scheduling truth, and disabled blocks stay
-// defined but out of schedule generation.
-func loadActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error) {
-	records, err := s.ListBlocks(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list blocks from store: %w", err)
-	}
-
-	blocks := make([]scheduler.Block, 0, len(records))
-	for _, rec := range records {
-		if !rec.Enabled {
-			continue
-		}
-		blocks = append(blocks, rec.Spec)
-	}
-	return blocks, nil
-}
-
-func fetchAndValidateContent(cfg *config.Config, client *tunarr.Client) ([]tunarr.Program, error) {
-	programs, err := fetchAllContent(cfg, client)
-	if err != nil {
-		return nil, err
-	}
-
-	fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Found %d program(s)", len(programs))))
-	return programs, nil
-}
-
-const tunarrCacheKey = "tunarr_programs.json"
-
-// fetchAllContent fetches all schedulable content from Tunarr's libraries,
-// caching the result for the configured cache duration. Falls back to
-// SearchPrograms() when no library content is available.
-func fetchAllContent(cfg *config.Config, tunarrClient *tunarr.Client) ([]tunarr.Program, error) {
-	fmt.Println(infoStyle.Render("📡 Fetching content..."))
-
-	cacheDuration := config.CacheDuration(cfg)
-	contentCache, err := cache.New(cacheDuration)
-	if err != nil {
-		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not initialize content cache: %v. Proceeding without cache.", err)))
-		contentCache = nil // Disable caching if initialization failed
-	} else {
-		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗄️  Using in-memory cache (duration %s)", cacheDuration)))
-	}
-
-	programs := fetchTunarrContent(tunarrClient, contentCache)
-
-	if len(programs) == 0 {
-		fmt.Println(warnStyle.Render("⚠ No content available from libraries - using fallback SearchPrograms()"))
-		var err error
-		programs, err = fetchAllProgramsViaSearch(tunarrClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch programs: %w", err)
-		}
-	}
-
-	return programs, nil
-}
-
-func fetchTunarrContent(client *tunarr.Client, contentCache *cache.Cache) []tunarr.Program {
-	if programs := tryLoadTunarrFromCache(contentCache); programs != nil {
-		return programs
-	}
-
-	allPrograms := fetchLibraryPrograms(client)
-	saveTunarrCache(contentCache, allPrograms)
-
-	return allPrograms
-}
-
-func tryLoadTunarrFromCache(contentCache *cache.Cache) []tunarr.Program {
-	if contentCache == nil {
-		return nil
-	}
-	data, found := contentCache.Get(tunarrCacheKey)
-	if !found {
-		return nil
-	}
-	programs, ok := data.([]tunarr.Program)
-	if !ok {
-		return nil
-	}
-	if verbose {
-		fmt.Printf("%s\n", infoStyle.Render("📖 Loaded Tunarr programs from cache"))
-	}
-	return programs
-}
-
-func fetchLibraryPrograms(client *tunarr.Client) []tunarr.Program {
-	fmt.Println(infoStyle.Render("📡 Fetching content from Tunarr..."))
-
-	// First, get all media sources
-	sources, err := client.GetMediaSources(context.Background())
-	if err != nil {
-		if verbose {
-			fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch media sources: %v", err)))
-		}
-		return nil
-	}
-
-	if verbose {
-		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📡 Found %d media source(s)", len(sources))))
-	}
-
-	// Collect libraries from all media sources
-	var allLibraries []tunarr.Library
-	for _, source := range sources {
-		libraries, err := client.GetLibraries(context.Background(), source.ID)
-		if err != nil {
-			if verbose {
-				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Could not fetch libraries for %s: %v", source.Name, err)))
-			}
-			continue
-		}
-		allLibraries = append(allLibraries, libraries...)
-	}
-
-	if verbose {
-		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📚 Found %d librar(y/ies)", len(allLibraries))))
-	}
-
-	var allPrograms []tunarr.Program
-	for _, lib := range allLibraries {
-		programs := fetchSingleLibrary(client, lib)
-		allPrograms = append(allPrograms, programs...)
-	}
-
-	return allPrograms
-}
-
-func fetchSingleLibrary(client *tunarr.Client, lib tunarr.Library) []tunarr.Program {
-	if verbose {
-		fmt.Printf("  - %s (%s)\n", lib.Name, lib.Type)
-	}
-
-	// Use SearchPrograms with library ID to get programs from this library
-	var allPrograms []tunarr.Program
-	page := 1
-	limit := 100
-
-	for {
-		req := tunarr.ProgramSearchRequest{
-			Query:     &tunarr.ProgramSearchQuery{}, // API requires query object
-			LibraryID: lib.ID,
-			Page:      page,
-			Limit:     limit,
-		}
-
-		resp, err := client.SearchPrograms(context.Background(), req)
-		if err != nil {
-			if verbose {
-				fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("    ⚠ Could not fetch programs from %s: %v", lib.Name, err)))
-			}
-			return nil
-		}
-
-		allPrograms = append(allPrograms, resp.Results...)
-
-		// Check if we've fetched all programs
-		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
-			break
-		}
-		page++
-	}
-
-	if verbose {
-		fmt.Printf("    ✓ %d programs\n", len(allPrograms))
-	}
-
-	return allPrograms
-}
-
-func fetchAllProgramsViaSearch(client *tunarr.Client) ([]tunarr.Program, error) {
-	var allPrograms []tunarr.Program
-	page := 1
-	limit := 100
-
-	for {
-		req := tunarr.ProgramSearchRequest{
-			Query: &tunarr.ProgramSearchQuery{}, // API requires query object
-			Page:  page,
-			Limit: limit,
-		}
-
-		resp, err := client.SearchPrograms(context.Background(), req)
-		if err != nil {
-			return nil, err
-		}
-
-		allPrograms = append(allPrograms, resp.Results...)
-
-		// Check if we've fetched all programs
-		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
-			break
-		}
-		page++
-	}
-
-	return allPrograms, nil
-}
-
-func saveTunarrCache(contentCache *cache.Cache, allPrograms []tunarr.Program) {
-	if contentCache == nil {
-		return
-	}
-
-	if err := contentCache.Set(tunarrCacheKey, allPrograms); err != nil {
-		fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Error writing Tunarr programs to cache: %v", err)))
-	}
-}
-
-func createEngine(cfg *config.Config, client *tunarr.Client, blocks []scheduler.Block, st *store.Store) (*scheduler.Engine, error) {
-	logger := newLogger(config.LogLevel(cfg), config.LogFormat(cfg))
-
-	timezone := config.LogTimezone(cfg)
-	loc, err := time.LoadLocation(timezone)
-	if err != nil {
-		return nil, fmt.Errorf("invalid timezone '%s' in app config: %w", timezone, err)
-	}
-
-	return scheduler.NewEngine(client, blocks, st, logger, loc), nil
-}
-
-func generateSchedulePlan(cfg *config.Config, engine *scheduler.Engine, programs []tunarr.Program) (map[string][]scheduler.ScheduledSlot, error) {
-	start := time.Now()
-	end := start.Add(24 * time.Hour)
-
-	fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("🗓️  Generating schedule from %s to %s in %s",
-		start.Format("2006-01-02 15:04"),
-		end.Format("2006-01-02 15:04"),
-		config.LogTimezone(cfg))))
-
-	plan, err := engine.GenerateForTimeRange(start, end, programs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate schedule: %w", err)
-	}
-
-	return plan, nil
+	return st, nil
 }
 
 func flattenSchedule(plan map[string][]scheduler.ScheduledSlot) map[string][]tunarr.Program {
@@ -555,41 +349,6 @@ func flattenSchedule(plan map[string][]scheduler.ScheduledSlot) map[string][]tun
 		}
 	}
 	return flattenedPlan
-}
-
-type scheduleOutputOptions struct {
-	apply  bool
-	dryRun bool
-}
-
-func handleScheduleOutput(cfg *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program, opts scheduleOutputOptions) error {
-	if opts.apply && !opts.dryRun {
-		if !assumeYes {
-			return errors.New("refusing to apply without --yes (interactive prompts were removed)")
-		}
-		return applyScheduleAndSync(cfg, client, engine, flattenedPlan)
-	}
-
-	if opts.dryRun {
-		displayDryRunSummary(flattenedPlan)
-	} else {
-		fmt.Println(infoStyle.Render("\n💡 Use --apply to push schedule to Tunarr"))
-		fmt.Println(infoStyle.Render("   Use --dry-run to see what would be applied without making changes"))
-	}
-
-	return nil
-}
-
-func applyScheduleAndSync(_ *config.Config, client *tunarr.Client, engine *scheduler.Engine, flattenedPlan map[string][]tunarr.Program) error {
-	if err := applySchedule(client, flattenedPlan); err != nil {
-		return err
-	}
-
-	if err := engine.Commit(); err != nil {
-		return fmt.Errorf("failed to commit state: %w", err)
-	}
-
-	return nil
 }
 
 type channelStats struct {
@@ -787,36 +546,6 @@ func fmtDuration(ms int64) string {
 		return fmt.Sprintf("%dm %ds", minutes, seconds)
 	}
 	return fmt.Sprintf("%ds", seconds)
-}
-
-func applySchedule(client *tunarr.Client, plan map[string][]tunarr.Program) error {
-	fmt.Println()
-	fmt.Println(infoStyle.Render("🚀 Applying schedule to Tunarr..."))
-
-	successCount := 0
-	failCount := 0
-
-	for cid, items := range plan {
-		fmt.Printf("  📺 Channel %s...", cid)
-
-		if err := client.UpdateSchedule(context.Background(), cid, items); err != nil {
-			fmt.Print(errorStyle.Render(" ✗\n"))
-			fmt.Printf("     %s %v\n", errorStyle.Render("Error:"), err)
-			failCount++
-		} else {
-			fmt.Print(successStyle.Render(" ✓\n"))
-			successCount++
-		}
-	}
-
-	fmt.Println()
-	if failCount == 0 {
-		fmt.Printf("%s\n", successStyle.Render(fmt.Sprintf("✓ Successfully applied schedule to %d channel(s)", successCount)))
-		return nil
-	}
-
-	fmt.Printf("%s\n", warnStyle.Render(fmt.Sprintf("⚠ Applied to %d channel(s), %d failed", successCount, failCount)))
-	return fmt.Errorf("failed to apply schedule to %d channel(s)", failCount)
 }
 
 func init() {
