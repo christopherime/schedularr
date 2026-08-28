@@ -395,3 +395,52 @@ func TestFromGen_DefaultsMissingType(t *testing.T) {
 	b := fromGen(spec)
 	assert.Equal(t, scheduler.BlockTypeFilter, b.Type)
 }
+
+// --- 500 responses must not leak internal error strings --------------------
+//
+// Both tests force a genuine, unmocked internal error by closing the
+// store's underlying sqlite handle before issuing the request: every
+// subsequent store call then fails with a real driver-level error (roughly
+// "sql: database is closed"), the same shape of error a production
+// sqlite/sqlx failure would produce. That exercises the two 500 call sites
+// blocks.go actually has -- ListBlocks' direct logAndWriteInternalError
+// call, and writeBlockStoreError's default branch (hit here via GetBlock)
+// -- with a real error, rather than asserting against a hand-rolled fake.
+
+func newClosedStoreServer(t *testing.T) http.Handler {
+	t.Helper()
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err, "failed to create test store")
+	require.NoError(t, s.Close(), "failed to close test store")
+
+	h := NewHandlers(Deps{Store: s, Logger: slog.Default(), Version: "test"})
+	return gen.HandlerFromMux(h, chi.NewRouter())
+}
+
+func assertGenericInternalErrorProblem(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+	require.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
+
+	p := decodeProblem(t, w)
+	assert.Equal(t, http.StatusInternalServerError, p.Status)
+	assert.Equal(t, "internal server error", p.Title)
+	assert.Empty(t, p.Detail, "500 detail must not leak the underlying store/driver error")
+	lower := strings.ToLower(p.Detail)
+	assert.NotContains(t, lower, "sql")
+	assert.NotContains(t, lower, "database")
+}
+
+func TestListBlocks_InternalErrorDoesNotLeakDetail(t *testing.T) {
+	h := newClosedStoreServer(t)
+
+	w := doRequest(t, h, http.MethodGet, "/blocks", nil)
+	assertGenericInternalErrorProblem(t, w)
+}
+
+func TestGetBlock_InternalErrorDoesNotLeakDetail(t *testing.T) {
+	h := newClosedStoreServer(t)
+
+	w := doRequest(t, h, http.MethodGet, "/blocks/some-id", nil)
+	assertGenericInternalErrorProblem(t, w)
+}

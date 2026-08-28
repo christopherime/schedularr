@@ -19,7 +19,7 @@ import (
 func (h *Handlers) ListBlocks(w http.ResponseWriter, r *http.Request) {
 	recs, err := h.d.Store.ListBlocks(r.Context())
 	if err != nil {
-		WriteProblem(w, r, http.StatusInternalServerError, "internal error", err.Error())
+		h.logAndWriteInternalError(w, r, "list_blocks", err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.d.Store.CreateBlock(r.Context(), rec); err != nil {
-		writeBlockStoreError(w, r, err)
+		h.writeBlockStoreError(w, r, "create_block", err)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 	rec, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
-		writeBlockStoreError(w, r, err)
+		h.writeBlockStoreError(w, r, "get_block", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toGen(*rec))
@@ -86,7 +86,7 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
-		writeBlockStoreError(w, r, err)
+		h.writeBlockStoreError(w, r, "update_block_lookup", err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 	existing.Spec = spec
 
 	if err := h.d.Store.UpdateBlock(r.Context(), existing); err != nil {
-		writeBlockStoreError(w, r, err)
+		h.writeBlockStoreError(w, r, "update_block", err)
 		return
 	}
 
@@ -122,7 +122,7 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 // DeleteBlock implements gen.ServerInterface.
 func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string) {
 	if err := h.d.Store.DeleteBlock(r.Context(), id); err != nil {
-		writeBlockStoreError(w, r, err)
+		h.writeBlockStoreError(w, r, "delete_block", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -139,15 +139,45 @@ func blockEnabled(enabled *bool) bool {
 
 // writeBlockStoreError maps store errors to the appropriate problem+json
 // response: ErrNotFound -> 404, ErrConflict -> 409, anything else -> 500.
-func writeBlockStoreError(w http.ResponseWriter, r *http.Request, err error) {
+// op identifies the calling handler operation (e.g. "create_block") for the
+// server-side log line logAndWriteInternalError writes on the 500 path.
+//
+// ErrNotFound/ErrConflict details are user-facing (they name what the
+// caller got wrong, e.g. a duplicate block name) and are not internal
+// leaks, so they keep err.Error() as their detail. The default (unmapped)
+// branch is different: err here is whatever the store returned, which can
+// wrap a raw sqlite/sqlx driver error, so it goes through
+// logAndWriteInternalError instead, matching the Recovery middleware's
+// convention (internal/api/middleware/recovery.go) of a generic 500 detail
+// with the real error logged server-side only.
+func (h *Handlers) writeBlockStoreError(w http.ResponseWriter, r *http.Request, op string, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		WriteProblem(w, r, http.StatusNotFound, "block not found", err.Error())
 	case errors.Is(err, store.ErrConflict):
 		WriteProblem(w, r, http.StatusConflict, "block name already exists", err.Error())
 	default:
-		WriteProblem(w, r, http.StatusInternalServerError, "internal error", err.Error())
+		h.logAndWriteInternalError(w, r, op, err)
 	}
+}
+
+// logAndWriteInternalError logs err server-side -- the only record of it,
+// since the client-facing response never repeats it -- and writes a
+// generic 500 problem+json response with no error detail. This matches the
+// Recovery middleware's convention (internal/api/middleware/recovery.go) of
+// never leaking internal error strings (e.g. raw sqlite/sqlx driver
+// errors) in a response body: an attacker or a curious client learning
+// schema/driver internals from a 500 body is a real information leak, and
+// silently returning them without logging would mean an operator has no
+// record of what actually failed. op identifies which handler code path
+// produced the error (e.g. "list_blocks", "update_block_lookup").
+func (h *Handlers) logAndWriteInternalError(w http.ResponseWriter, r *http.Request, op string, err error) {
+	h.d.Logger.Error("internal error",
+		"op", op,
+		"request_id", RequestIDFromContext(r.Context()),
+		"error", err,
+	)
+	WriteProblem(w, r, http.StatusInternalServerError, "internal server error", "")
 }
 
 // writeJSON writes body as an application/json response with the given
