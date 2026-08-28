@@ -335,3 +335,5 @@ None block the current close-out; each is a known, scoped-out gap.
   `time.After(someBound)` and log (not force-kill) if the bound is hit,
   since there's no way to cancel a `Runner.Run` already past its own
   ctx-check points.
+- `configs/config.yaml` carries a `log.file` key that `#LogConfig` does not define and no code reads; `make validate` misses it because `cue vet` runs without `-d '#Config'` closedness — remove the key and consider tightening the validate target.
+- CLAUDE.md's `internal/` architecture tree omits `cueconfig/`, `metrics/`, and `problem/` — add on next docs touch.
