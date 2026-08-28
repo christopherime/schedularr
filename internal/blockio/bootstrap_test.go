@@ -159,6 +159,23 @@ func TestBootstrap_MissingFileReturnsZero(t *testing.T) {
 	assert.Equal(t, int64(0), dbCount)
 }
 
+// TestBootstrap_EmptyPathReturnsZero covers the empty-string path case
+// specifically (as opposed to TestBootstrap_MissingFileReturnsZero's
+// nonexistent-but-nonempty path): os.ReadFile("") returns an error that
+// satisfies errors.Is(err, os.ErrNotExist) on this platform, so Bootstrap
+// already takes the same "no bootstrap file" no-op branch it takes for any
+// other missing path -- this locks that in as a regression test rather than
+// an implicit assumption.
+func TestBootstrap_EmptyPathReturnsZero(t *testing.T) {
+	s := newBootstrapTestStore(t)
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	count, err := blockio.Bootstrap(ctx, s, "", testLogger(&buf))
+	require.NoError(t, err, "empty path must not error")
+	assert.Equal(t, 0, count)
+}
+
 func TestBootstrap_InvalidFileErrorsWithoutPartialImport(t *testing.T) {
 	s := newBootstrapTestStore(t)
 	ctx := context.Background()
