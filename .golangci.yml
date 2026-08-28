@@ -196,6 +196,7 @@ linters:
             - github.com/charmbracelet/huh
             - github.com/jedib0t/go-pretty/v6
             - github.com/golang-migrate/migrate/v4
+            - github.com/google/uuid
 
     sloglint:
       no-mixed-args: true
