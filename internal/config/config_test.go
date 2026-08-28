@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/cueconfig"
 )
@@ -170,6 +171,57 @@ func TestSchedulerFilePath_DefaultsWhenOmitted(t *testing.T) {
 
 	if got := SchedulerFilePath(cfg); got != "scheduler.yaml" {
 		t.Errorf("Expected CUE-schema default 'scheduler.yaml' when scheduler_file is omitted, got %q", got)
+	}
+}
+
+// TestCronInterval_DefaultsWhenOmitted verifies the CUE schema default for
+// cron_interval (cmd/schema/config.cue: `cron_interval: string | *"6h"`)
+// reaches CronInterval when a config file doesn't set the key -- this is
+// the "config" tier of serve's flag > config > 6h-default precedence: with
+// no config value at all, the config tier itself already resolves to 6h.
+func TestCronInterval_DefaultsWhenOmitted(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	// No cron_interval key at all.
+	content := `tunarr:
+  url: "http://localhost:8000"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if got := CronInterval(cfg); got != 6*time.Hour {
+		t.Errorf("Expected CUE-schema default 6h when cron_interval is omitted, got %v", got)
+	}
+}
+
+// TestCronInterval_FromFile verifies a config file's cron_interval value
+// overrides the 6h CUE default.
+func TestCronInterval_FromFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+
+	content := `cron_interval: "2h"
+`
+
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cfg, err := Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if got := CronInterval(cfg); got != 2*time.Hour {
+		t.Errorf("Expected cron_interval '2h' from file, got %v", got)
 	}
 }
 

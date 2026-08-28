@@ -28,14 +28,11 @@ import (
 // `-ldflags "-X github.com/christopherime/schedularr/cmd.Version=..."`.
 var Version = "dev"
 
-// cronInterval is how often the cron loop regenerates and applies the
-// schedule -- the same default the removed `schedularr run` command's
-// --interval flag had. Unlike run, serve has no per-invocation --interval
-// flag: it's meant to be started once by a process supervisor (systemd,
-// Docker, ...) and left running, not re-invoked per tick, so there's no
-// CLI-ergonomics reason to expose this as a flag. See task-15-report.md
-// for the tradeoff if this needs to become configurable later.
-const cronInterval = 6 * time.Hour
+// defaultCronInterval is how often the cron loop regenerates and applies
+// the schedule when neither --interval nor the cron_interval config key is
+// set -- the same default the removed `schedularr run` command's
+// --interval flag had.
+const defaultCronInterval = 6 * time.Hour
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight
 // HTTP requests to finish before giving up.
@@ -44,6 +41,7 @@ const shutdownTimeout = 15 * time.Second
 var (
 	serveListen         string
 	serveInsecureNoAuth bool
+	serveInterval       time.Duration
 )
 
 var serveCmd = &cobra.Command{
@@ -69,7 +67,12 @@ Authentication:
   the SCHEDULARR_API_TOKEN environment variable (preferred) or the
   api.token config key -- the environment variable always wins when both
   are set. --insecure-no-auth disables the check entirely; use only for
-  local development.`,
+  local development.
+
+Cron interval:
+  --interval/-i sets how often the cron loop regenerates and applies the
+  schedule (default 6h). When not passed explicitly, the cron_interval
+  config key applies instead, which itself defaults to 6h.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return runServe(cmd)
 	},
@@ -80,6 +83,8 @@ func init() {
 	serveCmd.Flags().StringVar(&serveListen, "listen", ":8484", "Address for the HTTP API server to listen on")
 	serveCmd.Flags().BoolVar(&serveInsecureNoAuth, "insecure-no-auth", false,
 		"Skip bearer-token auth on /api/v1/* (local development only, never for a real deployment)")
+	serveCmd.Flags().DurationVarP(&serveInterval, "interval", "i", defaultCronInterval,
+		"Interval between cron-driven schedule generate-and-apply cycles")
 }
 
 // runServe is serveCmd's implementation: load config, assemble the store,
@@ -100,6 +105,7 @@ func runServe(cmd *cobra.Command) error {
 		}
 	}
 	insecureNoAuth := serveInsecureNoAuth || config.APIInsecureNoAuth(cfg)
+	interval := resolveCronInterval(cmd.Flags().Changed("interval"), serveInterval, cfg)
 
 	st, err := store.New(config.DatabasePath(cfg))
 	if err != nil {
@@ -144,25 +150,57 @@ func runServe(cmd *cobra.Command) error {
 	defer stop()
 
 	logger.Info("api server listening", "address", ln.Addr().String())
-	return serveUntil(sigCtx, ln, router, runner, logger)
+	return serveUntil(sigCtx, serveParams{
+		ln:           ln,
+		handler:      router,
+		runner:       runner,
+		cronInterval: interval,
+		logger:       logger,
+	})
 }
 
-// serveUntil runs the HTTP server (bound to ln) and the cron scheduling
-// loop side by side until ctx is canceled, then shuts both down gracefully:
-// http.Server.Shutdown (bounded by shutdownTimeout) followed by the cron
-// loop's own context cancellation. It's factored out of runServe so tests
-// can drive it directly against a real net.Listener (e.g. one bound to
-// ":0") without going through cobra, config loading, or a live Tunarr/store
-// setup.
-func serveUntil(ctx context.Context, ln net.Listener, handler http.Handler, runner service.ScheduleRunner, logger *slog.Logger) error {
+// resolveCronInterval determines the effective cron-loop interval:
+// --interval/-i wins when explicitly passed on the command line;
+// otherwise the cron_interval config key applies, which itself
+// CUE-defaults to 6h when the config file doesn't set it. So the
+// effective precedence is flag > config > 6h default, with the "config"
+// and "6h default" tiers both handled by config.CronInterval alone.
+// Factored out of runServe (which needs a live *cobra.Command to check
+// flagChanged and a loaded config) so it's unit-testable without either.
+func resolveCronInterval(flagChanged bool, flagValue time.Duration, cfg *config.Config) time.Duration {
+	if flagChanged {
+		return flagValue
+	}
+	return config.CronInterval(cfg)
+}
+
+// serveParams bundles serveUntil's dependencies into one argument -- it
+// otherwise takes 6 (ctx plus 5 more), one over the project's 5-argument
+// lint limit (see CLAUDE.md's Linting Limits).
+type serveParams struct {
+	ln           net.Listener
+	handler      http.Handler
+	runner       service.ScheduleRunner
+	cronInterval time.Duration
+	logger       *slog.Logger
+}
+
+// serveUntil runs the HTTP server (bound to p.ln) and the cron scheduling
+// loop (ticking every p.cronInterval) side by side until ctx is canceled,
+// then shuts both down gracefully: http.Server.Shutdown (bounded by
+// shutdownTimeout) followed by the cron loop's own context cancellation.
+// It's factored out of runServe so tests can drive it directly against a
+// real net.Listener (e.g. one bound to ":0") without going through cobra,
+// config loading, or a live Tunarr/store setup.
+func serveUntil(ctx context.Context, p serveParams) error {
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           p.handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	serveErrCh := make(chan error, 1)
 	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(p.ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErrCh <- err
 			return
 		}
@@ -178,17 +216,17 @@ func serveUntil(ctx context.Context, ln net.Listener, handler http.Handler, runn
 	cronDone := make(chan struct{})
 	go func() {
 		defer close(cronDone)
-		runCronLoop(cronCtx, runner, logger)
+		runCronLoop(cronCtx, p.runner, p.cronInterval, p.logger)
 	}()
 
 	var result error
 	select {
 	case <-ctx.Done():
-		logger.Info("serve: shutdown requested")
+		p.logger.Info("serve: shutdown requested")
 	case err := <-serveErrCh:
 		result = err
 		if result != nil {
-			logger.Error("serve: http server failed", "error", result)
+			p.logger.Error("serve: http server failed", "error", result)
 		}
 	}
 
@@ -200,7 +238,7 @@ func serveUntil(ctx context.Context, ln net.Listener, handler http.Handler, runn
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("serve: http server shutdown error", "error", err)
+		p.logger.Error("serve: http server shutdown error", "error", err)
 		if result == nil {
 			result = fmt.Errorf("http server shutdown: %w", err)
 		}
@@ -213,15 +251,16 @@ func serveUntil(ctx context.Context, ln net.Listener, handler http.Handler, runn
 }
 
 // runCronLoop runs one schedule generate-and-apply cycle immediately, then
-// again every cronInterval, until ctx is canceled. This is the same shape
-// the removed cmd/run.go's runDaemonLoop had (immediate run, then
+// again every interval, until ctx is canceled. This is the same shape the
+// removed cmd/run.go's runDaemonLoop had (immediate run, then
 // ticker-driven, cancelable) -- minus SIGHUP (serve has no config-reload
 // story) and minus --once (serve is always long-running, never a one-shot
-// invocation).
-func runCronLoop(ctx context.Context, runner service.ScheduleRunner, logger *slog.Logger) {
+// invocation). interval is resolveCronInterval's result (flag > config >
+// 6h default), threaded in from runServe via serveUntil.
+func runCronLoop(ctx context.Context, runner service.ScheduleRunner, interval time.Duration, logger *slog.Logger) {
 	runScheduleTick(ctx, runner, logger)
 
-	ticker := time.NewTicker(cronInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {

@@ -145,8 +145,11 @@ func TestRouter_APIv1RequestIDHeaderPresent(t *testing.T) {
 }
 
 // TestRouter_HealthzHasNoRequestIDHeader confirms the four system endpoints
-// are NOT wrapped in the RequestID/Logging/Recovery/BearerAuth chain: only
-// /api/v1/* gets a request id.
+// are NOT wrapped in RequestID/Logging/BearerAuth: only /api/v1/* gets a
+// request id. They DO still run through Recovery -- see
+// TestRouter_ReadyzPanicIsRecoveredNotConnectionDrop below -- Recovery
+// alone has no observable header of its own, so this only asserts the
+// absence of RequestID's header, not of the whole chain.
 func TestRouter_HealthzHasNoRequestIDHeader(t *testing.T) {
 	r, err := NewRouter(Config{InsecureNoAuth: true}, Deps{Store: newRouterTestStore(t), Logger: slog.Default()})
 	require.NoError(t, err)
@@ -154,4 +157,33 @@ func TestRouter_HealthzHasNoRequestIDHeader(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	assert.Empty(t, w.Header().Get("X-Request-Id"))
+}
+
+// TestRouter_ReadyzPanicIsRecoveredNotConnectionDrop proves the four
+// system routes really do run through Recovery (not just RequestID/
+// Logging/BearerAuth minus Recovery too). A nil Deps.Store makes
+// readyzHandler's d.Store.Ping(ctx) call panic with a nil-pointer
+// dereference -- a real, naturally occurring misconfiguration, not a
+// contrived test-only hook. This has to go over a real network
+// round-trip (httptest.NewServer + http.Get), not a direct
+// r.ServeHTTP(httptest.NewRecorder(), ...) call: an *unrecovered* panic
+// would otherwise just propagate straight up and crash the test process
+// itself rather than being observable as a response. If Recovery is
+// wired up, the client gets back a clean 500 problem+json body; if it
+// isn't, net/http's own bare-minimum panic handling closes the
+// connection instead, which surfaces here as an http.Get network error,
+// not a 500 status.
+func TestRouter_ReadyzPanicIsRecoveredNotConnectionDrop(t *testing.T) {
+	r, err := NewRouter(Config{InsecureNoAuth: true}, Deps{Store: nil, Logger: slog.Default()})
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/readyz") //nolint:noctx // test-only, fixed local address
+	require.NoError(t, err, "a recovered panic must still produce a normal HTTP response, not a dropped connection")
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, "application/problem+json", resp.Header.Get("Content-Type"))
 }

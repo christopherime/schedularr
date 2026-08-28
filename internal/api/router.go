@@ -39,8 +39,12 @@ type Config struct {
 // NewRouter builds the full HTTP handler for the Schedularr API server.
 //
 // Four endpoints are served unauthenticated and outside the
-// RequestID/Logging/Recovery/BearerAuth chain entirely, so health and
-// metrics probes stay cheap and never depend on a caller having a token:
+// RequestID/Logging/BearerAuth chain entirely, so health and metrics
+// probes stay cheap and never depend on a caller having a token. They do
+// still run through Recovery (and only Recovery): a panic in any of them
+// gets structured-logged and turned into a clean 500 problem+json response
+// instead of net/http's bare connection-drop default, without paying for a
+// request id or a logged line on every routine probe hit.
 //
 //   - GET /healthz     -- process liveness only, no dependency checks.
 //   - GET /readyz      -- liveness plus a bounded store round-trip
@@ -84,10 +88,16 @@ func NewRouter(cfg Config, d Deps) (http.Handler, error) {
 
 	r := chi.NewRouter()
 
-	r.Get("/healthz", healthzHandler)
-	r.Get("/readyz", readyzHandler(d))
-	r.Handle("/metrics", promhttp.Handler())
-	r.Get("/openapi.json", openAPIHandler(d.Logger))
+	// r.Group forks an inline sub-router with its own middleware stack but
+	// no path prefix (unlike r.Route), so these four keep their top-level
+	// paths while getting Recovery -- and only Recovery -- ahead of them.
+	r.Group(func(gr chi.Router) {
+		gr.Use(middleware.Recovery(d.Logger))
+		gr.Get("/healthz", healthzHandler)
+		gr.Get("/readyz", readyzHandler(d))
+		gr.Handle("/metrics", promhttp.Handler())
+		gr.Get("/openapi.json", openAPIHandler(d.Logger))
+	})
 
 	h := NewHandlers(d)
 	r.Route("/api/v1", func(sr chi.Router) {

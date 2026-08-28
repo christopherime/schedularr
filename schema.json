@@ -26,6 +26,12 @@
       "description": "Path to external scheduler configuration file",
       "default": "scheduler.yaml"
     },
+    "cron_interval": {
+      "type": "string",
+      "description": "Interval between cron-driven schedule regenerate-and-apply cycles (the `serve` command). `serve --interval`/`-i` overrides this when passed explicitly.",
+      "default": "6h",
+      "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
+    },
     "scheduler": {
       "$ref": "#/$defs/SchedulerConfig"
     },

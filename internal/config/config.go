@@ -29,6 +29,16 @@ func SchedulerFilePath(cfg *Config) string {
 	return cfg.GetString("scheduler_file")
 }
 
+// CronInterval returns the configured interval between the `serve`
+// command's cron-loop schedule regenerate-and-apply cycles, CUE-defaulting
+// to 6h when the config file doesn't set cron_interval. This is a
+// top-level key, not under api.*, because it governs the scheduler's cron
+// behavior, not the HTTP server -- `serve --interval`/`-i` overrides this
+// value when passed explicitly (flag > config > 6h default).
+func CronInterval(cfg *Config) time.Duration {
+	return cfg.GetDuration("cron_interval")
+}
+
 // ============================================================================
 // Client Configuration Helpers
 // Extract typed client configs from CUE-loaded configuration

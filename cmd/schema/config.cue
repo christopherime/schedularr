@@ -18,6 +18,12 @@ package schema
 	// Path to external scheduler configuration file
 	scheduler_file: string | *"scheduler.yaml"
 
+	// Interval between cron-driven schedule regenerate-and-apply cycles
+	// (the `serve` command's cron loop). Not under `api` since it governs
+	// the scheduler, not the HTTP server -- `serve --interval` overrides
+	// this value when explicitly passed.
+	cron_interval: string | *"6h"
+
 	// Inline scheduler configuration (legacy support)
 	scheduler?: #SchedulerConfig
 

@@ -31,7 +31,7 @@ go test -race -v ./internal/scheduler -run TestFilterPrograms
 go test -race -v ./internal/external/tunarr/...
 
 # Run the binary
-./bin/schedularr --config config.yaml generate --apply
+./bin/schedularr --config config.yaml generate --apply --yes
 ```
 
 ## Architecture
@@ -41,14 +41,14 @@ cmd/                          # CLI commands (Cobra)
 ├── channels.go               # List Tunarr channels
 ├── generate.go               # Generate & apply schedules
 ├── serve.go                  # HTTP API server + cron scheduling loop
-├── tui.go                    # Launch terminal UI
 ├── validate.go               # Config validation
 ├── state.go                  # Series state management
+├── scheduler.go              # scheduler.yaml authoring/import subcommands
 └── schema/                   # CUE schemas for validation
     ├── config.cue
     └── scheduler.cue
 internal/
-├── config/                   # Viper-based config management
+├── config/                   # CUE-based config loading (see internal/cueconfig)
 ├── scheduler/                # Core scheduling engine
 │   ├── engine.go             # GenerateForTimeRange, PlanBlock, PlanSeriesBlock
 │   ├── filter.go             # Genre/rating/year/duration/title filters
@@ -56,15 +56,17 @@ internal/
 │   └── types.go
 ├── external/                 # API clients
 │   └── tunarr/               # Tunarr REST API client
-├── store/                    # SQLite state persistence
+├── store/                    # SQLite state persistence (blocks, series state, history)
 │   └── migrations/           # DB migrations
-├── tui/                      # Terminal UI (Bubble Tea)
+├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
+├── service/                  # Schedule generate/apply workflow (shared by CLI + API)
+├── blockio/                  # scheduler.yaml parse/render + first-run store import
 ├── cache/                    # In-memory caching
 ├── cronbuilder/              # Cron expression builder
 └── httpclient/               # HTTP client with retry
 ```
 
-**Data Flow:** Config → Scheduling Engine → Tunarr API → Channel Programming
+**Data Flow:** Config + SQLite block store → Scheduling Engine → Tunarr API → Channel Programming
 
 **Key Integration Points:**
 
@@ -73,13 +75,12 @@ internal/
 ## CLI Commands
 
 ```bash
-schedularr generate [--apply]       # Generate schedule (--apply to push to Tunarr)
+schedularr generate [--apply --yes] # Generate schedule (--apply --yes to push to Tunarr)
 schedularr serve [--listen :8484]   # Run the HTTP API server + cron loop
 schedularr channels                 # List Tunarr channels
-schedularr tui                      # Launch interactive block editor
 schedularr validate <file>          # Validate config file
 schedularr config generate [file]   # Generate config template
-schedularr scheduler init [file]    # Create scheduler config
+schedularr scheduler init [file]    # Create scheduler.yaml import file
 ```
 
 ## Coding Standards
@@ -106,12 +107,24 @@ if err != nil {
 
 ## Configuration
 
-Two YAML config files, both validated by CUE schemas:
+`config.yaml` is the one live app config file, validated by the CUE schema
+in `cmd/schema/config.cue`: Tunarr URL/API key, logging, database path,
+cache/maintenance settings, `cron_interval` (the `serve` command's cron
+loop cadence, default `6h`), and `api.*` (the `serve` command's HTTP
+server: `listen`, `token`, `insecure_no_auth` -- see `cmd/serve.go`,
+`internal/api/router.go`).
 
-- **`config.yaml`** - App settings (Tunarr URL, API keys, logging)
-- **`scheduler.yaml`** - Scheduling blocks with cron expressions and filters
+**Scheduling blocks live in the SQLite store (`internal/store`), not in a
+file.** `scheduler.yaml` is a first-run **import** format only: on startup,
+if the block store is still empty, `internal/blockio.Bootstrap` imports
+its blocks into the store once; after that the file is never read again --
+editing it post-bootstrap has no effect. Manage blocks going forward via
+`schedularr scheduler` CLI subcommands (`init`/`validate`/`list`) or the
+`/api/v1/blocks` HTTP API (`schedularr serve`), not by hand-editing
+`scheduler.yaml`.
 
-**Scheduling Block Structure:**
+**Scheduling Block Structure** (as authored for `scheduler.yaml` import, or
+the JSON body of `POST /api/v1/blocks`):
 
 ```yaml
 blocks:
