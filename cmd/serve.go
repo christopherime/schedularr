@@ -251,6 +251,16 @@ func serveUntil(ctx context.Context, p serveParams) error {
 	}
 
 	cancelCron()
+	// Unbounded wait: runCronLoop's own select on cronCtx.Done() returns as
+	// soon as cancelCron above fires, so in practice this returns almost
+	// immediately -- the one exception is a schedule tick already in
+	// flight (runScheduleTick's Runner.Run, e.g. mid Tunarr UpdateSchedule
+	// call), which is not itself context-aware past what Run already does
+	// (see service.Runner.Run's own doc comment on ctx) and so runs to
+	// completion rather than being interrupted. Unlike the HTTP server
+	// above, there is no separate timeout guarding this wait; the backstop
+	// is external -- Kubernetes (or any process supervisor) SIGKILLs the
+	// process once its termination grace period elapses.
 	<-cronDone
 
 	return result

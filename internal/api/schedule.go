@@ -64,7 +64,9 @@ func (h *Handlers) GetSchedule(w http.ResponseWriter, r *http.Request, params ge
 // "use every default."
 func (h *Handlers) decodeGenerateRequest(w http.ResponseWriter, r *http.Request) (gen.GenerateRequest, bool) {
 	var body gen.GenerateRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
 		if errors.Is(err, io.EOF) {
 			return body, true
 		}

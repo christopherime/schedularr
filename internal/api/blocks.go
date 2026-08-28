@@ -33,7 +33,9 @@ func (h *Handlers) ListBlocks(w http.ResponseWriter, r *http.Request) {
 // CreateBlock implements gen.ServerInterface.
 func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 	var body gen.BlockWrite
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
@@ -95,7 +97,9 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 	}
 
 	var body gen.BlockWrite
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}

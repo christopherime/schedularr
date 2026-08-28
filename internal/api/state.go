@@ -45,7 +45,9 @@ func (h *Handlers) ListSeriesState(w http.ResponseWriter, r *http.Request) {
 // returns store.ErrNotFound when no row exists.
 func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, showTitle string) {
 	var patch gen.SeriesStatePatch
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&patch); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}

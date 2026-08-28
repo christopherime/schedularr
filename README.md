@@ -155,7 +155,8 @@ log:
   format: "text"             # text, json
   timezone: "Local"          # IANA time zone name
 
-database: "schedularr.db"    # SQLite database path
+database: "schedularr.db"    # SQLite database path (opened with _busy_timeout=5000&_journal_mode=WAL,
+                              # see internal/store/sqlite.go -- expect -shm/-wal sidecar files alongside it)
 scheduler_file: "scheduler.yaml"  # First-run block import file, see below
 cron_interval: "6h"          # `serve`'s cron loop cadence; `serve --interval`/`-i` overrides it
 

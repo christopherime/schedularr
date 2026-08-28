@@ -231,3 +231,107 @@ When implementing future refactoring tasks:
 - [x] Update go.mod with any new dependencies
 - [x] Run full test suite after each change
 - [ ] Update CLAUDE.md if any architectural patterns change (N/A for these changes)
+
+---
+
+## Deferred (API server core close-out)
+
+Recorded at the end of the API-server-core final fix wave
+(`.superpowers/sdd/2026-08-28-api-server-core/`) so these don't get lost.
+None block the current close-out; each is a known, scoped-out gap.
+
+- **Transactional batch import.** `internal/api/importexport.go`'s
+  `ImportBlocks` inserts blocks one at a time (via `store.CreateBlock` in a
+  loop, not a single DB transaction), so a name collision or store error
+  partway through a batch import leaves the earlier blocks in that same
+  request already persisted -- there is no rollback. `ImportBlocks`'s own
+  doc comment already flags this ("A batch transaction that could roll
+  back a partial write on such a race stays out of scope"). Fix: wrap the
+  insert loop in a single `*sql.Tx` (mirroring `RecordScheduleHistory`'s
+  and `ImportSeriesStates`'s existing transactional pattern in
+  `internal/store/sqlite.go`) so an import either fully succeeds or fully
+  rolls back.
+
+- **series_state channel-scoping.** `service.Runner.Run`'s `ChannelID`
+  filtering scopes *blocks* (and therefore series-cursor advances) to the
+  requested channel (see its doc comment in `internal/service/schedule.go`
+  and `TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched`
+  in `internal/service/schedule_test.go`), but `series_state` rows
+  themselves are keyed only by `show_title` -- not `(channel_id,
+  show_title)`. Two blocks on different channels tracking the same show
+  title would collide on the same series-cursor row today. Revisit in
+  sub-project 3.
+
+- **kin-openapi unreached vulns.** `github.com/getkin/kin-openapi` (used
+  by `internal/cueconfig`/`internal/api/gen` generation tooling, not at
+  request-serving runtime) has had `govulncheck`-flagged advisories in its
+  `openapi3filter` subpackage in the past; this project's code doesn't
+  reach that subpackage, so `govulncheck`'s reachability analysis reports
+  them as non-blocking. Monitor upstream and re-check
+  `govulncheck ./...` output on every `kin-openapi` bump in case a future
+  advisory does land in a reachable path.
+
+- **`${VAR}`-unset-\>null config bug.** An unset `${VAR}` placeholder left
+  in a config file expands to an empty, unquoted YAML scalar, which YAML
+  parses as `null` rather than `""` -- documented as a footgun in
+  README.md's Quick Start ("Environment Variable Interpolation") section,
+  worked around today by always quoting interpolated values explicitly.
+  The root fix belongs in `internal/cueconfig`'s `${VAR}` interpolation
+  step (`internal/cueconfig/schema.go`): substitute an unset variable with
+  an explicitly-quoted empty string instead of a bare empty token, so the
+  YAML never round-trips through `null`.
+
+- **YAML `type:`-omission CUE bug.** Documented in README.md's Scheduling
+  Blocks section: `scheduler.yaml`'s block `type` field has a CUE default
+  (`"filter" | "series" | *"filter"`, `cmd/schema/scheduler.cue`), but the
+  import path decodes each block into a Go struct *before* CUE-validating
+  it, which turns an omitted `type` into an explicit `""` rather than a
+  genuinely absent field -- CUE only applies `*default` to an absent
+  field, so the empty string fails the disjunction check. Workaround
+  today: always set `type` explicitly in `scheduler.yaml` (the JSON
+  `POST /api/v1/blocks` path doesn't have this problem -- see
+  `internal/api/blocks.go`'s `fromGen`). Fix: give `internal/blockio` a
+  raw-bytes validation path (validate the YAML bytes against CUE directly,
+  before decoding into the Go struct) plus `omitempty` tags on the
+  decode-target struct's optional fields, so an omitted field stays
+  genuinely absent through to CUE.
+
+- **Dockerfile `main.Version` -\> `cmd.Version`.** `Dockerfile` builds with
+  `-ldflags "... -X main.Version=${VERSION} ..."`, but `main` (`main.go`)
+  declares no `Version` variable at all -- the actual symbol
+  `GET /api/v1/status` reports is `cmd.Version`
+  (`var Version = "dev"` in `cmd/serve.go`, set via
+  `-X github.com/christopherime/schedularr/cmd.Version=...`). The
+  Dockerfile's `-X` flag is a no-op today: every container-built binary
+  reports `"dev"` regardless of `${VERSION}`. Fix as sub-project 4's first
+  commit: repoint the Dockerfile's `-X` target at
+  `github.com/christopherime/schedularr/cmd.Version`.
+
+- **Duplicate `generate config` command.** `cmd/config.go`'s
+  `config generate` and `cmd/generate.go`'s `generate config` are the same
+  operation (`cueconfig.NewValidator().GenerateConfigWithOverrides`)
+  reachable two ways; README.md's Available Commands table documents both
+  as intentional aliases today. Fast follow: delete one (`generate
+  config`, the less discoverable of the two nested under an unrelated
+  verb) and point users at `config generate`.
+
+- **`/status` probe timeout.** `GetStatus` (`internal/api/tunarr.go`)
+  probes Tunarr liveness via a live `GetChannels` call with no
+  request-scoped timeout of its own beyond whatever `r.Context()` and the
+  underlying `internal/httpclient` retry/backoff budget already impose --
+  a slow-but-not-dead Tunarr instance can make `/status` itself slow to
+  respond. Fix: wrap the probe in an explicit short `context.WithTimeout`
+  so `/status` has a bounded worst-case latency independent of Tunarr's.
+
+- **Bounded `cronDone` wait.** `cmd/serve.go`'s `serveUntil` waits on
+  `<-cronDone` with no timeout after `cancelCron()` -- see the comment
+  added at that line in this fix wave. In practice this returns almost
+  immediately (the cron loop's own `ctx.Done()` select fires as soon as
+  `cancelCron` runs) except when a schedule tick is already in flight, in
+  which case shutdown blocks until that `Runner.Run` call finishes end to
+  end. The current backstop is external (Kubernetes SIGKILLs the process
+  once its termination grace period elapses). Fix, if this needs a
+  self-contained bound: race `<-cronDone` against a
+  `time.After(someBound)` and log (not force-kill) if the bound is hit,
+  since there's no way to cancel a `Runner.Run` already past its own
+  ctx-check points.

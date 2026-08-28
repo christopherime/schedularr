@@ -222,6 +222,27 @@ func TestCreateBlock_InvalidBody(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestCreateBlock_UnknownField_Returns400 pins the JSON-decode strictness
+// added across the API's request bodies (CreateBlock/UpdateBlock,
+// decodeGenerateRequest, PatchSeriesState all now call
+// json.Decoder.DisallowUnknownFields): a body carrying a field the wire
+// schema doesn't recognize is a client error, not something to silently
+// ignore -- the same posture blockio's YAML import already takes via
+// yaml.Decoder.KnownFields(true) (internal/blockio/blockio.go).
+func TestCreateBlock_UnknownField_Returns400(t *testing.T) {
+	h := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/blocks", strings.NewReader(
+		`{"spec":{"name":"x","cron":"0 6 * * *","duration":60,"channel_id":"channel-1"},"unknown_field":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	p := decodeProblem(t, w)
+	assert.Equal(t, http.StatusBadRequest, p.Status)
+}
+
 func TestCreateBlock_DuplicateName(t *testing.T) {
 	h := newTestServer(t)
 
@@ -302,6 +323,37 @@ func TestUpdateBlock_RenameCollision(t *testing.T) {
 
 	p := decodeProblem(t, wu)
 	assert.Equal(t, http.StatusConflict, p.Status)
+}
+
+// TestUpdateBlock_OmittedEnabledDefaultsTrue pins UpdateBlock's documented
+// full-replace contract (see its doc comment in blocks.go): PUT replaces
+// the block's enabled flag along with its spec, using the same
+// nil-means-true default CreateBlock applies (blockEnabled) -- there is no
+// partial-update path that would let an update silently preserve a
+// previously-disabled block's current enabled state. A block created
+// disabled, then PUT without an "enabled" field, must come back enabled.
+func TestUpdateBlock_OmittedEnabledDefaultsTrue(t *testing.T) {
+	h := newTestServer(t)
+
+	body := filterBlockWrite("toggle-me", "0 6 * * *")
+	disabled := false
+	body.Enabled = &disabled
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", body)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+	require.False(t, created.Enabled, "block should be created disabled")
+
+	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, filterBlockWrite("toggle-me", "0 6 * * *"))
+	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
+	updated := decodeBlockRecord(t, wu)
+	assert.True(t, updated.Enabled, "PUT without enabled should default to true, per the full-replace contract")
+
+	// Persisted state must reflect it too, not just the handler's response.
+	wg := doRequest(t, h, http.MethodGet, "/blocks/"+created.Id, nil)
+	require.Equal(t, http.StatusOK, wg.Code)
+	fetched := decodeBlockRecord(t, wg)
+	assert.True(t, fetched.Enabled, "store should reflect the re-enabled block")
 }
 
 func TestUpdateBlock_NotFound(t *testing.T) {

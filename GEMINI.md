@@ -6,14 +6,16 @@
 
 The project allows for "Set It and Forget It" channel management, ensuring fresh content rotation without manual intervention. Tunarr is the sole integration; content availability filtering is driven entirely by Tunarr's own library data.
 
+There is no interactive UI: Schedularr is a CLI (one-shot commands like `generate`, `state`) plus, via `schedularr serve`, a long-lived process hosting an HTTP API and a cron scheduling loop. A former Bubble Tea TUI (`schedularr tui`, block-editing forms) was removed; blocks are now managed through the `/api/v1/blocks` HTTP API or `scheduler.yaml` first-run import.
+
 ## Technology Stack
 
-- **Language:** Go 1.25.5+
+- **Language:** Go 1.27
 - **CLI Framework:** [Cobra](https://github.com/spf13/cobra)
-- **TUI Framework:** [Bubble Tea](https://github.com/charmbracelet/bubbletea)
-- **Configuration:** [Viper](https://github.com/spf13/viper) (loading) & [CUE](https://cuelang.org/) (validation)
-- **Database:** SQLite (via `database/sql` + `github.com/mattn/go-sqlite3`)
-- **HTTP Client:** [Resty](https://github.com/go-resty/resty) with retry logic
+- **HTTP API:** [chi](https://github.com/go-chi/chi) router with a handler layer generated from `api/openapi.yaml` via [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) (`internal/api/gen`)
+- **Configuration:** [CUE](https://cuelang.org/) for both schema validation and default values (`cmd/schema/`, `internal/cueconfig`) -- no Viper
+- **Database:** SQLite (via `github.com/jmoiron/sqlx` + `github.com/mattn/go-sqlite3`)
+- **HTTP Client:** [Resty](https://github.com/go-resty/resty) with retry logic (`internal/httpclient`, used by the Tunarr client in `internal/external/tunarr`)
 - **Scheduling:** [robfig/cron](https://github.com/robfig/cron)
 
 ## Build & Run Instructions
@@ -61,36 +63,46 @@ The project uses `make` for common tasks.
 
 ## Architecture & Code Structure
 
-The project follows a standard Go project layout with a strong separation of concerns, heavily influenced by the "Athena" project patterns.
+The project follows a standard Go project layout with a strong separation of concerns.
 
 ### Key Directories
 
-- `cmd/`: Application entry points (CLI commands).
+- `cmd/`: Application entry points (CLI commands) plus `cmd/schema/` (embedded CUE schemas).
 
 - `internal/`: Private application code.
   - `scheduler/`: Core scheduling logic (Engine, Filter, History).
-  - `tunarr/`: Tunarr API client.
-  - `store/`: SQLite persistence layer (Series state).
-  - `config/`: Configuration loading and parsing.
-  - `tui/`: Terminal User Interface implementation.
-- `configs/`: Example configurations.
+  - `external/tunarr/`: Tunarr API client.
+  - `store/`: SQLite persistence layer (blocks, series state, schedule history).
+  - `config/`: Configuration loading and typed accessors over `internal/cueconfig`.
+  - `cueconfig/`: CUE schema compilation, validation, and default-config generation.
+  - `service/`: The schedule generate/apply workflow shared by the CLI (`cmd/generate.go`) and the HTTP API.
+  - `api/`: HTTP API -- router, handlers, RFC 7807 problem responses, and `internal/api/gen` (generated from `api/openapi.yaml`; edit only via `make generate`).
+  - `blockio/`: `scheduler.yaml` parse/render plus first-run store import (`blockio.Bootstrap`).
+  - `cache/`: In-memory content caching used by `service.Runner`.
+  - `metrics/`: Prometheus metrics registration, served at `GET /metrics` on `serve`'s own HTTP listener.
+- `configs/`: Example configuration (`config.yaml`).
 - `cmd/schema/`: **CUE schemas** for configuration validation.
 - `e2e/`: End-to-end test suite (Docker Compose, shell scripts).
 
 ### Core Components
 
 1. **Scheduling Engine (`internal/scheduler`):**
-    - **Engine:** Orchestrates the planning process.
-    - **Filter:** Applies rules (genre, rating, etc.) to select content.
-    - **History:** Tracks recently played items to avoid repetition (default 7-day window).
+    - **Engine:** Orchestrates the planning process (`GenerateForTimeRange`, `PlanBlock`, `PlanSeriesBlock`).
+    - **Filter:** Applies rules (genre, rating, year, duration, title, tags) to select content.
+    - **History:** Tracks recently played items to avoid repetition. The window defaults to 7 days but is configurable via `maintenance.history_retention` (threaded through `service.NewRunner` -> `scheduler.EngineOptions.HistoryWindow`); it also bounds how far back `GET /history?days=N` can return data.
 
 2. **State Store (`internal/store`):**
-    - Uses SQLite to track series progression (`season`, `episode`) for sequential blocks.
+    - Uses SQLite to track series progression (`season`, `episode`), scheduling blocks, and schedule history.
     - Ensures users can "pick up where they left off".
+    - Opened with `_busy_timeout=5000&_journal_mode=WAL` (see `internal/store/sqlite.go`), since `serve` is a long-lived writer that may share the database file with concurrent CLI invocations.
 
-3. **Tunarr Client (`internal/tunarr`):**
+3. **Tunarr Client (`internal/external/tunarr`):**
     - Handles all communication with the Tunarr API.
-    - Implements exponential backoff and retry logic.
+    - Implements exponential backoff and retry logic via `internal/httpclient`.
+
+4. **HTTP API (`internal/api`, hosted by `schedularr serve`):**
+    - Blocks CRUD and YAML import/export, schedule generate/apply/get, schedule history, series state, Tunarr channels, and status -- see `api/openapi.yaml` for the full contract.
+    - Also serves `/healthz`, `/readyz`, `/metrics`, and `/openapi.json` outside the versioned `/api/v1/*` surface.
 
 ## Development Conventions
 
@@ -116,8 +128,11 @@ The project follows a standard Go project layout with a strong separation of con
 
 ## Key CLI Commands
 
-- `schedularr generate`: Generates a schedule (add `--apply` to push to Tunarr).
+- `schedularr generate [--apply --yes]`: Generates a schedule (add `--apply --yes` to push it to Tunarr).
+- `schedularr serve [--listen :8484]`: Runs the HTTP API server and the cron scheduling loop in one process.
+- `schedularr channels`: Lists available Tunarr channels.
+- `schedularr validate <file>`: Validates a config or `scheduler.yaml` file.
+- `schedularr config generate [file]` / `schedularr scheduler init [file]`: Write a config or `scheduler.yaml` template from the CUE schema defaults.
+- `schedularr state <export|import|reset|set|list|backup>`: Manage series progression state.
 
-- `schedularr channels`: Lists available channels.
-- `schedularr tui`: Opens the interactive TUI.
-- `schedularr validate [file]`: Validates a config file.
+There is no `schedularr tui` command; block management happens through the `/api/v1/blocks` HTTP API (`schedularr serve`) or the `scheduler.yaml` first-run import.

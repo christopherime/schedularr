@@ -10,28 +10,32 @@ Schedularr is an intelligent automation tool for Tunarr TV channel programming. 
 
 - **CLI Interface** (`cmd/`) - User commands for configuration, scheduling, and monitoring
 - **Scheduling Engine** (`internal/scheduler/`) - Core logic for schedule generation and content selection
-- **Tunarr Client** (`internal/tunarr/`) - API client for communication with Tunarr instances
-- **State Store** (`internal/store/`) - SQLite-based persistence for series progression and history
-- **Configuration** (`internal/config/`) - CUE schema-based configuration management
-- **TUI** (`internal/tui/`) - Interactive terminal interface for block editing
+- **HTTP API** (`internal/api/`) - Blocks CRUD, schedule generate/apply, history, series state, channels, and status, hosted by `schedularr serve` alongside the cron scheduling loop
+- **Tunarr Client** (`internal/external/tunarr/`) - API client for communication with Tunarr instances
+- **State Store** (`internal/store/`) - SQLite-based persistence for blocks, series progression, and schedule history
+- **Configuration** (`internal/config/`, `internal/cueconfig/`) - CUE schema-based configuration management
+
+There is no interactive terminal UI: a former Bubble Tea TUI (block-editing
+forms, launched by a bare `schedularr` invocation) was removed. Blocks are
+managed through the `/api/v1/blocks` HTTP API or `scheduler.yaml` first-run
+import (see [SPECIFICATIONS.md](SPECIFICATIONS.md)).
 
 ## Architecture Diagram
 
 ```mermaid
 graph TB
   subgraph UI["User Interface"]
-    CLI["CLI Commands"]
-    TUI["TUI Editor"]
+    CLI["CLI Commands<br/>(generate, state, channels, ...)"]
+    ServeAPI["HTTP API<br/>(schedularr serve)<br/>/api/v1/blocks, /generate,<br/>/apply, /history, ..."]
     ConfigGen["Config Generate"]
     Validate["Validate Command"]
   end
 
   subgraph ConfigLayer["Configuration Layer"]
     ConfigYAML["config.yaml<br/>- tunarr.url<br/>- tunarr.api_key<br/>- log.level<br/>- log.format"]
-    SchedulerYAML["scheduler.yaml<br/>blocks:<br/>- name: Block A<br/>- cron: 0 6 * * *<br/>- duration: 240<br/>- filter: {...}"]
+    SchedulerYAML["scheduler.yaml<br/>(first-run import only)<br/>blocks:<br/>- name: Block A<br/>- cron: 0 6 * * *<br/>- duration: 240<br/>- filter: {...}"]
     CUEValidator["CUE Validator<br/>- config.cue<br/>- scheduler.cue"]
 
-    ConfigYAML <-->|"Loaded by Viper"| SchedulerYAML
     ConfigYAML --> CUEValidator
     SchedulerYAML --> CUEValidator
   end
@@ -39,14 +43,14 @@ graph TB
   subgraph Engine["Scheduling Engine"]
     EngineCore["Engine (engine.go)<br/>• GenerateForTimeRange()<br/>• PlanBlock()<br/>• PlanSeriesBlock()<br/>• ResolveConflicts()<br/>• GetFiller()"]
     FilterEngine["Filter Engine<br/>• FilterPrograms()<br/>• Genre filter<br/>• Rating filter<br/>• Duration<br/>• Year range<br/>• Title regex"]
-    History["Schedule History<br/>• Track recent plays<br/>• Prevent repeats<br/>• 7-day window"]
+    History["Schedule History<br/>• Track recent plays<br/>• Prevent repeats<br/>• Configurable window<br/>  (maintenance.history_retention,<br/>  default 7 days)"]
 
     EngineCore --> FilterEngine
     EngineCore --> History
   end
 
   subgraph StateStore["State Store"]
-    SQLite["SQLite Database<br/>Series State:<br/>- show_id<br/>- season<br/>- episode<br/>- last_used"]
+    SQLite["SQLite Database<br/>Blocks, Series State,<br/>Schedule History"]
   end
 
   subgraph TunarrClient["Tunarr API Client"]
@@ -61,7 +65,8 @@ graph TB
   end
 
   CLI --> ConfigLayer
-  TUI --> ConfigLayer
+  ServeAPI --> Engine
+  ServeAPI --> StateStore
   ConfigGen --> ConfigLayer
   Validate --> ConfigLayer
 
@@ -80,10 +85,10 @@ The CLI provides commands for all user interactions:
 - **`schedularr generate`** - Generate and optionally apply schedules
 - **`schedularr serve`** - Run the HTTP API server + cron scheduling loop
 - **`schedularr channels`** - List available Tunarr channels
-- **`schedularr tui`** - Launch interactive block editor
 - **`schedularr validate`** - Validate configuration files
 - **`schedularr config generate`** - Generate config templates
 - **`schedularr scheduler init`** - Create scheduler configuration
+- **`schedularr state`** - Export/import/reset/set/list/backup series progression state
 
 ### Scheduling Engine (`internal/scheduler/`)
 
@@ -133,7 +138,7 @@ Tracks recently scheduled content per channel:
 - **Storage**: In-memory map with cleanup
 - **Key**: `channel_id:program_id`
 
-### Tunarr Client (`internal/tunarr/`)
+### Tunarr Client (`internal/external/tunarr/`)
 
 HTTP client with robust error handling:
 
@@ -179,7 +184,8 @@ CREATE TABLE series_state (
 
 ### Configuration (`internal/config/`)
 
-CUE schema-based configuration with Viper loading:
+CUE schema-based configuration, both for validation and for supplying
+default values (`internal/cueconfig`) -- there is no Viper dependency:
 
 #### Config Files
 
@@ -321,8 +327,8 @@ Schedularr adopts the following patterns from the athena project to improve code
 
 **Implementation:**
 
-- `configs/schema/config.cue` - Application configuration schema
-- `configs/schema/scheduler.cue` - Scheduler configuration schema
+- `cmd/schema/config.cue` - Application configuration schema
+- `cmd/schema/scheduler.cue` - Scheduler configuration schema
 - Integration with config loading to validate on startup
 - Detailed error messages with line numbers and suggestions
 
@@ -355,9 +361,9 @@ Schedularr adopts the following patterns from the athena project to improve code
 
 **Commands:**
 
-- **Root (no verb):** `./schedularr` - Default behavior launches TUI
+- **Root (no verb):** `./schedularr` - No default action; prints usage/help (Cobra's default with no `Run` on the root command)
 - **validate:** `./schedularr validate [file]` - Validate configuration files
-- **generate:** `./schedularr generate [options]` - Generate configuration templates
+- **generate:** `./schedularr generate [options]` - Generate (and optionally apply) programming schedules
 - **serve:** `./schedularr serve [options]` - Run the HTTP API server + cron loop
 
 **Benefits:**
@@ -437,9 +443,9 @@ if err != nil {
 
 - `docs/ARCHITECTURE.md` - System architecture and data flow
 - `docs/SPECIFICATIONS.md` - Detailed specifications and formats
-- `CLAUDE.md` - AI assistant guidance and development commands
-- `ROADMAP.md` - Project vision and development phases
-- `CONTRIBUTING.md` - Contribution guidelines and PR process
+- `docs/SERIES_SCHEDULING_GUIDE.md` - Series-based scheduling tutorial
+- `CLAUDE.md` / `GEMINI.md` - AI assistant guidance and development commands
+- `TODO.md` - Historical refactoring/library-adoption notes and the deferred-work backlog
 
 **Benefits:**
 
@@ -486,16 +492,6 @@ if err != nil {
 - Easy to add new test cases
 - Reproducible test environments
 - Catches regressions early
-
-## Migration Path
-
-The migration to these patterns is organized in Phase 0 of the TODO.md file. The recommended order is:
-
-1. **CUE Schema Integration** - Establish configuration validation
-2. **CLI Command Restructuring** - Align command structure
-3. **Code Quality Alignment** - Update linting and logging
-4. **Documentation** - Create comprehensive docs
-5. **Build Tooling** - Standardize build process
 
 ## References
 

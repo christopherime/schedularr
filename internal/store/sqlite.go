@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/christopherime/schedularr/internal/scheduler"
@@ -18,9 +19,23 @@ type Store struct {
 	db *sqlx.DB
 }
 
-// New creates a new Store instance connected to the specified SQLite database.
+// sqliteDSNParams are mattn/go-sqlite3 driver query parameters appended to
+// every DSN New opens. `schedularr serve` is a long-lived writer (the cron
+// loop's apply cycles, blocks/state CRUD via the HTTP API) that now shares
+// its database file with concurrent short-lived CLI invocations (`state
+// set`, `generate --apply`, ...) -- SQLite's default behavior is to fail a
+// write immediately with SQLITE_BUSY on any lock contention rather than
+// wait, which a single-process, one-shot-CLI-at-a-time deployment never
+// surfaced. _busy_timeout=5000 makes a contending writer retry for up to
+// 5s before giving up instead of failing instantly; _journal_mode=WAL
+// switches off SQLite's default rollback journal so readers aren't
+// blocked behind an in-progress writer either.
+const sqliteDSNParams = "_busy_timeout=5000&_journal_mode=WAL"
+
+// New creates a new Store instance connected to the specified SQLite
+// database. dsn is augmented with sqliteDSNParams -- see its doc comment.
 func New(dsn string) (*Store, error) {
-	db, err := sqlx.Open("sqlite3", dsn)
+	db, err := sqlx.Open("sqlite3", withDSNParams(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -40,6 +55,17 @@ func New(dsn string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+// withDSNParams appends sqliteDSNParams to dsn, joining with "&" instead of
+// "?" if dsn already carries a query string (no current caller's DSN does,
+// but this keeps the append safe if one ever does).
+func withDSNParams(dsn string) string {
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + sqliteDSNParams
 }
 
 // Close closes the database connection.
