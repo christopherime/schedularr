@@ -1,0 +1,22 @@
+{{- /*
+  Primary channel-select nav. Items are hardcoded (not derived from Hugo
+  sections) because Tasks 5-7 haven't built /blocks/, /schedule/, /series/
+  yet -- linking to them now is deliberate and forward-looking: the shell
+  is done before the pages are, and the router's UI 404 page handles an
+  unbuilt route until then. Active state is server-rendered (aria-current,
+  no JS) so it's correct even if a page's script fails to load.
+*/ -}}
+{{- $current := .RelPermalink -}}
+{{- $items := slice
+  (dict "href" "/" "label" "Dashboard")
+  (dict "href" "/blocks/" "label" "Blocks")
+  (dict "href" "/schedule/" "label" "Schedule")
+  (dict "href" "/series/" "label" "Series")
+-}}
+<nav class="nav" aria-label="Primary">
+  {{- range $items }}
+    {{- $isHome := eq .href "/" }}
+    {{- $active := cond $isHome (eq $current .href) (strings.HasPrefix $current .href) }}
+    <a href="{{ .href }}" class="nav__link"{{ if $active }} aria-current="page"{{ end }}>{{ .label }}</a>
+  {{- end }}
+</nav>

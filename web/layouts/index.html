@@ -1,12 +1,29 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Schedularr</title>
-</head>
-<body>
-<h1>Schedularr</h1>
-<p>Content scheduling for Tunarr. The web UI is under construction.</p>
-</body>
-</html>
+{{ define "main" }}
+<div class="hero-panel graticule">
+  <h1>No Signal &mdash; Instrument Idle</h1>
+  <p>
+    Schedularr schedules Tunarr channels from cron-triggered content
+    blocks. This dashboard will read out Tunarr reachability, block
+    count, and recent history once the live readout is wired up.
+  </p>
+  <p>
+    Until then: arm your API token from the header, then use
+    <a href="/blocks/">Blocks</a> to define what airs, or
+    <a href="/schedule/">Schedule</a> to preview and apply it.
+  </p>
+  <dl class="hero-panel__meta">
+    <div>
+      <dt>Blocks</dt>
+      <dd>Filter and series content rules on a cron trigger</dd>
+    </div>
+    <div>
+      <dt>Schedule</dt>
+      <dd>Dry-run preview, then apply per channel</dd>
+    </div>
+    <div>
+      <dt>Series</dt>
+      <dd>Per-show season and episode cursor</dd>
+    </div>
+  </dl>
+</div>
+{{ end }}

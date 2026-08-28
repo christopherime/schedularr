@@ -1,3 +1,14 @@
 baseURL = "/"
 title = "Schedularr"
 disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
+
+# --minify (used by `make web-build`) strips HTML comments by default.
+# baseof.html's DIRECTION CONTRACT comment (an impeccable-skill audit
+# trail) must survive into the shipped web/public/index.html so it stays
+# auditable there, not just in the template source -- keep all HTML
+# comments rather than special-casing one. (Go's html/template also
+# strips literal "<!-- -->" comments at parse time, independent of this
+# setting; baseof.html works around that by emitting the comment through
+# safeHTML instead.)
+[minify.tdewolff.html]
+keepComments = true
