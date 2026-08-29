@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -89,6 +90,17 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // store.UpdateBlock enforces the same unique-name constraint CreateBlock
 // does, so a rename that collides with another block's name surfaces as
 // ErrConflict -> 409, same as a colliding create.
+//
+// After a successful update, every not-yet-aired occurrence snapshot for
+// this block ID is deleted (DeleteFutureOccurrenceSnapshots) so the next
+// apply re-derives those occurrences from the just-edited spec instead of
+// silently keeping a snapshot/committed assignment captured under the OLD
+// spec until it ages out of the schedule-generation window on its own --
+// see StateStore.DeleteFutureOccurrenceSnapshots' doc comment. This is a
+// series-only mechanism (only series blocks have occurrence snapshots at
+// all), but it's harmless -- a no-op deleting zero rows -- to call
+// unconditionally for a filter block too, so this doesn't special-case on
+// existing.Spec.Type.
 func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
@@ -128,15 +140,38 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, time.Now()); err != nil {
+		h.logAndWriteInternalError(w, r, "update_block_invalidate_snapshots", err)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, toGen(*existing))
 }
 
 // DeleteBlock implements gen.ServerInterface.
+//
+// After a successful delete, every not-yet-aired occurrence snapshot for
+// this block ID is also deleted (DeleteFutureOccurrenceSnapshots) -- see
+// UpdateBlock's doc comment for why a block mutation needs this. A
+// deleted block can never generate a future occurrence again, so this is
+// mostly tidiness rather than a live correctness bug the way UpdateBlock's
+// case is, but it's the same one-line cleanup and keeps the invariant
+// "a block ID with no corresponding block record has no leftover
+// snapshots either" from silently drifting false over time (e.g. a block
+// deleted and later re-created would otherwise never collide on ID -- IDs
+// are fresh UUIDs -- but leaving orphaned rows around for a since-deleted
+// ID serves no purpose).
 func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string) {
 	if err := h.d.Store.DeleteBlock(r.Context(), id); err != nil {
 		h.writeBlockStoreError(w, r, "delete_block", err)
 		return
 	}
+
+	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, time.Now()); err != nil {
+		h.logAndWriteInternalError(w, r, "delete_block_invalidate_snapshots", err)
+		return
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

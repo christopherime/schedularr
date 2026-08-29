@@ -640,6 +640,207 @@ func TestPlanBlock_SeriesReorder_ReDerivesInNewOrderWithoutAdvancingCursor(t *te
 	assert.Equal(t, stateC1, stateC2, "Show C's series state must be identical after both applies")
 }
 
+// TestPlanBlock_SeriesReorder_TwoOccurrences_ChainsCorrectedBaselineForward
+// is TestPlanBlock_SeriesReorder_ReDerivesInNewOrderWithoutAdvancingCursor
+// extended to TWO not-yet-aired occurrences of the same block re-derived in
+// a single pass -- exactly where the single-occurrence version can't catch
+// a chaining bug. Reviewer repro (see planSeriesOccurrences' doc comment):
+// block.Series == [A,B,C] with a block duration that fits exactly 2 of the
+// 3 shows' single episode each. Before planSeriesOccurrences chained a
+// running state across occurrences, re-deriving BOTH occurrences after a
+// reorder made occurrence 2 read its OWN stale, pre-reorder snapshot
+// (which still thought C had never aired) instead of occurrence 1's
+// actual new end state -- so occurrence 2 aired C's episode 1 a SECOND
+// time instead of advancing to episode 2, and it's asserted directly
+// below.
+func TestPlanBlock_SeriesReorder_TwoOccurrences_ChainsCorrectedBaselineForward(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "a-s1e2", Type: "episode", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+		{ID: "b-s1e1", Type: "episode", ShowTitle: "Show B", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "b-s1e2", Type: "episode", ShowTitle: "Show B", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+		{ID: "c-s1e1", Type: "episode", ShowTitle: "Show C", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "c-s1e2", Type: "episode", ShowTitle: "Show C", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+	}
+
+	blockABC := Block{
+		ID: "multi-series-block", Name: "Multi-Series Block", Type: BlockTypeSeries, Duration: 60, ChannelID: "channel-1",
+		Series: []SeriesConfig{
+			{ShowTitle: "Show A", EpisodesPerBlock: 1},
+			{ShowTitle: "Show B", EpisodesPerBlock: 1},
+			{ShowTitle: "Show C", EpisodesPerBlock: 1},
+		},
+	}
+
+	engine := NewEngine(client, []Block{blockABC}, store, slog.Default(), time.UTC)
+
+	now := time.Now()
+	occ1Start := now.Add(1 * time.Hour)
+	occ2Start := now.Add(2 * time.Hour)
+	shells := []ScheduledSlot{{StartTime: occ1Start, Block: blockABC}, {StartTime: occ2Start, Block: blockABC}}
+
+	// First apply, original order [A, B, C], both occurrences planned (and
+	// committed) together: 60min block, 30min episodes -- A+B fill it
+	// exactly, C never fits.
+	firstPlanned, err := engine.planSeriesOccurrences(blockABC, availablePrograms, shells, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"a-s1e1", "b-s1e1"}, programIDs(firstPlanned[0].Programs), "occurrence 1, original order")
+	require.Equal(t, []string{"a-s1e2", "b-s1e2"}, programIDs(firstPlanned[1].Programs), "occurrence 2, original order")
+
+	stateA1, err := store.GetSeriesState(ctx, "Show A")
+	require.NoError(t, err)
+	stateB1, err := store.GetSeriesState(ctx, "Show B")
+	require.NoError(t, err)
+	stateC1, err := store.GetSeriesState(ctx, "Show C")
+	require.NoError(t, err)
+
+	// Reorder to [C, A, B] and re-derive BOTH occurrences together, same
+	// "now" (both still not-yet-aired).
+	blockCAB := blockABC
+	blockCAB.Series = []SeriesConfig{
+		{ShowTitle: "Show C", EpisodesPerBlock: 1},
+		{ShowTitle: "Show A", EpisodesPerBlock: 1},
+		{ShowTitle: "Show B", EpisodesPerBlock: 1},
+	}
+	reorderedShells := []ScheduledSlot{{StartTime: occ1Start, Block: blockCAB}, {StartTime: occ2Start, Block: blockCAB}}
+
+	secondPlanned, err := engine.planSeriesOccurrences(blockCAB, availablePrograms, reorderedShells, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	assert.Equal(t, []string{"c-s1e1", "a-s1e1"}, programIDs(secondPlanned[0].Programs), "occurrence 1, reordered")
+	assert.Equal(t, []string{"c-s1e2", "a-s1e2"}, programIDs(secondPlanned[1].Programs),
+		"occurrence 2, reordered -- must chain from occurrence 1's ACTUAL re-derived end state and pick C's SECOND episode, not repeat episode 1")
+
+	// Re-deriving two not-yet-aired occurrences must never touch the real
+	// persisted series state, exactly like the single-occurrence version.
+	stateA2, err := store.GetSeriesState(ctx, "Show A")
+	require.NoError(t, err)
+	stateB2, err := store.GetSeriesState(ctx, "Show B")
+	require.NoError(t, err)
+	stateC2, err := store.GetSeriesState(ctx, "Show C")
+	require.NoError(t, err)
+	assert.Equal(t, stateA1, stateA2, "Show A's series state must be identical after both applies")
+	assert.Equal(t, stateB1, stateB2, "Show B's series state must be identical after both applies")
+	assert.Equal(t, stateC1, stateC2, "Show C's series state must be identical after both applies")
+}
+
+// TestPlanBlock_SeriesReDerive_DoesNotRepinStartEpisodeOnAlreadyAdvancedSnapshot
+// pins finding 1's fix: a reconstructed snapshot used to always leave
+// LastAired nil (see SeriesStateSnapshot.Seeded's doc comment), which made
+// initializeSeriesState treat every re-derive as "never initialized" and
+// re-apply start_episode on every single one -- silently re-pinning
+// progress back to the configured start position. Reviewer probe: apply 1
+// plans occurrence 2 at episode 6 (continuing on from occurrence 1's real
+// start_episode:5); apply 2 re-derives occurrence 2 ALONE (its own stored
+// snapshot, not chained with occurrence 1 in the same pass) and, before
+// the fix, gets episode 5 again instead of continuing from 6.
+func TestPlanBlock_SeriesReDerive_DoesNotRepinStartEpisodeOnAlreadyAdvancedSnapshot(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p-s1e5", Type: "episode", ShowTitle: "Pinned Show", SeasonNumber: 1, EpisodeNumber: 5, Duration: 1_800_000},
+		{ID: "p-s1e6", Type: "episode", ShowTitle: "Pinned Show", SeasonNumber: 1, EpisodeNumber: 6, Duration: 1_800_000},
+		{ID: "p-s1e7", Type: "episode", ShowTitle: "Pinned Show", SeasonNumber: 1, EpisodeNumber: 7, Duration: 1_800_000},
+	}
+
+	block := Block{
+		ID: "pinned-block", Name: "Pinned Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Pinned Show", EpisodesPerBlock: 1, StartEpisode: 5}},
+	}
+
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	now := time.Now()
+	occ1Start := now.Add(1 * time.Hour)
+	occ2Start := now.Add(2 * time.Hour)
+
+	// First apply: both occurrences planned together in one chained pass.
+	// Occurrence 1 applies start_episode:5 for real (genuinely never
+	// initialized before); occurrence 2 chains from occurrence 1's actual
+	// post-consumption state (episode 6).
+	shells := []ScheduledSlot{{StartTime: occ1Start, Block: block}, {StartTime: occ2Start, Block: block}}
+	firstPlanned, err := engine.planSeriesOccurrences(block, availablePrograms, shells, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"p-s1e5"}, programIDs(firstPlanned[0].Programs), "occurrence 1 should apply start_episode:5")
+	require.Equal(t, []string{"p-s1e6"}, programIDs(firstPlanned[1].Programs), "occurrence 2 should continue to episode 6")
+
+	// Second apply: re-derive occurrence 2 ALONE, via PlanBlock's
+	// single-shell delegation -- this time it must read its OWN stored
+	// snapshot (chain is nil going in, unlike the batched first apply
+	// above), which is exactly the path finding 1's bug lived on.
+	second, err := engine.PlanBlock(block, availablePrograms, occ2Start, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	assert.Equal(t, []string{"p-s1e6"}, programIDs(second),
+		"re-deriving occurrence 2 alone must NOT re-pin it back to start_episode:5 -- its snapshot already reflects episode 6")
+}
+
+// TestPlanBlock_SeriesFillerFallback_TwoApplies_ByteIdenticalContent pins
+// finding 5's fix: re-deriving a not-yet-aired occurrence used to re-run
+// rand.Shuffle (the global, unseeded math/rand source) for fallback/filler
+// content on every apply, so a series block with filler enabled wasn't
+// apply-idempotent even though its series episode picks were -- two
+// consecutive applies of the same unchanged occurrence could select (or
+// order) different filler programs. occurrenceRand seeds shuffling
+// deterministically from (block ID, occurrence start) so a re-derive
+// reproduces the exact same filler selection and order.
+func TestPlanBlock_SeriesFillerFallback_TwoApplies_ByteIdenticalContent(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "ep-1", Type: "episode", ShowTitle: "Filler Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 600_000},
+		{ID: "filler-1", Type: "movie", Genres: []tunarr.Genre{{Name: "Filler"}}, Duration: 900_000},
+		{ID: "filler-2", Type: "movie", Genres: []tunarr.Genre{{Name: "Filler"}}, Duration: 900_000},
+		{ID: "filler-3", Type: "movie", Genres: []tunarr.Genre{{Name: "Filler"}}, Duration: 900_000},
+		{ID: "filler-4", Type: "movie", Genres: []tunarr.Genre{{Name: "Filler"}}, Duration: 900_000},
+		{ID: "filler-5", Type: "movie", Genres: []tunarr.Genre{{Name: "Filler"}}, Duration: 900_000},
+	}
+
+	block := Block{
+		ID: "filler-fallback-block", Name: "Filler Fallback Block", Type: BlockTypeSeries, Duration: 70, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Filler Show", EpisodesPerBlock: 1}},
+		Fallback: SeriesFallback{
+			Mode:         FallbackModeFiller,
+			FillerFilter: Filter{Genres: []string{"Filler"}},
+		},
+	}
+
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	now := time.Now()
+	occurrenceStart := now.Add(1 * time.Hour)
+
+	// First apply: genuinely first-time plan. 70min block - 10min episode
+	// = 60min gap; five 15min filler candidates means only four fit
+	// (4*15=60), so WHICH four (and in what order) is a real, observable
+	// signal of the shuffle, not just a relabeling of an always-identical
+	// set.
+	first, err := engine.PlanBlock(block, availablePrograms, occurrenceStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Contains(t, programIDs(first), "ep-1", "expected the series episode to be included")
+	require.Len(t, first, 5, "expected the episode plus exactly 4 of the 5 filler candidates (60min gap / 15min each)")
+
+	// Second apply, same not-yet-aired occurrence, unchanged spec: must
+	// re-derive to EXACTLY the same content, byte for byte -- including
+	// filler selection and order.
+	second, err := engine.PlanBlock(block, availablePrograms, occurrenceStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	assert.Equal(t, programIDs(first), programIDs(second),
+		"re-deriving an unchanged not-yet-aired occurrence with filler fallback enabled must produce byte-identical content, including filler order/selection")
+}
+
 func TestGenerateForTimeRange(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
@@ -835,6 +1036,112 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 		assert.Equal(t, "Low Priority Block", w.BlockName)
 		assert.Equal(t, "High Priority Block", w.BlockingBlockName)
 	}
+}
+
+// TestResolveConflicts_RestartsScanAfterEviction_HandlesThreeMutualOverlaps
+// pins finding 6's fix: resolveConflicts used to `break` out of its inner
+// scan the moment it evicted ONE lower-priority resolved slot, without
+// re-checking the winner against any OTHER already-resolved slot it also
+// overlaps. A and B here do NOT overlap each other (so both survive
+// independently into `resolved`), but C overlaps BOTH of them and has the
+// highest priority -- the old code would evict A, `break`, and then just
+// append C, leaving B and C overlapping in the final result (only A would
+// be reported dropped). That broken invariant -- resolved slots aren't
+// actually non-overlapping -- is exactly what buildAnchoredLineup
+// (service/schedule.go) assumes never happens: an undetected overlap
+// there produces a negative gap and silent wall-clock drift.
+func TestResolveConflicts_RestartsScanAfterEviction_HandlesThreeMutualOverlaps(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	base := time.Date(2026, 1, 12, 9, 0, 0, 0, time.UTC)
+	slotA := ScheduledSlot{StartTime: base, EndTime: base.Add(60 * time.Minute), Block: Block{Name: "A", Priority: 1}}
+	slotB := ScheduledSlot{StartTime: base.Add(120 * time.Minute), EndTime: base.Add(180 * time.Minute), Block: Block{Name: "B", Priority: 1}}
+	// C spans [9:30, 11:30) -- overlaps A's tail (9:30-10:00) AND B's head
+	// (11:00-11:30), but A and B themselves don't overlap each other.
+	slotC := ScheduledSlot{StartTime: base.Add(30 * time.Minute), EndTime: base.Add(150 * time.Minute), Block: Block{Name: "C", Priority: 5}}
+
+	require.False(t, slotsOverlap(slotA, slotB), "test setup: A and B must not overlap each other")
+	require.True(t, slotsOverlap(slotC, slotA), "test setup: C must overlap A")
+	require.True(t, slotsOverlap(slotC, slotB), "test setup: C must overlap B")
+
+	resolved, dropped := engine.resolveConflicts([]ScheduledSlot{slotA, slotB, slotC})
+
+	require.Len(t, resolved, 1, "only the highest-priority slot should survive three mutually overlapping slots")
+	assert.Equal(t, "C", resolved[0].Block.Name)
+	assert.Len(t, dropped, 2, "both A and B must be reported as dropped, not just A")
+
+	for i := 0; i < len(resolved); i++ {
+		for j := i + 1; j < len(resolved); j++ {
+			assert.False(t, slotsOverlap(resolved[i], resolved[j]), "resolved slots must never overlap")
+		}
+	}
+}
+
+// TestGenerateForTimeRange_OnAirOccurrence_StaysInLineupAtOriginalStart
+// pins finding 7's fix: every apply used to anchor a channel's shells at
+// `start` alone, so an occurrence that began airing BEFORE this apply but
+// hasn't finished yet -- the thing actually on screen right now -- was
+// simply never generated (GenerateForTimeRange's normal sweep only starts
+// at or after `start`), and the next pushed lineup replaced it outright.
+// The fix adds an on-air shell to phase 1 whenever one exists, keyed by
+// its own ORIGINAL StartTime (not `start`) -- see onAirOccurrenceStart.
+//
+// This uses a filter block, not series, specifically to isolate finding
+// 7's shell-injection/anchor mechanism from findings 1/2/5's series-chain
+// machinery (already covered by their own tests above): the mechanism
+// itself is block-type-agnostic (added in phase 1, before the
+// series-vs-filter dispatch in phase 3).
+func TestGenerateForTimeRange_OnAirOccurrence_StaysInLineupAtOriginalStart(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	block := Block{
+		Name: "Hourly Block", Type: BlockTypeFilter, Cron: "0 * * * *", Duration: 60, ChannelID: "channel-1",
+	}
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Movie One", Duration: 1_800_000, Type: "movie"},
+		{ID: "p2", Title: "Movie Two", Duration: 1_800_000, Type: "movie"},
+	}
+
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	onAirStart := time.Now().UTC().Truncate(time.Hour)
+	firstNow := onAirStart.Add(20 * time.Minute) // 20min into the on-air occurrence
+
+	firstSchedule, _, err := engine.GenerateForTimeRange(firstNow, firstNow.Add(24*time.Hour), availablePrograms)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	firstSlot := findSlotAt(t, firstSchedule["channel-1"], onAirStart)
+	require.NotEmpty(t, firstSlot.Programs, "expected the on-air occurrence to have real content on its first apply")
+
+	// Second apply, later -- the SAME occurrence is still on air (45min
+	// in, still short of the 60min duration).
+	secondNow := onAirStart.Add(45 * time.Minute)
+	secondSchedule, _, err := engine.GenerateForTimeRange(secondNow, secondNow.Add(24*time.Hour), availablePrograms)
+	require.NoError(t, err)
+
+	secondSlot := findSlotAt(t, secondSchedule["channel-1"], onAirStart)
+	assert.True(t, secondSlot.StartTime.Equal(onAirStart),
+		"the on-air occurrence must keep its ORIGINAL StartTime as its anchor point -- not be shifted to this apply's own start -- so Tunarr's wall-clock playback formula still lands mid-episode")
+	assert.Equal(t, programIDs(firstSlot.Programs), programIDs(secondSlot.Programs),
+		"the on-air occurrence's content must be replayed verbatim from what was committed on the first apply, not re-planned")
+}
+
+// findSlotAt returns the slot in slots whose StartTime equals start,
+// failing the test if none matches.
+func findSlotAt(t *testing.T, slots []ScheduledSlot, start time.Time) ScheduledSlot {
+	t.Helper()
+	for _, s := range slots {
+		if s.StartTime.Equal(start) {
+			return s
+		}
+	}
+	t.Fatalf("no slot found with StartTime %s", start)
+	return ScheduledSlot{}
 }
 
 func TestCommit(t *testing.T) {
@@ -1160,7 +1467,7 @@ func TestApplySeriesFallback_FillerMode(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(3000000) // 50 minutes, needs 20 minutes more
 
-	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration, nil)
+	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, durationBudget{current: currentDuration, target: targetDuration}, nil)
 
 	assert.Greater(t, len(playlist), len(initialPlaylist), "Expected fallback filler to be added")
 	assert.Greater(t, finalDuration, currentDuration, "Expected duration to increase after fallback")
@@ -1177,7 +1484,7 @@ func TestApplySeriesFallback_NoFallbackNeeded(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(1800000) // Already at target
 
-	playlist, finalDuration := engine.applySeriesFallback(Block{}, []tunarr.Program{}, initialPlaylist, currentDuration, targetDuration, nil)
+	playlist, finalDuration := engine.applySeriesFallback(Block{}, []tunarr.Program{}, initialPlaylist, durationBudget{current: currentDuration, target: targetDuration}, nil)
 
 	assert.Len(t, playlist, len(initialPlaylist), "Expected no fallback when at target duration")
 	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
@@ -1204,7 +1511,7 @@ func TestApplySeriesFallback_NotFillerMode(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(3000000)
 
-	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration, nil)
+	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, durationBudget{current: currentDuration, target: targetDuration}, nil)
 
 	assert.Len(t, playlist, len(initialPlaylist), "Expected no fallback when not in filler mode")
 	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
@@ -1630,7 +1937,7 @@ func TestApplySeriesFallback_FilterErrorLogged(t *testing.T) {
 	}
 
 	// Should not panic, just log and return original
-	playlist, duration := engine.applySeriesFallback(block, []tunarr.Program{}, initialPlaylist, 1800000, 3600000, nil)
+	playlist, duration := engine.applySeriesFallback(block, []tunarr.Program{}, initialPlaylist, durationBudget{current: 1800000, target: 3600000}, nil)
 
 	assert.Len(t, playlist, 1, "Expected original playlist returned on filter error")
 	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on filter error")
@@ -1661,7 +1968,7 @@ func TestApplySeriesFallback_NoMatchingContent(t *testing.T) {
 		{ID: "p0", Title: "Initial", Duration: 1800000, Type: "episode"},
 	}
 
-	playlist, duration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, 1800000, 3600000, nil)
+	playlist, duration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, durationBudget{current: 1800000, target: 3600000}, nil)
 
 	assert.Len(t, playlist, 1, "Expected original playlist when no content matches filter")
 	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged when no content matches")

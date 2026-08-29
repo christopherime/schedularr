@@ -32,7 +32,7 @@ type SeriesState struct {
 // Engine.initializeSeriesState: it only applies start_season/start_episode
 // when LastAired is nil, treating that as "never initialized." A
 // reconstructed snapshot used to always leave LastAired nil (see
-// newSnapshotSeriesContext), which made initializeSeriesState re-apply
+// statesFromSnapshot), which made initializeSeriesState re-apply
 // start_season/start_episode on *every* re-derive of a not-yet-aired
 // occurrence, silently re-pinning its cursor back to the configured start
 // position regardless of how far the snapshot had actually progressed

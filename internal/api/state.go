@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
 	"github.com/christopherime/schedularr/internal/scheduler"
@@ -43,6 +45,16 @@ func (h *Handlers) ListSeriesState(w http.ResponseWriter, r *http.Request) {
 // fabricates a default S01E01 state for any show, tracked or not (see its
 // doc comment), so this uses store.GetPersistedSeriesState instead, which
 // returns store.ErrNotFound when no row exists.
+//
+// After a successful update, every not-yet-aired occurrence snapshot for
+// every block that references showTitle in its Series config is deleted
+// (via invalidateSeriesOccurrenceSnapshots) -- otherwise this PATCH would
+// be silently shadowed for up to the schedule-generation window (~a day):
+// planSeriesOccurrences never re-reads series_state for an occurrence
+// that already has a snapshot, so an operator's manual cursor reset would
+// have no visible effect until every affected occurrence aged out of the
+// window on its own. See StateStore.DeleteFutureOccurrenceSnapshots' doc
+// comment.
 func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, showTitle string) {
 	var patch gen.SeriesStatePatch
 	dec := json.NewDecoder(r.Body)
@@ -85,7 +97,48 @@ func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, show
 		return
 	}
 
+	if err := h.invalidateSeriesOccurrenceSnapshots(r.Context(), showTitle); err != nil {
+		h.logAndWriteInternalError(w, r, "patch_series_state_invalidate_snapshots", err)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, seriesStateToGen(*current))
+}
+
+// invalidateSeriesOccurrenceSnapshots deletes every not-yet-aired
+// occurrence snapshot for every block whose Series config references
+// showTitle -- see PatchSeriesState's doc comment for why. Matches by
+// scanning every block's Spec.Series (there is no reverse index from
+// show_title to block IDs; the blocks table is small enough -- one row
+// per configured block -- that a full scan on an infrequent operator
+// action like this is the right tradeoff over adding one).
+func (h *Handlers) invalidateSeriesOccurrenceSnapshots(ctx context.Context, showTitle string) error {
+	blocks, err := h.d.Store.ListBlocks(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list blocks while invalidating occurrence snapshots for %q: %w", showTitle, err)
+	}
+
+	now := time.Now()
+	for _, b := range blocks {
+		if !blockReferencesShow(b.Spec, showTitle) {
+			continue
+		}
+		if err := h.d.Store.DeleteFutureOccurrenceSnapshots(ctx, b.ID, now); err != nil {
+			return fmt.Errorf("failed to invalidate occurrence snapshots for block %q: %w", b.Name, err)
+		}
+	}
+	return nil
+}
+
+// blockReferencesShow reports whether spec's Series config lists
+// showTitle -- non-series blocks (an empty Series slice) trivially don't.
+func blockReferencesShow(spec scheduler.Block, showTitle string) bool {
+	for _, sc := range spec.Series {
+		if sc.ShowTitle == showTitle {
+			return true
+		}
+	}
+	return false
 }
 
 // seriesStateToGen converts a scheduler.SeriesState (the persisted domain

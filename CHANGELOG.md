@@ -93,6 +93,104 @@ testing against a real Tunarr 1.3.13 instance.
   unused by any caller in this repo, so this has no other effect.
   Regression test asserts both the decode and that the server is hit
   exactly once (no retry).
+- **Eight release-review findings against the idempotent-apply work
+  above, all engine-side.** All in `internal/scheduler/engine.go` unless
+  noted:
+  - **A not-yet-aired occurrence's re-derive could silently re-pin a
+    series back to `start_episode`/`start_season` on every single
+    apply, not just the first.** A reconstructed `SeriesStateSnapshot`
+    always left `LastAired` nil, which `initializeSeriesState` reads as
+    "never initialized" -- so a block configured with `start_episode: 5`
+    that had legitimately progressed to E6 got silently re-derived back
+    to E5 on the next apply. Fixed with a `Seeded bool` field on
+    `SeriesStateSnapshot` (`internal/scheduler/state.go`) recording
+    whether the cursor was already initialized at capture time;
+    `statesFromSnapshot` now reconstructs a non-nil marker `LastAired`
+    exactly when `Seeded` is true.
+  - **Reordering (or otherwise editing) a series block's spec before
+    two-or-more not-yet-aired occurrences aired could air the same
+    episode twice and silently skip another show entirely.** Each
+    occurrence's re-derive only ever read its OWN stored snapshot, so
+    when occurrence 1 was re-derived, nothing updated occurrence 2's
+    snapshot to match occurrence 1's actual new end state -- occurrence
+    2 kept re-deriving against a stale baseline. New
+    `planSeriesOccurrences` plans a whole block's surviving occurrences
+    in one chained pass (a running `map[string]*SeriesState` threaded
+    across all of them, only ever the first occurrence in the batch
+    touching real persisted state), rewriting later occurrences'
+    snapshots as it goes; `GenerateForTimeRange`'s phase 3 now calls it
+    once per series block instead of looping `PlanBlock` per occurrence
+    (which only chained a single occurrence at a time).
+  - **`PATCH /state/series/{show_title}` (an operator's manual cursor
+    reset) was silently shadowed for up to the schedule-generation
+    window.** Once an occurrence has a snapshot, its planning never
+    re-reads `series_state` again. `PatchSeriesState`
+    (`internal/api/state.go`), and `UpdateBlock`/`DeleteBlock`
+    (`internal/api/blocks.go`), now delete every not-yet-aired
+    occurrence snapshot for the affected block(s) via a new
+    `StateStore.DeleteFutureOccurrenceSnapshots`, so the next apply
+    re-derives them against the just-changed state/spec instead of
+    keeping a stale snapshot until it ages out on its own.
+  - **`series_occurrence_snapshots` had no retention/GC, and was keyed
+    by the renameable `block_name`.** Migration `000005` re-keys the
+    table by `block_id` (`scheduler.Block` gained a `Block.ID` field,
+    populated by `service.ActiveBlocks` from the store record) and adds
+    a `recorded_at` column; new `StateStore.CleanupOccurrenceSnapshots`
+    (called from `Engine.Commit`, mirroring
+    `CleanupScheduleHistory`'s window) prunes by `recorded_at` -- a real
+    wall-clock write timestamp, like `schedule_history.scheduled_at` --
+    not `occurrence_start`, which would otherwise prune a legitimately
+    fresh snapshot whenever the schedule-generation window itself
+    doesn't start at "now". `SaveOccurrenceSnapshot` is now an upsert
+    (needed by the chain fix above, which rewrites existing snapshots).
+    Also removed the dead "shouldn't happen" fallback that used to
+    re-derive an aired occurrence from the current spec when its
+    committed history had been pruned -- an aired occurrence's content
+    is historical fact a later apply must never invent; it now correctly
+    returns nothing to replay instead.
+  - **Re-deriving a not-yet-aired series occurrence with filler/fallback
+    content enabled reshuffled it differently on every apply**, via the
+    global, unseeded `math/rand` source -- so a filler-enabled series
+    block wasn't apply-idempotent even though its episode selection was.
+    New `occurrenceRand(blockID, occurrenceStart)` deterministically
+    seeds a `*rand.Rand` (FNV-1a hash of both) threaded through
+    `applySeriesFallback`/`applyBlockFiller`/`getFiller`, so re-deriving
+    the same occurrence reproduces the exact same filler selection and
+    order.
+  - **`resolveConflicts` could leave two occurrences overlapping in its
+    own output.** It stopped scanning a winning slot against the rest of
+    `resolved` the moment it evicted the FIRST lower-priority slot it
+    overlapped, so a slot overlapping three-or-more already-resolved
+    slots only ever evicted one of them (silently dropped from the
+    `warnings` returned too) -- violating `buildAnchoredLineup`'s
+    sorted-non-overlap precondition and risking a negative gap /
+    wall-clock drift. Now restarts the same index after an eviction
+    instead of breaking out, so a winner is checked against every
+    overlapping resolved slot, not just the first.
+  - **Every apply anchored a channel's pushed lineup at "now," cutting
+    off whatever occurrence was currently on air mid-episode.**
+    `GenerateForTimeRange`'s phase 1 now also injects an "on-air" shell
+    per block, if one exists (`onAirOccurrenceStart`: an occurrence
+    whose `[start, start+duration)` window contains `start` itself,
+    even though its own start is before the generation window) -- never
+    re-planned once it has a snapshot, content always a verbatim replay.
+    `service.anchorForChannel` (`internal/service/schedule.go`) shifts a
+    channel's own lineup anchor to that occurrence's original
+    `StartTime` instead of the Run's global `start` whenever one exists,
+    which is what lets Tunarr's wall-clock playback formula resolve to
+    a position partway through the episode instead of restarting it.
+  - Regression tests: the reorder scenario extended to two occurrences
+    (catches the chain bug directly -- a duplicate episode airing
+    twice); a two-apply byte-identical check with series filler fallback
+    enabled; a three-way mutual-overlap conflict test asserting no
+    residual overlap survives; an on-air-apply test asserting the
+    running occurrence stays in the lineup at its original `StartTime`
+    across a later re-apply; a `start_episode` re-pin regression; and
+    new `internal/store` SQL-level coverage for
+    `GetOccurrenceSnapshot`/`SaveOccurrenceSnapshot`'s upsert and
+    `block_id` keying, `DeleteFutureOccurrenceSnapshots`, and
+    `CleanupOccurrenceSnapshots`' `recorded_at`-based pruning (none of
+    which had a dedicated SQL-level test before this round).
 
 ## [0.2.1] - 2026-08-29
 

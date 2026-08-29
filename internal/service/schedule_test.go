@@ -643,19 +643,32 @@ func TestBuildAnchoredLineup_RejectsInvalidProgram(t *testing.T) {
 // end-to-end regression test proving Runner.Run's real Apply path -- not
 // just buildAnchoredLineup in isolation -- anchors and pads the lineup it
 // pushes: the fake Tunarr server's recorded startTime (PUT
-// /api/channels/{id}) must equal the same anchor used to build the
-// lineup, and the recorded lineup (GET .../programming) must cover at
+// /api/channels/{id}) must equal the anchor buildAnchoredLineup actually
+// used, and the recorded lineup (GET .../programming) must cover at
 // least the entire apply window (never less; see buildAnchoredLineup's
 // doc comment for why it can legitimately run a little over -- the
 // engine lets a block starting just inside the window complete rather
-// than cutting it off) with at least one flex entry. This Runner's
-// single hourly filter block ("0 * * * *"/60min duration against a
-// Truncate(time.Minute) anchor that's essentially never exactly on the
-// hour) always needs a leading flex entry before its first occurrence,
-// so haveFlex is a real assertion, not a tautology. A regression back to
-// flattenSlots-style concatenation (this task's Bug 1: content only, no
-// flex, no channel.startTime call) would make this test fail on both
-// counts.
+// than cutting it off).
+//
+// This Runner's single block ("Hourly Movies", cron "0 * * * *", 60min
+// duration) has no gap between consecutive occurrences at all, and --
+// with exactly two 30-minute candidate movies and nothing else in the
+// catalog -- each occurrence fills its own full 60 minutes too. Which
+// means this fixture always has some occurrence on air at apply time
+// (some occurrence's [start, start+60min) window always contains "now"):
+// see GenerateForTimeRange's on-air-shell-injection doc comment
+// (engine.go) and anchorForChannel (schedule.go). So the expected anchor
+// here is that on-air occurrence's own StartTime -- an exact hour
+// boundary, always <= `before` -- not Run's own `start`; and because that
+// on-air occurrence becomes the lineup's first (lowest StartTime) slot,
+// sitting exactly at the anchor, there is no leading flex gap before it
+// either (unlike before finding 7's on-air handling existed, back when
+// the anchor was always Run's own `start`, essentially never exactly on
+// the hour). A regression back to flattenSlots-style concatenation (the
+// original Bug 1 this test was written for: content only, no flex, no
+// channel.startTime call) would still be caught here: the anchor
+// wouldn't land on an exact hour boundary <= before, and
+// UpdateSchedule/setChannelStartTime would never be called at all.
 func TestRunner_Run_Apply_AnchorsChannelStartTimeAndPadsFullWindow(t *testing.T) {
 	server, fake := newFakeTunarr(t, canonicalPrograms())
 	r, _ := newTestRunner(t, server.URL)
@@ -668,7 +681,14 @@ func TestRunner_Run_Apply_AnchorsChannelStartTimeAndPadsFullWindow(t *testing.T)
 	startTimeMs, ok := fake.startTimeFor("channel-1")
 	require.True(t, ok, "expected channel.startTime to have been set via PUT /api/channels/channel-1")
 	gotAnchor := time.UnixMilli(startTimeMs).UTC()
-	assert.False(t, gotAnchor.Before(before), "anchor must not be before Run started")
+
+	// .UTC() before comparing: gotAnchor is already UTC (round-tripped
+	// through a UnixMilli timestamp), and testify's Equal on time.Time
+	// compares struct fields directly (not the .Equal() absolute-instant
+	// semantic) -- two Times for the same instant in different
+	// Locations would otherwise spuriously fail this assertion.
+	topOfHour := before.Truncate(time.Hour).UTC()
+	assert.Equal(t, topOfHour, gotAnchor, "anchor must be the on-air occurrence's own StartTime (the current hour boundary), not Run's start")
 	assert.False(t, gotAnchor.After(time.Now()), "anchor must not be after Run finished")
 	assert.Equal(t, gotAnchor, gotAnchor.Truncate(time.Minute), "anchor must already be minute-truncated")
 
@@ -676,14 +696,13 @@ func TestRunner_Run_Apply_AnchorsChannelStartTimeAndPadsFullWindow(t *testing.T)
 	require.NotEmpty(t, lineup)
 
 	var total time.Duration
-	var haveFlex, haveContent bool
+	var haveContent bool
 	for _, item := range lineup {
 		switch item.Type {
 		case "content":
 			haveContent = true
 			assert.NotEmpty(t, item.ID, "a content entry must carry a program ID")
 		case "flex":
-			haveFlex = true
 			assert.Positive(t, item.Duration, "a flex entry must have a strictly positive duration")
 		default:
 			t.Errorf("unexpected lineup item type %q", item.Type)
@@ -691,7 +710,15 @@ func TestRunner_Run_Apply_AnchorsChannelStartTimeAndPadsFullWindow(t *testing.T)
 		total += time.Duration(item.Duration) * time.Millisecond
 	}
 	assert.True(t, haveContent, "expected at least one content entry (the hourly block's matched program)")
-	assert.True(t, haveFlex, "expected at least one flex entry -- the anchor is essentially never exactly on the hour, so a leading gap before the first occurrence is guaranteed")
+	// No haveFlex assertion: this fixture's occurrences are exactly
+	// back-to-back and each exactly fills its own 60 minutes (two 30min
+	// movies), and its anchor now sits exactly on the on-air occurrence's
+	// own start (see the doc comment above) -- so, unlike before finding
+	// 7, there is no longer a guaranteed flex source for this specific
+	// fixture. Whether a flex entry happens to appear (e.g. a trailing
+	// pad if the window doesn't end on an hour boundary) isn't this
+	// test's concern; TestBuildAnchoredLineup_* covers flex-padding
+	// behavior directly.
 	assert.GreaterOrEqual(t, total, 24*time.Hour, "pushed lineup must cover at least the entire apply window (it may legitimately run a little over -- see buildAnchoredLineup's doc comment)")
 }
 

@@ -138,6 +138,154 @@ func TestStore_ScheduleHistoryCleanup(t *testing.T) {
 	assert.True(t, newRecent, "Expected new entry to remain")
 }
 
+// TestStore_OccurrenceSnapshots exercises the real SQL behind
+// GetOccurrenceSnapshot/SaveOccurrenceSnapshot against the migration
+// 000005 schema (series_occurrence_snapshots keyed by block_id, with a
+// recorded_at column) -- round 3 added these methods without a dedicated
+// SQL-level test (only exercised indirectly via scheduler.MockStateStore
+// in engine_test.go), and round 4 rewrote the key column and made the
+// save an upsert, so this closes that gap: a wrong column name or a
+// missing ON CONFLICT clause would compile fine and only surface here.
+func TestStore_OccurrenceSnapshots(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
+
+	// 1. No snapshot yet.
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-a", occurrenceStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "expected no snapshot before any save")
+
+	// 2. Save, then read back.
+	first := map[string]scheduler.SeriesStateSnapshot{
+		"Show A": {CurrentSeason: 1, CurrentEpisode: 1, Seeded: false},
+	}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", occurrenceStart, first))
+
+	got, ok, err := s.GetOccurrenceSnapshot(ctx, "block-a", occurrenceStart)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, first, got)
+
+	// 3. Saving again for the SAME (block_id, occurrence_start) must
+	// upsert -- overwrite, not error on a duplicate primary key -- since
+	// planSeriesOccurrences' chain mechanism rewrites a not-yet-aired
+	// occurrence's snapshot when an earlier occurrence in the same block
+	// is re-derived.
+	second := map[string]scheduler.SeriesStateSnapshot{
+		"Show A": {CurrentSeason: 1, CurrentEpisode: 6, Seeded: true},
+	}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", occurrenceStart, second), "second save for the same key must upsert, not fail")
+
+	got, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", occurrenceStart)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, second, got, "expected the upsert to have overwritten the first snapshot")
+
+	// 4. A different block ID at the SAME occurrence_start is independent
+	// -- proves the key is (block_id, occurrence_start), not just
+	// occurrence_start (i.e. the migration 000005 rekey from block_name
+	// to block_id actually took, and didn't collapse distinct blocks onto
+	// each other by accident).
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-b", occurrenceStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "a different block ID must not see block-a's snapshot")
+}
+
+// TestStore_DeleteFutureOccurrenceSnapshots pins finding 3's fix: an
+// operator's series_state PATCH (or a block edit/delete) must invalidate
+// only the NOT-YET-AIRED occurrences of the affected block, leaving
+// already-aired ones (occurrence_start <= now) and other blocks alone.
+func TestStore_DeleteFutureOccurrenceSnapshots(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now()
+	past := now.Add(-1 * time.Hour)
+	future1 := now.Add(1 * time.Hour)
+	future2 := now.Add(2 * time.Hour)
+
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", past, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", future1, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", future2, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-b", future1, snapshot), "a different block's future snapshot must survive")
+
+	require.NoError(t, s.DeleteFutureOccurrenceSnapshots(ctx, "block-a", now))
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-a", past)
+	require.NoError(t, err)
+	assert.True(t, ok, "an already-aired occurrence's snapshot must survive")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", future1)
+	require.NoError(t, err)
+	assert.False(t, ok, "a not-yet-aired occurrence's snapshot must be deleted")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", future2)
+	require.NoError(t, err)
+	assert.False(t, ok, "a not-yet-aired occurrence's snapshot must be deleted")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-b", future1)
+	require.NoError(t, err)
+	assert.True(t, ok, "a different block's snapshot must be untouched")
+}
+
+// TestStore_CleanupOccurrenceSnapshots pins finding 4's GC fix, and
+// specifically that it prunes by recorded_at (a real wall-clock write
+// timestamp), not occurrence_start -- see migration 000005's recorded_at
+// column doc comment for why the latter would be wrong (it would prune a
+// legitimately just-created snapshot outright whenever occurrence_start
+// itself is far from the real clock, e.g. a schedule-generation window
+// that doesn't start at "now"). The stale row here is inserted directly
+// via SQL (bypassing SaveOccurrenceSnapshot, which always stamps
+// recorded_at = time.Now()) specifically to control recorded_at without
+// a real sleep.
+func TestStore_CleanupOccurrenceSnapshots(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Fixed occurrenceStart values, reused at every lookup below (rather
+	// than calling time.Now() again at each use), so a lookup can't
+	// spuriously miss from two separate time.Now() calls landing
+	// nanoseconds apart.
+	staleOccurrenceStart := time.Now().Add(30 * 24 * time.Hour)
+	freshOccurrenceStart := time.Now().Add(1 * time.Hour)
+
+	// A stale row: occurrence_start far in the future (so an
+	// occurrence_start-based cutoff would NOT prune it), but recorded_at
+	// far in the past (so a recorded_at-based cutoff, the correct
+	// behavior, DOES).
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO series_occurrence_snapshots (block_id, occurrence_start, snapshot_json, recorded_at)
+		VALUES (?, ?, ?, ?)`,
+		"block-stale", staleOccurrenceStart, `{}`, time.Now().Add(-48*time.Hour))
+	require.NoError(t, err)
+
+	// A fresh row via the normal path -- recorded_at is "now".
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-fresh", freshOccurrenceStart, snapshot))
+
+	removed, err := s.CleanupOccurrenceSnapshots(ctx, 24*time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), removed, "expected exactly the stale row to be removed")
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-stale", staleOccurrenceStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "the stale (old recorded_at) row must be gone")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-fresh", freshOccurrenceStart)
+	require.NoError(t, err)
+	assert.True(t, ok, "the fresh row must survive")
+}
+
 func TestStore_ExportImportSeriesStates(t *testing.T) {
 	s, err := New(":memory:")
 	require.NoError(t, err, "Failed to create store")

@@ -278,11 +278,15 @@ func blocksForChannel(blocks []scheduler.Block, channelID string) []scheduler.Bl
 // window, and buildAnchoredLineup needs both ends to flex-pad the pushed
 // lineup across the entire window, not just up to the last scheduled
 // slot -- see its doc comment for why a partial-window lineup would drift
-// out of phase with wall-clock once Tunarr loops it.
+// out of phase with wall-clock once Tunarr loops it. anchor is only the
+// STARTING POINT for each channel's own anchor, though -- see
+// anchorForChannel for why a channel with an on-air occurrence shifts its
+// own anchor earlier.
 func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time, channels map[string][]scheduler.ScheduledSlot) error {
 	failCount := 0
 	for channelID, slots := range channels {
-		lineup, err := buildAnchoredLineup(anchor, windowEnd, slots)
+		channelAnchor := anchorForChannel(anchor, slots)
+		lineup, err := buildAnchoredLineup(channelAnchor, windowEnd, slots)
 		if err != nil {
 			r.logger.Error("failed to build anchored lineup for channel",
 				"channel_id", channelID,
@@ -291,7 +295,7 @@ func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time,
 			failCount++
 			continue
 		}
-		if err := r.tunarr.UpdateSchedule(ctx, channelID, anchor, lineup); err != nil {
+		if err := r.tunarr.UpdateSchedule(ctx, channelID, channelAnchor, lineup); err != nil {
 			r.logger.Error("failed to apply schedule to channel",
 				"channel_id", channelID,
 				"error", err,
@@ -305,6 +309,38 @@ func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time,
 		return fmt.Errorf("failed to apply schedule to %d channel(s)", failCount)
 	}
 	return nil
+}
+
+// anchorForChannel returns the anchor (lineup offset 0, and the value
+// written to channel.startTime) to use for one channel's own lineup: the
+// earliest of Run's own global anchor and every one of this channel's
+// slots' StartTime. Slots normally all start at or after the global
+// anchor (Run's own start) -- except for an on-air occurrence's shell,
+// which scheduler.Engine.GenerateForTimeRange's phase 1 injects whenever
+// something is already airing at apply time, and whose StartTime is
+// therefore *before* start (see its own doc comment for why).
+//
+// Anchoring at that occurrence's own StartTime rather than the global
+// anchor is what makes Tunarr's wall-clock playback formula (elapsed =
+// (now - channel.startTime) % duration -- see buildAnchoredLineup's doc
+// comment) resolve to a position partway through that occurrence's
+// content instead of restarting it from the beginning the moment this
+// apply's lineup takes effect: the on-air occurrence's own content is
+// always a frozen, verbatim replay (see PlanBlock/planSeriesOccurrences'
+// "aired" handling and resolveCommittedPrograms), specifically so its
+// position within the episode keeps making sense relative to whichever
+// anchor this function picks.
+//
+// A channel with no on-air occurrence is unaffected: every slot's
+// StartTime is already >= anchor, so the loop never lowers it, and this
+// returns anchor unchanged -- exactly the pre-finding-7 behavior.
+func anchorForChannel(anchor time.Time, slots []scheduler.ScheduledSlot) time.Time {
+	for _, slot := range slots {
+		if slot.StartTime.Before(anchor) {
+			anchor = slot.StartTime
+		}
+	}
+	return anchor
 }
 
 // buildAnchoredLineup converts one channel's scheduled slots into the
