@@ -190,6 +190,16 @@ function buildCronFromSimple(s: SimpleSchedule): string {
     case "weekly":
     case "custom": {
       const days = Array.from(new Set(s.daysOfWeek)).sort((a, b) => a - b);
+      // An empty daysOfWeek here must never reach submit() -- "*" would
+      // silently build a DAILY cron for a picker showing "Weekly"/"Custom
+      // days", and that cron re-parses as "daily" on the next edit, with
+      // no trace anything was ever wrong. validateSchedule() (below)
+      // blocks submit() whenever daysOfWeek is empty for these two
+      // frequencies, and onFrequencyChange() pre-selects today's weekday
+      // the moment the operator switches into either one, so in practice
+      // this branch is live-preview-only: it can render into
+      // editor.form.cron while the operator is still mid-edit (e.g. the
+      // instant after unchecking the last box), never into a saved spec.
       const dow = days.length > 0 ? days.join(",") : "*";
       return `${m} ${h} * * ${dow}`;
     }
@@ -638,6 +648,13 @@ interface EditorState {
   error: string | null;
   nameConflict: string | null;
   seriesRowErrors: (string | null)[];
+  // Set by validateSchedule() (called from submit()) when
+  // form.simpleSchedule.frequency is "weekly"/"custom" and daysOfWeek is
+  // empty -- the hard guard against silently saving a DAILY cron for a
+  // picker showing "Weekly"/"Custom days". Cleared the moment the
+  // operator checks a day (toggleScheduleDay) or on the next submit()
+  // attempt, whichever comes first.
+  scheduleDaysError: string | null;
   form: EditorForm;
   // id of the element focus returns to once the panel closes -- the
   // toolbar's "+ New Block" button for create, or the specific row's Edit
@@ -688,8 +705,10 @@ interface BlocksState {
   seriesTitleWarning(title: string): string | null;
 
   setScheduleMode(mode: "simple" | "cron"): void;
+  onFrequencyChange(): void;
   updateCronFromSimple(): void;
   toggleScheduleDay(day: number): void;
+  validateSchedule(): boolean;
 
   openCreate(): void;
   openEdit(block: BlockRecord): void;
@@ -748,6 +767,7 @@ document.addEventListener("alpine:init", () => {
         error: null,
         nameConflict: null,
         seriesRowErrors: [],
+        scheduleDaysError: null,
         form: emptyEditorForm(),
         returnFocusId: "new-block-btn",
       },
@@ -849,6 +869,27 @@ document.addEventListener("alpine:init", () => {
         this.editor.form.simpleSchedule = parsed;
         this.editor.form.scheduleMode = "simple";
         this.editor.form.scheduleLockNote = null;
+        // A parsed weekly/custom pattern always has >=1 day (dow !== "*"
+        // guarantees a non-empty split in parseCronToSimple), so this is
+        // always clearing stale state from an earlier attempt, never
+        // masking a real problem with the just-parsed result.
+        this.editor.scheduleDaysError = null;
+      },
+
+      // Wired to the frequency <select>'s own @change (not
+      // updateCronFromSimple() directly): switching INTO "weekly"/"custom"
+      // with no day yet checked pre-selects today's weekday, so the
+      // picker never silently represents "every day" the instant the
+      // operator picks "Weekly" -- see buildCronFromSimple's own comment
+      // on why an empty daysOfWeek must never reach submit() un-caught.
+      // Only fires when daysOfWeek is actually empty -- switching away
+      // and back preserves whatever the operator already chose.
+      onFrequencyChange() {
+        const s = this.editor.form.simpleSchedule;
+        if ((s.frequency === "weekly" || s.frequency === "custom") && s.daysOfWeek.length === 0) {
+          s.daysOfWeek = [new Date().getDay()];
+        }
+        this.updateCronFromSimple();
       },
 
       // Called from every Simple-mode picker control (list.html) on
@@ -863,7 +904,32 @@ document.addEventListener("alpine:init", () => {
         const idx = days.indexOf(day);
         if (idx === -1) days.push(day);
         else days.splice(idx, 1);
+        // Immediate feedback: the moment a day is checked, the "pick at
+        // least one day" error (if showing) is no longer true -- don't
+        // make the operator re-click Save just to see it clear.
+        if (days.length > 0) this.editor.scheduleDaysError = null;
         this.updateCronFromSimple();
+      },
+
+      // Hard guard, run from submit() before anything else: a Simple-mode
+      // schedule set to "weekly"/"custom" with no day checked is not a
+      // valid state to save (see buildCronFromSimple's comment) -- this
+      // is what actually keeps that silent-daily-cron branch unreachable
+      // in practice, rather than relying on the UX default
+      // (onFrequencyChange) alone, since the operator can still uncheck
+      // every box after it pre-selects one.
+      validateSchedule() {
+        const form = this.editor.form;
+        if (
+          form.scheduleMode === "simple" &&
+          (form.simpleSchedule.frequency === "weekly" || form.simpleSchedule.frequency === "custom") &&
+          form.simpleSchedule.daysOfWeek.length === 0
+        ) {
+          this.editor.scheduleDaysError = "Pick at least one day.";
+          return false;
+        }
+        this.editor.scheduleDaysError = null;
+        return true;
       },
 
       // Guards against silently reassigning a block's channel: if the
@@ -903,6 +969,7 @@ document.addEventListener("alpine:init", () => {
         this.editor.nameConflict = null;
         this.editor.form = emptyEditorForm();
         this.editor.seriesRowErrors = [];
+        this.editor.scheduleDaysError = null;
         this.editor.returnFocusId = "new-block-btn";
         this.editor.open = true;
         this.focusEditorSoon();
@@ -916,6 +983,7 @@ document.addEventListener("alpine:init", () => {
         this.editor.nameConflict = null;
         this.editor.form = formFromSpec(block.spec, block.enabled);
         this.editor.seriesRowErrors = this.editor.form.series.map(() => null);
+        this.editor.scheduleDaysError = null;
         // Derive the picker's starting mode from the loaded cron: Simple
         // mode (pre-parsed) when representable, Cron mode with an
         // explanatory note otherwise -- same rule setScheduleMode("simple")
@@ -944,6 +1012,7 @@ document.addEventListener("alpine:init", () => {
         this.editor.error = null;
         this.editor.nameConflict = null;
         this.editor.seriesRowErrors = [];
+        this.editor.scheduleDaysError = null;
         this.editor.form = emptyEditorForm();
         this.focusReturnSoon();
       },
@@ -1017,6 +1086,12 @@ document.addEventListener("alpine:init", () => {
       async submit() {
         this.editor.error = null;
         this.editor.nameConflict = null;
+        // Applies to both block types (the schedule field isn't gated by
+        // type) -- must run before buildSpec() ever reads editor.form.cron,
+        // since a Simple-mode weekly/custom schedule with no day checked
+        // would otherwise silently save as a daily cron (see
+        // buildCronFromSimple's comment).
+        if (!this.validateSchedule()) return;
         // Scoped to type === "series": switching the type selector away
         // from series deliberately leaves editor.form.series/
         // seriesRowErrors alone (non-destructive toggling -- see

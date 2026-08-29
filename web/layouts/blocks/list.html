@@ -62,7 +62,7 @@
                   <div class="form-grid">
                     <div class="form-field">
                       <label for="schedule-frequency">Frequency</label>
-                      <select id="schedule-frequency" x-model="editor.form.simpleSchedule.frequency" @change="updateCronFromSimple()">
+                      <select id="schedule-frequency" x-model="editor.form.simpleSchedule.frequency" @change="onFrequencyChange()">
                         <option value="daily">Daily</option>
                         <option value="weekdays">Weekdays</option>
                         <option value="weekly">Weekly</option>
@@ -101,6 +101,7 @@
                           <span x-text="day.label"></span>
                         </label>
                       </template>
+                      <p class="form-field__error" x-show="editor.scheduleDaysError" x-text="editor.scheduleDaysError"></p>
                     </fieldset>
                   </template>
                   <p class="form-field__hint schedule-picker__cron">Cron: <code x-text="editor.form.cron || '—'"></code></p>

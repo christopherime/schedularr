@@ -162,7 +162,7 @@ scrollbars theme correctly too.
 | `--color-border-interactive`      | `#5b6b63` | `#5a7469` | Borders on inputs, buttons, toggles -- anything clickable |
 | `--color-accent`                   | `#0f6b3c` | `#3ddc84` | Primary action, "armed"/"ok" status, active nav underline |
 | `--color-accent-contrast`          | `#ffffff` | `#06150c` | Text/icons on an accent-filled surface                    |
-| `--color-warn`                      | `#7a5200` | `#e8a33d` | Reserved; not yet consumed by a shipped component          |
+| `--color-warn`                      | `#7a5200` | `#e8a33d` | "Unarmed" token status dot; `.form-field__warning` (soft, non-blocking field warnings); the schedule picker's cron-lock note |
 | `--color-danger`                    | `#a3271f` | `#ff6b5e` | Errors, "unarmed"/"down" status, destructive actions       |
 | `--color-backdrop`                   | `rgb(22 33 28 / 45%)` | `rgb(2 6 4 / 65%)` | The token dialog's `::backdrop`         |
 
