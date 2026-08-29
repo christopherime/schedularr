@@ -3,6 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+    # The demo.yaml workflow's own bot commits touch only assets/cli.gif;
+    # skip full CI for those (they carry no code, so nothing here would
+    # catch anything) and to avoid an unnecessary run on every demo GIF
+    # regeneration.
+    paths-ignore:
+      - "assets/**"
   pull_request:
     branches: [main]
 

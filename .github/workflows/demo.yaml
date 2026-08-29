@@ -1,0 +1,98 @@
+name: Demo GIF
+
+# Regenerates assets/cli.gif from vhs/cli.tape and commits the result back
+# to main. Triggered by a change under vhs/** (the tape itself) or by hand.
+# Deliberately does NOT trigger on changes under assets/ -- the bot commit
+# this workflow makes only touches assets/cli.gif, so the vhs/** paths
+# filter here already keeps that commit from retriggering this workflow;
+# ci.yaml additionally paths-ignores assets/** so that same commit skips
+# full CI too.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "vhs/**"
+
+concurrency:
+  group: demo-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.27"
+  # Pinned to the version installed locally (`vhs --version`) so CI
+  # produces the same recording behavior as a local `vhs vhs/cli.tape` run.
+  VHS_VERSION: "v0.11.0"
+  # Pinned ttyd release (vhs's terminal-serving dependency), fetched
+  # directly from GitHub Releases and sha256-checked below -- no
+  # third-party install action.
+  TTYD_VERSION: "1.7.7"
+  TTYD_SHA256: "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
+
+jobs:
+  regenerate:
+    name: Regenerate CLI demo GIF
+    runs-on: ubuntu-latest
+    steps:
+      # Only GitHub-authored actions are used (checkout, setup-go);
+      # everything else below is plain shell.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install ttyd ${{ env.TTYD_VERSION }} (pinned, sha256-verified)
+        run: |
+          set -euo pipefail
+          url="https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
+          curl -fsSL -o /tmp/ttyd "$url"
+          echo "${TTYD_SHA256}  /tmp/ttyd" | sha256sum -c -
+          sudo install -m 0755 /tmp/ttyd /usr/local/bin/ttyd
+          ttyd --version
+        env:
+          TTYD_VERSION: ${{ env.TTYD_VERSION }}
+          TTYD_SHA256: ${{ env.TTYD_SHA256 }}
+
+      - name: Install vhs ${{ env.VHS_VERSION }}
+        run: |
+          go install github.com/charmbracelet/vhs@${{ env.VHS_VERSION }}
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build schedularr (placeholder UI, CLI-only demo)
+        run: |
+          make web-presence
+          CGO_ENABLED=1 go build -o bin/schedularr .
+
+      - name: Run vhs/cli.tape
+        run: vhs vhs/cli.tape
+
+      - name: Check for changes to assets/cli.gif
+        id: diff
+        run: |
+          if git diff --quiet -- assets/cli.gif; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push regenerated GIF
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/cli.gif
+          git commit -m "docs: regenerate CLI demo gif"
+          git push origin HEAD:main
