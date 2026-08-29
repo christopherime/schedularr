@@ -421,6 +421,51 @@ rules hold across every page (`web/assets/ts/pages/*.ts`,
    HTML-looking text renders as visible text on screen instead of
    getting parsed.
 
+## Content-Security-Policy
+
+Every UI response (`internal/api/ui.go`'s `newUIHandler`, spec Decision 6
+in `docs/superpowers/specs/2026-08-28-web-ui-design.md`) carries:
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'
+```
+
+Every directive is `'self'` (or `'none'` for `frame-ancestors`) because the
+shipped site never loads a third-party origin: Alpine is vendored (no
+CDN), `web/assets/ts/api.ts`/`token.ts` are the only modules that touch
+`fetch` and only ever call this same origin's `/api/v1`, and there are no
+`<img>`/font/stylesheet references to anywhere but `web/assets/css/main.css`
+itself.
+
+`script-src` carries `'unsafe-eval'` because Alpine.js 3's directive
+expressions (`x-data`, `x-show`, `x-text`, `x-if`, ...) are evaluated via
+`new Function(...)`, which CSP classifies as `eval`-family and blocks by
+default; there is no CSP-compliant build of Alpine 3 that keeps this UI's
+templates working (`@alpinejs/csp`, Alpine's own strict-CSP build, trades
+expression evaluation for a much narrower directive subset this codebase's
+templates don't target). `img-src` allows `data:` defensively even though
+nothing in the shipped templates uses a `data:` URI today.
+
+**Consequence for every future page/component: no inline `style="..."`
+attributes and no inline `<style>` blocks.** `style-src 'self'` (no
+`'unsafe-inline'`) means a real browser silently drops any inline style's
+declarations -- unlike a CSP-blocked script, this fails quiet, not loud,
+so it's easy to miss in review. This bit the dashboard's status-card
+skeleton (`web/layouts/index.html`) during the CSP fix wave: its three
+loading bars set per-bar widths via `style="width: 6rem"` etc. (needed
+because `.skeleton-row` is `flex-direction: row`, so unlike
+`.skeleton-stack`'s column layout there's no implicit cross-axis stretch
+to size an empty `<span>`). Fixed by adding three width-modifier classes
+instead (`.skeleton-bar--w-sm/--w-md/--w-lg`, `web/assets/css/main.css`)
+-- same visual result, zero inline styles. Same discipline as the `x-text`
+vs. `x-html` rule above: prefer a CSS class or a data-attribute selector
+over anything the CSP would have to special-case.
+
+Verified live (`schedularr serve`, `curl -sI`) on every route
+(`/`, `/blocks/`, `/schedule/`, `/series/`, and an unknown path's 404) --
+see `internal/api/router_test.go`'s `TestRouter_UIContentSecurityPolicyHeader`
+for the automated 200-and-404 assertion.
+
 ## Provenance
 
 Written for Task 8 of the web UI sub-project, from the shipped code and

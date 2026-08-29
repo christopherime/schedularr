@@ -774,6 +774,26 @@ dialog.panel::backdrop {
   height: 2.25rem;
 }
 
+/* Fixed-width variants for a .skeleton-row (flex-direction: row, so unlike
+   .skeleton-stack's column layout there's no implicit cross-axis stretch to
+   size an empty span) -- three sizes matching the dashboard status card's
+   Version/Tunarr/Blocks fields. Classes, not inline `style="width: ..."`,
+   because the UI's Content-Security-Policy (internal/api/ui.go's uiCSP) sets
+   style-src 'self' with no 'unsafe-inline': a real browser drops an inline
+   style attribute's declarations under that policy, which would collapse
+   these bars to their default zero width. */
+.skeleton-bar--w-sm {
+  width: 4rem;
+}
+
+.skeleton-bar--w-md {
+  width: 6rem;
+}
+
+.skeleton-bar--w-lg {
+  width: 8rem;
+}
+
 /* -- inline problem panel (ApiError, network failure) ----------------------
    Near the section that failed, not a toast -- PRODUCT.md's "No silent
    failures: API errors surface inline, near the action that caused them." */

@@ -17,7 +17,7 @@ import (
 	"github.com/christopherime/schedularr/internal/store"
 )
 
-// routerTestToken is a 33-char bearer token, comfortably over
+// routerTestToken is a 32-char bearer token, exactly at
 // middleware.BearerAuth's 32-char minimum.
 const routerTestToken = "01234567890123456789012345678901"
 
@@ -255,6 +255,24 @@ func TestRouter_UIUnknownPathServes404Page(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "not found")
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+}
+
+// TestRouter_UIContentSecurityPolicyHeader confirms the CSP header (spec
+// Decision 6) is present on both a 200 (index) and a 404 (unknown path)
+// UI response -- newUIHandler sets it unconditionally at the top of the
+// handler, before any status-code branching, so both paths must carry it.
+func TestRouter_UIContentSecurityPolicyHeader(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	wOK := httptest.NewRecorder()
+	r.ServeHTTP(wOK, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.Equal(t, http.StatusOK, wOK.Code)
+	assert.Equal(t, uiCSP, wOK.Header().Get("Content-Security-Policy"))
+
+	wNotFound := httptest.NewRecorder()
+	r.ServeHTTP(wNotFound, httptest.NewRequest(http.MethodGet, "/nope", nil))
+	assert.Equal(t, http.StatusNotFound, wNotFound.Code)
+	assert.Equal(t, uiCSP, wNotFound.Header().Get("Content-Security-Policy"))
 }
 
 func TestRouter_UIPostToUnknownPathIsMethodNotAllowed(t *testing.T) {

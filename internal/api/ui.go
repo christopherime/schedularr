@@ -37,7 +37,22 @@ const uiAllowedMethods = "GET, HEAD"
 //     no 404.html, the response falls back to net/http's plain-text 404.
 //
 // Every response this handler writes -- 200, 301, 404, 405 alike -- carries
-// X-Content-Type-Options: nosniff and Referrer-Policy: same-origin.
+// X-Content-Type-Options: nosniff, Referrer-Policy: same-origin, and the
+// Content-Security-Policy below (spec Decision 6, docs/superpowers/specs/
+// 2026-08-28-web-ui-design.md).
+//
+// uiCSP is deliberately narrow: every directive is 'self' (or 'none' for
+// frame-ancestors) since the embedded site never loads a third-party
+// origin -- no CDN scripts, no remote fonts/images, no cross-origin
+// fetches (web/assets/ts/api.ts and token.ts only ever call this same
+// origin's /api/v1). script-src carries 'unsafe-eval' because Alpine.js 3
+// evaluates directive expressions (x-data, x-show, x-text, ...) via `new
+// Function(...)`, which CSP classifies as eval; there is no CSP-compliant
+// build of Alpine 3 that avoids this (Alpine's own CSP-friendly build,
+// @alpinejs/csp, trades expression evaluation for a stricter, far more
+// limited directive subset that this UI's templates don't target).
+const uiCSP = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+
 func newUIHandler(uiFS fs.FS) http.HandlerFunc {
 	notFoundBody, err := fs.ReadFile(uiFS, "404.html")
 	has404 := err == nil
@@ -45,6 +60,7 @@ func newUIHandler(uiFS fs.FS) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Content-Security-Policy", uiCSP)
 
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", uiAllowedMethods)
