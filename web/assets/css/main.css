@@ -1271,3 +1271,59 @@ dialog.panel::backdrop {
     flex: 1;
   }
 }
+
+/* -- series: tracked-states table --------------------------------------------
+   Reuses .table-wrap/.history-table verbatim (Task 4) -- same bordered
+   instrument-log look as blocks-table/schedule-table; series-table__show
+   only adds room for the row's own inline error under the show title. */
+
+.series-table__show {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* -- series: SxxEyy cursor editor ---------------------------------------------
+   Two narrow number inputs framed by S/E prefixes, so the pair still reads
+   as one "SxxEyy" cursor at a glance even though each half is its own
+   editable field -- the binding contract's inline-edit requirement, folded
+   into the same cell as the display value rather than a separate edit
+   mode. Deliberately its own component, not .form-field: that one styles
+   full-width block-editor fields, and this is a narrow, row-scoped pair
+   that has to sit inside a table cell. */
+
+.series-cursor {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.series-cursor__prefix {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.series-cursor__input {
+  width: 3.5rem;
+  padding: var(--space-2);
+  background: var(--color-bg-inset);
+  border: var(--border-width) solid var(--color-border-interactive);
+  border-radius: var(--radius-sm);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.series-cursor .btn {
+  margin-left: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .series-cursor {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+}

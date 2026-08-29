@@ -1030,6 +1030,56 @@ or `/apply` renders inline as a `.problem` panel with the API's own
 `title` *and* `detail` shown verbatim, not folded into one string like
 the dashboard's/blocks' generic error label.
 
+#### Series (`/series/`)
+
+Every persisted `series_state` row — the per-show season/episode cursor a
+series block advances as it airs — backed by `GET`/`PATCH
+/api/v1/state/series[/{show_title}]` (`web/assets/ts/pages/series.ts`).
+There is no create endpoint and this page never offers one: a row exists
+only once a series block airs that show for the first time
+(`internal/api/state.go`'s own words, "the store fabricates nothing for
+the API"), so an empty result renders an explanatory empty state rather
+than an empty table shell.
+
+**List** — show title, an inline SxxEyy cursor editor, run count, last
+aired (local time, or an em dash for a show that hasn't aired yet), and a
+**Completed**/**In Progress** toggle plus a **Disabled**/**Active** toggle
+(the same coded-legend switch component as the blocks list's
+Enabled/Disabled toggle — the text label always carries the state, never
+color alone).
+
+**Cursor editing** — season and episode are two adjacent number inputs
+(`min="1"`) framed by `S`/`E` prefixes, so the pair still reads as one
+`SxxEyy` value at a glance while staying independently editable, inline,
+in the same cell — no separate edit mode. **Save** stays disabled until
+the row is actually dirty (its text differs from the loaded value) and,
+on click, sends a **true partial `PATCH`**: only `current_season`
+and/or `current_episode` land in the body, and only when their *parsed*
+value actually differs from what was loaded — editing a field back to
+its original value (or clicking Save with nothing touched) sends **zero
+requests**, checked both by the disabled button and, independently, by
+the save handler's own diff against the loaded row (`buildCursorPatch`
+in `series.ts`). A season/episode value that isn't a whole number `>= 1`
+is rejected client-side with an inline message and never reaches the
+API; anything else invalid (e.g. a value the show doesn't actually have)
+is left to the API's own `400`. Each toggle is its own single-field
+`PATCH` (`{"completed": true}` or `{"disabled": true}` alone) — never the
+cursor fields riding along.
+
+**show_title in the URL** — titles routinely contain spaces and
+punctuation (`Star Trek: The Next Generation`), so every `PATCH` path
+runs the title through `encodeURIComponent` before it's sent, matching
+how the server's own test suite constructs the same path
+(`internal/api/state_test.go`'s `url.PathEscape`).
+
+**Row vanishes mid-edit** — a save against a `show_title` whose
+`series_state` row was deleted or reset out from under the operator
+(between page-load and Save) returns `404`. The row stays on screen with
+an inline error and a **Refresh list** action next to the show title —
+re-running the `GET`, which naturally drops the now-gone row — rather
+than a row that silently can never save again; Save itself stays
+disabled on that row until the list is refreshed.
+
 ---
 
 ## 🧪 Development
