@@ -155,6 +155,7 @@ func LogsDir(cfg *Config) string {
 func FindConfigFile(flagValue string) string {
 	// Priority 1: Flag value
 	if flagValue != "" {
+		flagValue = filepath.Clean(flagValue)
 		if _, err := os.Stat(flagValue); err == nil {
 			return flagValue
 		}
@@ -163,13 +164,19 @@ func FindConfigFile(flagValue string) string {
 
 	// Priority 2: Environment variable
 	if envPath := os.Getenv(EnvConfigPath); envPath != "" {
-		// #nosec G703 -- envPath is the operator's own SCHEDULARR_CONFIG value,
-		// the same trust boundary as the --config flag above (which gosec's
-		// taint tracker doesn't flag, since it only treats os.Getenv/os.Args as
-		// tainted sources, not function parameters). Whoever can set this
-		// process's environment already has equivalent filesystem access, so
-		// there's no privilege boundary being crossed -- this is the intended
-		// "load a config from wherever the operator points at" behavior.
+		envPath = filepath.Clean(envPath)
+		// #nosec G703 -- envPath IS sanitized on the line above (filepath.Clean
+		// is gosec's own registered G703 sanitizer). golangci-lint's embedded
+		// gosec (v2.28.0 -- `go version -m $(which golangci-lint)` shows the
+		// pinned dependency) confirms zero issues here, no suppression needed.
+		// This comment exists only because `make lint` also runs the standalone
+		// gosec CLI (`gosec ./...`), which on this machine resolves to v2.29.0
+		// -- one version newer, unpinned by this repo -- and empirically still
+		// flags G703 on an os.Getenv-sourced path reaching os.Stat regardless
+		// of sanitization (verified: filepath.Clean, filepath.Abs, and a manual
+		// ".." substring check were each tried in isolation and every one was
+		// still flagged). That's a version-skew gap between two gosec releases
+		// on an already-sanitized line, not an unaddressed vulnerability.
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath
 		}
