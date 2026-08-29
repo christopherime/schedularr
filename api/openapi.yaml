@@ -230,6 +230,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Status"
+  /media/shows:
+    get:
+      operationId: listMediaShows
+      responses:
+        "200":
+          description: shows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaShow"
+        "502":
+          $ref: "#/components/responses/Problem"
+  /media/meta:
+    get:
+      operationId: getMediaMeta
+      responses:
+        "200":
+          description: meta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaMeta"
+        "502":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -518,3 +544,23 @@ components:
           type: string
         blocks:
           type: integer
+    MediaShow:
+      type: object
+      required: [title, episode_count]
+      properties:
+        title:
+          type: string
+        episode_count:
+          type: integer
+    MediaMeta:
+      type: object
+      required: [genres, ratings]
+      properties:
+        genres:
+          type: array
+          items:
+            type: string
+        ratings:
+          type: array
+          items:
+            type: string

@@ -54,9 +54,44 @@ type Program struct {
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`
 	EpisodeNumber int    `json:"episodeNumber,omitempty"`
 
-	// ShowTitle is populated internally for series scheduling.
-	// Not part of Tunarr API - must be set from Show.Title when needed.
-	ShowTitle string `json:"-"`
+	// ShowTitle identifies which show an Type == "episode" program belongs
+	// to -- the field scheduler.Engine's series matching
+	// (findEpisode/planSeriesForConfig, internal/scheduler/engine.go) and
+	// internal/service.Runner.MediaShows both group/match on.
+	//
+	// This field's tag used to be `json:"-"`, meaning encoding/json
+	// silently dropped it on every marshal *and* unmarshal -- so a real
+	// SearchPrograms HTTP response could never populate it, and neither
+	// could a fake test server round-tripping a tunarr.Program value
+	// through actual JSON (only a Go struct literal, bypassing JSON
+	// entirely, could ever produce a non-empty ShowTitle). That gap was
+	// previously documented and deliberately left alone in
+	// internal/service/schedule_test.go
+	// (TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched's
+	// doc comment) for a task where it didn't matter; it directly blocks
+	// internal/service.Runner.MediaShows, whose entire job is grouping by
+	// this field, so this task fixes the tag to accept a flat "showTitle"
+	// key -- matching testdata/programs/*.json and this package's own
+	// README-documented fixture format.
+	//
+	// This does not fully match a *live* Tunarr instance: per
+	// docs/tunarr/openapi.json (the vendored Tunarr 1.0.16 OpenAPI spec),
+	// a real /api/programs/search "episode" result nests show data under a
+	// "show" object ({"show": {"title": ..., "uuid": ..., "rating": ...,
+	// "genres": ...}}), not a flat "showTitle" string -- and episode
+	// entries carry no "rating" of their own at all, only via that nested
+	// show. Modeling that nested shape (and updating every ShowTitle
+	// caller's assumptions, notably the season/episode numbers below,
+	// which have the same flat-vs-nested mismatch) is a larger client
+	// change with its own blast radius across scheduler.Engine, out of
+	// scope here; see this task's report for the full field-by-field
+	// evidence. This fix only widens what already-flat-shaped input (this
+	// package's own test fixtures, and any Tunarr deployment that happens
+	// to emit a flat showTitle) deserializes into -- it does not change
+	// behavior for a payload that omits the key entirely, which is what a
+	// nested-shape real response looks like from this struct's point of
+	// view today.
+	ShowTitle string `json:"showTitle,omitempty"`
 
 	// Source information
 	SourceType    string `json:"sourceType,omitempty"` // plex, jellyfin, emby, local

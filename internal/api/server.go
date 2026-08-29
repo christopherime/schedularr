@@ -27,6 +27,16 @@ type Deps struct {
 	// passes a *service.Runner, which satisfies ScheduleRunner as-is;
 	// tests pass a fake.
 	Sched service.ScheduleRunner
+
+	// Media is the media-discovery boundary used by ListMediaShows and
+	// GetMediaMeta (see media.go). Production wiring passes the same
+	// *service.Runner as Sched -- MediaAPI is a separate, narrower
+	// interface (matching TunarrAPI/ScheduleRunner's precedent of one
+	// interface per concern) rather than folding MediaShows/MediaMeta
+	// into ScheduleRunner, but one concrete Runner satisfies both, which
+	// is what guarantees media discovery reuses Run's exact fetch+cache
+	// path instead of standing up a second one. Tests pass a fake.
+	Media MediaAPI
 }
 
 // Handlers implements gen.ServerInterface.
@@ -56,3 +66,6 @@ var _ gen.ServerInterface = (*Handlers)(nil)
 // state.go.
 
 // ListChannels and GetStatus implement gen.ServerInterface. See tunarr.go.
+
+// ListMediaShows and GetMediaMeta implement gen.ServerInterface. See
+// media.go.

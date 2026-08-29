@@ -159,6 +159,18 @@ type ImportResult struct {
 	Names    *[]string `json:"names,omitempty"`
 }
 
+// MediaMeta defines model for MediaMeta.
+type MediaMeta struct {
+	Genres  []string `json:"genres"`
+	Ratings []string `json:"ratings"`
+}
+
+// MediaShow defines model for MediaShow.
+type MediaShow struct {
+	EpisodeCount int    `json:"episode_count"`
+	Title        string `json:"title"`
+}
+
 // PlanResult defines model for PlanResult.
 type PlanResult struct {
 	Applied  bool                       `json:"applied"`
@@ -304,6 +316,12 @@ type ServerInterface interface {
 	// (GET /history)
 	GetHistory(w http.ResponseWriter, r *http.Request, params GetHistoryParams)
 
+	// (GET /media/meta)
+	GetMediaMeta(w http.ResponseWriter, r *http.Request)
+
+	// (GET /media/shows)
+	ListMediaShows(w http.ResponseWriter, r *http.Request)
+
 	// (GET /schedule)
 	GetSchedule(w http.ResponseWriter, r *http.Request, params GetScheduleParams)
 
@@ -373,6 +391,16 @@ func (_ Unimplemented) GenerateSchedule(w http.ResponseWriter, r *http.Request) 
 
 // (GET /history)
 func (_ Unimplemented) GetHistory(w http.ResponseWriter, r *http.Request, params GetHistoryParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /media/meta)
+func (_ Unimplemented) GetMediaMeta(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /media/shows)
+func (_ Unimplemented) ListMediaShows(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -633,6 +661,34 @@ func (siw *ServerInterfaceWrapper) GetHistory(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetMediaMeta operation middleware
+func (siw *ServerInterfaceWrapper) GetMediaMeta(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMediaMeta(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMediaShows operation middleware
+func (siw *ServerInterfaceWrapper) ListMediaShows(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMediaShows(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSchedule operation middleware
 func (siw *ServerInterfaceWrapper) GetSchedule(w http.ResponseWriter, r *http.Request) {
 
@@ -878,6 +934,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/status", wrapper.GetStatus)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/media/shows", wrapper.ListMediaShows)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/media/meta", wrapper.GetMediaMeta)
+	})
 
 	return r
 }
@@ -887,34 +949,36 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"5Fldb9s2FP0rBbe3abHTZBjqtyZruwB7CBoMewgMgZaubbYSqV5SaQ1D/30gqW+RstTG2cPeEpEizz33",
-	"3A9dH0kk0kxw4EqS1ZEgfMlBqhsRMzAPbhIRff4HmQL9XyS4Aq70nzTLEhZRxQRffJKC62cy2kNK9V8/",
-	"I2zJivy0aI5f2FW5aB1ZFEVg7mQIMVkpzME+kZngsoXgTkH6vAA+QiQwtghikBGyTB9FVmSjl0kR2Jv/",
-	"YlLNupkpSOUsCAFRhwzIilBEevBCknrnPYpNMspFZnf8Mo+T6lzH5YAokOjn5ebaK6UBqyPJUGSAqhRN",
-	"hEAVxCE14LYCU/0XiamCXxVLgdQWS4WM77RhwOkmAXNYubYRIgHK9SJrP2/e4TQF54LMIJrkgge9sQhI",
-	"nsUzEXeE+6gRlngaU0ocQZuPzlXr+lSx+QSRqkX3UOLv0bqnnEMSetiIUHDnQpwjtb48kpRxluYpWV3W",
-	"dzOuYAeod25pkmxo9PkUdw+ADOT7ard+kyUJ4Kn33ptdt4Jv2a58S016S1l8Kf0WVtaE4glwm4ivYcp4",
-	"rixFQ5O8GsmQCWTq4H5NGgsnx7MlpDGsG9DV/0cSw5bmiSKrynStFu2Ox+ZBefX6lORKtRm3t5wctHXi",
-	"VVid0rsSa0VhDVVn5cARlDODrIfevO2Cd2vRD7HNTQI8TzeAraXavYXj2o40x3gZEmG1HyZMKl9sauGW",
-	"20w6cWouZTzc0cy7wwO7jKAu4B1w7Ol3AKov0nZ0+RGO79BrfDfzYkVnv8FUAmFGlQJ0J70DUAy3KFI3",
-	"TrOsxFSaPwAHpAo+2v5odm6O6UF2gup3Q7dNxVfLYDQvuwD9yaQSeHjHFR6GaEy/EHoj4wTYDMUOaepb",
-	"1rEd58ncajkw4S7NBKqPIA0hfRNiPISYc08/YF7txGMv5c/SU7+WV6cHNQpXorpPKPehNw2ZL1+U9NuN",
-	"ccx0NNHkvpvsJlWdyhMPiVD+slNj7tlZgWwhctrZtJw9F4GiLHHyW35HeCWkqMo9BduE9ojTjifKolmt",
-	"jqmvchnWpc8dRLO6SOBxnbyndb1lqHVd7tZEpww3RvRdLhVFNQuFKzY7/cywGmZMihhkmAGGNU3jraUu",
-	"Lphzj9MFDzW5CdimpOqJ9CcO47kGjWAs0zHJpC7GjgYpIHIvvoZ+BcnPLAsr9PMqjuW1fNdthN0igUp3",
-	"dex3QA3WwEXp2uuX9602veuZsseY3VeLuMM7Qsw0FZtcaXD2VHdH6oH4oKirv6yc7MuMOSLwEzRXm/xE",
-	"1xrxXJNQqUJq/eCJEZ4niT6hF3etDJdryeb2+9uhhTEhjgmhZ92Qk/U45/dURfvnIH48nIdOGN8/5hCn",
-	"iuoK4UjKvsqRc4oY2nmFM6btBgQa7a1zXVw8AUom+Gm/VRsdB69dtVdClOsvTl13yg5lAxQB3+ZqX49q",
-	"DBrzuEnVe6UyO5phfGubViutqoZRxFdv7+9ICz25vFheLE1yzYDTjJEVubpYXlyRgGRU7c39C90D2AZS",
-	"2LZWk236+7uYrMhbvVzeAaSu6zciPjzbOK7fWxfFYAb4erl8tutabZtj2FX2RK+yxIrht+Vr34E1wvbw",
-	"rAjIotHoDhyc6onijd3iNnP8smYqaW5z++3WTJzM1qHX3Oe3Br+dEe0A4+VEjGZmWwTkermcQaHe/+Y7",
-	"KV/At0yg8jL/ziyPcu+R2IGmSVdi/dQwUJJ5pQvPflj4o+0u7eDLKNIUFKAkq8cjYfrULzngoRo1rurv",
-	"k6CFrP7G3NJEOiY3xXpqHE+yuje+P2Pkdj4YHYxjuXJuyQXk+vLqeyV6ZHFhvVQ1u10N/GGeN5Hb4fLa",
-	"vtk22p4TWyuuZ6EK3FHyAZTn+uXsyJ8LyCV5XawaxZtBe1dzwYhA1wHJcoeRf5sp/HkS5PLsCfJ6tvra",
-	"MwdvVbqtNv1gEE8aXpSXTfn5qwb/nQV5V3YY/sxb9SD/p1bnR1qcvR0/etX0AVQ5oZxYx+hBuotYe1D6",
-	"5tSgdP0Swu2MXieot+KqpK4an45x15Lhs5F3dW7y/hslSkUVLJqf67zJrT2XeAmZtO+boBJjh3RZtTg2",
-	"AwLTOpwukp2JwrxiWY0PugSaqUKfwefPj4M5xgt3mB2fDX1U/nT/UjW7mZJ784TdcU5G7A0ewdqV9mzD",
-	"KLI91Xhca1lJwKdKrzkmZKUnD2zxdEmKdfHvAA==",
+	"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",
+	"AA==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

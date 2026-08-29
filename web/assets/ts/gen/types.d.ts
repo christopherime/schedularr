@@ -200,6 +200,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/shows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listMediaShows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getMediaMeta"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -333,6 +365,14 @@ export interface components {
             tunarr_reachable: boolean;
             tunarr_error?: string;
             blocks?: number;
+        };
+        MediaShow: {
+            title: string;
+            episode_count: number;
+        };
+        MediaMeta: {
+            genres: string[];
+            ratings: string[];
         };
     };
     responses: {
@@ -686,6 +726,48 @@ export interface operations {
                     "application/json": components["schemas"]["Status"];
                 };
             };
+        };
+    };
+    listMediaShows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description shows */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaShow"][];
+                };
+            };
+            502: components["responses"]["Problem"];
+        };
+    };
+    getMediaMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description meta */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaMeta"];
+                };
+            };
+            502: components["responses"]["Problem"];
         };
     };
 }

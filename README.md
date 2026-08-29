@@ -693,6 +693,52 @@ Notes:
   `blocks` is simply omitted from the response rather than failing the
   request.
 
+### Media Discovery Endpoints
+
+Media discovery (`internal/api/media.go`) exposes what Tunarr's synced
+library actually contains -- shows and the distinct genre/rating values
+observed across it -- for a `MediaAPI` boundary (`Deps.Media`) backed by
+`internal/service.Runner.MediaShows`/`MediaMeta`. Both methods call the
+same `fetchPrograms` (`internal/service/schedule.go`) `Run` itself uses to
+build its scheduling candidate pool, including its 1h Runner-scoped cache:
+a `MediaShows` or `MediaMeta` call that finds the cache already warm (from
+a prior call to either method, or from `Run`) issues no Tunarr HTTP
+requests at all. There is no second cache and no second fetch.
+
+| Method | Path           | Success | Error codes |
+| ------ | -------------- | ------- | ----------- |
+| GET    | `/media/shows` | 200     | 502         |
+| GET    | `/media/meta`  | 200     | 502         |
+
+Notes:
+
+- `GET /media/shows` returns `[{title, episode_count}]`, one entry per
+  distinct show (`tunarr.Program.ShowTitle`, `Type == "episode"` programs
+  only), sorted by title, `episode_count` counting how many episodes in
+  the fetched library carry that title. `GET /media/meta` returns
+  `{genres, ratings}`: the distinct, sorted `Genres`/`Rating` values seen
+  across every fetched program, movies and episodes alike.
+- Both return `502` (`title: "tunarr unreachable"`) under the same two
+  conditions `GET /channels` does: `Deps.Media` is `nil` (`detail: "tunarr
+  not configured"`), or the underlying fetch fails (`detail` is a short,
+  fixed string -- unlike `GET /channels`, the wrapped error isn't Tunarr's
+  own connectivity message, so it's logged server-side only, matching
+  `writeScheduleRunnerError`'s convention). An empty library with Tunarr
+  reachable is a normal `200` with empty arrays, not an error.
+- `tunarr.Program.ShowTitle` used to be tagged `json:"-"`, so no episode
+  fetched over HTTP ever actually carried a show title -- a pre-existing
+  gap that also silently affected `series`-block scheduling
+  (`scheduler.Engine`'s episode matching keys off the same field). Fixing
+  it to accept a flat `showTitle` key (matching this repo's own
+  `testdata/programs/*.json` fixtures) was necessary to make `GET
+  /media/shows` return anything against those fixtures, and unblocks
+  series matching as a side effect. It does not fully match a live Tunarr
+  instance: the real `/api/programs/search` response nests episode show
+  data under a `show` object (see `docs/tunarr/openapi.json`) that this
+  client does not model yet, so `GET /media/shows` still returns an empty
+  list, and `GET /media/meta`'s `ratings` omits every TV rating, against
+  an unmodified live Tunarr deployment today.
+
 ### Middleware
 
 `internal/api/middleware` provides the four pieces of middleware every
@@ -1017,7 +1063,10 @@ out from under the operator on save.
 
 **Editor — type**: `filter` shows genres/ratings/title-pattern(regex)/year
 range/duration range/tags (comma-separated inputs map to arrays; an empty
-input omits the field, it is never sent as `[]`). `series` shows repeating
+input omits the field, it is never sent as `[]`). `GET /api/v1/media/shows`
+and `GET /api/v1/media/meta` (see Media Discovery Endpoints above) now
+exist to back a future autocomplete on these free-text genre/rating/show-title
+fields, which this UI doesn't call yet. `series` shows repeating
 rows (show title, episodes per block, start season/episode, on-complete,
 skip-episodes, max runs — add/remove freely) plus a fallback section
 (redistribute/filler, with a nested filter subset when filler is chosen).

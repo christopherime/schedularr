@@ -147,7 +147,7 @@ func runServe(cmd *cobra.Command) error {
 
 	router, err := api.NewRouter(
 		api.Config{Token: config.APIToken(cfg), InsecureNoAuth: insecureNoAuth, UI: site},
-		api.Deps{Store: st, Tunarr: client, Sched: runner, Logger: logger, Version: Version},
+		api.Deps{Store: st, Tunarr: client, Sched: runner, Media: runner, Logger: logger, Version: Version},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to build api router: %w", err)
