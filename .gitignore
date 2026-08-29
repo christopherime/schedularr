@@ -23,10 +23,11 @@ temp/
 vendor/
 node_modules/
 
-# Hugo build output (web/public/index.html is force-added once as a
-# committed placeholder so `go build` embeds something before `make web`
-# has run; `make web-build` overwrites it on disk but the committed blob
-# stays the placeholder unless someone re-adds it)
+# Hugo build output. Nothing under web/public/ is tracked -- `make
+# web-presence` (a prerequisite of `make build`) writes a one-line
+# placeholder here on demand when the directory has no index.html yet, so
+# `go build`'s go:embed has something to embed without Hugo/Node
+# installed; `make web`/`make web-build` overwrites it with the real site.
 web/public/
 web/.hugo_build.lock
 

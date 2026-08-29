@@ -6,6 +6,7 @@ BUILD_DIR=./bin
 MAIN_PATH=./main.go
 DOCKER_IMAGE=schedularr
 DOCKER_TAG=latest
+VERSION=dev
 HUGO_MIN_VERSION=0.120
 
 # Go build flags
@@ -18,10 +19,11 @@ help: ## Show this help message
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-web-presence: ## Verify web/public is non-empty (placeholder or hugo output) so go:embed builds
-	@if [ ! -d web/public ] || [ -z "$$(ls -A web/public 2>/dev/null)" ]; then \
-		echo "web/public is empty -- run 'make web' (or 'make web-build'), or restore the committed placeholder at web/public/index.html"; \
-		exit 1; \
+web-presence: ## Write a placeholder web/public/index.html if none exists, so go:embed has something to build against without Hugo/Node installed
+	@mkdir -p web/public
+	@if [ ! -e web/public/index.html ]; then \
+		printf 'Schedularr UI not built — run `make web`.\n' > web/public/index.html; \
+		echo "wrote placeholder web/public/index.html -- run 'make web' for the real UI"; \
 	fi
 
 build: web-presence ## Build binary to ./bin/schedularr
@@ -80,9 +82,9 @@ validate: ## Validate all config files with CUE
 	fi
 	@echo "Validation complete"
 
-docker-build: ## Build Docker image
-	@echo "Building Docker image $(DOCKER_IMAGE):$(DOCKER_TAG)..."
-	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+docker-build: ## Build Docker image (VERSION=... to stamp cmd.Version, default "dev")
+	@echo "Building Docker image $(DOCKER_IMAGE):$(DOCKER_TAG) (VERSION=$(VERSION))..."
+	@docker build --build-arg VERSION=$(VERSION) -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	@echo "Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 
 e2e-up: ## Start E2E test environment

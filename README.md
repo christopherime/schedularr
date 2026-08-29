@@ -11,7 +11,7 @@
 
 **Cron-based content scheduling for [Tunarr](https://tunarr.com) TV channels, driven by rule-based blocks and content filters.**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [API](#-api) • [Serve](#-serve-api-server--cron) • [Contributing](#-contributing)
+[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [API](#-api) • [Serve](#-serve-api-server--cron) • [Docker](#-docker) • [Contributing](#-contributing)
 
 </div>
 
@@ -76,6 +76,15 @@ sudo mv schedularr /usr/local/bin/
 
 ```bash
 go install github.com/christopherime/schedularr@latest
+```
+
+#### Option 3: Docker
+
+No local Go, Hugo, or Node needed — see [Docker](#-docker) for the full
+build/run reference.
+
+```bash
+docker build -t schedularr:local .
 ```
 
 ### Initial Setup
@@ -779,14 +788,16 @@ restarts and logging, the same way you'd run any other Go server binary.
 ## 🖥️ Web UI
 
 A Hugo-built web UI lives in `web/` and is embedded into the `schedularr`
-binary via `go:embed` (`web/embed.go`, `package web`, `web.Site()`). A
-committed placeholder (`web/public/index.html`, force-added with `git
-add -f` since `web/public/` is otherwise gitignored) keeps `go build
-./...` working without Hugo installed; `web/public/404.html` is not
-separately committed, since `internal/api/ui.go`'s `newUIHandler`
-already falls back to a plain-text 404 when the embedded site has no
-`404.html` of its own (see below) -- a fresh clone without `make web`
-gets that fallback, not a styled 404 page.
+binary via `go:embed` (`web/embed.go`, `package web`, `web.Site()`).
+Nothing under `web/public/` is tracked in git; `make web-presence` (a
+prerequisite of `make build`) writes a one-line placeholder there on
+demand when it's missing, so `go build ./...` keeps working without Hugo
+installed. That placeholder has no `404.html` of its own, but
+`internal/api/ui.go`'s `newUIHandler` already falls back to a plain-text
+404 when the embedded site lacks one (see below) -- a fresh clone without
+`make web` gets that fallback, not a styled 404 page. A release build
+(the Docker image, see [Docker](#-docker)) always runs the real `hugo
+--minify -s web` first and never ships the placeholder.
 
 `schedularr serve` mounts `web.Site()` as `internal/api.Config.UI` and
 serves it from the router's catch-all `NotFound` handler: the four system
@@ -846,37 +857,16 @@ make web-check  # web-types, then tsc --noEmit (skipped with a notice if npm is 
 make web-build  # web-check, then hugo --minify -s web -> web/public
 ```
 
-`make build` depends on `web/public` being non-empty (the committed
-placeholder satisfies this) so `go:embed` always has something to embed.
-
-**The placeholder workflow trap:** `web/public/index.html` is a
-git-*tracked* file that happens to live inside the otherwise-gitignored
-`web/public/` directory -- `.gitignore` only hides *untracked* paths, it
-never hides changes to a file git already tracks. So every `make
-web-build` (directly, or via `make web`/`make build`) overwrites that
-tracked file's on-disk content with the real Hugo-built homepage, and
-`git status`/`git diff` will show `web/public/index.html` as modified --
-this is expected, not a sign anything is wrong, but it means the
-placeholder is one uncommitted edit away from becoming a permanent
-(and wrong) part of your next commit if you `git add` broadly. Two ways
-to keep it out of your commits, pick one:
-
-- **`git restore web/public/index.html`** before committing, every time
-  you've run a web build in that working tree. No one-time setup, easy
-  to forget once.
-- **`git update-index --skip-worktree web/public/index.html`**, once per
-  clone. Git then ignores local modifications to that path outright, so
-  there's nothing to remember per-commit -- but if the committed
-  placeholder itself is ever intentionally edited, that clone needs
-  `git update-index --no-skip-worktree web/public/index.html` first, and
-  some git plumbing (`stash`, cross-branch `checkout`) can interact with
-  skip-worktree in surprising ways.
-
-`git restore` is the simpler default and what this repo's own workflow
-uses; reach for `--skip-worktree` if you build the UI locally often
-enough that the restore step gets tedious. (The structural fix --
-untrack the placeholder and generate it on demand instead -- is deferred
-to sub-project 4; see `TODO.md`.)
+`make build` depends on `web-presence`, not on a real Hugo build: it only
+requires `web/public/index.html` to exist, writing the placeholder above
+when it doesn't (see `Makefile`). This keeps `go build`/`make build`
+working on a machine without Hugo or Node installed -- the whole point of
+the placeholder -- while `web/public/` itself stays untracked, so there's
+no committed file for a real `make web` run to dirty and nothing to
+`git restore` before committing. Run `make web` (or `make web-build`)
+whenever you want the actual UI in `web/public` instead of the
+placeholder; the release build (Docker) always does this for you, never
+the placeholder -- see [Docker](#-docker).
 
 `web/assets/ts/gen/types.d.ts` is committed and regenerated by `make
 web-types`; hand-editing it is pointless since `make web` overwrites it.
@@ -1144,6 +1134,62 @@ an inline error and a **Refresh list** action next to the show title —
 re-running the `GET`, which naturally drops the now-gone row — rather
 than a row that silently can never save again; Save itself stays
 disabled on that row until the list is refreshed.
+
+---
+
+## 🐳 Docker
+
+`docker build` runs the same pipeline as `make web && make build`, inside
+the image, from a bare checkout — no local Hugo, Node, or Go required.
+`Dockerfile` is four stages: `node:22-alpine` regenerates and type-checks
+the TypeScript (`tsc --noEmit`), a pinned Hugo release binary runs `hugo
+--minify -s web`, `golang:1.27-alpine` builds the binary against that
+real UI output, and `alpine:3.20` is the runtime. The image never embeds
+the `web/public/index.html` placeholder described above — the Hugo stage
+always builds the real site first.
+
+**CGO is required.** `internal/store` persists through
+[`mattn/go-sqlite3`](https://github.com/mattn/go-sqlite3), a cgo binding
+over the sqlite3 C amalgamation with no pure-Go build tag, so
+`CGO_ENABLED=0` isn't an option here. The build stage links against musl
+(Alpine's default gcc target); the final stage is Alpine too, matching
+libc between build and run. A `distroless/static` final image is **not**
+viable with this dependency.
+
+```bash
+# Build (VERSION stamps GET /api/v1/status and cmd.Version, default "dev")
+docker build --build-arg VERSION=v1.2.3 -t schedularr:v1.2.3 .
+# or: make docker-build VERSION=v1.2.3
+
+# Run: mount a config file and pass the API token via env, never the config
+docker run -d --name schedularr \
+  -p 8484:8484 \
+  -v "$(pwd)/config.yaml:/etc/schedularr/config.yaml:ro" \
+  -v schedularr-data:/data \
+  -e SCHEDULARR_API_TOKEN="$(openssl rand -hex 32)" \
+  schedularr:v1.2.3
+```
+
+The image's default `CMD` is `serve --config /etc/schedularr/config.yaml`
+(`ENTRYPOINT ["schedularr"]`, so any `docker run ... schedularr:tag
+<args>` replaces it with another subcommand instead). Point the mounted
+config's `database` and `scheduler_file` keys at paths under `/data`
+explicitly — both are resolved relative to the process's working
+directory, not the config file's location (see
+[Configuration](#️-configuration)). The container runs as a non-root
+`schedularr` user (uid 1001), exposes `8484` (`api.listen`'s default),
+and its `HEALTHCHECK` polls `GET /healthz` on that port.
+
+| Build arg      | Default | Purpose                                                          |
+| --------------- | ------- | ------------------------------------------------------------------- |
+| `VERSION`         | `dev`    | Stamped via `-ldflags -X .../cmd.Version=...`; reported by `GET /api/v1/status` |
+| `GO_VERSION`       | `1.27`   | `golang:${GO_VERSION}-alpine` build stage                          |
+| `NODE_VERSION`     | `22`     | `node:${NODE_VERSION}-alpine` TypeScript stage                     |
+| `ALPINE_VERSION`   | `3.20`   | Hugo-fetch and final runtime stage                                  |
+| `HUGO_VERSION`     | `0.165.0`| Pinned Hugo release, downloaded and sha256-verified in-stage        |
+
+`make docker-build` is a thin wrapper (`DOCKER_IMAGE`/`DOCKER_TAG`/`VERSION`
+Makefile variables, default `schedularr:latest`/`dev`).
 
 ---
 
