@@ -352,6 +352,7 @@ p {
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
+  text-decoration: none;
   border-radius: var(--radius-sm);
   border: var(--border-width) solid var(--color-border-interactive);
   background: var(--color-bg-raised);

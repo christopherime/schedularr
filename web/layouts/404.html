@@ -1,13 +1,27 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Schedularr — Not Found</title>
-</head>
-<body>
-<h1>404 — Not Found</h1>
-<p>The page you requested does not exist.</p>
-<p><a href="/">Return to Schedularr</a></p>
-</body>
-</html>
+{{- /*
+  This template is only ever shipped as the single static file
+  web/public/404.html -- internal/api/ui.go's newUIHandler reads it once
+  at construction and serves it verbatim for any unmatched path, so there
+  is no per-request .RelPermalink/.Title to read here: Hugo's own build-
+  time context describes this page, not whatever the visitor actually
+  requested. Keep the copy path-agnostic for that reason.
+*/ -}}
+{{ define "main" }}
+<div class="page-head">
+  <h1>No Signal</h1>
+  <p>This instance serves no page at the address you requested.</p>
+</div>
+
+<section class="hero-panel graticule" aria-labelledby="not-found-title">
+  <h2 id="not-found-title" class="visually-hidden">Signal lost</h2>
+  <p class="status-line">
+    <span class="status-dot" data-state="down" aria-hidden="true"></span>
+    <span>404 -- No Signal</span>
+  </p>
+  <p>
+    The requested channel doesn't exist on this instance. Return to the
+    dashboard to pick one that does.
+  </p>
+  <a href="/" class="btn btn--primary">Return to Dashboard</a>
+</section>
+{{ end }}
