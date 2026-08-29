@@ -1314,6 +1314,12 @@ dialog.panel::backdrop {
   color: var(--color-ink-muted);
 }
 
+.series-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 @media (max-width: 640px) {
   .blocks-toolbar {
     justify-content: stretch;

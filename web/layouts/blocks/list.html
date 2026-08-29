@@ -226,12 +226,37 @@
         <template x-if="editor.form.type === 'series'">
           <div class="form-section">
             <h3 class="form-section__title">Series</h3>
+            <p class="form-field__hint">Series order is airing order — a reorder applies to the next occurrence that hasn't aired yet.</p>
             <div class="series-rows">
               <template x-for="(row, index) in editor.form.series" :key="index">
                 <div class="series-row">
                   <div class="series-row__head">
                     <span class="series-row__index" x-text="'Series ' + (index + 1)"></span>
-                    <button type="button" class="btn btn--danger-ghost btn--sm" @click="removeSeriesRow(index)">Remove</button>
+                    <div class="series-row__actions">
+                      <button
+                        type="button"
+                        class="btn btn--icon"
+                        :disabled="index === 0"
+                        :aria-label="'Move series ' + (index + 1) + ' up'"
+                        @click="moveSeriesRowUp(index)"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+                          <path d="M6 15l6-6 6 6"></path>
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn--icon"
+                        :disabled="index === editor.form.series.length - 1"
+                        :aria-label="'Move series ' + (index + 1) + ' down'"
+                        @click="moveSeriesRowDown(index)"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+                          <path d="M6 9l6 6 6-6"></path>
+                        </svg>
+                      </button>
+                      <button type="button" class="btn btn--danger-ghost btn--sm" @click="removeSeriesRow(index)">Remove</button>
+                    </div>
                   </div>
                   <div class="form-grid">
                     <div class="form-field form-field--wide">

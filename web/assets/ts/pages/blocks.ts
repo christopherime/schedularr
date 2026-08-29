@@ -369,6 +369,25 @@ function emptyFallbackForm(): FallbackForm {
   return { mode: "", fillerFilter: emptyFilterForm() };
 }
 
+// ---- series row reordering ---------------------------------------------
+//
+// A block's `series` array order IS the airing order (see
+// docs/scheduling-concepts.md's "Idempotent apply and editing a block
+// before it airs"): a not-yet-aired occurrence re-derives from the
+// block's current spec on every apply, so reordering here changes what
+// airs next without touching anything already aired. Exported for direct
+// testing, the same convention as cronReadback above.
+
+/** Swaps `arr[index]` with its neighbor in `direction` (-1 up, +1 down),
+ * in place. A no-op past either end of the array -- list.html already
+ * disables the first row's up button and the last row's down button, so
+ * this is defense-in-depth against a stray call, not the primary guard. */
+export function swapAdjacent<T>(arr: T[], index: number, direction: -1 | 1): void {
+  const target = index + direction;
+  if (index < 0 || index >= arr.length || target < 0 || target >= arr.length) return;
+  [arr[index], arr[target]] = [arr[target], arr[index]];
+}
+
 function emptyEditorForm(): EditorForm {
   const simpleSchedule = emptySimpleSchedule();
   return {
@@ -718,6 +737,8 @@ interface BlocksState {
   ensureSeriesRow(): void;
   addSeriesRow(): void;
   removeSeriesRow(index: number): void;
+  moveSeriesRowUp(index: number): void;
+  moveSeriesRowDown(index: number): void;
   validateSeriesRows(): boolean;
   submit(): Promise<void>;
 
@@ -1071,6 +1092,20 @@ document.addEventListener("alpine:init", () => {
       removeSeriesRow(index) {
         this.editor.form.series.splice(index, 1);
         this.editor.seriesRowErrors.splice(index, 1);
+      },
+
+      // Keeps editor.seriesRowErrors aligned to the same rows as
+      // editor.form.series -- addSeriesRow/removeSeriesRow already keep
+      // the two in lockstep, a reorder must too, so an inline skip-episode
+      // error stays attached to the row it was actually raised for.
+      moveSeriesRowUp(index) {
+        swapAdjacent(this.editor.form.series, index, -1);
+        swapAdjacent(this.editor.seriesRowErrors, index, -1);
+      },
+
+      moveSeriesRowDown(index) {
+        swapAdjacent(this.editor.form.series, index, 1);
+        swapAdjacent(this.editor.seriesRowErrors, index, 1);
       },
 
       validateSeriesRows() {
