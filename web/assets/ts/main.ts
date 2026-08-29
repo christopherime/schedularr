@@ -50,7 +50,7 @@ function refreshIndicator(): void {
   const armed = getToken() !== null;
   if (statusDot) statusDot.dataset.state = armed ? "armed" : "unarmed";
   if (statusLabel) statusLabel.textContent = armed ? "Armed" : "Unarmed";
-  if (trigger) trigger.setAttribute("aria-label", armed ? "API token stored -- open token panel" : "No API token stored -- open token panel");
+  if (trigger) trigger.setAttribute("aria-label", armed ? "API token stored — open token panel" : "No API token stored — open token panel");
 }
 
 function openPanel(): void {

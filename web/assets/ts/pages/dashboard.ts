@@ -50,6 +50,7 @@ interface DashboardState {
   loadStatus(): Promise<void>;
   loadHistory(): Promise<void>;
   formatLocal(iso: string | undefined): string;
+  blocksLabel(n: number | undefined): string;
 }
 
 /** Renders an ApiError as its problem title (+ detail, when present); any
@@ -120,6 +121,15 @@ document.addEventListener("alpine:init", () => {
           hour: "2-digit",
           minute: "2-digit",
         });
+      },
+
+      // A real plural, matching the schedule page's "N slot(s)" ->
+      // real-plural fix -- Status.blocks is optional (a store error omits
+      // it, see internal/api/tunarr.go's GetStatus), so undefined renders
+      // as an em dash rather than a fabricated "0 blocks".
+      blocksLabel(n) {
+        if (n === undefined) return "—";
+        return `${n} block${n === 1 ? "" : "s"}`;
       },
     }),
   );

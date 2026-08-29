@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{ if .IsHome }}Schedularr{{ else }}{{ with .Title }}{{ . }} · {{ end }}Schedularr{{ end }}</title>
-<meta name="description" content="Schedularr -- content scheduling for Tunarr.">
+<meta name="description" content="Schedularr — content scheduling for Tunarr.">
 {{- with resources.Get "css/main.css" }}
   {{- $css := . }}
   {{- if hugo.IsProduction }}{{ $css = $css | minify | fingerprint }}{{ end }}
@@ -74,11 +74,11 @@ carrying its provenance.
   </main>
 
   <footer class="footer">
-    Schedularr -- self-hosted content scheduling for Tunarr.
+    Schedularr — self-hosted content scheduling for Tunarr.
   </footer>
 </div>
 
-<dialog id="token-panel" class="panel" aria-labelledby="token-panel-title">
+<dialog id="token-panel" class="panel" aria-labelledby="token-panel-title" aria-describedby="token-panel-hint">
   <form id="token-form" novalidate>
     <div class="panel__head">
       <h2 id="token-panel-title">Arm API Token</h2>
@@ -89,7 +89,7 @@ carrying its provenance.
       </button>
     </div>
     <div class="panel__body">
-      <p class="panel__hint">
+      <p class="panel__hint" id="token-panel-hint">
         Paste the bearer token <code>schedularr serve</code> was started
         with. It is stored only in this browser (<code>localStorage</code>)
         and sent as <code>Authorization: Bearer &lt;token&gt;</code> on

@@ -58,7 +58,7 @@
                   <p class="form-field__error" x-show="rowErrors[state.show_title]" role="alert">
                     <span x-text="rowErrors[state.show_title]"></span>
                     <template x-if="rowNotFound[state.show_title]">
-                      <button type="button" class="btn btn--ghost btn--sm" @click="loadStates()">Refresh list</button>
+                      <button type="button" class="btn btn--ghost btn--sm" @click="loadStates()">Refresh List</button>
                     </template>
                   </p>
                 </td>
@@ -75,6 +75,7 @@
                       class="series-cursor__input"
                       aria-label="Season"
                       x-model="drafts[state.show_title].season"
+                      :aria-describedby="fieldErrors[state.show_title] ? 'season-episode-error-' + state.show_title : null"
                       :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
                     >
                     <span class="series-cursor__prefix" aria-hidden="true">E</span>
@@ -84,6 +85,7 @@
                       class="series-cursor__input"
                       aria-label="Episode"
                       x-model="drafts[state.show_title].episode"
+                      :aria-describedby="fieldErrors[state.show_title] ? 'season-episode-error-' + state.show_title : null"
                       :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
                     >
                     <button
@@ -94,9 +96,15 @@
                       x-text="pending[state.show_title] ? 'Saving…' : 'Save'"
                     ></button>
                   </div>
-                  <p class="form-field__error" x-show="fieldErrors[state.show_title]" x-text="fieldErrors[state.show_title]"></p>
+                  <p
+                    class="form-field__error"
+                    :id="'season-episode-error-' + state.show_title"
+                    x-show="fieldErrors[state.show_title]"
+                    x-text="fieldErrors[state.show_title]"
+                    role="alert"
+                  ></p>
                 </td>
-                <td x-text="state.run_count ?? 0"></td>
+                <td class="num" x-text="runsLabel(state.run_count)"></td>
                 <td x-text="formatLocal(state.last_aired)"></td>
                 <td>
                   <button

@@ -77,6 +77,7 @@
     <div class="problem" role="alert">
       <p class="problem__title" x-text="applyError.title"></p>
       <p class="problem__detail" x-show="applyError.detail" x-text="applyError.detail"></p>
+      <button type="button" class="btn btn--ghost btn--sm" :disabled="!canApply()" @click="requestApply()">Retry</button>
     </div>
   </template>
 
@@ -110,7 +111,7 @@
         <section class="schedule-channel" :aria-labelledby="'schedule-channel-' + entry.id">
           <div class="section-head">
             <h2 :id="'schedule-channel-' + entry.id" x-text="'Channel ' + entry.id"></h2>
-            <p x-text="entry.slots.length + ' slot(s)'"></p>
+            <p x-text="entry.slots.length + ' slot' + (entry.slots.length === 1 ? '' : 's')"></p>
           </div>
           <div class="table-wrap">
             <table class="history-table schedule-table">
@@ -131,7 +132,7 @@
                     <td>
                       <template x-if="programCount(slot) > 0">
                         <details class="schedule-programs">
-                          <summary x-text="programCount(slot) + ' program(s)'"></summary>
+                          <summary x-text="programCount(slot) + ' program' + (programCount(slot) === 1 ? '' : 's')"></summary>
                           <ul>
                             <template x-for="(title, tidx) in programTitles(slot)" :key="tidx">
                               <li x-text="title"></li>
@@ -155,19 +156,20 @@
     class="panel"
     x-ref="confirmDialog"
     aria-labelledby="apply-confirm-title"
+    aria-describedby="apply-confirm-hint"
     @click="if ($event.target === $refs.confirmDialog && !applying) cancelApply()"
     @cancel="if (applying) $event.preventDefault()"
   >
     <div class="panel__head">
       <h2 id="apply-confirm-title" x-text="'Apply ' + applyScopeLabel()"></h2>
-      <button type="button" class="btn btn--icon" :disabled="applying" @click="cancelApply()" aria-label="Close">
+      <button type="button" class="btn btn--icon" :disabled="applying" @click="cancelApply()" aria-label="Close apply confirmation">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
           <path d="M6 6l12 12M18 6L6 18"></path>
         </svg>
       </button>
     </div>
     <div class="panel__body">
-      <p class="panel__hint" x-text="applyConfirmBody()"></p>
+      <p class="panel__hint" id="apply-confirm-hint" x-text="applyConfirmBody()"></p>
     </div>
     <div class="panel__actions">
       <button type="button" class="btn btn--ghost" :disabled="applying" @click="cancelApply()">Cancel</button>

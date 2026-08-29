@@ -215,6 +215,21 @@ p {
   background-position: -1px -1px;
 }
 
+/* A static, very-low-opacity horizontal scanline layer -- opt-in via
+   [data-scan] so it stays 404-only (the "no signal" moment the brief's
+   "phosphor trace on the glass" vocabulary most directly describes), not
+   a system-wide texture. Pure CSS, no asset, no motion -- same technique
+   budget as .graticule itself, just a second gradient layered under it. */
+.graticule[data-scan] {
+  background-image: repeating-linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--color-ink) 4%, transparent) 0 1px,
+      transparent 1px 3px
+    ),
+    repeating-linear-gradient(to right, var(--color-graticule) 0 1px, transparent 1px var(--div)),
+    repeating-linear-gradient(to bottom, var(--color-graticule) 0 1px, transparent 1px var(--div));
+}
+
 /* -- shell / bezel ------------------------------------------------------ */
 
 .shell {
@@ -289,10 +304,15 @@ p {
   color: var(--color-ink-muted);
 }
 
+/* The instrument-legend treatment (uppercase + tracking-label) every other
+   piece of chrome -- wordmark, nav, buttons, badges, labels -- already
+   carries; the footer was the one remaining plain-HTML corner. */
 .footer {
   padding: var(--space-4) var(--space-5);
   border-top: var(--border-width) solid var(--color-border);
   font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
   color: var(--color-ink-muted);
   text-align: center;
 }
@@ -419,8 +439,13 @@ p {
   background: var(--color-bg-inset);
 }
 
+/* --space-2 vertical padding (not --space-1): clears WCAG 2.5.8's 24x24
+   CSS-px AA target-size floor without touching the --text-xs type
+   choice -- this is the row-action button used on every dense table
+   (blocks/series/schedule), so the floor matters everywhere, not just
+   here. */
 .btn--sm {
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
   font-size: var(--text-xs);
 }
 
@@ -447,8 +472,12 @@ p {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
+/* --color-warn, not --color-danger: an unarmed token is every fresh
+   install's default first-run state, not an error -- see DESIGN.md's
+   Colors table, which reserves --color-warn for exactly this "pending/
+   attention, not failure" semantic slot. */
 .status-dot[data-state="unarmed"] {
-  background: var(--color-danger);
+  background: var(--color-warn);
 }
 
 /* Same coded-legend vocabulary, reused for a live reading rather than the
@@ -582,6 +611,10 @@ dialog.panel::backdrop {
 }
 
 .panel__status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
   min-height: 1.25em;
   margin: 0;
   font-size: var(--text-sm);
@@ -629,6 +662,13 @@ dialog.panel::backdrop {
   padding: var(--space-7) var(--space-6);
 }
 
+/* Reserved, not currently consumed: every shipped .hero-panel (dashboard,
+   schedule, 404) uses a visually-hidden <h2> for its accessible name, never
+   a visible <h1> -- same "declared but unused" precedent as --color-warn's
+   own note above before this task gave it a consumer. Kept (not deleted)
+   as a documented reservation: a future page that does add a visible <h1>
+   inside a .hero-panel should know it renders at 36px, bigger than the
+   page-level .page-head h1 (--text-xl, 28px), before reaching for it. */
 .hero-panel h1 {
   margin: 0 0 var(--space-3);
   font-size: var(--text-2xl);
@@ -651,6 +691,14 @@ dialog.panel::backdrop {
   display: flex;
   gap: var(--space-6);
   flex-wrap: wrap;
+}
+
+/* A thin vertical rule between readout fields -- multimeter-style
+   segmented-display dividers, at zero motion/asset cost, reusing the
+   existing graticule token instead of the plain flex gap alone. */
+.hero-panel__meta > div:not(:first-child) {
+  border-left: var(--border-width) solid var(--color-graticule);
+  padding-left: var(--space-6);
 }
 
 .hero-panel__meta dt {
@@ -884,6 +932,14 @@ dialog.panel::backdrop {
   overflow-wrap: anywhere;
 }
 
+/* The one genuinely comparable numeric column in the table system (the
+   series page's Runs count) -- right-aligned so a column of counts is
+   easier to scan/compare than left-aligned numerals. Not a systemic
+   table redesign: applied only to that one <td>. */
+.history-table td.num {
+  text-align: right;
+}
+
 @media (max-width: 640px) {
   .empty-state {
     padding: var(--space-5) var(--space-4);
@@ -940,7 +996,9 @@ dialog.panel::backdrop {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0;
+  /* Vertical padding (not 0): clears WCAG 2.5.8's 24x24 CSS-px AA
+     target-size floor -- the track alone is only ~20px tall. */
+  padding: var(--space-1) 0;
   background: transparent;
   border: none;
   font: inherit;
@@ -964,6 +1022,12 @@ dialog.panel::backdrop {
   transition:
     background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out);
+}
+
+/* A custom role="switch" control needs its own hover cue more than a
+   native checkbox would -- .btn/.nav__link both get one, .toggle didn't. */
+.toggle:not(:disabled):hover .toggle__track {
+  border-color: var(--color-ink);
 }
 
 .toggle__thumb {
@@ -993,6 +1057,16 @@ dialog.panel::backdrop {
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+/* The track color is a secondary scan aid, same as .badge's data-type
+   tint -- the label text itself is what's supposed to carry the fact
+   (DESIGN.md's "text carries the fact" rule), so it needs to actually
+   change, not stay --color-ink-muted regardless of state. */
+.toggle[aria-checked="true"] .toggle__label {
+  color: var(--color-ink);
+  font-weight: 700;
 }
 
 /* -- blocks: list table -------------------------------------------------------
@@ -1154,6 +1228,27 @@ dialog.panel::backdrop {
 .form-field__error {
   margin: var(--space-2) 0 0;
   font-size: var(--text-xs);
+  color: var(--color-danger);
+}
+
+/* A soft, non-blocking nudge (the show-title library-match warning, the
+   schedule picker's "can't represent this cron" note) -- --color-warn,
+   not --color-danger: nothing here blocks submit or means the value is
+   wrong, just worth a second look. */
+.form-field__warning {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-warn);
+}
+
+/* A muted, always-visible required-field marker (WCAG error-prevention:
+   static feedback before submit, not just a 400 after). Danger-red is
+   the near-universal convention for this specific mark, not a reuse of
+   the "unarmed" status-dot's earlier mistake (a *default* state
+   mislabeled as an error) -- a required field really is one omission
+   away from a validation error. */
+.form-field__required {
+  margin-left: 0.15em;
   color: var(--color-danger);
 }
 
@@ -1347,4 +1442,73 @@ dialog.panel::backdrop {
     flex-wrap: wrap;
     row-gap: var(--space-2);
   }
+}
+
+/* -- blocks: schedule field (Simple/Cron picker) ----------------------------
+   Reuses .form-field/.form-grid/.checkbox-field verbatim for every actual
+   input -- the only new shapes here are the mode-toggle button pair and
+   the day-of-week checkbox row (.schedule-days), both thin wrappers around
+   existing primitives (.btn--ghost, .checkbox-field). */
+
+.schedule-field__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.schedule-field__head label {
+  margin-bottom: 0;
+}
+
+.schedule-mode-toggle {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+/* Same "text carries the fact" rule as every other stateful control --
+   the active mode gets an accent border and full-ink text, not just a
+   different aria attribute. */
+.schedule-mode-toggle .btn[aria-pressed="true"] {
+  background: var(--color-bg-inset);
+  border-color: var(--color-accent);
+  color: var(--color-ink);
+}
+
+.schedule-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.schedule-picker__cron code {
+  color: var(--color-ink);
+}
+
+.schedule-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.schedule-days legend {
+  width: 100%;
+  margin: 0 0 var(--space-1);
+  padding: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-muted);
+}
+
+.schedule-days__day {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
 }

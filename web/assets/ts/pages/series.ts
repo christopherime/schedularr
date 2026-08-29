@@ -84,6 +84,13 @@ function cursorLabel(season: number, episode: number): string {
   return `S${pad2(season)}E${pad2(episode)}`;
 }
 
+/** A real plural ("1 run", "0 runs", "2 runs"), not a mechanical "run(s)"
+ * suffix -- see the copy audit's "Mechanical (s) pluralization" item. */
+function runsLabel(n: number | undefined): string {
+  const count = n ?? 0;
+  return `${count} run${count === 1 ? "" : "s"}`;
+}
+
 /** Parses a whole number >= 1, or null when the input isn't one -- the
  * "number inputs enforce >=1 client-side" half of the contract. Anything
  * this doesn't catch (e.g. a season/episode that simply doesn't exist for
@@ -126,6 +133,7 @@ interface SeriesPageState {
   loadStates(): Promise<void>;
 
   cursorLabel(season: number, episode: number): string;
+  runsLabel(n: number | undefined): string;
   formatLocal(iso: string | null | undefined): string;
 
   rowDirty(state: SeriesRecord): boolean;
@@ -191,6 +199,7 @@ document.addEventListener("alpine:init", () => {
       },
 
       cursorLabel,
+      runsLabel,
 
       // Local timezone, not the UTC wire value -- same convention as
       // dashboard.ts's/schedule.ts's formatLocal (duplicated rather than

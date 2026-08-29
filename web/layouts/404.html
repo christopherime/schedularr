@@ -9,18 +9,18 @@
 {{ define "main" }}
 <div class="page-head">
   <h1>No Signal</h1>
-  <p>This instance serves no page at the address you requested.</p>
+  <p>This instance has no page at this address.</p>
 </div>
 
-<section class="hero-panel graticule" aria-labelledby="not-found-title">
-  <h2 id="not-found-title" class="visually-hidden">Signal lost</h2>
+<section class="hero-panel graticule" data-scan aria-labelledby="not-found-title">
+  <h2 id="not-found-title" class="visually-hidden">No Signal</h2>
   <p class="status-line">
     <span class="status-dot" data-state="down" aria-hidden="true"></span>
-    <span>404 -- No Signal</span>
+    <span>404</span>
   </p>
   <p>
-    The requested channel doesn't exist on this instance. Return to the
-    dashboard to pick one that does.
+    This page doesn't exist on this instance. Return to the dashboard to
+    pick a page that does.
   </p>
   <a href="/" class="btn btn--primary">Return to Dashboard</a>
 </section>

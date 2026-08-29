@@ -115,6 +115,12 @@ function programTitle(p: Record<string, unknown>): string {
   return typeof p.title === "string" && p.title.trim() !== "" ? p.title : "—";
 }
 
+/** A real plural ("1 slot", "2 slots"), not a mechanical "slot(s)" suffix
+ * -- see the copy audit's "Mechanical (s) pluralization" item. */
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 function channelLabel(c: Channel): string {
   const parts: string[] = [];
   if (c.number !== undefined) parts.push(String(c.number));
@@ -222,10 +228,10 @@ document.addEventListener("alpine:init", () => {
       channelHint() {
         if (this.channelsLoading) return "Loading channels from Tunarr…";
         if (this.channelsError) {
-          return `Tunarr channel list unavailable (${this.channelsError}) -- enter a channel ID manually, or leave blank for all channels.`;
+          return `Tunarr channel list unavailable (${this.channelsError}) — enter a channel ID manually, or leave blank for all channels.`;
         }
         if (this.channels.length === 0) {
-          return "Tunarr returned no channels -- enter a channel ID manually, or leave blank for all channels.";
+          return "Tunarr returned no channels — enter a channel ID manually, or leave blank for all channels.";
         }
         return "";
       },
@@ -398,7 +404,11 @@ document.addEventListener("alpine:init", () => {
         const channelCount = Object.keys(this.plan.channels).length;
         if (channelCount === 0) return "There is nothing to apply for this scope.";
         const slotCount = Object.values(this.plan.channels).reduce((sum, slots) => sum + slots.length, 0);
-        return `This pushes ${slotCount} slot(s) across ${channelCount} channel(s) to Tunarr.`;
+        // "Applies", matching the dialog's own title ("Apply " +
+        // applyScopeLabel()), the Confirm Apply button, and
+        // appliedSummary()'s "Applied ..." result below -- see the copy
+        // audit's Apply/Applied terminology decision.
+        return `This applies ${plural(slotCount, "slot")} across ${plural(channelCount, "channel")} to Tunarr.`;
       },
 
       appliedSummary() {
@@ -409,9 +419,8 @@ document.addEventListener("alpine:init", () => {
           return when ? `Applied — nothing to apply for this scope (${when}).` : "Applied — nothing to apply for this scope.";
         }
         const slotCount = Object.values(this.plan.channels).reduce((sum, slots) => sum + slots.length, 0);
-        return when
-          ? `Applied ${slotCount} slot(s) across ${channelCount} channel(s) at ${when}.`
-          : `Applied ${slotCount} slot(s) across ${channelCount} channel(s).`;
+        const summary = `Applied ${plural(slotCount, "slot")} across ${plural(channelCount, "channel")}`;
+        return when ? `${summary} at ${when}.` : `${summary}.`;
       },
     }),
   );
