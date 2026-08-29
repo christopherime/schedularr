@@ -4,7 +4,7 @@
     <h1>Blocks</h1>
     <p>
       Scheduling rules that generate programs for Tunarr channels. Toggle,
-      edit, or remove a block below, or arm a new one.
+      edit, or remove a block below, or create a new one.
     </p>
   </div>
 
@@ -27,7 +27,7 @@
         <div class="form-section">
           <div class="form-grid">
             <div class="form-field">
-              <label for="editor-name">Name</label>
+              <label for="editor-name">Name<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
               <input type="text" id="editor-name" x-model="editor.form.name" autocomplete="off">
               <p class="form-field__error" x-show="editor.nameConflict" x-text="editor.nameConflict"></p>
             </div>
@@ -38,17 +38,98 @@
                 <option value="series">Series</option>
               </select>
             </div>
-            <div class="form-field">
-              <label for="editor-cron">Cron</label>
-              <input type="text" id="editor-cron" x-model="editor.form.cron" placeholder="0 20 * * 6" autocomplete="off">
-              <p class="form-field__hint" x-show="cronHint(editor.form.cron)" x-text="cronHint(editor.form.cron)"></p>
+            <div class="form-field form-field--wide" id="schedule-field">
+              <div class="schedule-field__head">
+                <label id="schedule-label">Schedule<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                <div class="schedule-mode-toggle" role="group" aria-labelledby="schedule-label">
+                  <button
+                    type="button"
+                    class="btn btn--ghost btn--sm"
+                    :aria-pressed="editor.form.scheduleMode === 'simple'"
+                    @click="setScheduleMode('simple')"
+                  >Simple</button>
+                  <button
+                    type="button"
+                    class="btn btn--ghost btn--sm"
+                    :aria-pressed="editor.form.scheduleMode === 'cron'"
+                    @click="setScheduleMode('cron')"
+                  >Cron</button>
+                </div>
+              </div>
+
+              <template x-if="editor.form.scheduleMode === 'simple'">
+                <div class="schedule-picker">
+                  <div class="form-grid">
+                    <div class="form-field">
+                      <label for="schedule-frequency">Frequency</label>
+                      <select id="schedule-frequency" x-model="editor.form.simpleSchedule.frequency" @change="updateCronFromSimple()">
+                        <option value="daily">Daily</option>
+                        <option value="weekdays">Weekdays</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="custom">Custom days</option>
+                      </select>
+                    </div>
+                    <div class="form-field">
+                      <label for="schedule-time">Time</label>
+                      <input type="time" id="schedule-time" x-model="editor.form.simpleSchedule.time" @change="updateCronFromSimple()">
+                    </div>
+                    <template x-if="editor.form.simpleSchedule.frequency === 'monthly'">
+                      <div class="form-field">
+                        <label for="schedule-day-of-month">Day of month</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          id="schedule-day-of-month"
+                          x-model="editor.form.simpleSchedule.dayOfMonth"
+                          @change="updateCronFromSimple()"
+                        >
+                      </div>
+                    </template>
+                  </div>
+                  <template x-if="editor.form.simpleSchedule.frequency === 'weekly' || editor.form.simpleSchedule.frequency === 'custom'">
+                    <fieldset class="schedule-days">
+                      <legend>Days of week</legend>
+                      <template x-for="day in scheduleDayOptions" :key="day.value">
+                        <label class="checkbox-field schedule-days__day">
+                          <input
+                            type="checkbox"
+                            :checked="editor.form.simpleSchedule.daysOfWeek.includes(day.value)"
+                            @change="toggleScheduleDay(day.value)"
+                          >
+                          <span x-text="day.label"></span>
+                        </label>
+                      </template>
+                    </fieldset>
+                  </template>
+                  <p class="form-field__hint schedule-picker__cron">Cron: <code x-text="editor.form.cron || '—'"></code></p>
+                </div>
+              </template>
+
+              <template x-if="editor.form.scheduleMode === 'cron'">
+                <div class="schedule-picker schedule-picker--raw">
+                  <input
+                    type="text"
+                    id="editor-cron"
+                    x-model="editor.form.cron"
+                    placeholder="0 20 * * 6"
+                    autocomplete="off"
+                    aria-describedby="schedule-format-hint"
+                  >
+                  <p class="form-field__hint" id="schedule-format-hint">min hour day-of-month month day-of-week (* = any)</p>
+                </div>
+              </template>
+
+              <p class="form-field__hint" x-show="cronReadback(editor.form.cron)" x-text="cronReadback(editor.form.cron)"></p>
+              <p class="form-field__warning" x-show="editor.form.scheduleLockNote" x-text="editor.form.scheduleLockNote"></p>
             </div>
             <div class="form-field">
-              <label for="editor-duration">Duration (minutes)</label>
+              <label for="editor-duration">Duration (minutes)<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
               <input type="number" min="1" id="editor-duration" x-model="editor.form.duration">
             </div>
             <div class="form-field">
-              <label for="editor-channel">Channel</label>
+              <label for="editor-channel">Channel<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
               <template x-if="!channelsLoading && !channelsError && channels.length > 0">
                 <select id="editor-channel" x-model="editor.form.channel_id">
                   <option value="">— select a channel —</option>
@@ -79,6 +160,28 @@
           </div>
         </div>
 
+        <template x-if="mediaOk">
+          <datalist id="media-shows-list">
+            <template x-for="show in mediaShows" :key="show.title">
+              <option :value="show.title"></option>
+            </template>
+          </datalist>
+        </template>
+        <template x-if="mediaOk">
+          <datalist id="media-genres-list">
+            <template x-for="genre in mediaGenres" :key="genre">
+              <option :value="genre"></option>
+            </template>
+          </datalist>
+        </template>
+        <template x-if="mediaOk">
+          <datalist id="media-ratings-list">
+            <template x-for="rating in mediaRatings" :key="rating">
+              <option :value="rating"></option>
+            </template>
+          </datalist>
+        </template>
+
         <template x-if="editor.form.type === 'filter'">
           <div class="form-section">
             <h3 class="form-section__title">Filter</h3>
@@ -89,11 +192,11 @@
               </div>
               <div class="form-field">
                 <label for="filter-genres">Genres</label>
-                <input type="text" id="filter-genres" x-model="editor.form.filter.genres" placeholder="Comedy, Drama">
+                <input type="text" id="filter-genres" x-model="editor.form.filter.genres" list="media-genres-list" placeholder="Comedy, Drama">
               </div>
               <div class="form-field">
                 <label for="filter-ratings">Ratings</label>
-                <input type="text" id="filter-ratings" x-model="editor.form.filter.ratings" placeholder="PG, PG-13">
+                <input type="text" id="filter-ratings" x-model="editor.form.filter.ratings" list="media-ratings-list" placeholder="PG, PG-13">
               </div>
               <div class="form-field">
                 <label for="filter-year-from">Year from</label>
@@ -131,11 +234,12 @@
                   </div>
                   <div class="form-grid">
                     <div class="form-field form-field--wide">
-                      <label :for="'series-title-' + index">Show title</label>
-                      <input type="text" :id="'series-title-' + index" x-model="row.show_title">
+                      <label :for="'series-title-' + index">Show title<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                      <input type="text" :id="'series-title-' + index" x-model="row.show_title" list="media-shows-list">
+                      <p class="form-field__warning" x-show="seriesTitleWarning(row.show_title)" x-text="seriesTitleWarning(row.show_title)"></p>
                     </div>
                     <div class="form-field">
-                      <label :for="'series-episodes-' + index">Episodes per block</label>
+                      <label :for="'series-episodes-' + index">Episodes per block<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
                       <input type="number" min="1" :id="'series-episodes-' + index" x-model="row.episodes_per_block">
                     </div>
                     <div class="form-field">
@@ -167,7 +271,7 @@
                 </div>
               </template>
             </div>
-            <button type="button" id="add-series-row-btn" class="btn btn--ghost btn--sm" @click="addSeriesRow()">+ Add series</button>
+            <button type="button" id="add-series-row-btn" class="btn btn--ghost btn--sm" @click="addSeriesRow()">+ Add Series</button>
           </div>
         </template>
 
@@ -192,11 +296,11 @@
                 </div>
                 <div class="form-field">
                   <label for="fallback-genres">Fallback genres</label>
-                  <input type="text" id="fallback-genres" x-model="editor.form.fallback.fillerFilter.genres" placeholder="Comedy, Drama">
+                  <input type="text" id="fallback-genres" x-model="editor.form.fallback.fillerFilter.genres" list="media-genres-list" placeholder="Comedy, Drama">
                 </div>
                 <div class="form-field">
                   <label for="fallback-ratings">Fallback ratings</label>
-                  <input type="text" id="fallback-ratings" x-model="editor.form.fallback.fillerFilter.ratings" placeholder="PG, PG-13">
+                  <input type="text" id="fallback-ratings" x-model="editor.form.fallback.fillerFilter.ratings" list="media-ratings-list" placeholder="PG, PG-13">
                 </div>
               </div>
             </template>
@@ -204,7 +308,7 @@
         </template>
 
         <div class="form-section">
-          <h3 class="form-section__title">Filler <span class="form-section__note">(optional gap filler, either block type)</span></h3>
+          <h3 class="form-section__title">Filler <span class="form-section__note">(optional, either block type)</span></h3>
           <div class="form-grid">
             <div class="form-field form-field--checkbox">
               <label class="checkbox-field">
@@ -250,7 +354,12 @@
       <p>Every scheduling rule currently stored, enabled or not.</p>
     </div>
 
-    <p class="panel__status" data-tone="error" x-show="listError" x-text="listError" role="alert"></p>
+    <template x-if="listError">
+      <p class="panel__status" data-tone="error" role="alert">
+        <span x-text="listError"></span>
+        <button type="button" class="btn btn--ghost btn--sm" @click="loadBlocks()">Retry</button>
+      </p>
+    </template>
 
     <template x-if="blocksLoading">
       <div class="skeleton-stack" aria-hidden="true">
@@ -269,7 +378,7 @@
     </template>
 
     <template x-if="!blocksLoading && !blocksError && blocks.length === 0">
-      <p class="empty-state graticule">No blocks yet. Arm one with "+ New Block" above.</p>
+      <p class="empty-state graticule">No blocks yet. Create one with "+ New Block" above.</p>
     </template>
 
     <template x-if="!blocksLoading && !blocksError && blocks.length > 0">
@@ -293,7 +402,7 @@
                 <td>
                   <div class="blocks-table__cron">
                     <code x-text="block.spec.cron"></code>
-                    <span class="blocks-table__cron-hint" x-show="cronHint(block.spec.cron)" x-text="cronHint(block.spec.cron)"></span>
+                    <span class="blocks-table__cron-hint" x-show="cronReadback(block.spec.cron)" x-text="cronReadback(block.spec.cron)"></span>
                   </div>
                 </td>
                 <td x-text="block.spec.channel_id"></td>
@@ -313,7 +422,7 @@
                 <td class="blocks-table__actions">
                   <template x-if="confirmDeleteId !== block.id">
                     <div class="row-actions">
-                      <button type="button" class="btn btn--ghost btn--sm" @click="openEdit(block)">Edit</button>
+                      <button type="button" :id="'block-edit-' + block.id" class="btn btn--ghost btn--sm" @click="openEdit(block)">Edit</button>
                       <button type="button" class="btn btn--danger-ghost btn--sm" @click="requestDelete(block.id)">Delete</button>
                     </div>
                   </template>
@@ -342,6 +451,17 @@
 {{ end }}
 
 {{ define "page_js" }}
+{{- /*
+  cronstrue is vendored the same way Alpine is (baseof.html):
+  web/assets/vendor/cronstrue.min.js, pinned, loaded via a plain <script
+  defer>, no CDN, no npm runtime dependency (see web/DESIGN.md's
+  "Vendored dependencies" note for the pinned version and sha256). It
+  must load, and execute, before blocks.js -- deferred scripts run in
+  document order, so this tag stays first.
+*/ -}}
+{{- with resources.Get "vendor/cronstrue.min.js" }}
+<script src="{{ .RelPermalink }}" defer></script>
+{{- end }}
 {{- $js := resources.Get "ts/pages/blocks.ts" | js.Build (dict "targetPath" "js/blocks.js") }}
 {{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
 <script src="{{ $js.RelPermalink }}" defer></script>

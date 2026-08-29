@@ -31,6 +31,8 @@ type Filter = components["schemas"]["Filter"];
 type FillerConfig = components["schemas"]["FillerConfig"];
 type SeriesConfig = components["schemas"]["SeriesConfig"];
 type SeriesFallback = components["schemas"]["SeriesFallback"];
+type MediaShow = components["schemas"]["MediaShow"];
+type MediaMeta = components["schemas"]["MediaMeta"];
 // createBlock and updateBlock both take BlockWrite -- either operation name
 // resolves to the identical request type.
 type BlockWrite = ApiRequestJSON<"createBlock">;
@@ -38,6 +40,16 @@ type OnComplete = NonNullable<SeriesConfig["on_complete"]>;
 
 declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
+};
+
+// cronstrue is vendored as a plain UMD script (web/assets/vendor/
+// cronstrue.min.js, loaded before this bundle -- see blocks/list.html's
+// "page_js" block), the same no-CDN/no-runtime-dep convention as Alpine
+// (DESIGN.md's "Vendored dependencies" note). It attaches itself to the
+// global scope when loaded as a plain <script> (no module system present),
+// so it's declared here the same way `Alpine` above is.
+declare const cronstrue: {
+  toString(expression: string, options?: { throwExceptionOnParseError?: boolean; verbose?: boolean }): string;
 };
 
 // Same double-init defense as dashboard.ts: Alpine.data()'s init() is
@@ -57,51 +69,197 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// ---- cron plain-language hint --------------------------------------------
+// ---- cron plain-language readback -----------------------------------------
 //
-// A small hand-rolled parser for the handful of 5-field cron shapes a
-// scheduling UI's cron field realistically sees (fixed time, optionally
-// restricted to specific weekdays) -- not a cron-parsing dependency
-// (PRODUCT.md: "Static-first"). Anything outside that shape (a day-of-month
-// or month restriction, a list/range/step on minute or hour) returns null;
-// callers show the raw cron with no extra hint rather than guessing wrong.
+// cronstrue (vendored, see the `declare const cronstrue` comment above)
+// replaces this file's earlier hand-rolled cronHint(): that parser only
+// recognized fixed-time/weekday-restricted patterns and returned null (no
+// hint at all) for anything else -- a day-of-month/month restriction, a
+// list/step on minute or hour. cronstrue reads any valid 5-field
+// expression, so the readback is now universal rather than a narrow
+// subset, and is shown next to the schedule field in both Simple and Cron
+// mode (see EditorForm.scheduleMode below).
 
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const CRONSTRUE_ERROR_PREFIX = "An error occurred";
+
+/** Plain-language readback for a cron string, or null for blank/
+ * unparseable input (never thrown out of a template expression -- Alpine
+ * evaluates x-text/x-show inline, so a thrown error here would break the
+ * whole editor panel's render, not just this one field). */
+export function cronReadback(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  let text: string;
+  try {
+    text = cronstrue.toString(trimmed, { throwExceptionOnParseError: false });
+  } catch {
+    return null;
+  }
+  return text.startsWith(CRONSTRUE_ERROR_PREFIX) ? null : text;
+}
+
+// ---- schedule picker: simple <-> cron ---------------------------------
+//
+// Feature spec (2026-08-29 UI wave): a Simple/Cron mode toggle on the
+// schedule field. Simple mode drives a frequency select, day-of-week
+// checkboxes (weekly/custom only), and a native <input type="time">,
+// which together generate the 5-field cron string live
+// (updateCronFromSimple(), called from list.html on every picker input).
+// Cron mode is the pre-existing raw text field, unchanged. Storage/API
+// are unaffected either way -- editor.form.cron is still the one value
+// buildSpec() reads at submit time; scheduleMode/simpleSchedule/
+// scheduleLockNote are UI-only state, never sent to the server (buildSpec
+// only reads editor.form.cron, never these fields -- see buildSpec below).
+//
+// buildCronFromSimple/parseCronToSimple are exact inverses for every shape
+// the picker itself can produce (see each function's own comment): a cron
+// this file generates always round-trips back through Simple mode
+// unchanged. Anything parseCronToSimple doesn't recognize -- a
+// day-of-month combined with a weekday restriction, a month restriction,
+// any list/range/step on minute or hour -- makes setScheduleMode("simple")
+// refuse the switch and show scheduleLockNote instead of guessing at a
+// lossy approximation.
+
+type Frequency = "daily" | "weekdays" | "weekly" | "monthly" | "custom";
+
+interface SimpleSchedule {
+  frequency: Frequency;
+  daysOfWeek: number[]; // 0 (Sunday) .. 6 (Saturday); "weekly"/"custom" only
+  dayOfMonth: string; // "1".."31" as typed; "monthly" only
+  time: string; // "HH:MM", 24h -- the native <input type="time"> wire format
+}
+
+interface ScheduleDayOption {
+  value: number;
+  label: string;
+}
+
+// Sunday-first, matching cron's own day-of-week numbering (0 = Sunday).
+const SCHEDULE_DAY_OPTIONS: ScheduleDayOption[] = [
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+];
+
+function emptySimpleSchedule(): SimpleSchedule {
+  return { frequency: "daily", daysOfWeek: [], dayOfMonth: "1", time: "00:00" };
+}
+
+function clampDayOfMonth(raw: string): number {
+  const n = Number(raw.trim());
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(31, Math.max(1, Math.round(n)));
+}
+
+/** Parses an <input type="time"> value ("HH:MM"), defaulting to midnight
+ * for blank/malformed input -- the picker always has *some* time to build
+ * a cron from, even before the operator touches the field. */
+function parseTimeInput(raw: string): [hour: number, minute: number] {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
+  if (!m) return [0, 0];
+  const hour = Math.min(23, Math.max(0, Number(m[1])));
+  const minute = Math.min(59, Math.max(0, Number(m[2])));
+  return [hour, minute];
+}
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-export function cronHint(raw: string): string | null {
+/** Builds the 5-field cron string the picker's current state represents.
+ * Always a plain integer minute/hour (never a list/range/step) and either
+ * "*", a plain day-of-month integer, or a comma-joined sorted list of
+ * plain weekday digits for day-of-week -- exactly the shapes
+ * parseCronToSimple recognizes below, so build -> parse -> build
+ * round-trips for every frequency. */
+function buildCronFromSimple(s: SimpleSchedule): string {
+  const [hour, minute] = parseTimeInput(s.time);
+  const m = String(minute);
+  const h = String(hour);
+  switch (s.frequency) {
+    case "daily":
+      return `${m} ${h} * * *`;
+    case "weekdays":
+      return `${m} ${h} * * 1,2,3,4,5`;
+    case "monthly":
+      return `${m} ${h} ${clampDayOfMonth(s.dayOfMonth)} * *`;
+    case "weekly":
+    case "custom": {
+      const days = Array.from(new Set(s.daysOfWeek)).sort((a, b) => a - b);
+      const dow = days.length > 0 ? days.join(",") : "*";
+      return `${m} ${h} * * ${dow}`;
+    }
+  }
+}
+
+/** Inverse of buildCronFromSimple: recognizes exactly the shapes the
+ * picker can produce and returns null for everything else (a
+ * day-of-month/weekday combination, a month restriction, a list/range/
+ * step on minute or hour, a non-plain day-of-month) -- callers treat null
+ * as "this expression can't be represented in Simple mode" and lock to
+ * Cron mode with a note rather than render a lossy guess. A single
+ * weekday collapses to "weekly" (the picker's framing for "once a week,
+ * on this day"); more than one, to "custom" -- exactly matching which
+ * label building either one back through buildCronFromSimple reproduces,
+ * since both write the same daysOfWeek-driven day-of-week field. */
+function parseCronToSimple(raw: string): SimpleSchedule | null {
   const fields = raw.trim().split(/\s+/);
   if (fields.length !== 5) return null;
   const [min, hour, dom, mon, dow] = fields;
-  if (dom !== "*" || mon !== "*") return null;
-
-  if (min === "*" && hour === "*") {
-    return dow === "*" ? "Every minute" : null;
-  }
+  if (mon !== "*") return null;
   if (!/^\d{1,2}$/.test(min) || !/^\d{1,2}$/.test(hour)) return null;
   const m = Number(min);
   const h = Number(hour);
   if (m > 59 || h > 23) return null;
   const time = `${pad2(h)}:${pad2(m)}`;
 
-  if (dow === "*") return `Daily at ${time}`;
+  if (dom !== "*") {
+    if (dow !== "*") return null; // day-of-month + weekday together: not representable
+    if (!/^([1-9]|[12]\d|3[01])$/.test(dom)) return null;
+    return { frequency: "monthly", daysOfWeek: [], dayOfMonth: dom, time };
+  }
+
+  if (dow === "*") {
+    return { frequency: "daily", daysOfWeek: [], dayOfMonth: "1", time };
+  }
 
   const days = dow.split(",").map((d) => d.trim());
-  if (!days.every((d) => /^[0-7]$/.test(d))) return null;
-  const nums = days.map((d) => Number(d) % 7); // cron allows 7 as an alt-Sunday
-  const uniq = Array.from(new Set(nums)).sort((a, b) => a - b);
+  if (!days.every((d) => /^[0-6]$/.test(d))) return null;
+  const nums = Array.from(new Set(days.map(Number))).sort((a, b) => a - b);
 
-  if (uniq.length === 5 && [1, 2, 3, 4, 5].every((d) => uniq.includes(d))) {
-    return `Weekdays at ${time}`;
+  if (nums.length === 5 && [1, 2, 3, 4, 5].every((d) => nums.includes(d))) {
+    return { frequency: "weekdays", daysOfWeek: [], dayOfMonth: "1", time };
   }
-  if (uniq.length === 2 && uniq.includes(0) && uniq.includes(6)) {
-    return `Weekends at ${time}`;
-  }
-  const names = uniq.map((d) => `${DAY_NAMES[d]}s`).join(", ");
-  return `${names} at ${time}`;
+
+  return { frequency: nums.length === 1 ? "weekly" : "custom", daysOfWeek: nums, dayOfMonth: "1", time };
+}
+
+// ---- library-aware autocomplete (media discovery) --------------------
+//
+// GET /api/v1/media/shows and GET /api/v1/media/meta back a show-title
+// <datalist> (series rows) and genre/rating <datalist>s (filter block +
+// fallback filler filter) -- fetched once per editor open and reused
+// across every row, never per-row (loadMedia(), called from openCreate/
+// openEdit). Free text is always accepted regardless of fetch outcome; a
+// failed fetch degrades silently to no datalist and no warnings (no
+// console logging either -- see loadMedia's own comment), never a
+// .problem panel, since this is a convenience layer on top of an editor
+// that already works entirely with free text.
+
+const SHOW_TITLE_NOT_FOUND = "Not found in Tunarr's library.";
+
+/** True when `title` (trimmed) doesn't case-insensitively match any
+ * loaded show title. Case-insensitive on purpose: the warning is a soft,
+ * non-blocking nudge, not a strict validator, and a pure case mismatch
+ * ("the wire" vs "The Wire") isn't a meaningfully different problem from
+ * a match. */
+function titleKnown(shows: MediaShow[], title: string): boolean {
+  const needle = title.trim().toLowerCase();
+  return shows.some((s) => s.title.toLowerCase() === needle);
 }
 
 // ---- form-side shapes -----------------------------------------------------
@@ -150,6 +308,13 @@ interface EditorForm {
   type: "filter" | "series";
   name: string;
   cron: string;
+  // scheduleMode/simpleSchedule/scheduleLockNote are UI-only picker state
+  // (see the "schedule picker" section above) -- buildSpec() below only
+  // ever reads `cron`, never these three, so they're never sent to the
+  // server regardless of which mode produced the cron string.
+  scheduleMode: "simple" | "cron";
+  simpleSchedule: SimpleSchedule;
+  scheduleLockNote: string | null;
   duration: string;
   channel_id: string;
   priority: string;
@@ -195,10 +360,18 @@ function emptyFallbackForm(): FallbackForm {
 }
 
 function emptyEditorForm(): EditorForm {
+  const simpleSchedule = emptySimpleSchedule();
   return {
     type: "filter",
     name: "",
-    cron: "",
+    // A new block starts in Simple mode with the picker's own defaults
+    // (daily, midnight) already reflected into `cron`, rather than an
+    // empty cron field the operator has to notice and fill in before the
+    // readback/picker show anything live.
+    cron: buildCronFromSimple(simpleSchedule),
+    scheduleMode: "simple",
+    simpleSchedule,
+    scheduleLockNote: null,
     duration: "",
     channel_id: "",
     priority: "",
@@ -424,11 +597,20 @@ function fallbackToForm(f: SeriesFallback | undefined): FallbackForm {
   return { mode: f.mode ?? "redistribute", fillerFilter: filterToForm(f.filler_filter) };
 }
 
+// scheduleMode/simpleSchedule/scheduleLockNote are placeholders here --
+// this function only converts the wire spec's flat `cron` string into
+// form shape. openEdit() (the only caller) immediately overwrites all
+// three by running the loaded cron through parseCronToSimple(), the same
+// "derive UI-only state right after loading" pattern seriesRowErrors
+// already uses one line below its own call site.
 function formFromSpec(spec: BlockSpec, enabled: boolean): EditorForm {
   return {
     type: spec.type === "series" ? "series" : "filter",
     name: spec.name,
     cron: spec.cron,
+    scheduleMode: "cron",
+    simpleSchedule: emptySimpleSchedule(),
+    scheduleLockNote: null,
     duration: String(spec.duration),
     channel_id: spec.channel_id,
     priority: numToStr(spec.priority),
@@ -457,6 +639,14 @@ interface EditorState {
   nameConflict: string | null;
   seriesRowErrors: (string | null)[];
   form: EditorForm;
+  // id of the element focus returns to once the panel closes -- the
+  // toolbar's "+ New Block" button for create, or the specific row's Edit
+  // button for edit (see openCreate/openEdit/closeEditor below). Falls
+  // back to "new-block-btn" if the row's own button is somehow gone by
+  // the time focus returns (e.g. the row was deleted while its own
+  // editor was open -- performDelete() already calls closeEditor() in
+  // that case).
+  returnFocusId: string;
 }
 
 interface BlocksState {
@@ -469,24 +659,43 @@ interface BlocksState {
   channelsError: string | null;
   channels: Channel[];
 
+  // Library-aware autocomplete (media discovery): fetched once per editor
+  // open (loadMedia(), called from openCreate/openEdit), reused across
+  // every series/filter/fallback row for that open session. mediaOk
+  // gates both datalist rendering and the show-title warning -- a failed
+  // fetch degrades silently to free text with neither (see loadMedia's
+  // own comment).
+  mediaShows: MediaShow[];
+  mediaGenres: string[];
+  mediaRatings: string[];
+  mediaOk: boolean;
+
   pendingId: string | null;
   confirmDeleteId: string | null;
 
   editor: EditorState;
+  scheduleDayOptions: ScheduleDayOption[];
 
   init(): void;
   loadBlocks(): Promise<void>;
   loadChannels(): Promise<void>;
+  loadMedia(): Promise<void>;
 
-  cronHint(raw: string): string | null;
+  cronReadback(raw: string): string | null;
   channelLabel(c: Channel): string;
   channelSelectOptions(): Channel[];
   channelHint(): string;
+  seriesTitleWarning(title: string): string | null;
+
+  setScheduleMode(mode: "simple" | "cron"): void;
+  updateCronFromSimple(): void;
+  toggleScheduleDay(day: number): void;
 
   openCreate(): void;
   openEdit(block: BlockRecord): void;
   closeEditor(): void;
   focusEditorSoon(): void;
+  focusReturnSoon(): void;
   ensureSeriesRow(): void;
   addSeriesRow(): void;
   removeSeriesRow(index: number): void;
@@ -523,6 +732,11 @@ document.addEventListener("alpine:init", () => {
       channelsError: null,
       channels: [],
 
+      mediaShows: [],
+      mediaGenres: [],
+      mediaRatings: [],
+      mediaOk: false,
+
       pendingId: null,
       confirmDeleteId: null,
 
@@ -535,7 +749,9 @@ document.addEventListener("alpine:init", () => {
         nameConflict: null,
         seriesRowErrors: [],
         form: emptyEditorForm(),
+        returnFocusId: "new-block-btn",
       },
+      scheduleDayOptions: SCHEDULE_DAY_OPTIONS,
 
       init() {
         if (started) return;
@@ -569,8 +785,86 @@ document.addEventListener("alpine:init", () => {
         }
       },
 
-      cronHint,
+      // Fetched once per editor open (called from openCreate/openEdit,
+      // never per-row), reused across every series/filter/fallback row
+      // for that open session. Both calls run in parallel; either or both
+      // can fail independently (Promise.allSettled, not Promise.all) --
+      // a genre/rating fetch failure shouldn't also blank out the show
+      // list a moment earlier fetched successfully, or vice versa.
+      // Failure degrades silently: mediaOk stays false, no datalist
+      // renders (list.html gates every <datalist> on mediaOk), the
+      // show-title warning never fires, and there is no console logging
+      // -- this is a convenience layer over an editor that already works
+      // entirely with free text, not a required data source, so it never
+      // raises a .problem panel either.
+      async loadMedia() {
+        const [showsResult, metaResult] = await Promise.allSettled([
+          window.schedularr.apiGet<MediaShow[]>("/api/v1/media/shows"),
+          window.schedularr.apiGet<MediaMeta>("/api/v1/media/meta"),
+        ]);
+        const showsOk = showsResult.status === "fulfilled";
+        const metaOk = metaResult.status === "fulfilled";
+        this.mediaShows = showsOk ? showsResult.value : [];
+        this.mediaGenres = metaOk ? metaResult.value.genres : [];
+        this.mediaRatings = metaOk ? metaResult.value.ratings : [];
+        // Both must succeed for mediaOk: the show-title warning
+        // specifically needs mediaShows, and a genre/rating datalist
+        // needs mediaMeta -- "mediaOk" gates both uniformly rather than
+        // tracking two independent flags the templates would otherwise
+        // have to check separately.
+        this.mediaOk = showsOk && metaOk;
+      },
+
+      cronReadback,
       channelLabel,
+
+      // Factual, non-blocking nudge -- never blocks submit (buildSpec/
+      // submit() never consult this). Case-insensitive on purpose (see
+      // titleKnown's own comment); returns null (no warning) for a blank
+      // title or whenever the fetch didn't succeed, per the feature
+      // spec's "media fetch failure -> no warnings" rule.
+      seriesTitleWarning(title) {
+        if (!this.mediaOk) return null;
+        if (title.trim() === "") return null;
+        return titleKnown(this.mediaShows, title) ? null : SHOW_TITLE_NOT_FOUND;
+      },
+
+      // Attempts to switch into Simple mode by parsing the current cron
+      // text; a non-representable expression refuses the switch and sets
+      // scheduleLockNote instead (see parseCronToSimple's own comment).
+      // Switching to Cron mode always succeeds -- the raw field can show
+      // any string, representable or not.
+      setScheduleMode(mode) {
+        if (mode === this.editor.form.scheduleMode) return;
+        if (mode === "cron") {
+          this.editor.form.scheduleMode = "cron";
+          this.editor.form.scheduleLockNote = null;
+          return;
+        }
+        const parsed = parseCronToSimple(this.editor.form.cron);
+        if (!parsed) {
+          this.editor.form.scheduleLockNote = "This cron expression can't be represented in Simple mode.";
+          return;
+        }
+        this.editor.form.simpleSchedule = parsed;
+        this.editor.form.scheduleMode = "simple";
+        this.editor.form.scheduleLockNote = null;
+      },
+
+      // Called from every Simple-mode picker control (list.html) on
+      // change -- keeps editor.form.cron (the value submit() actually
+      // reads) live in sync with the picker's current state.
+      updateCronFromSimple() {
+        this.editor.form.cron = buildCronFromSimple(this.editor.form.simpleSchedule);
+      },
+
+      toggleScheduleDay(day) {
+        const days = this.editor.form.simpleSchedule.daysOfWeek;
+        const idx = days.indexOf(day);
+        if (idx === -1) days.push(day);
+        else days.splice(idx, 1);
+        this.updateCronFromSimple();
+      },
 
       // Guards against silently reassigning a block's channel: if the
       // block being edited points at a channel_id the live Tunarr channel
@@ -594,10 +888,10 @@ document.addEventListener("alpine:init", () => {
       channelHint() {
         if (this.channelsLoading) return "Loading channels from Tunarr…";
         if (this.channelsError) {
-          return `Tunarr channel list unavailable (${this.channelsError}) -- enter the channel ID manually.`;
+          return `Tunarr channel list unavailable (${this.channelsError}) — enter the channel ID manually.`;
         }
         if (this.channels.length === 0) {
-          return "Tunarr returned no channels -- enter the channel ID manually.";
+          return "Tunarr returned no channels — enter the channel ID manually.";
         }
         return "";
       },
@@ -609,8 +903,10 @@ document.addEventListener("alpine:init", () => {
         this.editor.nameConflict = null;
         this.editor.form = emptyEditorForm();
         this.editor.seriesRowErrors = [];
+        this.editor.returnFocusId = "new-block-btn";
         this.editor.open = true;
         this.focusEditorSoon();
+        void this.loadMedia();
       },
 
       openEdit(block) {
@@ -620,8 +916,25 @@ document.addEventListener("alpine:init", () => {
         this.editor.nameConflict = null;
         this.editor.form = formFromSpec(block.spec, block.enabled);
         this.editor.seriesRowErrors = this.editor.form.series.map(() => null);
+        // Derive the picker's starting mode from the loaded cron: Simple
+        // mode (pre-parsed) when representable, Cron mode with an
+        // explanatory note otherwise -- same rule setScheduleMode("simple")
+        // applies on an explicit mode switch, applied once up front here
+        // so the operator isn't shown a picker that doesn't match what's
+        // actually stored.
+        const parsed = parseCronToSimple(this.editor.form.cron);
+        if (parsed) {
+          this.editor.form.simpleSchedule = parsed;
+          this.editor.form.scheduleMode = "simple";
+          this.editor.form.scheduleLockNote = null;
+        } else {
+          this.editor.form.scheduleMode = "cron";
+          this.editor.form.scheduleLockNote = "This cron expression can't be represented in Simple mode.";
+        }
+        this.editor.returnFocusId = `block-edit-${block.id}`;
         this.editor.open = true;
         this.focusEditorSoon();
+        void this.loadMedia();
       },
 
       closeEditor() {
@@ -632,6 +945,7 @@ document.addEventListener("alpine:init", () => {
         this.editor.nameConflict = null;
         this.editor.seriesRowErrors = [];
         this.editor.form = emptyEditorForm();
+        this.focusReturnSoon();
       },
 
       // The editor panel sits above the list in document order, so opening
@@ -647,6 +961,21 @@ document.addEventListener("alpine:init", () => {
           const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
           panel?.scrollIntoView?.({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
           document.getElementById("editor-name")?.focus();
+        });
+      },
+
+      // Moves focus back to whatever opened the editor once the x-show
+      // swap has hidden the panel -- otherwise focus is left stranded on
+      // the now-removed Cancel/close-X button (the browser drops it to
+      // <body>), silent to a keyboard or screen-reader user. Same
+      // $nextTick idiom as focusEditorSoon() above and requestDelete()
+      // below; falls back to the toolbar's "+ New Block" button if the
+      // row-specific id (edit mode) is gone by the time this runs, e.g.
+      // performDelete() closing an editor whose own row it just removed.
+      focusReturnSoon() {
+        const id = this.editor.returnFocusId;
+        this.$nextTick(() => {
+          (document.getElementById(id) ?? document.getElementById("new-block-btn"))?.focus();
         });
       },
 
