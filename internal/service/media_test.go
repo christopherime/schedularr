@@ -63,10 +63,10 @@ func newFakeLibraryTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Se
 		inc()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(tunarr.ProgramSearchResponse{
-			Results: f.programs,
-			Total:   len(f.programs),
-			Page:    1,
-			Limit:   100,
+			Results:    f.programs,
+			Page:       1,
+			TotalPages: 1,
+			TotalHits:  len(f.programs),
 		})
 	})
 
@@ -242,4 +242,80 @@ func TestRunner_MediaMeta_EmptyLibrary_ReturnsEmptyNonNilSlices(t *testing.T) {
 	assert.Empty(t, meta.Genres)
 	assert.NotNil(t, meta.Ratings)
 	assert.Empty(t, meta.Ratings)
+}
+
+// nestedShowMediaTestPrograms mirrors mediaTestPrograms above but in the
+// live wire shape: no episode sets a flat ShowTitle or Rating, only a
+// nested Show object -- exactly what a real Tunarr /api/programs/search
+// "episode" result looks like (see tunarr.Program.ShowTitle's doc comment
+// in models.go). Genres stay flat on each episode, matching a live
+// Episode result's own "genres" field (unlike show identity/rating, genre
+// data was never nested to begin with, so it needs no hydration). Round
+// -tripped through fakeLibraryTunarr's real JSON encode/decode, this
+// exercises tunarr.Client.SearchPrograms's hydrateEpisodeShowFields, not
+// just this package's own field access.
+func nestedShowMediaTestPrograms() []tunarr.Program {
+	return []tunarr.Program{
+		{
+			ID: "e1", Type: "episode", Title: "Pilot",
+			SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000,
+			Genres: []tunarr.Genre{{Name: "Comedy"}},
+			Show: &tunarr.Show{
+				UUID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Title: "The Office", Rating: "TV-14",
+			},
+		},
+		{
+			ID: "e2", Type: "episode", Title: "Diversity Day",
+			SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_320_000,
+			Genres: []tunarr.Genre{{Name: "Comedy"}},
+			Show: &tunarr.Show{
+				UUID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Title: "The Office", Rating: "TV-14",
+			},
+		},
+		{
+			ID: "e3", Type: "episode", Title: "Pilot",
+			SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000,
+			Genres: []tunarr.Genre{{Name: "Comedy"}, {Name: "Mockumentary"}},
+			Show: &tunarr.Show{
+				UUID: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", Title: "Parks and Recreation", Rating: "TV-PG",
+			},
+		},
+		{
+			ID: "m1", Type: "movie", Title: "The Matrix", Duration: 8_160_000,
+			Rating: "R", Genres: []tunarr.Genre{{Name: "Action"}, {Name: "Sci-Fi"}},
+		},
+	}
+}
+
+// TestRunner_MediaShows_LiveNestedShowShape_HydratesAndGroups proves GET
+// /media/shows returns non-empty results against a live-shaped Tunarr
+// library, not just this package's own flat-shaped fixtures: episodes
+// whose show identity only ever arrives nested under Program.Show still
+// group into the correct show once tunarr.Client hydrates ShowTitle from
+// it.
+func TestRunner_MediaShows_LiveNestedShowShape_HydratesAndGroups(t *testing.T) {
+	server, _ := newFakeLibraryTunarr(t, nestedShowMediaTestPrograms())
+	r := newMediaTestRunner(t, server.URL)
+
+	shows, err := r.MediaShows(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []MediaShow{
+		{Title: "Parks and Recreation", EpisodeCount: 1},
+		{Title: "The Office", EpisodeCount: 2},
+	}, shows)
+}
+
+// TestRunner_MediaMeta_LiveNestedShowShape_HydratesRatings mirrors
+// TestRunner_MediaShows_LiveNestedShowShape_HydratesAndGroups for
+// MediaMeta: a live episode carries no rating of its own at all, only its
+// nested show does, so Ratings would be missing every TV rating without
+// hydration.
+func TestRunner_MediaMeta_LiveNestedShowShape_HydratesRatings(t *testing.T) {
+	server, _ := newFakeLibraryTunarr(t, nestedShowMediaTestPrograms())
+	r := newMediaTestRunner(t, server.URL)
+
+	meta, err := r.MediaMeta(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Action", "Comedy", "Mockumentary", "Sci-Fi"}, meta.Genres)
+	assert.Equal(t, []string{"R", "TV-14", "TV-PG"}, meta.Ratings)
 }

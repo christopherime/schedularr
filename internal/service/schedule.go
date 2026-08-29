@@ -374,8 +374,16 @@ func (r *Runner) fetchSingleLibrary(ctx context.Context, lib tunarr.Library) []t
 
 		allPrograms = append(allPrograms, resp.Results...)
 
-		// Check if we've fetched all programs
-		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
+		// Stop once every page has been fetched. resp.TotalPages is the
+		// live envelope's authoritative page count (POST
+		// /api/programs/search returns {results, page, totalPages,
+		// totalHits, facetDistribution} -- there is no "total"/"limit"
+		// key; see tunarr.ProgramSearchResponse). page == resp.TotalPages
+		// means the page just fetched was the last one. The
+		// len(resp.Results) == 0 fallback guards against an unexpected
+		// TotalPages of 0 (or a server that never reports it) causing an
+		// infinite loop.
+		if len(resp.Results) == 0 || page >= resp.TotalPages {
 			break
 		}
 		page++
@@ -404,8 +412,10 @@ func (r *Runner) fetchAllProgramsViaSearch(ctx context.Context) ([]tunarr.Progra
 
 		allPrograms = append(allPrograms, resp.Results...)
 
-		// Check if we've fetched all programs
-		if len(resp.Results) < limit || len(allPrograms) >= resp.Total {
+		// See the matching comment in fetchSingleLibrary above: resp.Total
+		// never existed on a live response, so this used to stop after the
+		// first page for any library/search result over `limit` programs.
+		if len(resp.Results) == 0 || page >= resp.TotalPages {
 			break
 		}
 		page++

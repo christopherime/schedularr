@@ -59,39 +59,36 @@ type Program struct {
 	// (findEpisode/planSeriesForConfig, internal/scheduler/engine.go) and
 	// internal/service.Runner.MediaShows both group/match on.
 	//
-	// This field's tag used to be `json:"-"`, meaning encoding/json
-	// silently dropped it on every marshal *and* unmarshal -- so a real
-	// SearchPrograms HTTP response could never populate it, and neither
-	// could a fake test server round-tripping a tunarr.Program value
-	// through actual JSON (only a Go struct literal, bypassing JSON
-	// entirely, could ever produce a non-empty ShowTitle). That gap was
-	// previously documented and deliberately left alone in
-	// internal/service/schedule_test.go
-	// (TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched's
-	// doc comment) for a task where it didn't matter; it directly blocks
-	// internal/service.Runner.MediaShows, whose entire job is grouping by
-	// this field, so this task fixes the tag to accept a flat "showTitle"
-	// key -- matching testdata/programs/*.json and this package's own
-	// README-documented fixture format.
-	//
-	// This does not fully match a *live* Tunarr instance: per
-	// docs/tunarr/openapi.json (the vendored Tunarr 1.0.16 OpenAPI spec),
-	// a real /api/programs/search "episode" result nests show data under a
-	// "show" object ({"show": {"title": ..., "uuid": ..., "rating": ...,
-	// "genres": ...}}), not a flat "showTitle" string -- and episode
-	// entries carry no "rating" of their own at all, only via that nested
-	// show. Modeling that nested shape (and updating every ShowTitle
-	// caller's assumptions, notably the season/episode numbers below,
-	// which have the same flat-vs-nested mismatch) is a larger client
-	// change with its own blast radius across scheduler.Engine, out of
-	// scope here; see this task's report for the full field-by-field
-	// evidence. This fix only widens what already-flat-shaped input (this
-	// package's own test fixtures, and any Tunarr deployment that happens
-	// to emit a flat showTitle) deserializes into -- it does not change
-	// behavior for a payload that omits the key entirely, which is what a
-	// nested-shape real response looks like from this struct's point of
-	// view today.
+	// The "showTitle" tag accepts a flat key for fixture/test compat
+	// (testdata/programs/*.json, this package's own tests, and any Tunarr
+	// deployment that happens to emit a flat showTitle) -- but a *live*
+	// Tunarr 1.3.13 instance, live-verified against
+	// docs/tunarr/openapi.json's Episode/Show schemas this session, never
+	// sends that key at all: a real POST /api/programs/search "episode"
+	// result nests show identity under a "show" object instead (see the
+	// Show field below), and carries no "rating" of its own -- only Show's
+	// does. Client.SearchPrograms and Client.GetFillerPrograms
+	// (client.go's hydrateEpisodeShowFields, the single post-unmarshal
+	// choke point both call) fill ShowTitle from Show.Title -- and Rating
+	// from Show.Rating -- whenever Show is non-nil and the flat field came
+	// back empty, so a live response now populates both exactly like a
+	// flat-shaped fixture always has. Hydration never overwrites an
+	// already-non-empty flat value, so existing fixtures round-trip
+	// unchanged. Season/episode numbers have the same flat-vs-nested
+	// mismatch (Tunarr nests them under "season"/uses "episodeNumber" only
+	// on Episode, no flat "seasonNumber") and are NOT hydrated here -- out
+	// of scope for this fix; scheduler.Engine's findEpisode still compares
+	// the flat SeasonNumber/EpisodeNumber fields, which a live response
+	// still cannot populate.
 	ShowTitle string `json:"showTitle,omitempty"`
+
+	// Show carries the nested show object a live Tunarr "episode" search
+	// result actually returns (see ShowTitle's doc comment above). Only
+	// ever set for Type == "episode" results; nil for movies, tracks, and
+	// every flat-shaped fixture that predates this field. Not read
+	// directly by any caller today -- hydrateEpisodeShowFields consumes it
+	// to populate ShowTitle/Rating, which is what callers actually read.
+	Show *Show `json:"show,omitempty"`
 
 	// Source information
 	SourceType    string `json:"sourceType,omitempty"` // plex, jellyfin, emby, local
@@ -223,11 +220,22 @@ type ProgramSearchRequest struct {
 }
 
 // ProgramSearchResponse represents the response from POST /api/programs/search.
+//
+// Field names match the live envelope, live-verified against Tunarr 1.3.13
+// this session and corroborated by docs/tunarr/openapi.json: {"results": [...],
+// "page": N, "totalPages": N, "totalHits": N, "facetDistribution": {...}}.
+// There is no "total" or "limit" key -- a prior version of this struct
+// modeled those instead of TotalHits/TotalPages, so they always
+// deserialized to zero against a real response, which made every
+// resp.Total-based pagination loop (internal/service/schedule.go) stop
+// after its first page regardless of how many programs actually matched.
+// FacetDistribution is part of the envelope but unused by any caller today,
+// so it isn't modeled here.
 type ProgramSearchResponse struct {
-	Results []Program `json:"results"`
-	Total   int       `json:"total"`
-	Page    int       `json:"page"`
-	Limit   int       `json:"limit"`
+	Results    []Program `json:"results"`
+	Page       int       `json:"page"`
+	TotalPages int       `json:"totalPages"`
+	TotalHits  int       `json:"totalHits"`
 }
 
 // ScheduleSlot represents a time slot in a channel schedule.

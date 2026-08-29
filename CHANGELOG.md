@@ -131,6 +131,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The interval-based daemon command is gone; see "`serve` replaces
   `run`" above.
 
+### Fixed - 2026-08-29
+
+#### Tunarr wire format: nested show hydration and pagination truncation
+
+Two live-verified bugs against a real Tunarr 1.3.13 instance, both in
+`internal/external/tunarr`: schedularr's Tunarr client was built against
+an invented response shape that happened to satisfy this repo's own test
+fixtures but never matched what Tunarr actually sends over the wire.
+
+- **Series-block scheduling now works against a live Tunarr instance.** A
+  live `/api/programs/search` "episode" result nests show identity under a
+  `show` object (`{"show": {"title": ..., "rating": ...}}`) instead of a
+  flat `showTitle`/`rating` key -- `tunarr.Program` didn't model that
+  nesting at all, so `ShowTitle` (and an episode's effective `Rating`)
+  always deserialized empty from real data, silently starving every
+  `series`-type block (`scheduler.Engine`'s `findEpisode` matches on
+  `ShowTitle`) and returning empty results from `GET /media/shows`/`GET
+  /media/meta`. Added `tunarr.Program.Show *Show` to model the nested
+  object, and `hydrateEpisodeShowFields`
+  (`internal/external/tunarr/client.go`) -- the single choke point
+  `SearchPrograms` and `GetFillerPrograms` both run their results through
+  -- fills `ShowTitle`/`Rating` from it whenever the flat field comes back
+  empty. A flat `showTitle`/`rating` key (this repo's own
+  `testdata/programs/*.json` fixtures) still works unchanged: hydration
+  never overrides an already-set flat value.
+- **Libraries and searches over 100 programs are no longer silently
+  truncated to their first page.** `tunarr.ProgramSearchResponse` modeled
+  a `total`/`limit` pair no live response actually sends -- the real
+  envelope is `{results, page, totalPages, totalHits,
+  facetDistribution}` -- so `resp.Total` always deserialized to `0`, and
+  `internal/service.Runner`'s pagination loops
+  (`fetchSingleLibrary`/`fetchAllProgramsViaSearch`, schedule.go's two
+  `for { ... SearchPrograms ... }` loops) stopped after the very first
+  100-program page every time,
+  regardless of how many programs actually matched. Replaced `Total`/
+  `Limit` with `TotalPages`/`TotalHits` (matching the live envelope; no
+  legacy fields kept) and fixed both loops to continue until `page >=
+  resp.TotalPages`.
+
+Both fixes are pinned by tests running an actual fake-Tunarr HTTP round
+trip in the live wire shape (not just Go struct literals bypassing JSON):
+`internal/external/tunarr/client_test.go` decodes a hand-written
+live-shaped response body directly; `internal/service/schedule_test.go`
+adds a 250-program, 3-page fake Tunarr proving the fetch returns all 250
+(not 100), and a series-block end-to-end test proving an episode whose
+show identity only ever arrives nested still matches a
+`SeriesConfig.ShowTitle`; `internal/service/media_test.go` adds a
+nested-shape fixture variant for `MediaShows`/`MediaMeta`.
+
 ### Added - 2026-01-12
 
 #### CUE Schema Integration

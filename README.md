@@ -725,19 +725,23 @@ Notes:
   own connectivity message, so it's logged server-side only, matching
   `writeScheduleRunnerError`'s convention). An empty library with Tunarr
   reachable is a normal `200` with empty arrays, not an error.
-- `tunarr.Program.ShowTitle` used to be tagged `json:"-"`, so no episode
-  fetched over HTTP ever actually carried a show title -- a pre-existing
-  gap that also silently affected `series`-block scheduling
-  (`scheduler.Engine`'s episode matching keys off the same field). Fixing
-  it to accept a flat `showTitle` key (matching this repo's own
-  `testdata/programs/*.json` fixtures) was necessary to make `GET
-  /media/shows` return anything against those fixtures, and unblocks
-  series matching as a side effect. It does not fully match a live Tunarr
-  instance: the real `/api/programs/search` response nests episode show
-  data under a `show` object (see `docs/tunarr/openapi.json`) that this
-  client does not model yet, so `GET /media/shows` still returns an empty
-  list, and `GET /media/meta`'s `ratings` omits every TV rating, against
-  an unmodified live Tunarr deployment today.
+- A live Tunarr `/api/programs/search` "episode" result never sends a flat
+  `showTitle` (or `rating`) key at all -- it nests show identity under a
+  `show` object instead (`{"show": {"title": ..., "rating": ..., ...}}`,
+  live-verified against Tunarr 1.3.13 and corroborated by
+  `docs/tunarr/openapi.json`'s `Episode`/`Show` schemas). `tunarr.Program`
+  still exposes flat `ShowTitle`/`Rating` fields -- accepting a flat
+  `showTitle`/`rating` key directly, for this repo's own
+  `testdata/programs/*.json` fixtures and tests -- but
+  `tunarr.Client.SearchPrograms`/`GetFillerPrograms` now also hydrate both
+  from the nested `show` object whenever the flat field comes back empty
+  (`hydrateEpisodeShowFields` in `internal/external/tunarr/client.go`).
+  So `GET /media/shows` and `GET /media/meta`'s `ratings` work against a
+  real, unmodified live Tunarr deployment today, not just flat-shaped
+  fixtures -- and the same hydration is what makes `series`-block
+  scheduling (`scheduler.Engine`'s episode matching keys off
+  `Program.ShowTitle`) actually match episodes fetched from a live
+  instance.
 
 ### Middleware
 

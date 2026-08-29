@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -55,11 +56,18 @@ func newFakeTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Server, *
 	})
 	mux.HandleFunc("/api/programs/search", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// Returns every program in one page regardless of the requested
+		// page/limit -- so TotalPages is always 1, matching the live
+		// envelope's actual semantics (no legacy "total"/"limit" keys; see
+		// tunarr.ProgramSearchResponse) closely enough for tests that don't
+		// care about pagination itself. See newPaginatedFakeTunarr below for
+		// a fake that actually paginates, used to pin the fetch-truncation
+		// fix.
 		_ = json.NewEncoder(w).Encode(tunarr.ProgramSearchResponse{
-			Results: f.programs,
-			Total:   len(f.programs),
-			Page:    1,
-			Limit:   100,
+			Results:    f.programs,
+			Page:       1,
+			TotalPages: 1,
+			TotalHits:  len(f.programs),
 		})
 	})
 	mux.HandleFunc("/api/channels/", func(w http.ResponseWriter, r *http.Request) {
@@ -299,14 +307,14 @@ func programsForChannelScopeTest() []tunarr.Program {
 // The fixture: channel-1 has a filter block (applied); channel-2 has a
 // series block that is never applied. The series block's SeriesConfig
 // ShowTitle is deliberately "" -- matching a canned "episode" program
-// whose ShowTitle is also, unavoidably, "" after the HTTP round trip:
-// tunarr.Program.ShowTitle is tagged `json:"-"`
-// (internal/external/tunarr/models.go) and so is never actually populated
-// by SearchPrograms over HTTP in this codebase today, for any show title
-// -- a separate, pre-existing gap outside this fix's scope. Using "" on
-// both sides is what makes findEpisode's match succeed despite that gap,
-// which is what makes this a *discriminating* regression test: without
-// the blocksForChannel pre-filter in Run, channel-2's series state would
+// whose ShowTitle is also "" after the HTTP round trip, since that
+// program (programsForChannelScopeTest) sets neither a flat ShowTitle nor
+// a nested Show, so tunarr.Client's hydrateEpisodeShowFields has nothing
+// to hydrate from (see tunarr.Program.ShowTitle's doc comment in
+// models.go for the flat/nested/hydration contract this now follows).
+// Using "" on both sides is what makes findEpisode's match succeed, which
+// is what makes this a *discriminating* regression test: without the
+// blocksForChannel pre-filter in Run, channel-2's series state would
 // visibly start advancing (and get committed) here; with it, this test
 // fails loudly if that guarantee ever regresses, rather than passing
 // vacuously regardless of whether scoping works.
@@ -459,4 +467,228 @@ func TestRunner_Run_Apply_UsesConfiguredHistoryWindowForCleanup(t *testing.T) {
 		"a 10-day-old entry must survive Commit's cleanup when history_retention is configured to 30 days -- the engine's old hardcoded 7-day default would have pruned it")
 	assert.NotContains(t, ids, "pruned-40d",
 		"a 40-day-old entry must still be pruned even under the wider configured 30-day window")
+}
+
+// makeMovies returns n distinct "movie" programs, used by the pagination
+// regression tests below where the content doesn't matter, only the
+// count.
+func makeMovies(n int) []tunarr.Program {
+	programs := make([]tunarr.Program, n)
+	for i := range programs {
+		programs[i] = tunarr.Program{
+			ID:       fmt.Sprintf("prog-%03d", i),
+			Title:    fmt.Sprintf("Movie %03d", i),
+			Duration: 1_800_000,
+			Type:     "movie",
+		}
+	}
+	return programs
+}
+
+// paginatedSearchHandler returns an /api/programs/search handler that
+// actually respects the requested page/limit against all, reporting
+// TotalHits/TotalPages against the live envelope shape (see
+// tunarr.ProgramSearchResponse's doc comment) -- unlike
+// fakeTunarr/fakeLibraryTunarr's handlers, which always return every
+// program in a single TotalPages: 1 response regardless of what was
+// requested. Shared by the two pagination-truncation regression tests
+// below: one exercising fetchAllProgramsViaSearch (the
+// zero-media-source fallback fetchPrograms takes), one exercising
+// fetchSingleLibrary/fetchLibraryPrograms (the primary, library-scoped
+// path Run/MediaShows/MediaMeta actually use day to day).
+func paginatedSearchHandler(t *testing.T, all []tunarr.Program) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req tunarr.ProgramSearchRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+
+		page := req.Page
+		if page < 1 {
+			page = 1
+		}
+		limit := req.Limit
+		if limit <= 0 {
+			limit = len(all)
+		}
+
+		start := (page - 1) * limit
+		if start > len(all) {
+			start = len(all)
+		}
+		end := start + limit
+		if end > len(all) {
+			end = len(all)
+		}
+
+		totalPages := (len(all) + limit - 1) / limit
+		if totalPages == 0 {
+			totalPages = 1
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tunarr.ProgramSearchResponse{
+			Results:    all[start:end],
+			Page:       page,
+			TotalPages: totalPages,
+			TotalHits:  len(all),
+		})
+	}
+}
+
+// newPaginatedFakeTunarr reports zero media sources (like fakeTunarr) so
+// fetchPrograms falls through to fetchAllProgramsViaSearch, but its
+// /api/programs/search handler actually paginates -- see
+// paginatedSearchHandler.
+func newPaginatedFakeTunarr(t *testing.T, all []tunarr.Program) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/media-sources", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]tunarr.MediaSource{})
+	})
+	mux.HandleFunc("/api/programs/search", paginatedSearchHandler(t, all))
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+// newPaginatedFakeLibraryTunarr reports one media source with one library
+// (like fakeLibraryTunarr in media_test.go) so fetchLibraryPrograms's
+// fetchSingleLibrary is what actually pages through all of `all`, rather
+// than the SearchPrograms-only fallback newPaginatedFakeTunarr exercises.
+func newPaginatedFakeLibraryTunarr(t *testing.T, all []tunarr.Program) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/media-sources", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]tunarr.MediaSource{{ID: "src-1", Name: "Plex", Type: "plex"}})
+	})
+	mux.HandleFunc("/api/media-sources/src-1/libraries", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]tunarr.Library{{ID: "lib-1", Name: "Movies", MediaType: "movies"}})
+	})
+	mux.HandleFunc("/api/programs/search", paginatedSearchHandler(t, all))
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+// TestRunner_fetchAllProgramsViaSearch_FetchesEveryPage is the regression
+// test for the pagination-truncation bug: a fake Tunarr library of 250
+// programs, paginated 100 per page (3 pages: 100+100+50, totalHits: 250),
+// must yield all 250 programs -- not just the first page's 100.
+//
+// Before the fix, tunarr.ProgramSearchResponse modeled a "total"/"limit"
+// pair no live response actually sends, so resp.Total silently
+// deserialized to its zero value every time. fetchAllProgramsViaSearch's
+// old loop condition, `len(resp.Results) < limit || len(allPrograms) >=
+// resp.Total`, breaks on that second clause the moment len(allPrograms)
+// (positive, after page 1) is compared >= 0 -- which is always true -- so
+// the loop stopped after exactly one page regardless of how many programs
+// actually matched. This test's 250-program, 3-page fixture would have
+// returned only the first 100 programs under that bug.
+func TestRunner_fetchAllProgramsViaSearch_FetchesEveryPage(t *testing.T) {
+	all := makeMovies(250)
+	server := newPaginatedFakeTunarr(t, all)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	got, err := r.fetchAllProgramsViaSearch(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, got, 250,
+		"must fetch every page (100+100+50, totalHits: 250), not stop after the first page's 100")
+}
+
+// TestRunner_fetchLibraryPrograms_FetchesEveryPage mirrors
+// TestRunner_fetchAllProgramsViaSearch_FetchesEveryPage above, but against
+// fetchSingleLibrary/fetchLibraryPrograms -- the primary, library-scoped
+// fetch path Run/MediaShows/MediaMeta take when Tunarr reports at least
+// one media source and library, which fetchAllProgramsViaSearch's
+// zero-media-source fallback never exercises. Same bug, same fix, same
+// 250-programs-across-3-pages fixture.
+func TestRunner_fetchLibraryPrograms_FetchesEveryPage(t *testing.T) {
+	all := makeMovies(250)
+	server := newPaginatedFakeLibraryTunarr(t, all)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	got := r.fetchTunarrContent(context.Background())
+	assert.Len(t, got, 250,
+		"the primary library-scoped fetch path must also paginate through every page, not just SearchPrograms' fallback")
+}
+
+// TestRunner_Run_SeriesBlock_MatchesEpisodeFromNestedShowObject is the
+// end-to-end regression test for the show-hydration bug: a series block
+// whose SeriesConfig.ShowTitle is "The Office" must match an episode whose
+// show identity only ever arrives nested under Program.Show -- exactly
+// what a live Tunarr /api/programs/search response looks like (see
+// tunarr.Program.ShowTitle's doc comment in models.go) -- with no flat
+// "showTitle" key anywhere in the wire response. Before
+// hydrateEpisodeShowFields (internal/external/tunarr/client.go) existed,
+// this episode would decode with an empty ShowTitle and
+// scheduler.Engine's findEpisode would never match it against the block's
+// SeriesConfig, silently starving the series block every run. This is the
+// test that proves series scheduling (e.g. a Saturday-night block) works
+// against a live-shaped Tunarr response, not just this package's own
+// flat-shaped fixtures.
+func TestRunner_Run_SeriesBlock_MatchesEpisodeFromNestedShowObject(t *testing.T) {
+	episode := tunarr.Program{
+		ID: "ep-1", Title: "Pilot", Type: "episode",
+		SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000,
+		// No flat ShowTitle/Rating -- exactly what a live Tunarr response
+		// sends: show identity only ever arrives nested.
+		Show: &tunarr.Show{
+			UUID:   "44444444-4444-4444-4444-444444444444",
+			Title:  "The Office",
+			Rating: "TV-14",
+		},
+	}
+	server, _ := newFakeTunarr(t, []tunarr.Program{episode})
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Evening Sitcoms", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Evening Sitcoms", Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1",
+			Type:   scheduler.BlockTypeSeries,
+			Series: []scheduler.SeriesConfig{{ShowTitle: "The Office", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	result, err := r.Run(ctx, Options{Days: 1, Apply: false})
+	require.NoError(t, err)
+
+	slots, ok := result.Channels["channel-1"]
+	require.True(t, ok, "expected a scheduled slot for channel-1's series block")
+	require.NotEmpty(t, slots)
+
+	var matchedPilot bool
+	for _, slot := range slots {
+		for _, p := range slot.Programs {
+			if p.Title == "Pilot" && p.ShowTitle == "The Office" {
+				matchedPilot = true
+			}
+		}
+	}
+	assert.True(t, matchedPilot,
+		`series block with SeriesConfig.ShowTitle == "The Office" must match the episode whose show identity only ever arrived nested under Program.Show`)
 }

@@ -35,20 +35,19 @@ type MediaMeta struct {
 //
 // Only Type == "episode" programs are grouped; a movie has no show to
 // belong to. A program whose ShowTitle is empty is skipped rather than
-// folded into a bogus "" show. That happens for every episode fetched from
-// a real Tunarr instance today: tunarr.Program.ShowTitle is tagged
-// `json:"-"` (internal/external/tunarr/models.go), so it is never actually
-// populated by a live SearchPrograms HTTP response -- a pre-existing gap
-// this method does not fix (see internal/service/schedule_test.go's
-// TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched doc
-// comment, which documents the same gap for scheduler.Engine's series
-// matching). MediaShows only ever sees a non-empty ShowTitle today when a
-// caller constructs tunarr.Program values directly (as this package's own
-// tests, and every scheduler engine test, already do) rather than
-// unmarshaling them from Tunarr's wire format. Fixing the client
-// deserialization is out of scope here -- see this task's report for the
-// full evidence trail -- and once it lands, this grouping starts working
-// against real data with no change needed on this end.
+// folded into a bogus "" show. tunarr.Program.ShowTitle is tagged
+// `json:"showTitle,omitempty"` (internal/external/tunarr/models.go), which
+// covers a flat-shaped fixture or test double directly -- and, for a real
+// Tunarr instance, tunarr.Client.SearchPrograms hydrates it from the
+// nested "show" object a live "episode" result actually carries
+// (hydrateEpisodeShowFields in internal/external/tunarr/client.go, the
+// single choke point that also covers GetFillerPrograms and every
+// library-scoped search fetchLibraryPrograms below issues). So a program
+// with an empty ShowTitle here means Tunarr genuinely has no show data for
+// it (or it isn't an episode at all), not a client-side deserialization
+// gap -- that gap (see git history around this comment, and this task's
+// report, for the "used to be tagged json:-" and later "nested vs. flat"
+// history) is now closed.
 func (r *Runner) MediaShows(ctx context.Context) ([]MediaShow, error) {
 	programs, err := r.fetchPrograms(ctx)
 	if err != nil {
@@ -80,13 +79,15 @@ func (r *Runner) MediaShows(ctx context.Context) ([]MediaShow, error) {
 // them.
 //
 // Unlike genres (tunarr.Program.Genres, tagged "genres" and populated for
-// both movie and episode entries), tunarr.Program.Rating is only ever
-// non-empty for Type == "movie" programs against a real Tunarr instance:
-// the real /api/programs/search "episode" response nests rating under a
-// "show" object schedularr's client does not currently model (see
-// docs/tunarr/openapi.json), so an episode's own Program.Rating field is
-// always "". That's a read of the same client gap MediaShows documents,
-// not a new one -- episodes simply don't contribute to Ratings today.
+// both movie and episode entries directly), a live Tunarr "episode" result
+// carries no rating of its own at all -- only its nested "show" object
+// does (see docs/tunarr/openapi.json's Episode/Show schemas, and
+// tunarr.Program.ShowTitle's doc comment in models.go). The same
+// hydrateEpisodeShowFields choke point MediaShows' doc comment describes
+// fills Program.Rating from Show.Rating whenever an episode's own Rating
+// came back empty, so episodes now contribute to Ratings here exactly like
+// movies do -- this is a read of the same client-side hydration, not a
+// second implementation of it.
 func (r *Runner) MediaMeta(ctx context.Context) (*MediaMeta, error) {
 	programs, err := r.fetchPrograms(ctx)
 	if err != nil {

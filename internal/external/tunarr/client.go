@@ -40,6 +40,41 @@ func validateProgram(p *Program) error {
 	return httpclient.Validate(p)
 }
 
+// hydrateEpisodeShowFields is the single post-unmarshal choke point every
+// []Program-decoding client method (SearchPrograms, GetFillerPrograms --
+// and, transitively, every library-scoped search
+// internal/service.Runner.fetchSingleLibrary issues through
+// SearchPrograms) runs its results through. A live Tunarr "episode" result
+// nests its show identity under a "show" object (Program.Show) instead of
+// the flat "showTitle"/"rating" keys a fixture or test double may set
+// directly (see Program.ShowTitle's doc comment in models.go) -- this
+// fills those flat, already-consumed fields (ShowTitle: read by
+// scheduler.Engine's findEpisode/planSeriesForConfig and
+// service.Runner.MediaShows; Rating: read by scheduler.Engine's Ratings
+// filter and service.Runner.MediaMeta) from the nested object whenever
+// they came back empty, so every downstream reader keeps working against
+// its existing flat-field contract without caring which shape the wire
+// response actually used.
+//
+// Hydration only ever fills an empty field -- it never overwrites a
+// non-empty flat value a caller/fixture already supplied -- and only
+// touches Type == "episode" programs with a non-nil Show; movies, tracks,
+// and any program Tunarr didn't nest a show onto are left untouched.
+func hydrateEpisodeShowFields(programs []Program) {
+	for i := range programs {
+		p := &programs[i]
+		if p.Type != "episode" || p.Show == nil {
+			continue
+		}
+		if p.ShowTitle == "" {
+			p.ShowTitle = p.Show.Title
+		}
+		if p.Rating == "" {
+			p.Rating = p.Show.Rating
+		}
+	}
+}
+
 // GetChannels retrieves all channels from the Tunarr instance.
 // GET /api/channels
 func (c *Client) GetChannels(ctx context.Context) ([]Channel, error) {
@@ -126,6 +161,8 @@ func (c *Client) SearchPrograms(ctx context.Context, req ProgramSearchRequest) (
 		return nil, fmt.Errorf("failed to search programs: %w", err)
 	}
 
+	hydrateEpisodeShowFields(response.Results)
+
 	for i := range response.Results {
 		if err := validateProgram(&response.Results[i]); err != nil {
 			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
@@ -157,6 +194,8 @@ func (c *Client) GetFillerPrograms(ctx context.Context, fillerListID string) ([]
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
 		return nil, fmt.Errorf("failed to get filler programs for list %s: %w", fillerListID, err)
 	}
+
+	hydrateEpisodeShowFields(programs)
 
 	for i := range programs {
 		if err := validateProgram(&programs[i]); err != nil {
