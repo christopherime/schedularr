@@ -279,6 +279,7 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	allowedDurationWithOverflow := targetDuration + maxOverflowMs
 
 	// Simple random shuffle and fill
+	// #nosec G404 - content shuffle for programming variety, not a security-sensitive value
 	rand.Shuffle(len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
@@ -541,6 +542,7 @@ func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Pro
 		return playlist, currentDuration
 	}
 
+	// #nosec G404 - content shuffle for programming variety, not a security-sensitive value
 	rand.Shuffle(len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
@@ -682,6 +684,7 @@ func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Progr
 	}
 
 	// Shuffle filler content for variety
+	// #nosec G404 - content shuffle for programming variety, not a security-sensitive value
 	rand.Shuffle(len(fillerContent), func(i, j int) {
 		fillerContent[i], fillerContent[j] = fillerContent[j], fillerContent[i]
 	})

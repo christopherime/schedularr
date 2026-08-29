@@ -34,18 +34,25 @@ test: ## Run tests with race detector
 	@echo "Running tests..."
 	@go test -race -cover ./...
 
-lint: ## Run golangci-lint
-	@echo "Running golangci-lint..."
-	@golangci-lint run
-	@echo "Running gosec..."
-	@gosec ./...
-	@echo "Running govulncheck..."
-	@govulncheck ./...
-	@if command -v npm >/dev/null 2>&1; then \
-		$(MAKE) web-check; \
+lint: ## Run golangci-lint, gosec, govulncheck, and web-check -- runs every step even if an earlier one fails, and reports all failures at the end
+	@status=0; \
+	echo "Running golangci-lint..."; \
+	golangci-lint run || status=1; \
+	echo "Running gosec..."; \
+	gosec ./... || status=1; \
+	echo "Running govulncheck..."; \
+	govulncheck ./... || status=1; \
+	if command -v npm >/dev/null 2>&1; then \
+		$(MAKE) web-check || status=1; \
 	else \
 		echo "npm not found -- skipping web-check"; \
-	fi
+	fi; \
+	if [ $$status -ne 0 ]; then \
+		echo "lint: one or more steps failed (see above)"; \
+	else \
+		echo "lint: all steps passed"; \
+	fi; \
+	exit $$status
 
 clean: ## Remove build artifacts
 	@echo "Cleaning build artifacts..."

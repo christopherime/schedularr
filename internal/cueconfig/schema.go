@@ -89,6 +89,7 @@ func (v *SchemaValidator) LoadConfig(data []byte, format string) (*Config, error
 // LoadConfigWithEnvInterpolation loads config from file, expanding environment variables
 func (v *SchemaValidator) LoadConfigWithEnvInterpolation(path string) (*Config, error) {
 	// Read file
+	// #nosec G304 - path is the operator's own --config/SCHEDULARR_CONFIG value
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -268,7 +269,8 @@ func combineSchemas(schemas ...string) string {
 		return schemas[0]
 	}
 
-	result := schemas[0]
+	var b strings.Builder
+	b.WriteString(schemas[0])
 	for i := 1; i < len(schemas); i++ {
 		// Strip "package schema" line from subsequent schemas
 		s := schemas[i]
@@ -281,9 +283,10 @@ func combineSchemas(schemas ...string) string {
 			}
 			filteredLines = append(filteredLines, line)
 		}
-		result += "\n" + strings.Join(filteredLines, "\n")
+		b.WriteByte('\n')
+		b.WriteString(strings.Join(filteredLines, "\n"))
 	}
-	return result
+	return b.String()
 }
 
 // mergeMap recursively merges src into dst, overwriting existing values.

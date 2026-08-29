@@ -163,6 +163,13 @@ func FindConfigFile(flagValue string) string {
 
 	// Priority 2: Environment variable
 	if envPath := os.Getenv(EnvConfigPath); envPath != "" {
+		// #nosec G703 -- envPath is the operator's own SCHEDULARR_CONFIG value,
+		// the same trust boundary as the --config flag above (which gosec's
+		// taint tracker doesn't flag, since it only treats os.Getenv/os.Args as
+		// tainted sources, not function parameters). Whoever can set this
+		// process's environment already has equivalent filesystem access, so
+		// there's no privilege boundary being crossed -- this is the intended
+		// "load a config from wherever the operator points at" behavior.
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath
 		}

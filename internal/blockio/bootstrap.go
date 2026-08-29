@@ -43,6 +43,7 @@ func Bootstrap(ctx context.Context, s *store.Store, path string, logger *slog.Lo
 		return 0, nil
 	}
 
+	// #nosec G304 - path is the operator's own scheduler_file config value
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

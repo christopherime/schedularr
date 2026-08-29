@@ -8,8 +8,14 @@ import (
 	_ "embed"
 )
 
+// ConfigSchema is the embedded contents of config.cue, the CUE schema for
+// the application config file (structure, validation, and defaults).
+//
 //go:embed config.cue
 var ConfigSchema string
 
+// SchedulerSchema is the embedded contents of scheduler.cue, the CUE schema
+// for the scheduler.yaml block-import file.
+//
 //go:embed scheduler.cue
 var SchedulerSchema string
