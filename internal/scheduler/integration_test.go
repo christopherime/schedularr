@@ -67,7 +67,7 @@ func TestIntegration_FullSchedulingWorkflow(t *testing.T) {
 	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
 	endTime := startTime.Add(7 * 24 * time.Hour)
 
-	schedule, err := engine.GenerateForTimeRange(startTime, endTime, programs)
+	schedule, _, err := engine.GenerateForTimeRange(startTime, endTime, programs)
 	if err != nil {
 		t.Fatalf("GenerateForTimeRange failed: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestIntegration_ConflictResolution(t *testing.T) {
 	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
 	endTime := startTime.Add(24 * time.Hour)
 
-	schedule, err := engine.GenerateForTimeRange(startTime, endTime, programs)
+	schedule, _, err := engine.GenerateForTimeRange(startTime, endTime, programs)
 	if err != nil {
 		t.Fatalf("GenerateForTimeRange failed: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestIntegration_SeriesSchedulingWithState(t *testing.T) {
 	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
 	endTime := startTime.Add(24 * time.Hour)
 
-	schedule, err := engine.GenerateForTimeRange(startTime, endTime, programs)
+	schedule, _, err := engine.GenerateForTimeRange(startTime, endTime, programs)
 	if err != nil {
 		t.Fatalf("GenerateForTimeRange failed: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestIntegration_SeriesStateRestoration(t *testing.T) {
 	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
 	endTime := startTime.Add(24 * time.Hour)
 
-	_, err = engine.GenerateForTimeRange(startTime, endTime, programs)
+	_, _, err = engine.GenerateForTimeRange(startTime, endTime, programs)
 	if err != nil {
 		t.Fatalf("GenerateForTimeRange failed: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestIntegration_MixedBlockTypes(t *testing.T) {
 	startTime := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC)
 	endTime := startTime.Add(24 * time.Hour)
 
-	schedule, err := engine.GenerateForTimeRange(startTime, endTime, allPrograms)
+	schedule, _, err := engine.GenerateForTimeRange(startTime, endTime, allPrograms)
 	if err != nil {
 		t.Fatalf("GenerateForTimeRange failed: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestIntegration_FilterValidation(t *testing.T) {
 	startTime := time.Date(2026, 1, 16, 0, 0, 0, 0, time.UTC)
 	endTime := startTime.Add(24 * time.Hour)
 
-	schedule, err := engine.GenerateForTimeRange(startTime, endTime, programs)
+	schedule, _, err := engine.GenerateForTimeRange(startTime, endTime, programs)
 	if err != nil {
 		t.Fatalf("GenerateForTimeRange failed: %v", err)
 	}

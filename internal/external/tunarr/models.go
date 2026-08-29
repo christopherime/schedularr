@@ -15,8 +15,23 @@ type Channel struct {
 	Name       string       `json:"name" validate:"required"`
 	Icon       *ChannelIcon `json:"icon,omitempty"`
 	GroupTitle string       `json:"groupTitle"`
-	Duration   int64        `json:"duration"`
-	Stealth    bool         `json:"stealth"`
+	// Duration is float64, not int64: live-verified this session that a
+	// real Tunarr instance's channel.duration (server-computed as the sum
+	// of its lineup items' own -- also float -- durations, see
+	// LineupRepository.ts's updateChannel) can come back with a fractional
+	// millisecond component (e.g. 691200000.9999), matching
+	// tunarr.Program.Duration's existing "float from Tunarr API"
+	// convention. An int64 field here used to make GetChannels's response
+	// decode fail on any such channel -- which, worse, is not a one-shot
+	// failure: internal/httpclient.Client's resty retry condition fires on
+	// any non-nil error regardless of HTTP status (see
+	// httpclient.DefaultConfig's AddRetryCondition), so a decode error
+	// alone triggered up to MaxRetries (3) extra live requests against
+	// Tunarr for a response shape that could never decode differently.
+	// This field is otherwise unused by any caller in this repo (grepped),
+	// so widening its type has no other effect.
+	Duration float64 `json:"duration"`
+	Stealth  bool    `json:"stealth"`
 }
 
 // Genre represents a genre with metadata.

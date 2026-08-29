@@ -73,6 +73,17 @@
     </p>
   </section>
 
+  <template x-if="plan && warnings().length > 0">
+    <div class="schedule-warnings" role="status">
+      <p class="schedule-warnings__title" x-text="warningsHeading()"></p>
+      <ul class="schedule-warnings__list">
+        <template x-for="(w, widx) in warnings()" :key="widx">
+          <li x-text="warningLabel(w)"></li>
+        </template>
+      </ul>
+    </div>
+  </template>
+
   <template x-if="applyError">
     <div class="problem" role="alert">
       <p class="problem__title" x-text="applyError.title"></p>

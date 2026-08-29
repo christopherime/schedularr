@@ -136,7 +136,11 @@ func (h *Handlers) writeScheduleRunnerError(w http.ResponseWriter, r *http.Reque
 }
 
 // planResultToGen converts a service.Result (the domain representation) to
-// a gen.PlanResult (the API wire shape).
+// a gen.PlanResult (the API wire shape). Warnings is omitted entirely
+// (nil, not an empty array) when result.Warnings is empty, matching
+// OpenAPI's `warnings` being optional -- a caller with nothing to report
+// sees no key at all, not a distracting `"warnings": []` on every
+// response.
 func planResultToGen(result *service.Result) gen.PlanResult {
 	channels := make(map[string][]gen.ScheduledSlot, len(result.Channels))
 	for channelID, slots := range result.Channels {
@@ -146,7 +150,28 @@ func planResultToGen(result *service.Result) gen.PlanResult {
 		}
 		channels[channelID] = list
 	}
-	return gen.PlanResult{Applied: result.Applied, Channels: channels}
+
+	plan := gen.PlanResult{Applied: result.Applied, Channels: channels}
+	if len(result.Warnings) > 0 {
+		warnings := make([]gen.Warning, 0, len(result.Warnings))
+		for _, w := range result.Warnings {
+			warnings = append(warnings, warningToGen(w))
+		}
+		plan.Warnings = &warnings
+	}
+	return plan
+}
+
+// warningToGen converts a scheduler.Warning into a gen.Warning.
+func warningToGen(w scheduler.Warning) gen.Warning {
+	blockName := w.BlockName
+	occurrenceStart := w.OccurrenceStart
+	blockingBlockName := w.BlockingBlockName
+	return gen.Warning{
+		BlockName:         &blockName,
+		OccurrenceStart:   &occurrenceStart,
+		BlockingBlockName: &blockingBlockName,
+	}
 }
 
 // slotToGen converts a scheduler.ScheduledSlot into a gen.ScheduledSlot.

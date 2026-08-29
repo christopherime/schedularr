@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-29
+
+A critical bug plus two smaller ones found during live multi-block
+testing against a real Tunarr 1.3.13 instance.
+
+### Fixed
+
+- **Apply is now idempotent per occurrence, instead of re-advancing
+  series cursors on every re-apply that still covered it.** Live
+  evidence: a Saturday-night block was planned with E01 on its first
+  apply, E04 after two more; a show's `series_state` drifted to S2E3
+  after a day of test applies with nothing having actually aired that
+  far. Root cause: the 24h apply window and the default 6h cron interval
+  mean the same future occurrence falls inside several consecutive
+  applies' windows, and every one of them re-ran `PlanBlock` from
+  scratch, each time advancing the series cursor and writing a fresh
+  `schedule_history` row for content that was never going to air
+  differently, since the next apply would just overwrite it anyway.
+  Conflict-dropped occurrences had the same problem one level worse:
+  `PlanBlock` ran (and advanced state) for every planned occurrence
+  *before* conflict resolution ever discarded the losing ones.
+  Fixed with per-`(block_name, occurrence_start)` idempotence, split by
+  block type:
+  - `internal/scheduler/engine.go`'s `GenerateForTimeRange` now runs in
+    three phases -- build occurrence "shells" (time only, no content),
+    resolve conflicts on the shells, *then* plan content only for
+    occurrences that survived -- so a conflict-dropped occurrence never
+    reaches `PlanBlock` and can't advance anything.
+  - Filter blocks: an already-committed occurrence (aired or not) is
+    replayed verbatim from `schedule_history` -- there's no
+    spec-derived cursor to re-derive for a random pick, so freezing the
+    choice once made is the only idempotent option.
+  - Series blocks needed more: users can (and do) edit a block's
+    `series` order, add/remove a series, or change
+    `episodes_per_block`/`duration` before an occurrence airs, and
+    expect that to take effect -- freezing the final program list like
+    a filter block would silently ignore such an edit. So a series
+    occurrence's per-show cursor *snapshot* (season/episode/completed/
+    disabled/run_count, captured immutably the first time it's ever
+    planned, in the new `series_occurrence_snapshots` table) is stored
+    separately from its assignment: a still-future occurrence is
+    re-derived every apply from that fixed snapshot plus the *current*
+    block spec (same snapshot + unchanged spec = idempotent; a spec
+    edit changes the result); once an occurrence's start time has
+    passed, it's replayed verbatim like a filter block, forever.
+  - `schedule_history` gained `occurrence_start`, `sequence`,
+    `duration_ms`, `title`, and `type` columns (migration `000003`) so
+    an occurrence's assignment can be looked up and fully reconstructed
+    by `(block_name, occurrence_start)` instead of only supporting the
+    existing recency-dedup query shape; `series_occurrence_snapshots`
+    (migration `000004`) is new.
+  - Also fixed a related `RunCount` inflation bug surfaced by testing
+    this: `markSeriesCompleted` used to re-run its bookkeeping (and
+    increment `run_count` again) every time a completed series was
+    re-examined within one wide apply window, not just once per actual
+    completion.
+  - Regression tests: two consecutive `Runner.Run(Apply: true)` calls
+    over the same window now produce byte-identical plans and leave
+    series state unchanged; a conflict-dropped series occurrence is
+    proven to never even create a `series_state` row; and the exact
+    reorder-before-airing scenario (commit `[A, B, C]`, reorder the spec
+    to `[C, A, B]`, re-apply -- same occurrence, new order, same episode
+    per show, unchanged series state) is covered directly.
+- **Conflict resolution is no longer invisible to API callers.**
+  Overlapping occurrences resolving by priority (or, tied, first-come)
+  used to be visible only in a server-side INFO log line -- `POST
+  /generate` and `POST /apply` responses carried nothing. `PlanResult`
+  gained an optional `warnings` array (`api/openapi.yaml`, both
+  codegens regenerated) listing each dropped occurrence's block name,
+  occurrence time, and the block it lost to; omitted entirely (not an
+  empty array) when there's nothing to report. The
+  [Web UI's Schedule page](docs/web-ui-guide.md#schedule-schedule) now
+  renders a warning panel above the channel list after every preview or
+  apply when the response carries any.
+- **A live Tunarr endpoint returning a fractional-millisecond channel
+  duration (observed: `691200000.9999`) no longer triggers a resty WARN
+  retry loop.** `tunarr.Channel.Duration` was `int64`, which failed to
+  decode that response at all; `internal/httpclient.Client`'s retry
+  condition fires on any non-nil error regardless of HTTP status, so
+  every such decode failure cost up to `MaxRetries` (3) extra live
+  requests against Tunarr for a response shape that could never decode
+  differently. Widened to `float64`, matching `tunarr.Program.Duration`'s
+  existing "float from Tunarr API" convention -- the field is otherwise
+  unused by any caller in this repo, so this has no other effect.
+  Regression test asserts both the decode and that the server is hit
+  exactly once (no retry).
+
 ## [0.2.1] - 2026-08-29
 
 Bugs found during the first live `--apply` against a real Tunarr 1.3.13

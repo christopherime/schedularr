@@ -131,6 +131,18 @@ fallback:
 
 Current season/episode, completion status, and run count persist per show in SQLite (`series_state` table), across restarts. State changes are pending in memory until the schedule applies successfully to Tunarr — commit on success, rollback (discard) on failure. See the [Web UI's Series page](web-ui-guide.md#series-series) for inline cursor editing, or `schedularr state` in the [CLI Reference](cli-reference.md#series-state) for the command-line equivalent.
 
+### Idempotent apply and editing a block before it airs
+
+A given block occurrence (its cron-computed start time) is only ever planned for real, advancing a series cursor, **once** — the first time any apply's window covers it. Because the default 6h cron interval re-applies more often than the 24h window it covers, the same not-yet-aired occurrence is re-examined by several consecutive applies; each of those re-examinations reuses what was already decided instead of re-planning from the live cursor, which is what makes repeated applies safe rather than silently skipping episodes ahead over time.
+
+That reuse still lets you edit a block before an occurrence airs and see the change take effect:
+
+- **Filter blocks**: once an occurrence's content is picked, it's frozen — reused verbatim on every later apply, aired or not. There's no "cursor" to re-derive for random content, so editing the filter criteria only affects occurrences not yet committed to (i.e. still outside every apply's window so far).
+- **Series blocks**: a not-yet-aired occurrence's content is *re-derived* on every apply, from a fixed starting cursor (each show's season/episode as of when the occurrence was first reached) combined with the block's **current** spec. Reordering `series`, adding or removing an entry, or changing `episodes_per_block`/`duration` before the occurrence airs changes what it schedules — same episodes, or a different set, per what the new spec says — without advancing or duplicating anything.
+- Once an occurrence's start time has passed, it's aired: frozen and replayed verbatim from then on, exactly like a filter block, regardless of any later spec edit.
+
+Conflict-dropped occurrences (see below) never reach this at all — they're excluded before planning, so they can't advance a cursor or get recorded.
+
 **Example — Sunday sitcom marathon, unlimited restarts:**
 
 ```yaml
@@ -222,7 +234,7 @@ The [Web UI's blocks editor](web-ui-guide.md#schedule-picker) offers a Simple mo
 
 ## Priority and conflict resolution
 
-When multiple blocks schedule content for overlapping time periods, the higher `priority` value wins; the conflicting lower-priority block is discarded entirely, and the resolution is logged.
+When multiple blocks schedule content for overlapping time periods, the higher `priority` value wins; the conflicting lower-priority block is discarded entirely. Every dropped occurrence is both logged server-side and reported in the API response's `warnings` array (`POST /generate` and `POST /apply`, see the [API Reference](api-reference.md#schedule)) — surfaced on the [Web UI's Schedule page](web-ui-guide.md#schedule-schedule) after every preview or apply, not just visible in a server log.
 
 ```text
 Block A: [10:00-12:00], priority 10

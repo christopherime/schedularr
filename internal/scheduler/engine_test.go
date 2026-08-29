@@ -72,9 +72,10 @@ func TestResolveConflicts(t *testing.T) {
 	block2 := Block{Name: "High Priority", Priority: 20}
 
 	tests := []struct {
-		name     string
-		slots    []ScheduledSlot
-		expected int
+		name            string
+		slots           []ScheduledSlot
+		expected        int
+		expectedDropped int
 	}{
 		{
 			name:     "no conflicts",
@@ -95,7 +96,8 @@ func TestResolveConflicts(t *testing.T) {
 					Block:     block2,
 				},
 			},
-			expected: 2,
+			expected:        2,
+			expectedDropped: 0,
 		},
 		{
 			name: "two overlapping slots - high priority wins",
@@ -111,7 +113,8 @@ func TestResolveConflicts(t *testing.T) {
 					Block:     block2,
 				},
 			},
-			expected: 1, // Only high priority should remain
+			expected:        1, // Only high priority should remain
+			expectedDropped: 1,
 		},
 	}
 
@@ -119,12 +122,19 @@ func TestResolveConflicts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a minimal engine to call the method
 			engine := &Engine{logger: slog.Default()}
-			resolved := engine.resolveConflicts(tt.slots)
+			resolved, dropped := engine.resolveConflicts(tt.slots)
 			assert.Len(t, resolved, tt.expected, "resolveConflicts returned wrong number of slots")
+			assert.Len(t, dropped, tt.expectedDropped, "resolveConflicts returned wrong number of warnings")
 
-			// If there were conflicts, verify high priority won
+			// If there were conflicts, verify high priority won and the
+			// warning correctly names the loser and its blocker.
 			if tt.name == "two overlapping slots - high priority wins" && len(resolved) > 0 {
 				assert.Equal(t, 20, resolved[0].Block.Priority, "Expected high priority block to win")
+				require.Len(t, dropped, 1)
+				assert.Equal(t, "Low Priority", dropped[0].BlockName)
+				assert.Equal(t, "High Priority", dropped[0].BlockingBlockName)
+				assert.Equal(t, block1.Name, dropped[0].BlockName)
+				assert.True(t, dropped[0].OccurrenceStart.Equal(time.Date(2026, 1, 11, 10, 0, 0, 0, time.UTC)))
 			}
 		})
 	}
@@ -159,7 +169,7 @@ func TestPlanBlock_WithoutFiller(t *testing.T) {
 		},
 	}
 
-	playlist, err := engine.PlanBlock(block, availablePrograms)
+	playlist, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 	require.Len(t, playlist, 2, "Expected 2 programs in playlist")
 
@@ -195,7 +205,7 @@ func TestPlanBlock_NoMatchingContent(t *testing.T) {
 		},
 	}
 
-	_, err := engine.PlanBlock(block, availablePrograms)
+	_, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	assert.Error(t, err, "Expected error when no content matches filter")
 }
 
@@ -224,7 +234,7 @@ func TestPlanBlock_UsesStoreHistory(t *testing.T) {
 		{ID: "prog-2", Title: "Fresh", Duration: 1800000, Type: "movie"},
 	}
 
-	playlist, err := engine.PlanBlock(block, availablePrograms)
+	playlist, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 	require.Len(t, playlist, 1, "Expected 1 program")
 	assert.Equal(t, "prog-2", playlist[0].ID, "Expected prog-2 after filtering")
@@ -285,7 +295,7 @@ func TestPlanBlock_Series(t *testing.T) {
 		{ID: "p3", Title: "Ep 3", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1800000, Type: "episode"},
 	}
 
-	playlist, err := engine.PlanBlock(block, availablePrograms)
+	playlist, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 	require.Len(t, playlist, 2, "Expected 2 episodes")
 	assert.Equal(t, 1, playlist[0].EpisodeNumber, "Expected Ep 1")
@@ -318,7 +328,7 @@ func TestPlanBlock_SeriesMarksCompleteWhenMissing(t *testing.T) {
 		{ID: "p1", Title: "Other Show", ShowTitle: "Other Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
 	}
 
-	playlist, err := engine.PlanBlock(block, availablePrograms)
+	playlist, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 	require.Empty(t, playlist, "Expected empty playlist")
 
@@ -359,7 +369,7 @@ func TestSeriesCompletion_Restart(t *testing.T) {
 		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
 	}
 
-	_, err := engine.PlanBlock(block, availablePrograms)
+	_, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 
 	state, ok := engine.pendingStates["Test Show"]
@@ -398,7 +408,7 @@ func TestSeriesCompletion_Disable(t *testing.T) {
 
 	availablePrograms := []tunarr.Program{}
 
-	_, err := engine.PlanBlock(block, availablePrograms)
+	_, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 
 	state, ok := engine.pendingStates["Test Show"]
@@ -438,7 +448,7 @@ func TestSeriesCompletion_MaxRuns(t *testing.T) {
 
 	availablePrograms := []tunarr.Program{}
 
-	_, err := engine.PlanBlock(block, availablePrograms)
+	_, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 
 	state, ok := engine.pendingStates["Test Show"]
@@ -481,7 +491,7 @@ func TestSeriesEpisodeSkipping(t *testing.T) {
 		{ID: "p5", Title: "Test Show S01E05", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 5, Duration: 1800000, Type: "episode"},
 	}
 
-	playlist, err := engine.PlanBlock(block, availablePrograms)
+	playlist, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 
 	// Should get E01, skip E02, get E03, get E05 (skipping E02 and E04)
@@ -527,11 +537,107 @@ func TestSeriesSkipDisabled(t *testing.T) {
 		{ID: "p1", Title: "Test Show S01E01", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1800000, Type: "episode"},
 	}
 
-	playlist, err := engine.PlanBlock(block, availablePrograms)
+	playlist, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock returned error")
 
 	// Should get empty playlist because series is disabled
 	assert.Empty(t, playlist, "Expected empty playlist for disabled series")
+}
+
+// programIDs extracts each program's GetID() in order, for asserting on
+// exact playback order.
+func programIDs(programs []tunarr.Program) []string {
+	ids := make([]string, len(programs))
+	for i := range programs {
+		ids[i] = programs[i].GetID()
+	}
+	return ids
+}
+
+// TestPlanBlock_SeriesReorder_ReDerivesInNewOrderWithoutAdvancingCursor is
+// the exact regression scenario the idempotent-apply design requires:
+// commit a not-yet-aired occurrence with series order [A, B, C], reorder
+// the block spec to [C, A, B], re-apply the SAME occurrence -- it must
+// re-plan in the new order with the SAME episode picked for each show (no
+// cursor advance), and persisted series state must be identical after
+// both applies. This is what makes editing a block's series order (or
+// adding/removing a series, or episodes_per_block/duration) visibly take
+// effect on an occurrence that hasn't aired yet, instead of being frozen
+// at first commit -- see PlanBlock's doc comment.
+func TestPlanBlock_SeriesReorder_ReDerivesInNewOrderWithoutAdvancingCursor(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 1, Duration: 600_000},
+		{ID: "b-s1e1", Type: "episode", ShowTitle: "Show B", SeasonNumber: 1, EpisodeNumber: 1, Duration: 600_000},
+		{ID: "c-s1e1", Type: "episode", ShowTitle: "Show C", SeasonNumber: 1, EpisodeNumber: 1, Duration: 600_000},
+	}
+
+	blockABC := Block{
+		Name: "Multi-Series Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{
+			{ShowTitle: "Show A", EpisodesPerBlock: 1},
+			{ShowTitle: "Show B", EpisodesPerBlock: 1},
+			{ShowTitle: "Show C", EpisodesPerBlock: 1},
+		},
+	}
+
+	engine := NewEngine(client, []Block{blockABC}, store, slog.Default(), time.UTC)
+
+	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
+	now := occurrenceStart.Add(-1 * time.Hour) // still in the future relative to "now"
+
+	ctx := context.Background()
+
+	// First apply: commits the occurrence with order [A, B, C].
+	first, err := engine.PlanBlock(blockABC, availablePrograms, occurrenceStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"a-s1e1", "b-s1e1", "c-s1e1"}, programIDs(first))
+
+	stateA1, err := store.GetSeriesState(ctx, "Show A")
+	require.NoError(t, err)
+	stateB1, err := store.GetSeriesState(ctx, "Show B")
+	require.NoError(t, err)
+	stateC1, err := store.GetSeriesState(ctx, "Show C")
+	require.NoError(t, err)
+	// Sanity check the first apply actually advanced these cursors (past
+	// S01E01) -- otherwise "identical after both applies" below would be
+	// true trivially, proving nothing.
+	require.Equal(t, 2, stateA1.CurrentEpisode)
+	require.Equal(t, 2, stateB1.CurrentEpisode)
+	require.Equal(t, 2, stateC1.CurrentEpisode)
+
+	// Reorder the block's series to [C, A, B] -- simulating a block edit
+	// made through the API before this occurrence airs.
+	blockCAB := blockABC
+	blockCAB.Series = []SeriesConfig{
+		{ShowTitle: "Show C", EpisodesPerBlock: 1},
+		{ShowTitle: "Show A", EpisodesPerBlock: 1},
+		{ShowTitle: "Show B", EpisodesPerBlock: 1},
+	}
+
+	// Second apply, same occurrence, same "now" (still future): must
+	// re-derive in the NEW order, picking the SAME episode for each show
+	// (from the fixed stored snapshot, not the now-advanced live cursor),
+	// and must not touch series state at all.
+	second, err := engine.PlanBlock(blockCAB, availablePrograms, occurrenceStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	assert.Equal(t, []string{"c-s1e1", "a-s1e1", "b-s1e1"}, programIDs(second),
+		"re-derived occurrence must reflect the new series order, with the same episode picked for each show")
+
+	stateA2, err := store.GetSeriesState(ctx, "Show A")
+	require.NoError(t, err)
+	stateB2, err := store.GetSeriesState(ctx, "Show B")
+	require.NoError(t, err)
+	stateC2, err := store.GetSeriesState(ctx, "Show C")
+	require.NoError(t, err)
+
+	assert.Equal(t, stateA1, stateA2, "Show A's series state must be identical after both applies")
+	assert.Equal(t, stateB1, stateB2, "Show B's series state must be identical after both applies")
+	assert.Equal(t, stateC1, stateC2, "Show C's series state must be identical after both applies")
 }
 
 func TestGenerateForTimeRange(t *testing.T) {
@@ -574,7 +680,7 @@ func TestGenerateForTimeRange(t *testing.T) {
 	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
+	schedule, _, err := engine.GenerateForTimeRange(start, end, availablePrograms)
 	require.NoError(t, err, "GenerateForTimeRange returned error")
 
 	// Should have schedule for channel-1
@@ -634,7 +740,7 @@ func TestGenerateForTimeRange_UsesConfiguredLocationForCronOccurrences(t *testin
 	start := time.Date(2026, 1, 12, 19, 0, 0, 0, time.UTC) // 21:00 local in loc
 	end := start.Add(30 * time.Hour)                       // wide enough for exactly one occurrence either way
 
-	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
+	schedule, _, err := engine.GenerateForTimeRange(start, end, availablePrograms)
 	require.NoError(t, err, "GenerateForTimeRange returned error")
 
 	slots, ok := schedule["channel-1"]
@@ -671,7 +777,7 @@ func TestGenerateForTimeRange_InvalidCron(t *testing.T) {
 	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	_, err := engine.GenerateForTimeRange(start, end, []tunarr.Program{})
+	_, _, err := engine.GenerateForTimeRange(start, end, []tunarr.Program{})
 	assert.Error(t, err, "Expected error for invalid cron expression")
 }
 
@@ -714,7 +820,7 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
+	schedule, warnings, err := engine.GenerateForTimeRange(start, end, availablePrograms)
 	require.NoError(t, err, "GenerateForTimeRange returned error")
 
 	programs, ok := schedule["channel-1"]
@@ -722,6 +828,13 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 
 	// Should have programs from both blocks, with high priority winning conflicts
 	assert.NotEmpty(t, programs, "Expected programs in schedule")
+
+	// The losing occurrence must be reported as a Warning, not just logged.
+	require.NotEmpty(t, warnings, "expected a Warning for the low-priority block's dropped occurrence")
+	for _, w := range warnings {
+		assert.Equal(t, "Low Priority Block", w.BlockName)
+		assert.Equal(t, "High Priority Block", w.BlockingBlockName)
+	}
 }
 
 func TestCommit(t *testing.T) {
@@ -1300,7 +1413,7 @@ func TestFindNextSeriesEpisode_FindsCurrent(t *testing.T) {
 		{ID: "e3", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1800000},
 	}
 
-	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+	ep := engine.findNextSeriesEpisode(engineSeriesContext{engine}, config, state, availablePrograms)
 
 	require.NotNil(t, ep, "Expected to find episode")
 	assert.Equal(t, "e2", ep.ID, "Expected episode e2")
@@ -1329,7 +1442,7 @@ func TestFindNextSeriesEpisode_SkipsEpisodes(t *testing.T) {
 		{ID: "e4", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 1, EpisodeNumber: 4, Duration: 1800000},
 	}
 
-	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+	ep := engine.findNextSeriesEpisode(engineSeriesContext{engine}, config, state, availablePrograms)
 
 	require.NotNil(t, ep, "Expected to find episode")
 	assert.Equal(t, "e4", ep.ID, "Expected episode e4 after skipping e2 and e3")
@@ -1357,7 +1470,7 @@ func TestFindNextSeriesEpisode_AdvancesToNextSeason(t *testing.T) {
 		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 2, Duration: 1800000},
 	}
 
-	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+	ep := engine.findNextSeriesEpisode(engineSeriesContext{engine}, config, state, availablePrograms)
 
 	require.NotNil(t, ep, "Expected to find next season episode")
 	assert.Equal(t, "s2e1", ep.ID, "Expected season 2 episode 1")
@@ -1386,7 +1499,7 @@ func TestFindNextSeriesEpisode_MarksCompleteWhenNoneFound(t *testing.T) {
 		{ID: "s2e1", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 1, Duration: 1800000},
 	}
 
-	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+	ep := engine.findNextSeriesEpisode(engineSeriesContext{engine}, config, state, availablePrograms)
 
 	assert.Nil(t, ep, "Expected nil when no episodes found")
 	assert.True(t, state.Completed, "Expected series to be marked as completed")
@@ -1414,7 +1527,7 @@ func TestFindNextSeriesEpisode_SkipsFirstEpisodeOfNewSeason(t *testing.T) {
 		{ID: "s2e2", Type: "episode", ShowTitle: "Test Show", SeasonNumber: 2, EpisodeNumber: 2, Duration: 1800000},
 	}
 
-	ep := engine.findNextSeriesEpisode(config, state, availablePrograms)
+	ep := engine.findNextSeriesEpisode(engineSeriesContext{engine}, config, state, availablePrograms)
 
 	require.NotNil(t, ep, "Expected to find episode after skipping S02E01")
 	assert.Equal(t, "s2e2", ep.ID, "Expected S02E02")
@@ -1489,7 +1602,7 @@ func TestPlanBlock_HistoryFallbackAllowsRepeats(t *testing.T) {
 	}
 
 	// Should still return content (allows repeats when all filtered)
-	playlist, err := engine.PlanBlock(block, availablePrograms)
+	playlist, err := engine.PlanBlock(block, availablePrograms, time.Now(), time.Now())
 	require.NoError(t, err, "PlanBlock should allow repeats when history filters everything")
 	assert.NotEmpty(t, playlist, "Expected playlist to contain repeated programs")
 }

@@ -79,6 +79,54 @@ func TestClient_GetChannels(t *testing.T) {
 	}
 }
 
+// TestClient_GetChannels_FractionalDuration is the regression test for a
+// live-observed bug: a real Tunarr instance's channel.duration can come
+// back with a fractional millisecond component (this session's exact
+// reported value, 691200000.9999) -- see Channel.Duration's doc comment
+// for why (it mirrors Program.Duration, itself a float, since Tunarr
+// computes a channel's duration as the sum of its lineup items' own
+// durations). Channel.Duration used to be int64, which failed to decode
+// this response at all.
+//
+// The request counter is the important assertion here, not just the
+// decode succeeding: internal/httpclient.Client retries on ANY non-nil
+// error regardless of HTTP status (see httpclient.DefaultConfig's
+// AddRetryCondition), so a 200 response that fails to decode used to
+// trigger up to MaxRetries (3) extra live requests against Tunarr for a
+// response shape that could never decode differently -- a "WARN retry
+// loop" against a real deployment. A fix that merely swallowed the
+// decode error somewhere else would leave that retry storm in place;
+// this asserts the server was hit exactly once.
+func TestClient_GetChannels_FractionalDuration(t *testing.T) {
+	const body = `[{"id":"channel-1","number":1,"name":"Test Channel","duration":691200000.9999,"stealth":false}]`
+
+	var requestCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("failed to write mock response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	channels, err := client.GetChannels(context.Background())
+	if err != nil {
+		t.Fatalf("GetChannels returned error decoding a fractional duration: %v", err)
+	}
+	if len(channels) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(channels))
+	}
+	if channels[0].Duration != 691200000.9999 {
+		t.Errorf("expected Duration 691200000.9999, got %v", channels[0].Duration)
+	}
+	if requestCount != 1 {
+		t.Errorf("expected exactly 1 request (no retry loop), got %d", requestCount)
+	}
+}
+
 // TestClient_UpdateSchedule pins the live v1.3.13 wire contract for
 // UpdateSchedule (see its doc comment, and setChannelStartTime's, in
 // client.go for how both were verified): (1) GET then PUT

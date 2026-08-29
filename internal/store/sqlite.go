@@ -4,11 +4,13 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
@@ -182,8 +184,8 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 
 	for _, entry := range entries {
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at)
-			VALUES (:program_id, :channel_id, :block_name, :scheduled_at)`, entry); err != nil {
+			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type)
+			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type)`, entry); err != nil {
 			return fmt.Errorf("failed to insert schedule history: %w", err)
 		}
 	}
@@ -202,7 +204,7 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 func (s *Store) ListScheduleHistory(ctx context.Context, since time.Time) ([]scheduler.ScheduleHistoryEntry, error) {
 	var entries []scheduler.ScheduleHistoryEntry
 	err := s.db.SelectContext(ctx, &entries, `
-		SELECT program_id, channel_id, block_name, scheduled_at
+		SELECT program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type
 		FROM schedule_history
 		WHERE scheduled_at >= ?
 		ORDER BY scheduled_at DESC`, since)
@@ -210,6 +212,125 @@ func (s *Store) ListScheduleHistory(ctx context.Context, since time.Time) ([]sch
 		return nil, fmt.Errorf("failed to list schedule history: %w", err)
 	}
 	return entries, nil
+}
+
+// GetCommittedOccurrence returns the program assignment previously
+// committed for one occurrence of blockName starting at occurrenceStart,
+// reconstructed in playback order from the persisted schedule_history
+// rows -- see scheduler.ScheduleHistoryEntry's and Engine.PlanBlock's doc
+// comments for why this is stored (and looked up) separately from the
+// scheduled_at-keyed recency-dedup rows the same table already served.
+func (s *Store) GetCommittedOccurrence(ctx context.Context, blockName string, occurrenceStart time.Time) ([]tunarr.Program, bool, error) {
+	var rows []struct {
+		ProgramID  string  `db:"program_id"`
+		DurationMs float64 `db:"duration_ms"`
+		Title      string  `db:"title"`
+		Type       string  `db:"type"`
+	}
+	err := s.db.SelectContext(ctx, &rows, `
+		SELECT program_id, duration_ms, title, type
+		FROM schedule_history
+		WHERE block_name = ? AND occurrence_start = ?
+		ORDER BY sequence ASC`, blockName, occurrenceStart)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to query committed occurrence for block %q at %s: %w", blockName, occurrenceStart, err)
+	}
+	if len(rows) == 0 {
+		return nil, false, nil
+	}
+	// A single row with an empty program_id is the sentinel
+	// makeHistoryEntries writes for an occurrence that was planned and
+	// genuinely produced zero programs -- see its doc comment
+	// (internal/scheduler/engine.go) for why that's not the same thing as
+	// "never planned."
+	if len(rows) == 1 && rows[0].ProgramID == "" {
+		return nil, true, nil
+	}
+
+	programs := make([]tunarr.Program, 0, len(rows))
+	for _, row := range rows {
+		programs = append(programs, tunarr.Program{
+			UUID:     row.ProgramID,
+			Title:    row.Title,
+			Duration: row.DurationMs,
+			Type:     row.Type,
+		})
+	}
+	return programs, true, nil
+}
+
+// GetOccurrenceSnapshot returns the per-show cursor snapshot captured the
+// first time a series block's occurrence (blockName, occurrenceStart) was
+// ever planned. See scheduler.SeriesStateSnapshot's and
+// scheduler.Engine.PlanBlock's doc comments for the mechanism.
+func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockName string, occurrenceStart time.Time) (map[string]scheduler.SeriesStateSnapshot, bool, error) {
+	var raw string
+	err := s.db.GetContext(ctx, &raw, `
+		SELECT snapshot_json FROM series_occurrence_snapshots
+		WHERE block_name = ? AND occurrence_start = ?`, blockName, occurrenceStart)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("failed to query occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+	}
+
+	var snapshot map[string]scheduler.SeriesStateSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, false, fmt.Errorf("failed to decode occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+	}
+	return snapshot, true, nil
+}
+
+// SaveOccurrenceSnapshot persists a series block occurrence's cursor
+// snapshot the first (and only) time it's planned. A second call for the
+// same (blockName, occurrenceStart) -- which callers should never make,
+// see SaveOccurrenceSnapshot's interface doc comment -- fails on the
+// table's primary key rather than silently overwriting what's meant to
+// stay fixed.
+func (s *Store) SaveOccurrenceSnapshot(ctx context.Context, blockName string, occurrenceStart time.Time, snapshot map[string]scheduler.SeriesStateSnapshot) error {
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("failed to encode occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO series_occurrence_snapshots (block_name, occurrence_start, snapshot_json)
+		VALUES (?, ?, ?)`, blockName, occurrenceStart, string(raw)); err != nil {
+		return fmt.Errorf("failed to save occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+	}
+	return nil
+}
+
+// ReplaceOccurrenceHistory atomically replaces every schedule_history row
+// for one occurrence (blockName, occurrenceStart) with entries -- see its
+// interface doc comment (internal/scheduler/interfaces.go) for why a
+// re-derived series occurrence needs replacement rather than the
+// append-only insert RecordScheduleHistory does for a first-time plan.
+func (s *Store) ReplaceOccurrenceHistory(ctx context.Context, blockName string, occurrenceStart time.Time, entries []scheduler.ScheduleHistoryEntry) error {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM schedule_history WHERE block_name = ? AND occurrence_start = ?`,
+		blockName, occurrenceStart); err != nil {
+		return fmt.Errorf("failed to clear previous occurrence history for block %q at %s: %w", blockName, occurrenceStart, err)
+	}
+
+	for _, entry := range entries {
+		if _, err := tx.NamedExecContext(ctx, `
+			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type)
+			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type)`, entry); err != nil {
+			return fmt.Errorf("failed to insert replacement schedule history for block %q at %s: %w", blockName, occurrenceStart, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit replacement schedule history for block %q at %s: %w", blockName, occurrenceStart, err)
+	}
+	return nil
 }
 
 // WasRecentlyScheduled returns true if a program was scheduled within the provided window.

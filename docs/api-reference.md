@@ -51,6 +51,7 @@ Delegates to the same runner the CLI's `generate`/`generate --apply` uses, so th
 - `POST /generate` always runs a dry run (`applied: false` in the response) regardless of the request body — it never mutates the store or Tunarr. Only `POST /apply` (`applied: true` on success) pushes anything.
 - `channel_id`, when set, restricts *which blocks get planned at all* — not just which channels appear in the response or get pushed. A channel-scoped `POST /apply` never touches Tunarr, schedule history, or series-cursor state for any other channel.
 - A failure (loading blocks, fetching Tunarr content, generating the schedule, or — on apply — pushing/committing) returns `502` (`title: "schedule generation failed"`) with a short, fixed detail; the underlying error is logged server-side only, never echoed in the response body.
+- The response's `warnings` array (present, non-empty only when at least one occurrence was dropped) lists every occurrence that was planned a time slot but then lost conflict resolution to an overlapping, higher- (or equal-, first-come-) priority occurrence on the same channel — `block_name`, `occurrence_start`, and `blocking_block_name` for each. Both `POST /generate` and `POST /apply` populate it identically (conflict resolution happens during generation either way, not only on apply); the [Web UI's Schedule page](web-ui-guide.md#schedule-schedule) surfaces it after every preview or apply.
 
 ## History
 

@@ -466,6 +466,25 @@ components:
           items:
             type: object
             additionalProperties: true
+    Warning:
+      type: object
+      description: >-
+        One occurrence that was planned a time slot but then dropped by
+        conflict resolution -- an overlapping occurrence on the same
+        channel, resolved by priority (higher wins; equal priority is
+        first-come). Previously this was only visible in a server-side
+        INFO log line.
+      properties:
+        block_name:
+          type: string
+          description: The block whose occurrence was dropped.
+        occurrence_start:
+          type: string
+          format: date-time
+          description: That occurrence's cron-computed start time.
+        blocking_block_name:
+          type: string
+          description: The block whose occurrence it lost to.
     PlanResult:
       type: object
       required: [applied, channels]
@@ -478,6 +497,10 @@ components:
             type: array
             items:
               $ref: "#/components/schemas/ScheduledSlot"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Warning"
     HistoryEntry:
       type: object
       properties:

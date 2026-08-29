@@ -96,6 +96,8 @@ Preview a schedule, then apply it — a dry-run/apply pair backed by `POST /api/
 
 **Apply** — disabled until a preview has run **for the exact controls currently on screen**: editing `days` or the channel scope after a preview invalidates it immediately, and a fresh **Generate Preview** is required to re-arm it (the web equivalent of the CLI's `--yes` gate, applied per action rather than once per process). Clicking **Apply** opens a native `<dialog>` confirmation naming the scope exactly: **"Apply ALL channels"** or **"Apply channel `<id>`"**, plus a real slot/channel count summary. Confirming sends `POST /api/v1/apply` with the identical body the preview used — `/apply` independently re-runs the generate-and-push workflow server-side, so this means the same request, not a cached payload. A successful apply flips the readout to **Applied** with a summary line and immediately disables **Apply** again.
 
+**Conflict warnings** — when two blocks' occurrences overlap on the same channel, the lower- (or, tied, later-listed) priority one loses and is left out of the schedule entirely (see [Priority and conflict resolution](scheduling-concepts.md#priority-and-conflict-resolution)). A preview or apply response carrying any dropped occurrences renders a warning panel above the channel list — one line per occurrence, naming the block, its would-be start time, and the block it lost to — instead of that information being visible only in the server log.
+
 ### Series (`/series/`)
 
 ![Schedularr series state table with per-show season/episode cursors](assets/screenshots/series.png)

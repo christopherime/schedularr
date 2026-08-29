@@ -326,11 +326,24 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** @description One occurrence that was planned a time slot but then dropped by conflict resolution -- an overlapping occurrence on the same channel, resolved by priority (higher wins; equal priority is first-come). Previously this was only visible in a server-side INFO log line. */
+        Warning: {
+            /** @description The block whose occurrence was dropped. */
+            block_name?: string;
+            /**
+             * Format: date-time
+             * @description That occurrence's cron-computed start time.
+             */
+            occurrence_start?: string;
+            /** @description The block whose occurrence it lost to. */
+            blocking_block_name?: string;
+        };
         PlanResult: {
             applied: boolean;
             channels: {
                 [key: string]: components["schemas"]["ScheduledSlot"][];
             };
+            warnings?: components["schemas"]["Warning"][];
         };
         HistoryEntry: {
             program_id?: string;

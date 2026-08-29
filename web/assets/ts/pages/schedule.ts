@@ -34,6 +34,7 @@ import type { components } from "../gen/types";
 
 type PlanResult = ApiResponse<"generateSchedule", 200>;
 type ScheduledSlot = components["schemas"]["ScheduledSlot"];
+type Warning = components["schemas"]["Warning"];
 type GenerateBody = ApiRequestJSON<"generateSchedule">;
 type Channel = ApiResponse<"listChannels", 200>[number];
 
@@ -166,6 +167,10 @@ interface ScheduleState {
   programCount(slot: ScheduledSlot): number;
   programTitles(slot: ScheduledSlot): string[];
   formatLocal(iso: string | undefined): string;
+
+  warnings(): Warning[];
+  warningsHeading(): string;
+  warningLabel(w: Warning): string;
 
   applyScopeLabel(): string;
   applyConfirmBody(): string;
@@ -409,6 +414,27 @@ document.addEventListener("alpine:init", () => {
         // appliedSummary()'s "Applied ..." result below -- see the copy
         // audit's Apply/Applied terminology decision.
         return `This applies ${plural(slotCount, "slot")} across ${plural(channelCount, "channel")} to Tunarr.`;
+      },
+
+      // Every dropped occurrence from the last preview/apply (both
+      // /generate and /apply return PlanResult.warnings the same way) --
+      // conflict resolution on the server (internal/scheduler/engine.go's
+      // resolveConflicts) picked a higher- (or equal-, first-come-)
+      // priority occurrence on the same channel instead. Previously this
+      // was only visible in a server-side INFO log line.
+      warnings() {
+        return this.plan?.warnings ?? [];
+      },
+
+      warningsHeading() {
+        return `${plural(this.warnings().length, "occurrence")} not scheduled — conflict with a higher-priority block`;
+      },
+
+      warningLabel(w) {
+        const block = w.block_name ?? "A block";
+        const blocker = w.blocking_block_name ?? "a higher-priority block";
+        const when = this.formatLocal(w.occurrence_start);
+        return `${block} lost to ${blocker} at ${when} and was not scheduled.`;
       },
 
       appliedSummary() {

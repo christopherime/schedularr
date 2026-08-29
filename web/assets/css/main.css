@@ -869,6 +869,36 @@ dialog.panel::backdrop {
   color: var(--color-ink-muted);
 }
 
+/* -- schedule: conflict warnings --------------------------------------------
+   A dropped occurrence (conflict resolution: an overlapping occurrence on
+   the same channel lost to a higher- or equal-priority one) used to be
+   visible only in a server-side INFO log line. --color-warn, not
+   --color-danger: the preview/apply itself succeeded -- this is a "worth a
+   second look" nudge (same family as .form-field__warning), not a failure. */
+
+.schedule-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--color-warn);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-inset);
+}
+
+.schedule-warnings__title {
+  margin: 0;
+  font-weight: 700;
+  color: var(--color-warn);
+}
+
+.schedule-warnings__list {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
 /* -- history: empty state --------------------------------------------------- */
 
 .empty-state {

@@ -250,3 +250,50 @@ func TestGenerateSchedule_MapsResultToPlanResult(t *testing.T) {
 	require.Len(t, *slots[0].Programs, 1)
 	assert.Equal(t, "Movie One", (*slots[0].Programs)[0]["title"])
 }
+
+// TestGenerateSchedule_MapsWarningsToPlanResult is the API-contract half
+// of the "conflict resolution is invisible to callers" fix: a dropped
+// occurrence used to be visible only in a server-side INFO log line; now
+// it's on the response itself.
+func TestGenerateSchedule_MapsWarningsToPlanResult(t *testing.T) {
+	occStart := time.Date(2026, 8, 28, 6, 0, 0, 0, time.UTC)
+	fake := &fakeScheduleRunner{result: &service.Result{
+		Applied:  false,
+		Channels: map[string][]scheduler.ScheduledSlot{},
+		Warnings: []scheduler.Warning{
+			{BlockName: "Low Priority Block", OccurrenceStart: occStart, BlockingBlockName: "High Priority Block"},
+		},
+	}}
+	h := newTestServerWithSched(t, fake)
+
+	w := doRequest(t, h, http.MethodPost, "/generate", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got gen.PlanResult
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+	require.NotNil(t, got.Warnings)
+	require.Len(t, *got.Warnings, 1)
+
+	warning := (*got.Warnings)[0]
+	require.NotNil(t, warning.BlockName)
+	assert.Equal(t, "Low Priority Block", *warning.BlockName)
+	require.NotNil(t, warning.BlockingBlockName)
+	assert.Equal(t, "High Priority Block", *warning.BlockingBlockName)
+	require.NotNil(t, warning.OccurrenceStart)
+	assert.True(t, warning.OccurrenceStart.Equal(occStart))
+}
+
+// TestGenerateSchedule_NoWarnings_OmitsWarningsField asserts the other
+// half of planResultToGen's contract: a plan with nothing to warn about
+// must omit the "warnings" key entirely (nil), not send a distracting
+// empty array on every ordinary response.
+func TestGenerateSchedule_NoWarnings_OmitsWarningsField(t *testing.T) {
+	fake := &fakeScheduleRunner{}
+	h := newTestServerWithSched(t, fake)
+
+	w := doRequest(t, h, http.MethodPost, "/generate", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.NotContains(t, w.Body.String(), `"warnings"`,
+		"a plan with no warnings must omit the field entirely, not send an empty array")
+}

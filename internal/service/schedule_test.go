@@ -1407,3 +1407,128 @@ func TestRunner_hydrateSeasonNumbers_LocalJoinThenNetworkFallback(t *testing.T) 
 	assert.Equal(t, 1, programs[1].SeasonNumber, "resolved via the local join")
 	assert.Equal(t, 9, programs[2].SeasonNumber, "resolved via the network fallback, since no local season entry covered it")
 }
+
+// TestRunner_Run_Apply_IsIdempotentPerOccurrence is the regression test for
+// the non-idempotent-apply bug found during live multi-block testing: a
+// Saturday-8pm block observed E01 on its first apply, then E04 after two
+// more, because the 24h apply window slid forward every cron tick
+// (default 6h) while still covering the same future occurrence, and every
+// apply that saw it replanned it from scratch -- advancing the series
+// cursor again for content that was never going to change, since the next
+// apply would just overwrite it anyway. Two consecutive Runner.Run(Apply:
+// true) calls over the same window must instead produce byte-identical
+// plans, and the second must leave series state exactly as the first left
+// it.
+func TestRunner_Run_Apply_IsIdempotentPerOccurrence(t *testing.T) {
+	episodes := []tunarr.Program{
+		{ID: "ep-1", Title: "Pilot", Type: "episode", ShowTitle: "The Office", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000},
+		{ID: "ep-2", Title: "Diversity Day", Type: "episode", ShowTitle: "The Office", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_320_000},
+	}
+	server, _ := newFakeTunarr(t, episodes)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Evening Sitcoms", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Evening Sitcoms", Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1", Priority: 10,
+			Type:   scheduler.BlockTypeSeries,
+			Series: []scheduler.SeriesConfig{{ShowTitle: "The Office", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	result1, err := r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.True(t, result1.Applied)
+	require.NotEmpty(t, result1.Channels["channel-1"], "expected at least one occurrence planned in the window")
+
+	state1, err := st.GetPersistedSeriesState(ctx, "The Office")
+	require.NoError(t, err)
+	// The hourly cron plans every occurrence in the 24h window within this
+	// one Run call, so the cursor may already have advanced past both
+	// available episodes (and the series marked completed) by the time
+	// this first apply returns -- the exact count isn't what this test is
+	// about. What matters, and is asserted below, is that a *second* apply
+	// over the same window leaves this exact state untouched.
+	require.NotEqual(t, 1, state1.CurrentEpisode,
+		"first apply should have advanced the cursor at least once past the S01E01 default")
+
+	// A second apply over the same window -- exactly what a real
+	// deployment's cron loop does every tick: the same future occurrences
+	// already committed by the previous apply are still inside the new
+	// window and get planned again.
+	result2, err := r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.True(t, result2.Applied)
+
+	assert.Equal(t, result1.Channels, result2.Channels,
+		"re-applying over the same window must reuse every already-committed occurrence's assignment byte-for-byte, not re-plan it")
+
+	state2, err := st.GetPersistedSeriesState(ctx, "The Office")
+	require.NoError(t, err)
+	assert.Equal(t, state1, state2,
+		"series state must not advance again for an occurrence that was already committed")
+}
+
+// TestRunner_Run_Apply_ConflictDroppedOccurrence_DoesNotAdvanceCursor is
+// the second half of the idempotent-apply fix's required coverage: an
+// occurrence that conflict resolution drops must never reach
+// Engine.PlanBlock at all, so it can't advance a series cursor (or create
+// series state in the first place) for content that will never actually
+// air. "Loser Series" and "Winner Filter" share the exact same cron and
+// duration, so every one of "Loser Series"'s occurrences across the whole
+// apply window overlaps -- and, being lower priority, loses to -- the
+// corresponding "Winner Filter" occurrence.
+func TestRunner_Run_Apply_ConflictDroppedOccurrence_DoesNotAdvanceCursor(t *testing.T) {
+	episode := tunarr.Program{ID: "ep-1", Title: "Pilot", Type: "episode", ShowTitle: "The Office", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000}
+	movie := tunarr.Program{ID: "mov-1", Title: "A Movie", Type: "movie", Duration: 3_600_000}
+	server, _ := newFakeTunarr(t, []tunarr.Program{episode, movie})
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-loser", Name: "Loser Series", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Loser Series", Cron: "0 * * * *", Duration: 60, ChannelID: "channel-1", Priority: 5,
+			Type:   scheduler.BlockTypeSeries,
+			Series: []scheduler.SeriesConfig{{ShowTitle: "The Office", EpisodesPerBlock: 1}},
+		},
+	}))
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-winner", Name: "Winner Filter", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Winner Filter", Cron: "0 * * * *", Duration: 60, ChannelID: "channel-1", Priority: 10,
+		},
+	}))
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	result, err := r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+
+	require.NotEmpty(t, result.Warnings, "expected every one of the loser series block's occurrences to be reported as dropped")
+	for _, w := range result.Warnings {
+		assert.Equal(t, "Loser Series", w.BlockName)
+		assert.Equal(t, "Winner Filter", w.BlockingBlockName)
+	}
+
+	// The decisive assertion: a conflict-dropped occurrence must never
+	// reach PlanBlock, so no series_state row should exist for "The
+	// Office" at all -- not "exists but still at S01E01", genuinely never
+	// written, mirroring the existing channel-scoping regression test's
+	// pattern (TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched).
+	_, err = st.GetPersistedSeriesState(ctx, "The Office")
+	assert.ErrorIs(t, err, store.ErrNotFound,
+		"a conflict-dropped series occurrence must never advance, or even create, series state")
+}

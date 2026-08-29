@@ -44,10 +44,16 @@ type Options struct {
 }
 
 // Result is what Run produces: the generated (and, if Applied, pushed)
-// schedule, keyed by Tunarr channel ID.
+// schedule, keyed by Tunarr channel ID. Warnings lists every occurrence
+// GenerateForTimeRange planned a time slot for but then had to drop
+// (conflict resolution -- see scheduler.Warning's doc comment); it can be
+// non-empty on both a dry run and an apply, since conflict resolution
+// happens during generation either way. Nil (not just empty) when there's
+// nothing to report.
 type Result struct {
 	Applied  bool
 	Channels map[string][]scheduler.ScheduledSlot
+	Warnings []scheduler.Warning
 }
 
 // ScheduleRunner is the interface api.Deps.Sched depends on, so handler
@@ -212,7 +218,7 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	// block fed to NewEngine above has ChannelID == o.ChannelID (when set),
 	// and GenerateForTimeRange keys its result by each block's ChannelID,
 	// so no separate "narrow the result map" step is needed anymore.
-	channels, err := engine.GenerateForTimeRange(start, end, programs) //nolint:contextcheck
+	channels, warnings, err := engine.GenerateForTimeRange(start, end, programs) //nolint:contextcheck
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate schedule: %w", err)
 	}
@@ -226,7 +232,7 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 		}
 	}
 
-	return &Result{Applied: o.Apply, Channels: channels}, nil
+	return &Result{Applied: o.Apply, Channels: channels, Warnings: warnings}, nil
 }
 
 // blocksForChannel returns only the blocks whose ChannelID matches
