@@ -368,3 +368,4 @@ scoped-out gap.
   -s web` before the Go build stage, so a container image can never ship
   the placeholder as its embedded site.
 - [ ] Enforce or document the reapply-interval vs apply-window constraint: `cron_interval` > the serve loop's 24h apply window exhausts the pushed lineup and Tunarr loops it back to the anchor (wall-clock drift). Clamp Days from the interval or cap the interval; at minimum document next to cron_interval in the CUE schema + docs/deployment.md. (re-review 5227c5f, Minor)
+- [ ] Committed TS test infra: the web UI has no checked-in jsdom/unit harness (picker + reorder logic were verified with throwaway scripts). Add a minimal committed harness + CI step so UI logic tests accumulate. (flagged during reorder-UI task)
