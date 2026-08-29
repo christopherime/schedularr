@@ -726,22 +726,36 @@ Notes:
   `writeScheduleRunnerError`'s convention). An empty library with Tunarr
   reachable is a normal `200` with empty arrays, not an error.
 - A live Tunarr `/api/programs/search` "episode" result never sends a flat
-  `showTitle` (or `rating`) key at all -- it nests show identity under a
-  `show` object instead (`{"show": {"title": ..., "rating": ..., ...}}`,
-  live-verified against Tunarr 1.3.13 and corroborated by
-  `docs/tunarr/openapi.json`'s `Episode`/`Show` schemas). `tunarr.Program`
-  still exposes flat `ShowTitle`/`Rating` fields -- accepting a flat
-  `showTitle`/`rating` key directly, for this repo's own
-  `testdata/programs/*.json` fixtures and tests -- but
-  `tunarr.Client.SearchPrograms`/`GetFillerPrograms` now also hydrate both
-  from the nested `show` object whenever the flat field comes back empty
-  (`hydrateEpisodeShowFields` in `internal/external/tunarr/client.go`).
-  So `GET /media/shows` and `GET /media/meta`'s `ratings` work against a
-  real, unmodified live Tunarr deployment today, not just flat-shaped
-  fixtures -- and the same hydration is what makes `series`-block
+  `showTitle` (or `rating`, or `seasonNumber`) key at all, and it does
+  **not** nest a `show` object either -- live-verified against a real
+  Tunarr 1.3.13 instance this session (transcript in
+  `.superpowers/sdd/2026-08-29-deploy/wire-fix-report.md`; a prior round
+  of this fix claimed the nested-object shape from a spec read alone, and
+  that claim was wrong: 0 of 84 captured live episodes carried one). What
+  a live episode result actually carries is a `showId` foreign key
+  (`tunarr.Program.ShowID`) pointing at a separate, `Type == "show"`
+  search-result entry that Tunarr interleaves in the *same* paginated
+  result stream as episodes -- not nested inside them, and not reliably
+  on the same page as its own episodes either.
+  `internal/service.Runner.hydrateShowsAndSeasons` (schedule.go) is the
+  production fix: after a fetch's *entire* result set has been
+  accumulated (across every page), it joins each episode's `showId`
+  against those interleaved show entries to fill `ShowTitle`/`Rating`,
+  and resolves each distinct `seasonId` individually via
+  `GET /api/programming/seasons/{id}` (`tunarr.Client.GetSeason`, cached
+  for the same 1h window as the fetched program list) to fill
+  `SeasonNumber`. `tunarr.Client`'s nested-`show`-object hydration
+  (`hydrateEpisodeShowFields`) is kept as a harmless secondary path --
+  correct if some future/richer Tunarr response ever did nest show data
+  -- but does not fire against Tunarr 1.3.13 today. A flat `showTitle`/
+  `rating`/`seasonNumber` key (this repo's own `testdata/programs/*.json`
+  fixtures) still works unchanged: none of these hydration paths ever
+  override an already-set flat value. Together, this is what makes `GET
+  /media/shows`, `GET /media/meta`'s `ratings`, and `series`-block
   scheduling (`scheduler.Engine`'s episode matching keys off
-  `Program.ShowTitle`) actually match episodes fetched from a live
-  instance.
+  `Program.ShowTitle`/`SeasonNumber`/`EpisodeNumber`) actually work
+  against a real, unmodified live Tunarr deployment, not just flat- or
+  nested-shaped fixtures.
 
 ### Middleware
 

@@ -244,16 +244,19 @@ func TestRunner_MediaMeta_EmptyLibrary_ReturnsEmptyNonNilSlices(t *testing.T) {
 	assert.Empty(t, meta.Ratings)
 }
 
-// nestedShowMediaTestPrograms mirrors mediaTestPrograms above but in the
-// live wire shape: no episode sets a flat ShowTitle or Rating, only a
-// nested Show object -- exactly what a real Tunarr /api/programs/search
-// "episode" result looks like (see tunarr.Program.ShowTitle's doc comment
-// in models.go). Genres stay flat on each episode, matching a live
-// Episode result's own "genres" field (unlike show identity/rating, genre
-// data was never nested to begin with, so it needs no hydration). Round
-// -tripped through fakeLibraryTunarr's real JSON encode/decode, this
-// exercises tunarr.Client.SearchPrograms's hydrateEpisodeShowFields, not
-// just this package's own field access.
+// nestedShowMediaTestPrograms mirrors mediaTestPrograms above but with no
+// episode setting a flat ShowTitle or Rating, only a nested Show object --
+// exercising hydrateEpisodeShowFields's SECONDARY, defensive hydration
+// path (see its doc comment in internal/external/tunarr/client.go). This
+// is NOT what a real Tunarr /api/programs/search "episode" result looks
+// like -- live-verified this session (transcript in this task's report)
+// that a live episode never nests a "show" object at all, only carries a
+// ShowID foreign key; a prior round of this fix claimed the nested shape
+// was live-accurate, which was wrong. See liveShapeMediaTestPrograms below
+// for the actual live-shaped fixture. Round-tripped through
+// fakeLibraryTunarr's real JSON encode/decode, this exercises
+// tunarr.Client.SearchPrograms's hydrateEpisodeShowFields, not just this
+// package's own field access.
 func nestedShowMediaTestPrograms() []tunarr.Program {
 	return []tunarr.Program{
 		{
@@ -287,13 +290,13 @@ func nestedShowMediaTestPrograms() []tunarr.Program {
 	}
 }
 
-// TestRunner_MediaShows_LiveNestedShowShape_HydratesAndGroups proves GET
-// /media/shows returns non-empty results against a live-shaped Tunarr
-// library, not just this package's own flat-shaped fixtures: episodes
-// whose show identity only ever arrives nested under Program.Show still
-// group into the correct show once tunarr.Client hydrates ShowTitle from
-// it.
-func TestRunner_MediaShows_LiveNestedShowShape_HydratesAndGroups(t *testing.T) {
+// TestRunner_MediaShows_NestedShowObject_HydratesAndGroups pins
+// hydrateEpisodeShowFields's secondary path (see
+// nestedShowMediaTestPrograms' doc comment): episodes whose show identity
+// arrives nested under Program.Show still group into the correct show.
+// See TestRunner_MediaShows_LiveShape_HydratesAndGroups below for the
+// actual live-shaped (ShowID FK + interleaved show entry) version.
+func TestRunner_MediaShows_NestedShowObject_HydratesAndGroups(t *testing.T) {
 	server, _ := newFakeLibraryTunarr(t, nestedShowMediaTestPrograms())
 	r := newMediaTestRunner(t, server.URL)
 
@@ -305,13 +308,91 @@ func TestRunner_MediaShows_LiveNestedShowShape_HydratesAndGroups(t *testing.T) {
 	}, shows)
 }
 
-// TestRunner_MediaMeta_LiveNestedShowShape_HydratesRatings mirrors
-// TestRunner_MediaShows_LiveNestedShowShape_HydratesAndGroups for
-// MediaMeta: a live episode carries no rating of its own at all, only its
-// nested show does, so Ratings would be missing every TV rating without
-// hydration.
-func TestRunner_MediaMeta_LiveNestedShowShape_HydratesRatings(t *testing.T) {
+// TestRunner_MediaMeta_NestedShowObject_HydratesRatings mirrors
+// TestRunner_MediaShows_NestedShowObject_HydratesAndGroups for MediaMeta.
+func TestRunner_MediaMeta_NestedShowObject_HydratesRatings(t *testing.T) {
 	server, _ := newFakeLibraryTunarr(t, nestedShowMediaTestPrograms())
+	r := newMediaTestRunner(t, server.URL)
+
+	meta, err := r.MediaMeta(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Action", "Comedy", "Mockumentary", "Sci-Fi"}, meta.Genres)
+	assert.Equal(t, []string{"R", "TV-14", "TV-PG"}, meta.Ratings)
+}
+
+// liveShapeMediaTestPrograms mirrors mediaTestPrograms above but in the
+// ACTUAL live Tunarr wire shape -- live-verified this session (transcript
+// in this task's report): episodes carry only ShowID foreign keys (no
+// flat ShowTitle/Rating, no nested Show object), and their shows are
+// separate Type == "show" entries interleaved in the same result set,
+// related only by ID. Round-tripped through fakeLibraryTunarr's real
+// JSON encode/decode, this exercises
+// service.Runner.hydrateShowTitleAndRating -- the actual production join
+// -- not the client's defensive nested-Show fallback.
+func liveShapeMediaTestPrograms() []tunarr.Program {
+	const (
+		officeID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		parksID  = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	)
+	return []tunarr.Program{
+		{UUID: officeID, Type: "show", Title: "The Office", Rating: "TV-14"},
+		{UUID: parksID, Type: "show", Title: "Parks and Recreation", Rating: "TV-PG"},
+		{
+			ID: "e1", Type: "episode", Title: "Pilot", ShowID: officeID,
+			SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000,
+			Genres: []tunarr.Genre{{Name: "Comedy"}},
+		},
+		{
+			ID: "e2", Type: "episode", Title: "Diversity Day", ShowID: officeID,
+			SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_320_000,
+			Genres: []tunarr.Genre{{Name: "Comedy"}},
+		},
+		{
+			ID: "e3", Type: "episode", Title: "Pilot", ShowID: parksID,
+			SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000,
+			Genres: []tunarr.Genre{{Name: "Comedy"}, {Name: "Mockumentary"}},
+		},
+		{
+			ID: "m1", Type: "movie", Title: "The Matrix", Duration: 8_160_000,
+			Rating: "R", Genres: []tunarr.Genre{{Name: "Action"}, {Name: "Sci-Fi"}},
+		},
+	}
+}
+
+// TestRunner_MediaShows_LiveShape_HydratesAndGroups proves GET
+// /media/shows returns non-empty, correctly grouped results against a
+// live-shaped Tunarr library (ShowID FK + interleaved show entry, no
+// nested object) -- the shape a real Tunarr 1.3.13 instance actually
+// sends, not just this package's flat-shaped or nested-Show fixtures.
+func TestRunner_MediaShows_LiveShape_HydratesAndGroups(t *testing.T) {
+	server, _ := newFakeLibraryTunarr(t, liveShapeMediaTestPrograms())
+	r := newMediaTestRunner(t, server.URL)
+
+	shows, err := r.MediaShows(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []MediaShow{
+		{Title: "Parks and Recreation", EpisodeCount: 1},
+		{Title: "The Office", EpisodeCount: 2},
+	}, shows)
+}
+
+// TestRunner_MediaMeta_LiveShape_HydratesRatings proves MediaMeta returns
+// the correct aggregate Ratings/Genres set against live-shaped data
+// end-to-end. Caveat found during this fix's revert-verify pass (see
+// service.TestRunner_hydrateShowTitleAndRating for the test that actually
+// discriminates the join): because Type == "show" entries pass through
+// fetchPrograms' returned slice unfiltered, and MediaMeta iterates every
+// program's own Rating field, "TV-14"/"TV-PG" reach Ratings here from the
+// show entries THEMSELVES (which always carry their own Rating, join or
+// no join) as well as from any episode the join successfully hydrates --
+// so, unlike TestRunner_MediaShows_LiveShape_HydratesAndGroups (which
+// only ever counts Type == "episode" entries and genuinely fails without
+// the join), this specific assertion does not go red if
+// hydrateShowTitleAndRating is disabled. Kept as honest end-to-end
+// coverage of MediaMeta's actual output, not as a join-specific
+// regression pin.
+func TestRunner_MediaMeta_LiveShape_HydratesRatings(t *testing.T) {
+	server, _ := newFakeLibraryTunarr(t, liveShapeMediaTestPrograms())
 	r := newMediaTestRunner(t, server.URL)
 
 	meta, err := r.MediaMeta(context.Background())

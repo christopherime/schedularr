@@ -538,16 +538,27 @@ func TestHydrateEpisodeShowFields(t *testing.T) {
 	}
 }
 
-// TestClient_SearchPrograms_LiveNestedShowShape_HydratesShowTitleAndRating
-// decodes a response body shaped exactly like a real Tunarr 1.3.13 POST
-// /api/programs/search reply (live-verified this session; corroborated by
-// docs/tunarr/openapi.json's response envelope and Episode/Show schemas):
-// the envelope uses "page"/"totalPages"/"totalHits" (no legacy
-// "total"/"limit"), and the episode result carries no flat "showTitle" or
-// "rating" key at all -- only a nested "show" object. This is the pin for
-// Client.SearchPrograms actually decoding and hydrating that live shape,
-// not just a Go-struct round trip through this package's own marshaling.
-func TestClient_SearchPrograms_LiveNestedShowShape_HydratesShowTitleAndRating(t *testing.T) {
+// TestClient_SearchPrograms_NestedShowShape_HydratesShowTitleAndRating
+// decodes a raw response body -- not a Go-struct round trip through this
+// package's own marshaling -- to pin two things at once:
+//
+//  1. The response ENVELOPE ("page"/"totalPages"/"totalHits", no legacy
+//     "total"/"limit") -- live-verified this session against a real
+//     Tunarr 1.3.13 instance (transcript in this task's report) and
+//     corroborated by docs/tunarr/openapi.json. This part of the shape is
+//     accurate.
+//  2. hydrateEpisodeShowFields's SECONDARY, defensive hydration path (an
+//     episode result nesting a "show" object). This part of the shape is
+//     NOT what live Tunarr sends -- live-verified this session that a
+//     real episode result carries no nested "show" object at all, only a
+//     "showId" foreign key (see Program.ShowTitle's doc comment in
+//     models.go, and
+//     TestClient_SearchPrograms_LiveShape_DecodesShowIDForeignKey below
+//     for the actual live-shaped test). A prior round of this fix
+//     claimed this nested shape was live-accurate; that claim was wrong.
+//     Kept because the nested-Show path itself is still real,
+//     intentionally-retained code.
+func TestClient_SearchPrograms_NestedShowShape_HydratesShowTitleAndRating(t *testing.T) {
 	const body = `{
 		"results": [
 			{
@@ -650,8 +661,11 @@ func TestClient_SearchPrograms_HydrationDoesNotOverrideFlatShowTitle(t *testing.
 // TestClient_GetFillerPrograms_HydratesNestedShow proves GetFillerPrograms
 // runs its results through the same hydrateEpisodeShowFields choke point
 // SearchPrograms does -- filler content is fetched from a different
-// endpoint (GET /api/filler-lists/{id}/programs) but a live Tunarr nests
-// show data the same way for any episode result.
+// endpoint (GET /api/filler-lists/{id}/programs), but the same secondary,
+// defensive nested-Show hydration path applies there too. (This pins the
+// secondary path specifically, not a live-shaped claim -- see
+// Program.ShowTitle's doc comment in models.go: a live episode result
+// never nests a "show" object.)
 func TestClient_GetFillerPrograms_HydratesNestedShow(t *testing.T) {
 	mockPrograms := []Program{
 		{
@@ -687,5 +701,180 @@ func TestClient_GetFillerPrograms_HydratesNestedShow(t *testing.T) {
 	}
 	if programs[0].Rating != "TV-PG" {
 		t.Errorf("expected hydrated Rating %q, got %q", "TV-PG", programs[0].Rating)
+	}
+}
+
+// TestClient_SearchPrograms_LiveShape_DecodesShowIDForeignKey decodes a
+// response body shaped exactly like what a real Tunarr 1.3.13
+// /api/programs/search reply actually contains -- live-verified this
+// session (transcript in this task's report): an episode entry with only
+// a "showId" foreign key (no "showTitle", no "rating", no nested "show"
+// object at all), and a SEPARATE, interleaved Type == "show" entry
+// related only by "uuid", not nesting.
+//
+// Client.SearchPrograms has no join logic of its own (see
+// hydrateEpisodeShowFields's doc comment) -- that's
+// service.Runner.hydrateShowTitleAndRating's job, over the fully
+// accumulated result set (see schedule_test.go in internal/service for
+// the join itself). This test only pins that the DECODE is faithful to
+// the live shape: ShowID/SeasonID populate from the flat keys, Show stays
+// nil, and ShowTitle/Rating stay empty -- nothing is (or could be)
+// hydrated at this layer.
+func TestClient_SearchPrograms_LiveShape_DecodesShowIDForeignKey(t *testing.T) {
+	const body = `{
+		"results": [
+			{
+				"uuid": "55555555-5555-5555-5555-555555555555",
+				"type": "show",
+				"title": "The Office",
+				"rating": "TV-14"
+			},
+			{
+				"uuid": "11111111-1111-1111-1111-111111111111",
+				"type": "episode",
+				"title": "Pilot",
+				"duration": 1320000,
+				"episodeNumber": 1,
+				"showId": "55555555-5555-5555-5555-555555555555",
+				"seasonId": "66666666-6666-6666-6666-666666666666"
+			}
+		],
+		"page": 1,
+		"totalPages": 1,
+		"totalHits": 2,
+		"facetDistribution": {}
+	}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("failed to write mock response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	resp, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{}})
+	if err != nil {
+		t.Fatalf("SearchPrograms returned error: %v", err)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(resp.Results))
+	}
+
+	var episode *Program
+	for i := range resp.Results {
+		if resp.Results[i].Type == "episode" {
+			episode = &resp.Results[i]
+		}
+	}
+	if episode == nil {
+		t.Fatal("expected an episode result")
+	}
+
+	if episode.ShowID != "55555555-5555-5555-5555-555555555555" {
+		t.Errorf("expected ShowID decoded from the flat \"showId\" key, got %q", episode.ShowID)
+	}
+	if episode.SeasonID != "66666666-6666-6666-6666-666666666666" {
+		t.Errorf("expected SeasonID decoded from the flat \"seasonId\" key, got %q", episode.SeasonID)
+	}
+	if episode.Show != nil {
+		t.Errorf("expected Show to stay nil -- a live episode never nests one, got %+v", episode.Show)
+	}
+	if episode.ShowTitle != "" {
+		t.Errorf("expected ShowTitle to stay empty at the client layer (joining is service.Runner's job), got %q", episode.ShowTitle)
+	}
+	if episode.Rating != "" {
+		t.Errorf("expected Rating to stay empty at the client layer, got %q", episode.Rating)
+	}
+}
+
+// TestClient_GetSeason exercises the happy path: GET
+// /api/programming/seasons/{id} decoded into a Season, path built
+// correctly from the season ID.
+func TestClient_GetSeason(t *testing.T) {
+	seasonID := "99051dca-8fdb-4f74-a315-f54a541ee261"
+	mockSeason := Season{UUID: seasonID, Title: "Season 1", SeasonNumber: 1}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/api/programming/seasons/" + seasonID
+		if r.URL.Path != expectedPath {
+			t.Errorf("expected %s path, got %s", expectedPath, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(mockSeason); err != nil {
+			t.Fatalf("failed to encode mock response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	season, err := client.GetSeason(context.Background(), seasonID)
+	if err != nil {
+		t.Fatalf("GetSeason returned error: %v", err)
+	}
+	if season.SeasonNumber != 1 {
+		t.Errorf("expected SeasonNumber 1, got %d", season.SeasonNumber)
+	}
+	if season.Title != "Season 1" {
+		t.Errorf("expected Title %q, got %q", "Season 1", season.Title)
+	}
+}
+
+// TestClient_GetSeason_LiveIndexKey decodes a raw response body shaped
+// exactly like a real GET /api/programming/seasons/{id} reply --
+// live-verified this session (transcript in this task's report): the
+// season number is under "index", not "seasonNumber". A prior version of
+// the Season struct used the wrong tag and so never actually decoded this
+// field from a real response.
+func TestClient_GetSeason_LiveIndexKey(t *testing.T) {
+	const body = `{
+		"uuid": "99051dca-8fdb-4f74-a315-f54a541ee261",
+		"title": "Saison 1",
+		"index": 1,
+		"type": "season"
+	}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("failed to write mock response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	season, err := client.GetSeason(context.Background(), "99051dca-8fdb-4f74-a315-f54a541ee261")
+	if err != nil {
+		t.Fatalf("GetSeason returned error: %v", err)
+	}
+	if season.SeasonNumber != 1 {
+		t.Errorf("expected SeasonNumber 1 decoded from \"index\", got %d", season.SeasonNumber)
+	}
+}
+
+func TestClient_GetSeason_EmptyID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server with an empty season ID")
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetSeason(context.Background(), "")
+	if err == nil {
+		t.Error("expected error for empty season ID, got nil")
+	}
+}
+
+func TestClient_GetSeason_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	_, err := client.GetSeason(context.Background(), "some-id")
+	if err == nil {
+		t.Error("expected error for 500 response, got nil")
 	}
 }

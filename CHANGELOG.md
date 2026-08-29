@@ -133,29 +133,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - 2026-08-29
 
-#### Tunarr wire format: nested show hydration and pagination truncation
+#### Tunarr wire format: show/season ID joins, pagination truncation, and a dead search filter
 
-Two live-verified bugs against a real Tunarr 1.3.13 instance, both in
-`internal/external/tunarr`: schedularr's Tunarr client was built against
-an invented response shape that happened to satisfy this repo's own test
-fixtures but never matched what Tunarr actually sends over the wire.
+Three bugs against a real Tunarr 1.3.13 instance, all in
+`internal/external/tunarr` and `internal/service`: schedularr's Tunarr
+client was built against invented response shapes that happened to
+satisfy this repo's own test fixtures but never matched what Tunarr
+actually sends over the wire. This entry supersedes an earlier same-day
+version of itself that claimed an episode result nests its show under a
+`show` object -- that claim was based on a spec read, not a live capture,
+and was wrong; see "What we got wrong the first time" below.
 
-- **Series-block scheduling now works against a live Tunarr instance.** A
-  live `/api/programs/search` "episode" result nests show identity under a
-  `show` object (`{"show": {"title": ..., "rating": ...}}`) instead of a
-  flat `showTitle`/`rating` key -- `tunarr.Program` didn't model that
-  nesting at all, so `ShowTitle` (and an episode's effective `Rating`)
-  always deserialized empty from real data, silently starving every
-  `series`-type block (`scheduler.Engine`'s `findEpisode` matches on
-  `ShowTitle`) and returning empty results from `GET /media/shows`/`GET
-  /media/meta`. Added `tunarr.Program.Show *Show` to model the nested
-  object, and `hydrateEpisodeShowFields`
-  (`internal/external/tunarr/client.go`) -- the single choke point
-  `SearchPrograms` and `GetFillerPrograms` both run their results through
-  -- fills `ShowTitle`/`Rating` from it whenever the flat field comes back
-  empty. A flat `showTitle`/`rating` key (this repo's own
-  `testdata/programs/*.json` fixtures) still works unchanged: hydration
-  never overrides an already-set flat value.
+- **Series-block scheduling now works against a live Tunarr instance.**
+  Live-verified this session (transcript in
+  `.superpowers/sdd/2026-08-29-deploy/wire-fix-report.md`): a real
+  `/api/programs/search` "episode" result carries no flat
+  `showTitle`/`rating`/`seasonNumber` key, and does **not** nest a `show`
+  object either -- it carries only `showId`/`seasonId` foreign keys. Its
+  show is a *separate*, `Type == "show"` entry Tunarr interleaves in the
+  *same paginated result stream* as episodes (not co-located on the same
+  page as its own episodes, in general), and there is no equivalent
+  interleaved entry for seasons at all.
+  `internal/service.Runner.hydrateShowsAndSeasons` (schedule.go) is the
+  fix: called once per fetch on the *fully accumulated* `[]Program` (after
+  every page has been fetched, so a show entry and its episodes are
+  guaranteed to have landed in the same slice regardless of which pages
+  they arrived on), it (1) joins each episode's `ShowID` against the
+  interleaved `Type == "show"` entries to fill `ShowTitle`/`Rating`, and
+  (2) resolves each distinct `SeasonID` individually via the new
+  `Client.GetSeason` (`GET /api/programming/seasons/{id}`, whose season
+  number is the response's `index` field -- also live-verified; a
+  no-batch-equivalent check against `POST /api/programming/batch/lookup`
+  confirmed it takes external, source-specific IDs and returns an
+  unrelated response shape, so it isn't usable here) to fill
+  `SeasonNumber`, caching each resolution in Runner's existing 1h content
+  cache. `tunarr.Client`'s earlier nested-`show`-object hydration
+  (`hydrateEpisodeShowFields`) is kept as a harmless secondary path --
+  correct if a richer response shape ever did nest show data -- but does
+  not fire against Tunarr 1.3.13 today. A flat `showTitle`/`rating`/
+  `seasonNumber` key (this repo's own `testdata/programs/*.json`
+  fixtures) still works unchanged: neither hydration path ever overrides
+  an already-set flat value.
 - **Libraries and searches over 100 programs are no longer silently
   truncated to their first page.** `tunarr.ProgramSearchResponse` modeled
   a `total`/`limit` pair no live response actually sends -- the real
@@ -164,21 +182,52 @@ fixtures but never matched what Tunarr actually sends over the wire.
   `internal/service.Runner`'s pagination loops
   (`fetchSingleLibrary`/`fetchAllProgramsViaSearch`, schedule.go's two
   `for { ... SearchPrograms ... }` loops) stopped after the very first
-  100-program page every time,
-  regardless of how many programs actually matched. Replaced `Total`/
-  `Limit` with `TotalPages`/`TotalHits` (matching the live envelope; no
-  legacy fields kept) and fixed both loops to continue until `page >=
-  resp.TotalPages`.
+  100-program page every time, regardless of how many programs actually
+  matched. Replaced `Total`/`Limit` with `TotalPages`/`TotalHits`
+  (matching the live envelope; no legacy fields kept) and fixed both loops
+  to continue until `page >= resp.TotalPages`. (This part was already
+  correct in the earlier same-day version of this entry and needed no
+  changes this round.)
+- **Removed `tunarr.SearchFilter` (`ProgramSearchQuery.Filter`).** Never
+  constructed by any code path in this repo, and wrong besides: the real
+  request schema's `query.filter` is an expression-tree shape (`{type:
+  "op"|"value", ...}`), nothing like the flat `{type: []string}` this
+  struct modeled -- live-verified this session that POSTing the old shape
+  against a real instance returns `400 FST_ERR_VALIDATION`. Deleted
+  outright (no-legacy) rather than fixed, since nothing used it.
 
-Both fixes are pinned by tests running an actual fake-Tunarr HTTP round
-trip in the live wire shape (not just Go struct literals bypassing JSON):
-`internal/external/tunarr/client_test.go` decodes a hand-written
-live-shaped response body directly; `internal/service/schedule_test.go`
-adds a 250-program, 3-page fake Tunarr proving the fetch returns all 250
-(not 100), and a series-block end-to-end test proving an episode whose
-show identity only ever arrives nested still matches a
-`SeriesConfig.ShowTitle`; `internal/service/media_test.go` adds a
-nested-shape fixture variant for `MediaShows`/`MediaMeta`.
+##### What we got wrong the first time
+
+An earlier version of this fix (same day) modeled `tunarr.Program.Show`
+(a nested show object) and `hydrateEpisodeShowFields`, claiming that was
+what a live Tunarr episode result actually sends, and that fixing it made
+series-block scheduling and `GET /media/shows`/`GET /media/meta` work
+against real data. That claim was **not backed by a live capture** --
+every citation was a read of the vendored `docs/tunarr/openapi.json`
+spec, which does describe a nested-`show` `Episode` schema variant, but a
+real Tunarr 1.3.13 instance doesn't send it: a live capture this round
+(84 episodes, 16 interleaved show entries) found 0 nested `show` objects.
+The nested-`show` code and its tests are kept (see above -- harmless,
+possibly useful if a richer shape ever ships), but the actual production
+fix is the `ShowID`/`SeasonID` join described above. Pagination (the
+`resp.Total` -> `resp.TotalPages` fix) was independently live-confirmed
+correct in that same earlier round and needed no correction.
+
+Every fix in this entry is pinned by tests running an actual fake-Tunarr
+HTTP round trip in the live wire shape (not just Go struct literals
+bypassing JSON), plus direct unit tests of the join and season-resolution
+functions in isolation: `internal/external/tunarr/client_test.go` decodes
+hand-written live-shaped response bodies (envelope, and a `showId`-only
+episode alongside an interleaved show entry) and adds `Client.GetSeason`
+coverage; `internal/service/schedule_test.go` adds a 250-program/3-page
+fetch-truncation test, a pagination+join interaction test (show entry on
+page 1, its episode on page 3), a series-block end-to-end test using only
+`ShowID`/`SeasonID` FKs plus a fake seasons endpoint, and isolated unit
+tests of `hydrateShowTitleAndRating`/`hydrateSeasonNumbers`/
+`resolveSeasonNumber`'s caching; `internal/service/media_test.go` adds a
+live-shaped fixture variant for `MediaShows`/`MediaMeta`. The join and the
+season resolver were each independently disabled and re-verified to
+confirm their respective tests fail without them.
 
 ### Added - 2026-01-12
 

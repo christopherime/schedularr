@@ -48,13 +48,34 @@ type Program struct {
 	// Subtype is used in filler content: movie, episode, track, music_video, other_video
 	Subtype string `json:"subtype,omitempty"`
 
-	// Episode-specific fields (Tunarr uses seasonNumber/episodeNumber)
-	ShowID        string `json:"showId,omitempty"`
-	SeasonID      string `json:"seasonId,omitempty"`
-	SeasonNumber  int    `json:"seasonNumber,omitempty"`
-	EpisodeNumber int    `json:"episodeNumber,omitempty"`
+	// ShowID and SeasonID are the foreign keys a live Tunarr "episode"
+	// search result actually carries -- live-verified against a real
+	// Tunarr 1.3.13 instance this session (transcript in this task's
+	// report; a prior round of this fix claimed, from a spec read alone,
+	// that episodes nest a "show" object instead -- that claim was wrong,
+	// see ShowTitle's doc comment below). ShowID points at a separate
+	// Type == "show" Program entry (matched by that entry's own
+	// UUID/ID, via GetID()) that a live search interleaves in the SAME
+	// paginated result stream as episodes, not nested inside them.
+	// SeasonID points at a season with no equivalent interleaved entry at
+	// all -- it can only be resolved individually, via Client.GetSeason.
+	// service.Runner.hydrateShowsAndSeasons (internal/service/schedule.go)
+	// is the only production consumer of both: it joins ShowID against
+	// the accumulated result set's Type == "show" entries to fill
+	// ShowTitle/Rating, and resolves each distinct SeasonID through
+	// Client.GetSeason to fill SeasonNumber.
+	ShowID   string `json:"showId,omitempty"`
+	SeasonID string `json:"seasonId,omitempty"`
+	// SeasonNumber is not sent as a flat field by a live episode result at
+	// all (unlike EpisodeNumber, which is) -- it stays 0 until
+	// service.Runner.hydrateSeasonNumbers resolves it via SeasonID (see
+	// above). The "seasonNumber" tag exists for fixture/test compat only
+	// (testdata/programs/*.json, this package's own tests), matching
+	// ShowTitle's flat-tag-for-fixtures/join-for-live split below.
+	SeasonNumber  int `json:"seasonNumber,omitempty"`
+	EpisodeNumber int `json:"episodeNumber,omitempty"`
 
-	// ShowTitle identifies which show an Type == "episode" program belongs
+	// ShowTitle identifies which show a Type == "episode" program belongs
 	// to -- the field scheduler.Engine's series matching
 	// (findEpisode/planSeriesForConfig, internal/scheduler/engine.go) and
 	// internal/service.Runner.MediaShows both group/match on.
@@ -62,32 +83,41 @@ type Program struct {
 	// The "showTitle" tag accepts a flat key for fixture/test compat
 	// (testdata/programs/*.json, this package's own tests, and any Tunarr
 	// deployment that happens to emit a flat showTitle) -- but a *live*
-	// Tunarr 1.3.13 instance, live-verified against
-	// docs/tunarr/openapi.json's Episode/Show schemas this session, never
-	// sends that key at all: a real POST /api/programs/search "episode"
-	// result nests show identity under a "show" object instead (see the
-	// Show field below), and carries no "rating" of its own -- only Show's
-	// does. Client.SearchPrograms and Client.GetFillerPrograms
-	// (client.go's hydrateEpisodeShowFields, the single post-unmarshal
-	// choke point both call) fill ShowTitle from Show.Title -- and Rating
-	// from Show.Rating -- whenever Show is non-nil and the flat field came
-	// back empty, so a live response now populates both exactly like a
-	// flat-shaped fixture always has. Hydration never overwrites an
-	// already-non-empty flat value, so existing fixtures round-trip
-	// unchanged. Season/episode numbers have the same flat-vs-nested
-	// mismatch (Tunarr nests them under "season"/uses "episodeNumber" only
-	// on Episode, no flat "seasonNumber") and are NOT hydrated here -- out
-	// of scope for this fix; scheduler.Engine's findEpisode still compares
-	// the flat SeasonNumber/EpisodeNumber fields, which a live response
-	// still cannot populate.
+	// Tunarr 1.3.13 instance never sends that key, and never nests a
+	// "show" object under an episode either (see the Show field below --
+	// live-verified this session with an actual captured response; a
+	// prior round of this fix modeled that nested shape from a spec read
+	// alone and was wrong: 0 of 84 live episodes captured carried one).
+	// What a live episode actually carries is the ShowID FK above. The
+	// PRODUCTION path that fills ShowTitle (and Rating, which an episode
+	// also carries no value of its own for) against live data is
+	// service.Runner.hydrateShowTitleAndRating, which joins ShowID against
+	// separate Type == "show" entries Tunarr interleaves in the same
+	// search result stream -- see ShowID's doc comment above and
+	// hydrateShowsAndSeasons's doc comment in
+	// internal/service/schedule.go for the full mechanism and the live
+	// evidence for why this must be a post-pagination, whole-result-set
+	// join rather than a per-page client-side one.
+	//
+	// Show/hydrateEpisodeShowFields (client.go) hydrate this the same way
+	// (fill only if empty) from a nested "show" object, and are kept as a
+	// harmless secondary path -- correct if some future/richer Tunarr
+	// response ever does nest show data -- but do not fire against Tunarr
+	// 1.3.13 today. Both hydration paths, and the flat tag itself, only
+	// ever fill an already-empty field, so a flat-shaped fixture always
+	// round-trips unchanged regardless of which path (if any) also ran.
 	ShowTitle string `json:"showTitle,omitempty"`
 
-	// Show carries the nested show object a live Tunarr "episode" search
-	// result actually returns (see ShowTitle's doc comment above). Only
-	// ever set for Type == "episode" results; nil for movies, tracks, and
-	// every flat-shaped fixture that predates this field. Not read
-	// directly by any caller today -- hydrateEpisodeShowFields consumes it
-	// to populate ShowTitle/Rating, which is what callers actually read.
+	// Show would carry a nested show object if a live Tunarr "episode"
+	// search result ever actually returned one -- it does not, against
+	// Tunarr 1.3.13 (live-verified this session; see ShowTitle's doc
+	// comment above for what a live episode carries instead, and for why
+	// this field is being kept anyway). Always nil against real data
+	// today; only ever non-nil when a caller constructs one directly
+	// (this package's own hydration tests). Not read directly by any
+	// production caller -- hydrateEpisodeShowFields (client.go) consumes
+	// it defensively to populate ShowTitle/Rating, which is what callers
+	// actually read, in case a richer response shape ever does nest it.
 	Show *Show `json:"show,omitempty"`
 
 	// Source information
@@ -143,12 +173,22 @@ type Library struct {
 	LastScannedAt int64  `json:"lastScannedAt,omitempty"`
 }
 
-// Season represents a TV show season.
+// Season represents a TV show season. Retrieved individually from GET
+// /api/programming/seasons/{id} (see Client.GetSeason) -- the only way to
+// learn an episode's season number against a live Tunarr instance, since
+// neither a search result's episode entry nor any interleaved entry in
+// that same result carries it (see tunarr.Program.SeasonID's doc comment).
 type Season struct {
-	UUID         string `json:"uuid"`
-	Title        string `json:"title,omitempty"`
-	SeasonNumber int    `json:"seasonNumber"`
-	ChildCount   int    `json:"childCount"` // Episode count
+	UUID  string `json:"uuid"`
+	Title string `json:"title,omitempty"`
+	// SeasonNumber is the season's 1-based ordinal (e.g. 1 for "Season
+	// 1"). The wire key is "index", not "seasonNumber" -- live-verified
+	// against Tunarr 1.3.13 (GET /api/programming/seasons/{id} response)
+	// and corroborated by docs/tunarr/openapi.json; a prior version of
+	// this struct used the wrong ("seasonNumber") key and so never
+	// actually deserialized this field from a real response.
+	SeasonNumber int `json:"index"`
+	ChildCount   int `json:"childCount"` // Episode count
 }
 
 // Show represents a TV show with metadata.
@@ -192,16 +232,25 @@ type MediaSource struct {
 }
 
 // ProgramSearchQuery represents a search query for programs.
+//
+// There used to be a Filter *SearchFilter field here, modeled as
+// {Type []string}. No code path in this repo ever constructed one (grepped
+// every SearchFilter{...} literal and every ProgramSearchQuery{...}
+// literal in this task's report -- always empty/omitted). It was also
+// simply wrong: the real request schema's query.filter is
+// SearchFilterInput, an expression-tree shape ({type: "op", op: "or"/
+// "and", children: [...]} or {type: "value", fieldSpec: {...}, op, value}),
+// nothing like a flat type list -- live-verified this session: POSTing our
+// old {"filter": {"type": [...]}} shape against a live instance returns
+// HTTP 400 FST_ERR_VALIDATION ("body/query/filter/type Invalid input").
+// Removed entirely (no-legacy) rather than fixed, since nothing used it;
+// if a caller needs server-side filtering in the future, restrictSearchTo
+// (below) already models the simpler, correctly-typed alternative Tunarr
+// also accepts for narrowing by content type.
 type ProgramSearchQuery struct {
-	Query            string        `json:"query,omitempty"`
-	RestrictSearchTo []string      `json:"restrictSearchTo,omitempty"`
-	Filter           *SearchFilter `json:"filter,omitempty"`
-	Sort             *SearchSort   `json:"sort,omitempty"`
-}
-
-// SearchFilter represents search filter options.
-type SearchFilter struct {
-	Type []string `json:"type,omitempty"` // movie, episode, track, etc.
+	Query            string      `json:"query,omitempty"`
+	RestrictSearchTo []string    `json:"restrictSearchTo,omitempty"`
+	Sort             *SearchSort `json:"sort,omitempty"`
 }
 
 // SearchSort represents search sort options.

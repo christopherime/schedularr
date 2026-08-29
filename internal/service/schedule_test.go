@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,6 +37,7 @@ func discardLogger() *slog.Logger {
 // TestClient_UpdateSchedule).
 type fakeTunarr struct {
 	programs []tunarr.Program
+	seasons  map[string]tunarr.Season // seasonID -> Season, served by GET /api/programming/seasons/{id}
 
 	mu      sync.Mutex
 	updates map[string][]tunarr.Program // channelID -> programs pushed via UpdateSchedule
@@ -43,7 +45,18 @@ type fakeTunarr struct {
 
 func newFakeTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Server, *fakeTunarr) {
 	t.Helper()
-	f := &fakeTunarr{programs: programs, updates: make(map[string][]tunarr.Program)}
+	return newFakeTunarrWithSeasons(t, programs, nil)
+}
+
+// newFakeTunarrWithSeasons is newFakeTunarr plus a GET
+// /api/programming/seasons/{id} handler serving seasons -- the fake
+// counterpart to tunarr.Client.GetSeason, letting a test exercise
+// Runner.resolveSeasonNumber without a real Tunarr instance. A season ID
+// with no entry in seasons yields a 404, matching a real deleted/unknown
+// season.
+func newFakeTunarrWithSeasons(t *testing.T, programs []tunarr.Program, seasons map[string]tunarr.Season) (*httptest.Server, *fakeTunarr) {
+	t.Helper()
+	f := &fakeTunarr{programs: programs, seasons: seasons, updates: make(map[string][]tunarr.Program)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/media-sources", func(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +83,7 @@ func newFakeTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Server, *
 			TotalHits:  len(f.programs),
 		})
 	})
+	mux.HandleFunc("/api/programming/seasons/", seasonsHandler(t, f.seasons))
 	mux.HandleFunc("/api/channels/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			w.WriteHeader(http.StatusNotFound)
@@ -91,6 +105,24 @@ func newFakeTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Server, *
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, f
+}
+
+// seasonsHandler serves GET /api/programming/seasons/{id} from a fixed
+// seasonID -> Season map -- the fake counterpart to
+// tunarr.Client.GetSeason, shared by every fake Tunarr server in this
+// file that needs to exercise Runner.resolveSeasonNumber.
+func seasonsHandler(t *testing.T, seasons map[string]tunarr.Season) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/programming/seasons/")
+		season, ok := seasons[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(season)
+	}
 }
 
 func (f *fakeTunarr) updatedChannels() map[string][]tunarr.Program {
@@ -629,20 +661,24 @@ func TestRunner_fetchLibraryPrograms_FetchesEveryPage(t *testing.T) {
 		"the primary library-scoped fetch path must also paginate through every page, not just SearchPrograms' fallback")
 }
 
-// TestRunner_Run_SeriesBlock_MatchesEpisodeFromNestedShowObject is the
-// end-to-end regression test for the show-hydration bug: a series block
-// whose SeriesConfig.ShowTitle is "The Office" must match an episode whose
-// show identity only ever arrives nested under Program.Show -- exactly
-// what a live Tunarr /api/programs/search response looks like (see
-// tunarr.Program.ShowTitle's doc comment in models.go) -- with no flat
-// "showTitle" key anywhere in the wire response. Before
-// hydrateEpisodeShowFields (internal/external/tunarr/client.go) existed,
-// this episode would decode with an empty ShowTitle and
-// scheduler.Engine's findEpisode would never match it against the block's
-// SeriesConfig, silently starving the series block every run. This is the
-// test that proves series scheduling (e.g. a Saturday-night block) works
-// against a live-shaped Tunarr response, not just this package's own
-// flat-shaped fixtures.
+// TestRunner_Run_SeriesBlock_MatchesEpisodeFromNestedShowObject pins
+// hydrateEpisodeShowFields's SECONDARY, defensive hydration path (see its
+// doc comment in internal/external/tunarr/client.go): a series block
+// matches an episode whose show identity arrives nested under
+// Program.Show. This does NOT reflect a live Tunarr 1.3.13 response --
+// live-verified this session (transcript in this task's report) that a
+// real episode result never nests a "show" object; a prior round of this
+// fix claimed otherwise from a spec read alone, and that claim was wrong.
+// See TestRunner_Run_SeriesBlock_MatchesEpisodeViaLiveShowAndSeasonJoin
+// below for the actual live-shaped end-to-end test (episode carries only
+// ShowID/SeasonID foreign keys, joined against a separate interleaved
+// Type == "show" entry and a resolved season) -- THAT is the test that
+// proves a Saturday-night block works against real Tunarr. This test
+// stays because the nested-Show path itself is still real code
+// (client.go keeps it as a harmless secondary hydration, correct for a
+// hypothetical richer future response shape) and deserves its own
+// regression coverage, just not the "this is what live Tunarr sends"
+// claim it used to carry.
 func TestRunner_Run_SeriesBlock_MatchesEpisodeFromNestedShowObject(t *testing.T) {
 	episode := tunarr.Program{
 		ID: "ep-1", Title: "Pilot", Type: "episode",
@@ -691,4 +727,268 @@ func TestRunner_Run_SeriesBlock_MatchesEpisodeFromNestedShowObject(t *testing.T)
 	}
 	assert.True(t, matchedPilot,
 		`series block with SeriesConfig.ShowTitle == "The Office" must match the episode whose show identity only ever arrived nested under Program.Show`)
+}
+
+// liveShapeOfficeShowID and liveShapeOfficeSeasonID are the join keys
+// shared by the live-shaped fixtures below (liveShapeOfficeShow,
+// liveShapeOfficePilot, liveShapeOfficeSeasonOne): a real Tunarr episode
+// result's ShowID/SeasonID foreign keys, exactly as live-verified this
+// session (transcript in this task's report).
+const (
+	liveShapeOfficeShowID   = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	liveShapeOfficeSeasonID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+)
+
+// liveShapeOfficeShow is a separate Type == "show" search-result entry --
+// live-verified this session: a real Tunarr search interleaves entries
+// like this one in the SAME paginated result stream as episodes, not
+// nested inside them.
+func liveShapeOfficeShow() tunarr.Program {
+	return tunarr.Program{
+		UUID: liveShapeOfficeShowID, Type: "show", Title: "The Office", Rating: "TV-14",
+	}
+}
+
+// liveShapeOfficePilot is what a live Tunarr episode result actually
+// looks like -- live-verified this session: only ShowID/SeasonID foreign
+// keys, no flat ShowTitle/Rating/SeasonNumber, no nested Show object at
+// all.
+func liveShapeOfficePilot() tunarr.Program {
+	return tunarr.Program{
+		ID: "ep-1", Title: "Pilot", Type: "episode", Duration: 1_320_000,
+		ShowID: liveShapeOfficeShowID, SeasonID: liveShapeOfficeSeasonID, EpisodeNumber: 1,
+	}
+}
+
+// liveShapeOfficeSeasonOne is the tunarr.Season GET
+// /api/programming/seasons/{id} resolves liveShapeOfficeSeasonID to --
+// live-verified this session: the wire key is "index" (SeasonNumber's
+// json tag; see models.go), not "seasonNumber".
+func liveShapeOfficeSeasonOne() tunarr.Season {
+	return tunarr.Season{UUID: liveShapeOfficeSeasonID, Title: "Season 1", SeasonNumber: 1}
+}
+
+// TestRunner_Run_SeriesBlock_MatchesEpisodeViaLiveShowAndSeasonJoin is the
+// DEFINITIVE end-to-end regression test for the show/season-hydration bug
+// -- the one that actually proves a Saturday-night series block works
+// against a real Tunarr 1.3.13 instance, replacing the now-corrected
+// nested-Show version above (which never reflected live Tunarr's actual
+// wire shape). It uses exactly the shape live-verified this session
+// (transcript in this task's report): the episode carries only
+// ShowID/SeasonID foreign keys (liveShapeOfficePilot); its show is a
+// separate, interleaved Type == "show" search result entry
+// (liveShapeOfficeShow); its season number comes from a real HTTP
+// round trip to a fake GET /api/programming/seasons/{id}
+// (liveShapeOfficeSeasonOne, via newFakeTunarrWithSeasons). A series block
+// with SeriesConfig.ShowTitle == "The Office" must still match this
+// episode, proving service.Runner.hydrateShowsAndSeasons' join (ShowID ->
+// interleaved show entry) and season resolution (SeasonID -> GetSeason)
+// both actually feed scheduler.Engine's findEpisode, which requires
+// ShowTitle AND SeasonNumber AND EpisodeNumber to all match.
+func TestRunner_Run_SeriesBlock_MatchesEpisodeViaLiveShowAndSeasonJoin(t *testing.T) {
+	programs := []tunarr.Program{liveShapeOfficeShow(), liveShapeOfficePilot()}
+	seasons := map[string]tunarr.Season{liveShapeOfficeSeasonID: liveShapeOfficeSeasonOne()}
+	server, _ := newFakeTunarrWithSeasons(t, programs, seasons)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Evening Sitcoms", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Evening Sitcoms", Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1",
+			Type:   scheduler.BlockTypeSeries,
+			Series: []scheduler.SeriesConfig{{ShowTitle: "The Office", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	result, err := r.Run(ctx, Options{Days: 1, Apply: false})
+	require.NoError(t, err)
+
+	slots, ok := result.Channels["channel-1"]
+	require.True(t, ok, "expected a scheduled slot for channel-1's series block")
+	require.NotEmpty(t, slots)
+
+	var matchedPilot bool
+	for _, slot := range slots {
+		for _, p := range slot.Programs {
+			if p.Title == "Pilot" && p.ShowTitle == "The Office" && p.SeasonNumber == 1 && p.EpisodeNumber == 1 {
+				matchedPilot = true
+			}
+		}
+	}
+	assert.True(t, matchedPilot,
+		`series block with SeriesConfig.ShowTitle == "The Office" must match the live-shaped episode (ShowID/SeasonID FKs only) via the show join + season resolution`)
+}
+
+// TestRunner_fetchLibraryPrograms_JoinsShowAcrossPaginationBoundary is the
+// pagination+join interaction regression test: a show's Type == "show"
+// entry lands on page 1 of a paginated library fetch, and its episode
+// lands on page 3 -- live-verified this session that a show entry is NOT
+// reliably co-located on the same search-results page as its own
+// episodes (see hydrateShowsAndSeasons' doc comment in schedule.go for the
+// live evidence). This proves the join happens over the FULLY
+// accumulated, post-pagination []Program (as hydrateShowsAndSeasons'
+// callers guarantee), not per-page -- a per-page join would miss this
+// episode's show entirely, since they never share a page.
+func TestRunner_fetchLibraryPrograms_JoinsShowAcrossPaginationBoundary(t *testing.T) {
+	const limit = 100
+	all := make([]tunarr.Program, 0, 251)
+	all = append(all, liveShapeOfficeShow()) // index 0 -> page 1
+	for i := 1; i < 250; i++ {
+		all = append(all, tunarr.Program{
+			ID: fmt.Sprintf("filler-%03d", i), Title: fmt.Sprintf("Filler %03d", i),
+			Duration: 1_800_000, Type: "movie",
+		})
+	}
+	all = append(all, liveShapeOfficePilot()) // index 250 -> page 3 (250/100 = page 3)
+
+	server := newPaginatedFakeLibraryTunarr(t, all)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	got := r.fetchTunarrContent(context.Background())
+	require.Len(t, got, 251)
+
+	var pilot *tunarr.Program
+	for i := range got {
+		if got[i].ID == "ep-1" {
+			pilot = &got[i]
+		}
+	}
+	require.NotNil(t, pilot, "the pilot episode must still be present in the fully accumulated fetch")
+	assert.Equal(t, "The Office", pilot.ShowTitle,
+		"ShowTitle must be joined from the show entry on page 1 even though the episode itself was fetched from page 3")
+	assert.Equal(t, "TV-14", pilot.Rating)
+}
+
+// TestRunner_hydrateShowTitleAndRating is a direct, HTTP-free unit test of
+// the join itself -- found necessary during this fix's revert-verify pass:
+// the higher-level MediaMeta live-shape test (media_test.go) turned out
+// NOT to discriminate this function (Type == "show" entries contribute
+// their own Rating to MediaMeta's aggregate regardless of whether the
+// join ran), so this is the test that actually pins hydrateShowTitleAndRating's
+// behavior in isolation. Covers every branch: an episode's ShowID
+// resolves against a Type == "show" entry elsewhere in the same slice and
+// gets hydrated; an already-flat episode is left untouched; a ShowID with
+// no matching show entry stays empty (not an error); non-episode types
+// are never touched.
+func TestRunner_hydrateShowTitleAndRating(t *testing.T) {
+	r := &Runner{} // pure function: touches only its `programs` argument, no store/tunarr/cache/logger needed
+
+	programs := []tunarr.Program{
+		{UUID: "show-1", Type: "show", Title: "The Office", Rating: "TV-14"},
+		{ID: "ep-1", Type: "episode", Title: "Pilot", ShowID: "show-1"},
+		{
+			ID: "ep-2", Type: "episode", Title: "Already Flat", ShowID: "show-1",
+			ShowTitle: "Flat Title", Rating: "Flat Rating",
+		},
+		{ID: "ep-3", Type: "episode", Title: "Unknown Show", ShowID: "does-not-exist"},
+		{ID: "m1", Type: "movie", Title: "A Movie", Rating: "R"},
+	}
+
+	r.hydrateShowTitleAndRating(programs)
+
+	assert.Equal(t, "The Office", programs[1].ShowTitle, "ep-1 must be hydrated from the show entry its ShowID points at")
+	assert.Equal(t, "TV-14", programs[1].Rating)
+
+	assert.Equal(t, "Flat Title", programs[2].ShowTitle, "ep-2's already-flat ShowTitle must not be overridden")
+	assert.Equal(t, "Flat Rating", programs[2].Rating, "ep-2's already-flat Rating must not be overridden")
+
+	assert.Empty(t, programs[3].ShowTitle, "ep-3's ShowID matches no show entry -- stays empty, not an error")
+	assert.Empty(t, programs[3].Rating)
+
+	assert.Equal(t, "R", programs[4].Rating, "a movie is never touched by episode-only hydration")
+}
+
+// TestRunner_hydrateSeasonNumbers is a direct, HTTP-free-except-for-the-
+// fake-seasons-endpoint unit test of season resolution in isolation,
+// mirroring TestRunner_hydrateShowTitleAndRating above for the same
+// revert-verify reason: this needs its own discriminating test, separate
+// from any higher-level end-to-end one. Covers: an episode's SeasonID
+// resolves via the fake seasons endpoint; a second episode sharing the
+// same SeasonID reuses the one resolution; an unknown SeasonID leaves
+// SeasonNumber at 0 (not an error); an episode that already has a
+// SeasonNumber is never re-resolved; movies are untouched.
+func TestRunner_hydrateSeasonNumbers(t *testing.T) {
+	const seasonID = "season-1"
+	seasons := map[string]tunarr.Season{
+		seasonID: {UUID: seasonID, Title: "Season 1", SeasonNumber: 3},
+	}
+	server, _ := newFakeTunarrWithSeasons(t, nil, seasons)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	programs := []tunarr.Program{
+		{ID: "ep-1", Type: "episode", Title: "Ep 1", SeasonID: seasonID},
+		{ID: "ep-2", Type: "episode", Title: "Ep 2", SeasonID: seasonID},
+		{ID: "ep-3", Type: "episode", Title: "Ep 3", SeasonID: "unknown-season"},
+		{ID: "ep-4", Type: "episode", Title: "Ep 4", SeasonID: seasonID, SeasonNumber: 7},
+		{ID: "m1", Type: "movie", Title: "A Movie"},
+	}
+
+	r.hydrateSeasonNumbers(context.Background(), programs)
+
+	assert.Equal(t, 3, programs[0].SeasonNumber, "ep-1 resolved from the fake seasons endpoint")
+	assert.Equal(t, 3, programs[1].SeasonNumber, "ep-2 shares the same season, resolved once and applied to both")
+	assert.Equal(t, 0, programs[2].SeasonNumber, "ep-3's season doesn't exist -- stays unresolved (0), not an error")
+	assert.Equal(t, 7, programs[3].SeasonNumber, "ep-4 already had a SeasonNumber -- must not be re-resolved/overridden")
+	assert.Equal(t, 0, programs[4].SeasonNumber, "movies are never touched")
+}
+
+// TestRunner_resolveSeasonNumber_CachesAcrossCalls pins the caching
+// contract: a second resolveSeasonNumber call for a SeasonID already
+// resolved must be served from Runner's cache, issuing no new Tunarr
+// request -- the "cache resolutions in the same 1h content cache keyed
+// by seasonId" requirement.
+func TestRunner_resolveSeasonNumber_CachesAcrossCalls(t *testing.T) {
+	const seasonID = "season-1"
+	var mu sync.Mutex
+	requestCount := 0
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/programming/seasons/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tunarr.Season{UUID: seasonID, SeasonNumber: 2})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	number1, ok1 := r.resolveSeasonNumber(context.Background(), seasonID)
+	require.True(t, ok1)
+	assert.Equal(t, 2, number1)
+
+	number2, ok2 := r.resolveSeasonNumber(context.Background(), seasonID)
+	require.True(t, ok2)
+	assert.Equal(t, 2, number2)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, requestCount,
+		"a second resolveSeasonNumber call for the same seasonID must be served from Runner's cache, issuing no new Tunarr request")
 }

@@ -390,7 +390,7 @@ func (r *Runner) fetchSingleLibrary(ctx context.Context, lib tunarr.Library) []t
 	}
 
 	r.logger.Debug("fetched library programs", "library", lib.Name, "count", len(allPrograms))
-	return allPrograms
+	return r.hydrateShowsAndSeasons(ctx, allPrograms)
 }
 
 func (r *Runner) fetchAllProgramsViaSearch(ctx context.Context) ([]tunarr.Program, error) {
@@ -421,7 +421,157 @@ func (r *Runner) fetchAllProgramsViaSearch(ctx context.Context) ([]tunarr.Progra
 		page++
 	}
 
-	return allPrograms, nil
+	return r.hydrateShowsAndSeasons(ctx, allPrograms), nil
+}
+
+// seasonCacheKeyPrefix namespaces cached season-index resolutions
+// (tunarr.Program.SeasonID -> its 1-based season number) inside Runner's
+// existing 1h content cache (r.cache), distinct from tunarrCacheKey's
+// program-list entry. See hydrateSeasonNumbers.
+const seasonCacheKeyPrefix = "tunarr_season_index:"
+
+// hydrateShowsAndSeasons is the production join step for a live Tunarr
+// instance's search results, called once by each of fetchSingleLibrary and
+// fetchAllProgramsViaSearch on their own fully accumulated []Program --
+// after every page for that call has already been fetched.
+//
+// Live-verified against a real Tunarr 1.3.13 instance this session
+// (transcript in this task's report): a real /api/programs/search result
+// does NOT nest an episode's show data (tunarr.Program.Show, hydrated
+// defensively by tunarr.Client's hydrateEpisodeShowFields, is always nil
+// against live data). Instead:
+//   - An episode carries only ShowID/SeasonID foreign keys (flat "showId"/
+//     "seasonId" UUIDs) -- no ShowTitle, no Rating, no SeasonNumber of its
+//     own at all.
+//   - Separate Type == "show" Program entries are interleaved in the SAME
+//     paginated result stream as Type == "episode" entries (live-verified:
+//     one 100-item page held 88 episodes and 12 shows together), related
+//     only by ShowID -- and a show's entry is NOT reliably co-located on
+//     the same page as its own episodes (live-verified: of 88 episodes on
+//     one page, only 8 had their show's entry on that same page). That is
+//     exactly why this can only run once per caller's fully accumulated
+//     result set, not per-page inside the client: a per-page choke point
+//     would miss the show entry for most episodes.
+//   - No equivalent "season"-type entry is ever interleaved the way "show"
+//     entries are, so season numbers can't be joined locally at all --
+//     hydrateSeasonNumbers resolves each distinct SeasonID individually via
+//     GET /api/programming/seasons/{id}.
+func (r *Runner) hydrateShowsAndSeasons(ctx context.Context, programs []tunarr.Program) []tunarr.Program {
+	r.hydrateShowTitleAndRating(programs)
+	r.hydrateSeasonNumbers(ctx, programs)
+	return programs
+}
+
+// hydrateShowTitleAndRating fills each Type == "episode" program's
+// ShowTitle/Rating -- only when currently empty; never overrides a flat
+// value a fixture/test double already set directly -- by joining its
+// ShowID against the Type == "show" Program entries also present in
+// programs (see hydrateShowsAndSeasons's doc comment for why both must
+// come from the same, fully accumulated slice). No HTTP calls: the show
+// data needed is already present in the result set this was fetched from.
+func (r *Runner) hydrateShowTitleAndRating(programs []tunarr.Program) {
+	shows := make(map[string]tunarr.Program)
+	for _, p := range programs {
+		if p.Type != "show" {
+			continue
+		}
+		if id := p.GetID(); id != "" {
+			shows[id] = p
+		}
+	}
+	if len(shows) == 0 {
+		return
+	}
+
+	for i := range programs {
+		p := &programs[i]
+		if p.Type != "episode" || p.ShowID == "" {
+			continue
+		}
+		show, ok := shows[p.ShowID]
+		if !ok {
+			continue
+		}
+		if p.ShowTitle == "" {
+			p.ShowTitle = show.Title
+		}
+		if p.Rating == "" {
+			p.Rating = show.Rating
+		}
+	}
+}
+
+// hydrateSeasonNumbers fills each Type == "episode" program's
+// SeasonNumber by resolving its SeasonID through GET
+// /api/programming/seasons/{id} (see hydrateShowsAndSeasons's doc comment
+// for why this can't be a local join like show data can). Each distinct
+// SeasonID is resolved at most once per cache window -- resolveSeasonNumber
+// caches the result in Runner's existing content cache, so repeat fetches
+// (and repeat episodes of the same season within one fetch) cost at most
+// one Tunarr request per season, not one per episode. A season that fails
+// to resolve (network error, deleted season, unexpected zero index) is
+// logged and skipped: that episode's SeasonNumber simply stays 0 (its
+// existing "unknown" value, matching the field's omitempty contract)
+// rather than failing the whole fetch over one bad season lookup.
+func (r *Runner) hydrateSeasonNumbers(ctx context.Context, programs []tunarr.Program) {
+	needed := make(map[string][]int) // SeasonID -> indexes into programs needing it resolved
+	for i := range programs {
+		p := &programs[i]
+		if p.Type != "episode" || p.SeasonID == "" || p.SeasonNumber != 0 {
+			continue
+		}
+		needed[p.SeasonID] = append(needed[p.SeasonID], i)
+	}
+	if len(needed) == 0 {
+		return
+	}
+
+	for seasonID, indexes := range needed {
+		number, ok := r.resolveSeasonNumber(ctx, seasonID)
+		if !ok {
+			continue
+		}
+		for _, i := range indexes {
+			programs[i].SeasonNumber = number
+		}
+	}
+}
+
+// resolveSeasonNumber returns seasonID's 1-based season number (Tunarr's
+// "index" field -- see tunarr.Season.SeasonNumber's doc comment), serving
+// from Runner's cache when possible and falling back to
+// tunarr.Client.GetSeason on a miss. The second return is false if
+// resolution failed outright (the request errored) or came back with a
+// non-positive index; callers must treat that as "leave unresolved," not
+// as season 0.
+func (r *Runner) resolveSeasonNumber(ctx context.Context, seasonID string) (int, bool) {
+	cacheKey := seasonCacheKeyPrefix + seasonID
+
+	if r.cache != nil {
+		if cached, found := r.cache.Get(cacheKey); found {
+			if number, ok := cached.(int); ok {
+				return number, true
+			}
+		}
+	}
+
+	season, err := r.tunarr.GetSeason(ctx, seasonID)
+	if err != nil {
+		r.logger.Debug("could not resolve season number", "season_id", seasonID, "error", err)
+		return 0, false
+	}
+	if season.SeasonNumber <= 0 {
+		r.logger.Debug("season resolved with no positive index", "season_id", seasonID, "index", season.SeasonNumber)
+		return 0, false
+	}
+
+	if r.cache != nil {
+		if err := r.cache.Set(cacheKey, season.SeasonNumber); err != nil {
+			r.logger.Warn("failed to cache resolved season number", "season_id", seasonID, "error", err)
+		}
+	}
+
+	return season.SeasonNumber, true
 }
 
 func (r *Runner) saveToCache(programs []tunarr.Program) {
