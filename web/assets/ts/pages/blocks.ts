@@ -751,8 +751,25 @@ document.addEventListener("alpine:init", () => {
         }
       },
 
+      // Moves focus onto the Confirm button once the x-if swap has
+      // replaced the row's Edit/Delete pair with the Confirm/Cancel pair --
+      // otherwise focus is left stranded on the now-removed Delete button
+      // (the browser drops it to <body>), which is silent to a keyboard or
+      // screen-reader user. $nextTick + getElementById (not the
+      // `autofocus` HTML attribute) because autofocus's WHATWG processing
+      // model is one-shot per Document: the very first autofocus-bearing
+      // element ever inserted claims the browsing context's single
+      // "autofocus processed" flag, and every later insertion -- e.g. this
+      // same button reappearing after a Cancel, or a different row's
+      // Confirm button -- is silently ignored. Same $nextTick idiom as
+      // focusEditorSoon() above; getElementById (not x-ref) since only one
+      // row is ever in the confirm state at a time (confirmDeleteId is a
+      // single value), so the static id can't collide.
       requestDelete(id) {
         this.confirmDeleteId = id;
+        this.$nextTick(() => {
+          document.getElementById("block-delete-confirm-btn")?.focus();
+        });
       },
 
       cancelDelete() {

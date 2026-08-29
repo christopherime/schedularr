@@ -146,7 +146,7 @@ web-types: ## Regenerate web/assets/ts/gen/types.d.ts from api/openapi.yaml
 	@echo "Generating TypeScript types from api/openapi.yaml..."
 	@npm run types --prefix web
 
-web-check: ## Type-check the web TS sources (skips with a notice if node is absent)
+web-check: web-types ## Type-check the web TS sources (skips with a notice if node is absent)
 	@if command -v npm >/dev/null 2>&1; then \
 		echo "Type-checking web/assets/ts..."; \
 		npm run check --prefix web; \
@@ -154,7 +154,7 @@ web-check: ## Type-check the web TS sources (skips with a notice if node is abse
 		echo "npm not found -- skipping web-check"; \
 	fi
 
-web-build: ## Build the Hugo site into web/public
+web-build: web-check ## Build the Hugo site into web/public
 	@command -v hugo >/dev/null 2>&1 || { \
 		echo "hugo not found -- install it: brew install hugo (see https://gohugo.io/installation/)"; \
 		exit 1; \
@@ -173,4 +173,4 @@ web-build: ## Build the Hugo site into web/public
 	@hugo --minify -s web
 	@echo "Hugo build complete: web/public"
 
-web: web-types web-check web-build ## Regenerate types, type-check, and build the web UI
+web: web-build ## Regenerate types, type-check, and build the web UI (web-build -> web-check -> web-types, real prerequisites so `make -j` can't interleave them)

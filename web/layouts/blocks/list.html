@@ -322,6 +322,7 @@
                       <span class="row-actions__prompt">Delete this block?</span>
                       <button
                         type="button"
+                        id="block-delete-confirm-btn"
                         class="btn btn--danger-ghost btn--sm"
                         :disabled="pendingId === block.id"
                         @click="performDelete(block.id)"

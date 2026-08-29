@@ -56,6 +56,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   component-class catalog, the light/dark mechanism (OS/browser
   preference only, no manual toggle), WCAG contrast evidence, and the
   Alpine.js conventions the UI code follows.
+- **Content-Security-Policy** on every UI response, alongside the
+  existing `X-Content-Type-Options`/`Referrer-Policy` headers: `default-src
+  'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src
+  'self' data:; connect-src 'self'; frame-ancestors 'none'`. Every
+  directive is same-origin/none (no third-party origins anywhere in the
+  UI); `'unsafe-eval'` is required by Alpine.js 3's expression evaluation.
+  See `web/DESIGN.md`'s Content-Security-Policy section for the full
+  rationale.
+- **Blocks list delete-confirm** moves focus to the Confirm button once
+  the row's Delete button is replaced by Confirm/Cancel, instead of
+  leaving a keyboard/screen-reader user's focus stranded on the removed
+  element.
 - See the README's [Web UI](README.md#-web-ui) section for the full page
   tour, build instructions (`make web`), and prerequisites (Hugo ≥
   0.120, Node/npm).
