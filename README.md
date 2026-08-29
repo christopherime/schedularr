@@ -38,16 +38,16 @@ Schedularr generates and applies TV channel schedules for [Tunarr](https://tunar
 
 ### Core Capabilities
 
-| Feature               | Description                                                                    |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| **Tunarr integration** | Reads channels and library content from Tunarr, pushes schedules back            |
-| **Content filtering**  | Regex title matching, genre/rating filters, year ranges, duration constraints    |
-| **Cron scheduling**    | Standard cron expressions for recurring blocks                                   |
-| **Series blocks**      | Sequential episode progression per show, with season/episode state persisted     |
-| **HTTP API**           | Blocks CRUD, generate/apply, history, series state, channels, status             |
-| **Dry run**            | `generate` without `--apply` previews a schedule without pushing it to Tunarr    |
-| **Priority system**    | Resolves overlapping blocks by configurable priority                             |
-| **Tag support**        | Filter content by custom tags                                                    |
+| Feature                | Description                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| **Tunarr integration** | Reads channels and library content from Tunarr, pushes schedules back         |
+| **Content filtering**  | Regex title matching, genre/rating filters, year ranges, duration constraints |
+| **Cron scheduling**    | Standard cron expressions for recurring blocks                                |
+| **Series blocks**      | Sequential episode progression per show, with season/episode state persisted  |
+| **HTTP API**           | Blocks CRUD, generate/apply, history, series state, channels, status          |
+| **Dry run**            | `generate` without `--apply` previews a schedule without pushing it to Tunarr |
+| **Priority system**    | Resolves overlapping blocks by configurable priority                          |
+| **Tag support**        | Filter content by custom tags                                                 |
 
 ---
 
@@ -265,18 +265,18 @@ schedularr [command] [flags]
 
 ### Available Commands
 
-| Command | Purpose |
-| --- | --- |
-| `config generate [file]` | Write an app config file from the CUE schema defaults (`--tunarr-url`, `--log-level`, ... override individual keys) |
-| `config dump` | Print the currently loaded effective config as YAML |
-| `scheduler init [file]` | Write a `scheduler.yaml` block-import file from the CUE schema defaults |
-| `validate <file>` | Validate an app config or `scheduler.yaml` file against its CUE schema (file type is inferred: a filename containing `scheduler` is validated as a block-import file) |
-| `channels` | List Tunarr channels |
-| `generate [--apply] [--yes] [--dry-run] [-v]` | Generate (and optionally apply) the next schedule cycle |
-| `generate config --output <file>` | Same config generation as `config generate`, under `generate` instead |
-| `state export/import/reset/set/list/backup` | Manage series progression state (`internal/store`) |
-| `health [--port 9600]` | Standalone `/healthz`/`/livez` probe server (unrelated to `serve`'s own health endpoints) |
-| `serve [--listen] [--insecure-no-auth] [--interval/-i]` | Run the HTTP API and the cron scheduling loop -- see [Serve](#-serve-api-server--cron) |
+| Command                                                 | Purpose                                                                                                                                                               |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config generate [file]`                                | Write an app config file from the CUE schema defaults (`--tunarr-url`, `--log-level`, ... override individual keys)                                                   |
+| `config dump`                                           | Print the currently loaded effective config as YAML                                                                                                                   |
+| `scheduler init [file]`                                 | Write a `scheduler.yaml` block-import file from the CUE schema defaults                                                                                               |
+| `validate <file>`                                       | Validate an app config or `scheduler.yaml` file against its CUE schema (file type is inferred: a filename containing `scheduler` is validated as a block-import file) |
+| `channels`                                              | List Tunarr channels                                                                                                                                                  |
+| `generate [--apply] [--yes] [--dry-run] [-v]`           | Generate (and optionally apply) the next schedule cycle                                                                                                               |
+| `generate config --output <file>`                       | Same config generation as `config generate`, under `generate` instead                                                                                                 |
+| `state export/import/reset/set/list/backup`             | Manage series progression state (`internal/store`)                                                                                                                    |
+| `health [--port 9600]`                                  | Standalone `/healthz`/`/livez` probe server (unrelated to `serve`'s own health endpoints)                                                                             |
+| `serve [--listen] [--insecure-no-auth] [--interval/-i]` | Run the HTTP API and the cron scheduling loop -- see [Serve](#-serve-api-server--cron)                                                                                |
 
 #### List Channels
 
@@ -534,10 +534,10 @@ Both endpoints exchange raw YAML text, not JSON: oapi-codegen does not
 generate a Go type for an `application/yaml` request or response body, so
 the handlers read/write `[]byte` directly.
 
-| Method | Path             | Success | Error codes |
-| ------ | ---------------- | ------- | ----------- |
+| Method | Path             | Success | Error codes   |
+| ------ | ---------------- | ------- | ------------- |
 | POST   | `/blocks/import` | 200     | 400, 409, 413 |
-| GET    | `/blocks/export` | 200     | —           |
+| GET    | `/blocks/export` | 200     | —             |
 
 Notes:
 
@@ -613,9 +613,9 @@ History (`internal/api/history.go`) lists `schedule_history` rows (backed
 by `store.ListScheduleHistory`, ordered by `scheduled_at` DESC) scheduled
 within the last `days` days.
 
-| Method | Path      | Success | Error codes |
-| ------ | --------- | ------- | ----------- |
-| GET    | `/history?days=N` | 200 | 400 |
+| Method | Path              | Success | Error codes |
+| ------ | ----------------- | ------- | ----------- |
+| GET    | `/history?days=N` | 200     | 400         |
 
 Notes:
 
@@ -735,20 +735,20 @@ SCHEDULARR_API_TOKEN=$(openssl rand -hex 32) schedularr serve --listen :8484
 
 ### Flags
 
-| Flag                    | Default | Description                                                       |
-| ------------------------ | ------- | --------------------------------------------------------------------- |
-| `--listen`                | `:8484`  | Address the HTTP API server listens on                              |
-| `--insecure-no-auth`     | `false`  | Skip bearer-token auth on `/api/v1/*` — local development only, never a real deployment (logs a `WARN` at startup when set) |
-| `--interval`/`-i`         | `6h`     | Interval between cron-driven schedule generate-and-apply cycles     |
+| Flag                 | Default | Description                                                                                                                 |
+| -------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--listen`           | `:8484` | Address the HTTP API server listens on                                                                                      |
+| `--insecure-no-auth` | `false` | Skip bearer-token auth on `/api/v1/*` — local development only, never a real deployment (logs a `WARN` at startup when set) |
+| `--interval`/`-i`    | `6h`    | Interval between cron-driven schedule generate-and-apply cycles                                                             |
 
 ### Environment and config keys
 
-| Config key              | Env var                 | Default | Description                                                         |
-| ------------------------ | ------------------------ | ------- | --------------------------------------------------------------------- |
-| `api.listen`              | —                          | `:8484`  | Same as `--listen`; the flag wins when explicitly passed              |
-| `api.token`                | `SCHEDULARR_API_TOKEN` | `""`     | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set |
-| `api.insecure_no_auth` | —                          | `false`  | Same as `--insecure-no-auth`; either source turning it on disables auth |
-| `cron_interval`            | —                          | `6h`     | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` -- it governs the cron loop, not the HTTP server |
+| Config key             | Env var                | Default | Description                                                                                                                                        |
+| ---------------------- | ---------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.listen`           | —                      | `:8484` | Same as `--listen`; the flag wins when explicitly passed                                                                                           |
+| `api.token`            | `SCHEDULARR_API_TOKEN` | `""`    | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set                                                      |
+| `api.insecure_no_auth` | —                      | `false` | Same as `--insecure-no-auth`; either source turning it on disables auth                                                                            |
+| `cron_interval`        | —                      | `6h`    | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` -- it governs the cron loop, not the HTTP server |
 
 `schedularr serve` refuses to start if the effective token is empty (or
 shorter than 32 characters) and `--insecure-no-auth`/`api.insecure_no_auth`
@@ -756,13 +756,13 @@ is not set.
 
 ### Endpoints
 
-| Method | Path             | Auth | Description                                     |
-| ------ | ---------------- | ---- | ------------------------------------------------ |
-| GET    | `/healthz`         | none | Process liveness only, no dependency checks     |
-| GET    | `/readyz`           | none | Liveness plus a store round-trip (`SELECT 1`)    |
-| GET    | `/metrics`          | none | Prometheus text exposition                        |
-| GET    | `/openapi.json`    | none | The OpenAPI 3.0 contract as JSON                  |
-| \*      | `/api/v1/*`         | bearer | Blocks CRUD, import/export, generate/apply/schedule, history, series state, channels, status — see [API](#-api) above |
+| Method | Path            | Auth   | Description                                                                                                           |
+| ------ | --------------- | ------ | --------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/healthz`      | none   | Process liveness only, no dependency checks                                                                           |
+| GET    | `/readyz`       | none   | Liveness plus a store round-trip (`SELECT 1`)                                                                         |
+| GET    | `/metrics`      | none   | Prometheus text exposition                                                                                            |
+| GET    | `/openapi.json` | none   | The OpenAPI 3.0 contract as JSON                                                                                      |
+| \*     | `/api/v1/*`     | bearer | Blocks CRUD, import/export, generate/apply/schedule, history, series state, channels, status — see [API](#-api) above |
 
 ### Cron loop
 
@@ -819,7 +819,7 @@ HTTP 404 (falling back to a plain-text 404 if the embedded site has no
 handler serves carries `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: same-origin`, and a Content-Security-Policy:
 
-```
+```txt
 Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'
 ```
 
@@ -1075,7 +1075,8 @@ programs` is an untyped `additionalProperties: true` array in
 `api/openapi.yaml`, so a title is read defensively (a real Tunarr program
 always has one; a missing one renders as an em dash rather than being
 invented). A visible **Preview — nothing applied** readout (a status dot
-+ text, same coded-legend convention as the Tunarr/token indicators)
+
+- text, same coded-legend convention as the Tunarr/token indicators)
 makes the dry-run state explicit. A scope with no matching channels
 renders its own empty state ("No channels matched this scope") rather
 than an empty table shell.
@@ -1203,13 +1204,13 @@ directory, not the config file's location (see
 `schedularr` user (uid 1001), exposes `8484` (`api.listen`'s default),
 and its `HEALTHCHECK` polls `GET /healthz` on that port.
 
-| Build arg      | Default | Purpose                                                          |
-| --------------- | ------- | ------------------------------------------------------------------- |
-| `VERSION`         | `dev`    | Stamped via `-ldflags -X .../cmd.Version=...`; reported by `GET /api/v1/status` |
-| `GO_VERSION`       | `1.27`   | `golang:${GO_VERSION}-alpine` build stage                          |
-| `NODE_VERSION`     | `22`     | `node:${NODE_VERSION}-alpine` TypeScript stage                     |
-| `ALPINE_VERSION`   | `3.20`   | Hugo-fetch and final runtime stage                                  |
-| `HUGO_VERSION`     | `0.165.0`| Pinned Hugo release, downloaded and sha256-verified in-stage        |
+| Build arg        | Default   | Purpose                                                                         |
+| ---------------- | --------- | ------------------------------------------------------------------------------- |
+| `VERSION`        | `dev`     | Stamped via `-ldflags -X .../cmd.Version=...`; reported by `GET /api/v1/status` |
+| `GO_VERSION`     | `1.27`    | `golang:${GO_VERSION}-alpine` build stage                                       |
+| `NODE_VERSION`   | `22`      | `node:${NODE_VERSION}-alpine` TypeScript stage                                  |
+| `ALPINE_VERSION` | `3.20`    | Hugo-fetch and final runtime stage                                              |
+| `HUGO_VERSION`   | `0.165.0` | Pinned Hugo release, downloaded and sha256-verified in-stage                    |
 
 `make docker-build` is a thin wrapper (`DOCKER_IMAGE`/`DOCKER_TAG`/`VERSION`
 Makefile variables, default `schedularr:latest`/`dev`).
@@ -1224,12 +1225,12 @@ third-party marketplace actions):
 
 ### `ci.yaml` — every push and PR to `main`
 
-| Job      | Checks                                                                                          |
-| -------- | ------------------------------------------------------------------------------------------------ |
-| `go`     | `golangci-lint run` (pinned to match local, config `.golangci.yml`), `gosec ./...`, `govulncheck ./...`, `go test -race ./...` |
+| Job      | Checks                                                                                                                                  |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `go`     | `golangci-lint run` (pinned to match local, config `.golangci.yml`), `gosec ./...`, `govulncheck ./...`, `go test -race ./...`          |
 | `drift`  | `make generate` and `make web-types` must produce **no diff** against the committed `internal/api/gen/` and `web/assets/ts/gen/` output |
-| `web`    | `tsc --noEmit` against the freshly regenerated TS types                                          |
-| `docker` | `docker build --build-arg VERSION=ci .` (no push) — proves the image still builds                |
+| `web`    | `tsc --noEmit` against the freshly regenerated TS types                                                                                 |
+| `docker` | `docker build --build-arg VERSION=ci .` (no push) — proves the image still builds                                                       |
 
 Go tool versions are pinned in `ci.yaml`'s `env:` block and installed with
 `go install ...@<version>` (not a marketplace action) so CI enforces
