@@ -585,6 +585,72 @@ func TestGenerateForTimeRange(t *testing.T) {
 	assert.NotEmpty(t, programs, "Expected programs in schedule")
 }
 
+// TestGenerateForTimeRange_UsesConfiguredLocationForCronOccurrences is the
+// regression test for a bug found during the first live apply against a
+// real Tunarr instance (2026-08-29): cron occurrences were computed against
+// start's own Location instead of the engine's configured one, so a
+// deployment with log.timezone set to anything other than "Local"/UTC (a
+// bare time.Now() in a container without TZ set carries UTC) silently
+// planned every block's occurrences against UTC wall-clock fields. A cron
+// like "30 20 * * *" then fired at 20:30 UTC, not 20:30 in the configured
+// zone -- e.g. planning tonight's occurrence even though 20:30 in the real
+// zone had already passed.
+//
+// This uses a synthetic +2h time.FixedZone rather than a real IANA zone
+// (time.LoadLocation("Europe/Zurich")) so the test doesn't depend on the
+// test environment's tzdata. The offset and start instant are chosen so
+// the pre-fix (UTC) and post-fix (configured-location) answers disagree
+// about which *day* is next, not just the hour: at the chosen start
+// instant, local wall-clock time in the +2h zone is 21:00 -- 20:30 has
+// already passed locally, so the correct next occurrence is tomorrow at
+// 20:30 local. UTC wall-clock time is still 19:00 (before 20:30), so the
+// pre-fix bug -- evaluating the cron against start's UTC fields instead of
+// e.location -- would wrongly report *today* at 20:30 UTC as next.
+func TestGenerateForTimeRange_UsesConfiguredLocationForCronOccurrences(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	blocks := []Block{
+		{
+			Name:      "Nightly Block",
+			Type:      BlockTypeFilter,
+			Cron:      "30 20 * * *", // daily at 20:30 in the engine's configured location
+			Duration:  30,
+			ChannelID: "channel-1",
+			Priority:  10,
+			Filter: Filter{
+				Genres: []string{"Drama"},
+			},
+		},
+	}
+
+	loc := time.FixedZone("TestZone+2", 2*60*60)
+	engine := NewEngine(client, blocks, store, slog.Default(), loc)
+
+	availablePrograms := []tunarr.Program{
+		{ID: "p1", Title: "Drama Show", Genres: []tunarr.Genre{{Name: "Drama"}}, Duration: 1_800_000, Type: "episode"},
+	}
+
+	start := time.Date(2026, 1, 12, 19, 0, 0, 0, time.UTC) // 21:00 local in loc
+	end := start.Add(30 * time.Hour)                       // wide enough for exactly one occurrence either way
+
+	schedule, err := engine.GenerateForTimeRange(start, end, availablePrograms)
+	require.NoError(t, err, "GenerateForTimeRange returned error")
+
+	slots, ok := schedule["channel-1"]
+	require.True(t, ok, "expected a schedule for channel-1")
+	require.NotEmpty(t, slots, "expected at least one scheduled occurrence")
+
+	got := slots[0].StartTime
+	buggyUTCAnswer := time.Date(2026, 1, 12, 20, 30, 0, 0, time.UTC)   // today at 20:30 UTC -- what the pre-fix bug produced
+	correctAnswer := time.Date(2026, 1, 13, 18, 30, 0, 0, time.UTC)    // tomorrow at 20:30 in the +2h zone
+
+	assert.False(t, got.Equal(buggyUTCAnswer),
+		"next occurrence must not be today's UTC-evaluated 20:30 (%s) -- cron must be evaluated in the engine's configured location, not UTC", buggyUTCAnswer)
+	assert.True(t, got.Equal(correctAnswer),
+		"expected next occurrence %s (20:30 tomorrow in the configured +2h location), got %s", correctAnswer, got)
+}
+
 func TestGenerateForTimeRange_InvalidCron(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()

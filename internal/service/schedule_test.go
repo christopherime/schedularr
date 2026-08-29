@@ -94,22 +94,40 @@ func newFakeTunarrWithSeasons(t *testing.T, programs []tunarr.Program, seasons m
 		})
 	})
 	mux.HandleFunc("/api/programming/seasons/", seasonsHandler(t, f.seasons))
+	// /api/channels/{id}/programming mirrors live Tunarr 1.3.13 semantics
+	// (live-verified, see tunarr.Client.UpdateSchedule's doc comment): no
+	// PUT route exists at all (404), and POST expects the manual-lineup
+	// contract ({"type": "manual", "lineup": [...], "append": ...}), not a
+	// bare []Program body. Mirroring the 404-on-PUT here specifically is
+	// what makes a regression back to PUT (this task's Bug 1) fail a test
+	// instead of silently passing against a fake more lenient than reality.
 	mux.HandleFunc("/api/channels/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
+		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		// path is /api/channels/{id}/programming
 		id := r.URL.Path[len("/api/channels/") : len(r.URL.Path)-len("/programming")]
 
-		var programs []tunarr.Program
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&programs))
+		var req tunarr.ManualLineupRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if req.Type != "manual" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		programs := make([]tunarr.Program, len(req.Lineup))
+		for i, item := range req.Lineup {
+			programs[i] = tunarr.Program{UUID: item.ID, Duration: item.Duration, Type: item.Type}
+		}
 
 		f.mu.Lock()
 		f.updates[id] = programs
 		f.mu.Unlock()
 
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{})
 	})
 
 	server := httptest.NewServer(mux)

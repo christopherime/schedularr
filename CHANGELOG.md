@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-29
+
+Two bugs found during the first live `--apply` against a real Tunarr
+1.3.13 instance and this deployment's configured (non-UTC) timezone.
+
+### Fixed
+
+- **`UpdateSchedule` now sends the live manual-lineup contract, not a
+  dead PUT route.** Live-verified this session: a real Tunarr 1.3.13
+  instance has no PUT route for `/api/channels/{id}/programming` at all
+  (`404 {"message":"Route PUT:... not found"}`); `tunarr.Client` sent
+  PUT anyway. Verified the actual contract against the Tunarr source at
+  tag `v1.3.13` (`github.com/chrisbenincasa/tunarr`) rather than the
+  stale vendored `docs/tunarr/openapi.json` (v1.0.16), which also
+  documents this route incorrectly (it lists a required `programs`
+  field the live "manual" branch never reads). `Client.UpdateSchedule`
+  now POSTs `{"type": "manual", "lineup": [{"type": "content", "id":
+  ..., "duration": ...}, ...], "append": false}`
+  (`types/src/api/index.ts`'s `ManualProgramLineupSchema`), matching
+  what `server/src/db/channel/LineupRepository.ts`'s `updateLineup`
+  actually consumes. `internal/service/schedule_test.go`'s fake Tunarr
+  server now mirrors live semantics (404 on PUT, decodes and validates
+  the POST body) so a regression back to PUT fails a test instead of
+  silently passing.
+- **Cron occurrence planning now honors the configured timezone instead
+  of always evaluating in UTC.** `log.timezone` was loaded correctly and
+  threaded all the way to `scheduler.Engine.location`, but
+  `GenerateForTimeRange` never actually applied it: it passed `start`
+  (a bare `time.Now()`, carrying the process's own zone -- UTC in a
+  container without `TZ` set) straight into `robfig/cron`'s
+  `SpecSchedule.Next()`, which -- for a cron string with no `CRON_TZ=`
+  prefix, which none of this repo's blocks carry -- matches calendar
+  fields against whatever `Location` its input already has, not against
+  a schedule-level setting. A block like `30 20 * * 6` was therefore
+  planned against 20:30 UTC, not 20:30 in the deployment's configured
+  zone, e.g. still planning tonight's occurrence after 20:30 in the real
+  zone had already passed. Fixed by converting `start` to
+  `e.location` at the top of `GenerateForTimeRange`
+  (`internal/scheduler/engine.go`); `Next()` converts its result back
+  to the same location it was given, so the rest of the occurrence loop
+  follows automatically. Regression test uses a synthetic
+  `time.FixedZone` (not a real IANA zone) so it doesn't depend on the
+  test environment's tzdata.
+
 ## [0.2.0] - 2026-08-29
 
 Series-based scheduling now works end-to-end against a live Tunarr

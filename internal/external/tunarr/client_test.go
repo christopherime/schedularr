@@ -78,15 +78,51 @@ func TestClient_GetChannels(t *testing.T) {
 	}
 }
 
+// TestClient_UpdateSchedule pins the live v1.3.13 wire contract for
+// UpdateSchedule (see ManualLineupRequest's doc comment in models.go for
+// how it was verified): POST (not PUT) to
+// /api/channels/{id}/programming, body {"type": "manual", "lineup":
+// [{"type": "content", "id": ..., "duration": ...}, ...], "append":
+// false}. The server here decodes the raw body rather than trusting
+// Client's own request-building, so a regression that reverts to the old
+// PUT-with-a-bare-[]Program-body shape fails this test on the body
+// assertions even if it somehow still hit this path.
 func TestClient_UpdateSchedule(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("expected PUT request, got %s", r.Method)
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
 		}
 		if r.URL.Path != "/api/channels/channel-1/programming" {
 			t.Errorf("expected /api/channels/channel-1/programming path, got %s", r.URL.Path)
 		}
-		w.WriteHeader(http.StatusNoContent)
+
+		var body ManualLineupRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		if body.Type != "manual" {
+			t.Errorf("expected type %q, got %q", "manual", body.Type)
+		}
+		if body.Append {
+			t.Error("expected append=false for a full-replacement UpdateSchedule call")
+		}
+		if len(body.Lineup) != 1 {
+			t.Fatalf("expected 1 lineup entry, got %d: %+v", len(body.Lineup), body.Lineup)
+		}
+		item := body.Lineup[0]
+		if item.Type != "content" {
+			t.Errorf("expected lineup entry type %q, got %q", "content", item.Type)
+		}
+		if item.ID != "prog-1" {
+			t.Errorf("expected lineup entry id %q, got %q", "prog-1", item.ID)
+		}
+		if item.Duration != 1800000 {
+			t.Errorf("expected lineup entry duration 1800000, got %v", item.Duration)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{})
 	}))
 	defer server.Close()
 
@@ -97,6 +133,40 @@ func TestClient_UpdateSchedule(t *testing.T) {
 	err := client.UpdateSchedule(context.Background(), "channel-1", schedule)
 	if err != nil {
 		t.Fatalf("UpdateSchedule returned error: %v", err)
+	}
+}
+
+// TestClient_UpdateSchedule_NeverSendsPUT is the regression test for the
+// bug this round fixes: a live Tunarr 1.3.13 instance has no PUT route
+// for /api/channels/{id}/programming at all (live-verified this session:
+// PUT returns 404 "Route PUT:... not found"; POST with an empty body
+// returns 400, proving the route exists). This fake mirrors exactly that
+// live behavior -- PUT is 404, POST succeeds -- so a regression back to
+// PUT fails here with the same error a real deployment would hit, instead
+// of silently passing against a fake that's more lenient than reality.
+func TestClient_UpdateSchedule_NeverSendsPUT(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Route PUT:/api/channels/channel-1/programming not found"})
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	schedule := []Program{
+		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
+	}
+	err := client.UpdateSchedule(context.Background(), "channel-1", schedule)
+	if err != nil {
+		t.Fatalf("UpdateSchedule returned error: %v -- client must send POST, a PUT would 404 against a live Tunarr 1.3.13 instance", err)
 	}
 }
 

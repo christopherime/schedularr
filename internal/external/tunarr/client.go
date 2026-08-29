@@ -276,11 +276,16 @@ func (c *Client) GetSeason(ctx context.Context, seasonID string) (*Season, error
 	return &season, nil
 }
 
-// UpdateSchedule applies a schedule of programs to a channel.
-// PUT /api/channels/{id}/programming
+// UpdateSchedule applies a full-replacement schedule of programs to a
+// channel. POST /api/channels/{id}/programming, body {"type": "manual",
+// "lineup": [...], "append": false} -- see ManualLineupRequest's doc
+// comment for how that contract was verified. There is no PUT route for
+// this path against a live Tunarr 1.3.13 instance at all (confirmed live
+// this session: 404 "Route PUT:... not found"); an earlier version of this
+// method sent PUT, which is the bug this fixes.
 func (c *Client) UpdateSchedule(ctx context.Context, channelID string, programs []Program) error {
 	const endpoint = "/api/channels/{id}/programming"
-	const method = http.MethodPut
+	const method = http.MethodPost
 
 	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
 	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
@@ -292,15 +297,22 @@ func (c *Client) UpdateSchedule(ctx context.Context, channelID string, programs 
 	}
 
 	// Validate all programs before sending
+	lineup := make([]LineupItem, len(programs))
 	for i := range programs {
 		if err := validateProgram(&programs[i]); err != nil {
 			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "request_validation_error").Inc()
 			return fmt.Errorf("invalid program at index %d: %w", i, err)
 		}
+		lineup[i] = LineupItem{
+			Type:     "content",
+			ID:       programs[i].GetID(),
+			Duration: programs[i].Duration,
+		}
 	}
 
 	path := "/api/channels/" + channelID + "/programming"
-	if err := c.http.Put(ctx, path, programs, nil); err != nil {
+	req := ManualLineupRequest{Type: "manual", Lineup: lineup, Append: false}
+	if err := c.http.Post(ctx, path, req, nil); err != nil {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
 		return fmt.Errorf("failed to update schedule for channel %s: %w", channelID, err)
 	}

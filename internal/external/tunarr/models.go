@@ -352,3 +352,44 @@ type TimeBasedSchedule struct {
 type ScheduleRequest struct {
 	Schedule *TimeBasedSchedule `json:"schedule"`
 }
+
+// ManualLineupRequest is the request body Client.UpdateSchedule sends to
+// POST /api/channels/{id}/programming -- the "manual" variant of a
+// discriminated union of three lineup-update kinds Tunarr also accepts
+// ("manual", "time", "random"; only "manual" is modeled here, since it's
+// the only one any caller in this repo constructs).
+//
+// Source-verified against tag v1.3.13 (github.com/chrisbenincasa/tunarr):
+// types/src/api/index.ts's ManualProgramLineupSchema --
+//
+//	z.object({ type: z.literal('manual'), lineup: CondensedChannelProgramSchema.array(), append: z.boolean().default(false) })
+//
+// -- and server/src/db/channel/LineupRepository.ts's updateLineup, whose
+// "manual" branch (`if (req.type === 'manual')`) reads only req.lineup,
+// never req.programs. This deliberately does NOT match the vendored
+// docs/tunarr/openapi.json (v1.0.16), which lists this variant as also
+// requiring a top-level "programs" field -- that document is stale for
+// this route: live-verified this session that a real Tunarr 1.3.13
+// instance has no PUT route for this path at all (404 "Route PUT:...
+// not found"), which the vendored spec doesn't reflect either.
+type ManualLineupRequest struct {
+	Type   string       `json:"type"` // always "manual"
+	Lineup []LineupItem `json:"lineup"`
+	Append bool         `json:"append"`
+}
+
+// LineupItem is one entry of a ManualLineupRequest's "lineup" array.
+// Schedularr only ever sends "content" entries (movies/episodes/tracks
+// Tunarr already knows about, from SearchPrograms/library results) -- ID
+// must be an existing Tunarr program UUID (see Program.GetID, which
+// prefers UUID over the legacy ID field): updateLineup's
+// channelProgramToLineupItemFunc carries a content entry's "id" straight
+// through to the channel_programs.program_uuid foreign key
+// (LineupRepository.ts), so an ID Tunarr doesn't already recognize
+// produces a broken lineup entry rather than a validation error -- there
+// is no server-side existence check at this layer.
+type LineupItem struct {
+	Type     string  `json:"type"` // "content" -- the only kind Schedularr produces
+	ID       string  `json:"id"`
+	Duration float64 `json:"duration"` // milliseconds
+}

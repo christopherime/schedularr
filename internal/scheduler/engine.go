@@ -101,6 +101,25 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 	timer := prometheus.NewTimer(metrics.ScheduleGenerationDurationSeconds)
 	defer timer.ObserveDuration()
 
+	// Anchor cron occurrence math to e.location. robfig/cron's
+	// SpecSchedule.Next only converts its argument into a *schedule's own*
+	// location -- set from a "CRON_TZ=..." prefix on the cron string itself
+	// (see spec.go's Next) -- which block.Cron strings here never carry, so
+	// every parsed SpecSchedule.Location is the zero value, time.Local.
+	// Next's own doc comment for that case: "schedules without a time zone
+	// specified (time.Local) are treated as local to the time provided" --
+	// i.e. it matches calendar fields against whatever Location its input
+	// already carries, not e.location. Without this .In(), start (bare
+	// time.Now() from service.Runner.Run/cmd/generate.go) carries the
+	// process's own zone -- UTC in a container without TZ set -- and every
+	// occurrence below is computed against UTC wall-clock fields instead of
+	// the deployment's configured log.timezone, e.g. planning "30 20 * * 6"
+	// for tonight at 20:30 UTC even when 20:30 in the real configured zone
+	// already passed. Next() converts its result back to the same location
+	// it was given (see spec.go), so this alone is sufficient -- nextTime
+	// below stays in e.location for the rest of the loop.
+	start = start.In(e.location)
+
 	// First, generate all potential slots
 	channelSlots := make(map[string][]ScheduledSlot)
 
