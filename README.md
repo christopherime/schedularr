@@ -14,6 +14,8 @@
 
 [Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [API](#-api) • [Serve](#-serve-api-server--cron) • [Docker](#-docker) • [Release Process](#️-release-process) • [Contributing](#-contributing)
 
+<img src="assets/demo.gif" alt="Schedularr web UI walkthrough: dashboard, blocks editor, schedule preview, and series state" width="800"/>
+
 </div>
 
 ---
@@ -254,6 +256,10 @@ problem; `type` there can be omitted.
 ```bash
 schedularr [command] [flags]
 ```
+
+<img src="assets/cli.gif" alt="schedularr --help followed by schedularr validate against a fixture scheduler config"/>
+
+*`schedularr --help` and `schedularr validate` against a fixture in `testdata/configs/`.*
 
 **For per-command flags and a full walkthrough, see [CLI Reference](docs/CLI_REFERENCE.md).**
 
@@ -946,6 +952,10 @@ every API request; it is never embedded in the served HTML/JS.
 
 #### Dashboard (`/`)
 
+<img src="assets/screenshots/dashboard.png" alt="Schedularr dashboard showing Tunarr signal, block count, and recent history"/>
+
+*System status (version, Tunarr signal, block count) and recent history, each loaded independently.*
+
 The landing page. Two sections, each fetched independently on load
 (`web/assets/ts/pages/dashboard.ts`, bundled separately from the shell via
 the `page_js` template hook):
@@ -970,6 +980,10 @@ the section that failed, with a **Retry** button — never a toast. Alpine's
 literal text; nothing on this page goes through `innerHTML`.
 
 #### Blocks (`/blocks/`)
+
+<img src="assets/screenshots/blocks.png" alt="Schedularr blocks editor open on a series-type block with two series rows"/>
+
+*The inline editor, open on a `series`-type block with two show rows.*
 
 List every stored block and create/edit/delete them, backed entirely by
 `GET/POST/PUT/DELETE /api/v1/blocks[/{id}]` (`web/assets/ts/pages/blocks.ts`).
@@ -1030,6 +1044,10 @@ field specifically, not mixed in with the generic error.
 
 #### Schedule (`/schedule/`)
 
+<img src="assets/screenshots/schedule.png" alt="Schedularr schedule preview listing slots for a channel with program counts"/>
+
+*A generated preview: chronological slots per channel, each with an expandable program list.*
+
 Preview a schedule, then apply it — a dry-run/apply pair backed by `POST
 /api/v1/generate` and `POST /api/v1/apply` (`web/assets/ts/pages/
 schedule.ts`), the same `GenerateRequest` body (`days`, optional
@@ -1087,6 +1105,10 @@ or `/apply` renders inline as a `.problem` panel with the API's own
 the dashboard's/blocks' generic error label.
 
 #### Series (`/series/`)
+
+<img src="assets/screenshots/series.png" alt="Schedularr series state table with per-show season/episode cursors"/>
+
+*Tracked series with inline season/episode cursor editing, run count, and status toggles.*
 
 Every persisted `series_state` row — the per-show season/episode cursor a
 series block advances as it airs — backed by `GET`/`PATCH
