@@ -463,6 +463,71 @@ func TestValidateProgram(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		// The following (season/album/artist/collection/folder/playlist)
+		// were all MISSING from Type's oneof list until this round --
+		// live-verified this session that a live /api/programs/search
+		// result can carry any of them (season, specifically: a growing
+		// library scan started interleaving Type == "season" entries,
+		// which validateProgram rejected outright, and the pre-fix caller
+		// treated that single rejection as fatal to the ENTIRE fetch --
+		// see filterValidPrograms' doc comment in client.go for the
+		// skip-and-continue half of that fix). This table pins that the
+		// oneof itself is now complete, independent of the
+		// skip-and-continue behavior.
+		{
+			name: "Valid season",
+			program: Program{
+				UUID:  "season-1",
+				Title: "Season 1",
+				Type:  "season",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid album",
+			program: Program{
+				UUID:  "album-1",
+				Title: "Test Album",
+				Type:  "album",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid artist",
+			program: Program{
+				UUID:  "artist-1",
+				Title: "Test Artist",
+				Type:  "artist",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid collection",
+			program: Program{
+				UUID:  "collection-1",
+				Title: "Test Collection",
+				Type:  "collection",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid folder",
+			program: Program{
+				UUID:  "folder-1",
+				Title: "Test Folder",
+				Type:  "folder",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid playlist",
+			program: Program{
+				UUID:  "playlist-1",
+				Title: "Test Playlist",
+				Type:  "playlist",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -688,9 +753,12 @@ func TestClient_GetFillerPrograms_HydratesNestedShow(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	programs, err := client.GetFillerPrograms(context.Background(), fillerListID)
+	programs, dropped, err := client.GetFillerPrograms(context.Background(), fillerListID)
 	if err != nil {
 		t.Fatalf("GetFillerPrograms returned error: %v", err)
+	}
+	if dropped != 0 {
+		t.Errorf("expected 0 dropped programs, got %d", dropped)
 	}
 
 	if len(programs) != 1 {
@@ -876,5 +944,72 @@ func TestClient_GetSeason_Error(t *testing.T) {
 	_, err := client.GetSeason(context.Background(), "some-id")
 	if err == nil {
 		t.Error("expected error for 500 response, got nil")
+	}
+}
+
+// TestClient_SearchPrograms_SkipsInvalidEntriesAndCountsDropped is the
+// regression test for the pre-existing bug this round fixes: a live
+// library search interleaves entries of several different Type values --
+// live-verified this session (transcript in this task's report) that a
+// growing library's search started returning Type == "season" entries
+// (previously missing from the oneof, see TestValidateProgram) and that
+// nothing rules out an entirely unrecognized future Type value either.
+// Before this fix, ANY single invalid entry anywhere in a page made
+// SearchPrograms return an error for the WHOLE page -- discarding every
+// other, perfectly valid entry on it (and, transitively, every
+// already-accumulated page in a paginated fetch; see
+// internal/service/schedule.go's fetchSingleLibrary/
+// fetchAllProgramsViaSearch). This response mixes a valid movie, a valid
+// (now that the oneof is fixed) season entry, and a truly-unknown-type
+// entry that must never be valid: SearchPrograms must still succeed,
+// keep the two valid entries, and report DroppedCount == 1.
+func TestClient_SearchPrograms_SkipsInvalidEntriesAndCountsDropped(t *testing.T) {
+	mockResponse := ProgramSearchResponse{
+		Results: []Program{
+			{ID: "m1", Title: "A Movie", Type: "movie", Duration: 1_800_000},
+			{UUID: "season-1", Title: "Season 1", Type: "season", Index: 1},
+			{ID: "mystery-1", Title: "Mystery Entry", Type: "definitely-not-a-real-type", Duration: 100},
+		},
+		Page: 1, TotalPages: 1, TotalHits: 3,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Fatalf("failed to encode mock response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{URL: server.URL})
+	resp, err := client.SearchPrograms(context.Background(), ProgramSearchRequest{Query: &ProgramSearchQuery{}})
+	if err != nil {
+		t.Fatalf("SearchPrograms returned error: %v -- a single invalid entry must never fail the whole page", err)
+	}
+
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 valid results (movie + season), got %d: %+v", len(resp.Results), resp.Results)
+	}
+	if resp.DroppedCount != 1 {
+		t.Errorf("expected DroppedCount 1, got %d", resp.DroppedCount)
+	}
+
+	var haveMovie, haveSeason bool
+	for _, p := range resp.Results {
+		switch p.Type {
+		case "movie":
+			haveMovie = true
+		case "season":
+			haveSeason = true
+			if p.Index != 1 {
+				t.Errorf("expected season Index 1, got %d", p.Index)
+			}
+		}
+	}
+	if !haveMovie {
+		t.Error("expected the valid movie to survive")
+	}
+	if !haveSeason {
+		t.Error("expected the season entry to survive now that \"season\" is a valid Type")
 	}
 }

@@ -3,6 +3,7 @@ package httpclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -274,4 +275,87 @@ func TestClient_Put(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+// TestIsDecodeError_DistinguishesDecodeFromConnectivityAndStatus exercises
+// IsDecodeError against the three real error shapes this client's
+// resty-backed Get/Post/Put actually produce (verified this session, not
+// assumed): a response body that fails to decode into the target struct
+// (*APIError{StatusCode: 0, Err: *json.UnmarshalTypeError}), a
+// connectivity failure (*APIError{StatusCode: 0, Err: *url.Error}), and a
+// non-2xx HTTP status (*APIError{StatusCode: <code>, Err: nil}). Only the
+// first must report true.
+func TestIsDecodeError_DistinguishesDecodeFromConnectivityAndStatus(t *testing.T) {
+	type target struct {
+		Index int `json:"index"`
+	}
+
+	t.Run("decode failure (field type mismatch)", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"index": "not-a-number"}`))
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig(server.URL, "", AuthNone)
+		cfg.MaxRetries = 0
+		client := New(cfg)
+
+		var got target
+		err := client.Get(context.Background(), "/x", &got)
+		if err == nil {
+			t.Fatal("expected a decode error, got nil")
+		}
+		if !IsDecodeError(err) {
+			t.Errorf("expected IsDecodeError(err) to be true for a field type mismatch, got false (err: %v)", err)
+		}
+	})
+
+	t.Run("connectivity failure", func(t *testing.T) {
+		cfg := DefaultConfig("http://127.0.0.1:1", "", AuthNone)
+		cfg.MaxRetries = 0
+		client := New(cfg)
+
+		var got target
+		err := client.Get(context.Background(), "/x", &got)
+		if err == nil {
+			t.Fatal("expected a connectivity error, got nil")
+		}
+		if IsDecodeError(err) {
+			t.Errorf("expected IsDecodeError(err) to be false for a connection failure, got true (err: %v)", err)
+		}
+	})
+
+	t.Run("non-2xx status", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"boom"}`))
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig(server.URL, "", AuthNone)
+		cfg.MaxRetries = 0
+		client := New(cfg)
+
+		var got target
+		err := client.Get(context.Background(), "/x", &got)
+		if err == nil {
+			t.Fatal("expected a status error, got nil")
+		}
+		if IsDecodeError(err) {
+			t.Errorf("expected IsDecodeError(err) to be false for a non-2xx status, got true (err: %v)", err)
+		}
+	})
+
+	t.Run("nil error", func(t *testing.T) {
+		if IsDecodeError(nil) {
+			t.Error("expected IsDecodeError(nil) to be false")
+		}
+	})
+
+	t.Run("unrelated wrapped error", func(t *testing.T) {
+		if IsDecodeError(errors.New("something else entirely")) {
+			t.Error("expected IsDecodeError to be false for an unrelated error")
+		}
+	})
 }

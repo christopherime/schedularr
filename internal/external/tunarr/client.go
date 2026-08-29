@@ -148,6 +148,38 @@ func (c *Client) GetLibraries(ctx context.Context, mediaSourceID string) ([]Libr
 	return libraries, nil
 }
 
+// filterValidPrograms validates each entry in programs, returning only the
+// ones that pass and how many were dropped. This is the fix for a
+// pre-existing bug: a single malformed or unrecognized entry anywhere in
+// an otherwise large, valid page used to abort the ENTIRE response (see
+// git history -- validateProgram's caller used to return an error the
+// instant any one entry failed, which is exactly what happened once a
+// growing library's search started interleaving "season"-type entries
+// before Program.Type's validate oneof included "season": every
+// accumulated page in that fetch got discarded, not just the one bad
+// entry). SearchPrograms and GetFillerPrograms both call this instead of
+// validating (and erroring) inline: one weird entry now costs exactly
+// that one entry, never the whole batch. Each dropped entry still bumps
+// the existing response_validation_error metrics counter; producing a
+// human-readable summary is the caller's job -- see
+// internal/service/schedule.go's fetchSingleLibrary/
+// fetchAllProgramsViaSearch, which accumulate the dropped count across
+// every page of a fetch and log one WARN per whole fetch, not one per
+// page or per dropped entry.
+func filterValidPrograms(programs []Program, endpoint, method string) ([]Program, int) {
+	valid := make([]Program, 0, len(programs))
+	dropped := 0
+	for i := range programs {
+		if err := validateProgram(&programs[i]); err != nil {
+			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
+			dropped++
+			continue
+		}
+		valid = append(valid, programs[i])
+	}
+	return valid, dropped
+}
+
 // SearchPrograms searches for programs using the Tunarr search API.
 // POST /api/programs/search
 func (c *Client) SearchPrograms(ctx context.Context, req ProgramSearchRequest) (*ProgramSearchResponse, error) {
@@ -166,19 +198,21 @@ func (c *Client) SearchPrograms(ctx context.Context, req ProgramSearchRequest) (
 
 	hydrateEpisodeShowFields(response.Results)
 
-	for i := range response.Results {
-		if err := validateProgram(&response.Results[i]); err != nil {
-			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
-			return nil, fmt.Errorf("invalid program in search results: %w", err)
-		}
-	}
+	// See filterValidPrograms' doc comment: an invalid entry is dropped,
+	// not fatal to this whole page.
+	response.Results, response.DroppedCount = filterValidPrograms(response.Results, endpoint, method)
 
 	return &response, nil
 }
 
-// GetFillerPrograms retrieves programs from a specific filler list.
+// GetFillerPrograms retrieves programs from a specific filler list. The
+// second return is how many entries were dropped for failing validation
+// (see filterValidPrograms' doc comment) -- a non-zero count is not an
+// error, but callers should generally log it once (this is a single,
+// non-paginated call, so "once per fetch" is trivially satisfied by
+// logging at the call site; see internal/scheduler/engine.go's caller).
 // GET /api/filler-lists/{id}/programs
-func (c *Client) GetFillerPrograms(ctx context.Context, fillerListID string) ([]Program, error) {
+func (c *Client) GetFillerPrograms(ctx context.Context, fillerListID string) ([]Program, int, error) {
 	const endpoint = "/api/filler-lists/{id}/programs"
 	const method = http.MethodGet
 
@@ -188,26 +222,21 @@ func (c *Client) GetFillerPrograms(ctx context.Context, fillerListID string) ([]
 
 	if fillerListID == "" {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_filler_list_id").Inc()
-		return nil, errors.New("filler list ID cannot be empty")
+		return nil, 0, errors.New("filler list ID cannot be empty")
 	}
 
 	path := "/api/filler-lists/" + fillerListID + "/programs"
 	var programs []Program
 	if err := c.http.Get(ctx, path, &programs); err != nil {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "api_call_error").Inc()
-		return nil, fmt.Errorf("failed to get filler programs for list %s: %w", fillerListID, err)
+		return nil, 0, fmt.Errorf("failed to get filler programs for list %s: %w", fillerListID, err)
 	}
 
 	hydrateEpisodeShowFields(programs)
 
-	for i := range programs {
-		if err := validateProgram(&programs[i]); err != nil {
-			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "response_validation_error").Inc()
-			return nil, fmt.Errorf("invalid program in filler programs: %w", err)
-		}
-	}
+	valid, dropped := filterValidPrograms(programs, endpoint, method)
 
-	return programs, nil
+	return valid, dropped, nil
 }
 
 // GetSeason retrieves a single season by its UUID -- the only way to learn

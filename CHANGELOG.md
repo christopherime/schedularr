@@ -229,6 +229,46 @@ live-shaped fixture variant for `MediaShows`/`MediaMeta`. The join and the
 season resolver were each independently disabled and re-verified to
 confirm their respective tests fail without them.
 
+#### Round 3: a growing library's scan could still discard every fetched program
+
+The two fixes above were real, but a third, pre-existing bug -- exposed
+specifically by a library large enough to reach a "season"-type entry --
+still made `fetchSingleLibrary` discard an entire fetch's worth of
+already-accumulated pages. Fixed, and verified against the operator's own
+live, ~10,600-hit library (not a synthetic fixture) via a scratch
+`schedularr serve` run against `https://tunarr.local.geekxflood.io`: see
+"Round 3" in `.superpowers/sdd/2026-08-29-deploy/wire-fix-report.md` for
+the full transcript, including 493 real show titles and 23 real ratings
+returned by `GET /api/v1/media/shows`/`GET /api/v1/media/meta`.
+
+- **`tunarr.Program.Type`'s `validate:"oneof=..."` list was missing
+  `"season"`** (and `"album"`/`"artist"`/`"collection"`/`"folder"`/
+  `"playlist"`, all live-verified this round as real values a search
+  result can carry) -- so once a growing library's search started
+  interleaving season-type entries, `validateProgram` rejected every one
+  of them, and the single-invalid-entry-aborts-the-whole-page behavior
+  (pre-existing, unrelated to Bug 1/2) turned that into
+  `fetchSingleLibrary` discarding every already-fetched page, not just the
+  bad entry. Fixed both layers: the oneof list is now complete, and
+  `SearchPrograms`/`GetFillerPrograms` skip-and-continue instead of
+  aborting (new `filterValidPrograms`/`Program.DroppedCount`) -- one
+  malformed or genuinely-unrecognized entry now costs exactly that one
+  entry, logged once per whole fetch (not per page or per entry) via a new
+  WARN in `internal/service/schedule.go`.
+- **Season resolution now tries a local join first.** A live search
+  interleaves `Type == "season"` entries the same way it interleaves show
+  entries (live-verified: a 100-item page was observed as 100% season
+  entries) -- `hydrateSeasonNumbers` now builds a `SeasonID -> index` map
+  from whatever season entries already showed up in the accumulated fetch
+  before falling back to the existing per-ID `Client.GetSeason` resolver,
+  cutting a large fetch's season-related HTTP calls dramatically.
+- **502 wording**: `GET /media/shows`/`GET /media/meta` used to say
+  "tunarr unreachable" for every failure, including one where Tunarr was
+  reached fine and the problem was a response body that didn't decode into
+  the expected shape. New `httpclient.IsDecodeError` distinguishes that
+  case (`"tunarr response invalid"` / `"tunarr returned unexpected data"`)
+  from genuine connectivity/status failures (unchanged wording).
+
 ### Added - 2026-01-12
 
 #### CUE Schema Integration

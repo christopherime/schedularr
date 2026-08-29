@@ -355,6 +355,7 @@ func (r *Runner) fetchLibraryPrograms(ctx context.Context) []tunarr.Program {
 
 func (r *Runner) fetchSingleLibrary(ctx context.Context, lib tunarr.Library) []tunarr.Program {
 	var allPrograms []tunarr.Program
+	droppedTotal := 0
 	page := 1
 	const limit = 100
 
@@ -373,28 +374,42 @@ func (r *Runner) fetchSingleLibrary(ctx context.Context, lib tunarr.Library) []t
 		}
 
 		allPrograms = append(allPrograms, resp.Results...)
+		droppedTotal += resp.DroppedCount
 
 		// Stop once every page has been fetched. resp.TotalPages is the
 		// live envelope's authoritative page count (POST
 		// /api/programs/search returns {results, page, totalPages,
 		// totalHits, facetDistribution} -- there is no "total"/"limit"
 		// key; see tunarr.ProgramSearchResponse). page == resp.TotalPages
-		// means the page just fetched was the last one. The
-		// len(resp.Results) == 0 fallback guards against an unexpected
-		// TotalPages of 0 (or a server that never reports it) causing an
-		// infinite loop.
-		if len(resp.Results) == 0 || page >= resp.TotalPages {
+		// means the page just fetched was the last one. This used to also
+		// break on len(resp.Results) == 0 as a defensive fallback -- but
+		// resp.Results is now the *validated* count (see
+		// tunarr.Client.filterValidPrograms), and a page consisting
+		// entirely of entries that fail validation (rare, but a whole
+		// page can share one type -- live-verified: one page was 100%
+		// season-type entries) would zero that out and truncate the fetch
+		// early even though more valid pages remained, reintroducing a
+		// shape of the truncation bug the TotalPages fix itself closed.
+		// TotalPages alone is authoritative and already handles the
+		// legitimate empty-results case (page 1 >= TotalPages 0), so the
+		// fallback was both redundant there and actively wrong here.
+		if page >= resp.TotalPages {
 			break
 		}
 		page++
 	}
 
 	r.logger.Debug("fetched library programs", "library", lib.Name, "count", len(allPrograms))
+	if droppedTotal > 0 {
+		r.logger.Warn("dropped invalid programs while fetching library",
+			"library", lib.Name, "valid_count", len(allPrograms), "dropped_count", droppedTotal)
+	}
 	return r.hydrateShowsAndSeasons(ctx, allPrograms)
 }
 
 func (r *Runner) fetchAllProgramsViaSearch(ctx context.Context) ([]tunarr.Program, error) {
 	var allPrograms []tunarr.Program
+	droppedTotal := 0
 	page := 1
 	const limit = 100
 
@@ -411,16 +426,22 @@ func (r *Runner) fetchAllProgramsViaSearch(ctx context.Context) ([]tunarr.Progra
 		}
 
 		allPrograms = append(allPrograms, resp.Results...)
+		droppedTotal += resp.DroppedCount
 
-		// See the matching comment in fetchSingleLibrary above: resp.Total
-		// never existed on a live response, so this used to stop after the
-		// first page for any library/search result over `limit` programs.
-		if len(resp.Results) == 0 || page >= resp.TotalPages {
+		// See the matching comment in fetchSingleLibrary above -- both for
+		// why resp.Total never existed on a live response (the original
+		// truncation bug) and for why the termination check is
+		// TotalPages-only now, not also len(resp.Results) == 0.
+		if page >= resp.TotalPages {
 			break
 		}
 		page++
 	}
 
+	if droppedTotal > 0 {
+		r.logger.Warn("dropped invalid programs while fetching via search",
+			"valid_count", len(allPrograms), "dropped_count", droppedTotal)
+	}
 	return r.hydrateShowsAndSeasons(ctx, allPrograms), nil
 }
 
@@ -452,9 +473,15 @@ const seasonCacheKeyPrefix = "tunarr_season_index:"
 //     exactly why this can only run once per caller's fully accumulated
 //     result set, not per-page inside the client: a per-page choke point
 //     would miss the show entry for most episodes.
-//   - No equivalent "season"-type entry is ever interleaved the way "show"
-//     entries are, so season numbers can't be joined locally at all --
-//     hydrateSeasonNumbers resolves each distinct SeasonID individually via
+//   - Type == "season" entries ARE also interleaved in the same stream --
+//     live-verified this round (a correction to an earlier version of
+//     this comment, which claimed otherwise): a season entry carries its
+//     own "index" (1-based season number) directly, and a 100-item page
+//     was observed as 100% season entries during a library scan. Unlike
+//     shows, though, a season is not guaranteed to be interleaved in
+//     every fetch -- hydrateSeasonNumbers tries this local join first
+//     (free, no HTTP call) and falls back to resolving whichever
+//     SeasonIDs it didn't cover individually via
 //     GET /api/programming/seasons/{id}.
 func (r *Runner) hydrateShowsAndSeasons(ctx context.Context, programs []tunarr.Program) []tunarr.Program {
 	r.hydrateShowTitleAndRating(programs)
@@ -502,19 +529,27 @@ func (r *Runner) hydrateShowTitleAndRating(programs []tunarr.Program) {
 }
 
 // hydrateSeasonNumbers fills each Type == "episode" program's
-// SeasonNumber by resolving its SeasonID through GET
-// /api/programming/seasons/{id} (see hydrateShowsAndSeasons's doc comment
-// for why this can't be a local join like show data can). Each distinct
-// SeasonID is resolved at most once per cache window -- resolveSeasonNumber
-// caches the result in Runner's existing content cache, so repeat fetches
-// (and repeat episodes of the same season within one fetch) cost at most
-// one Tunarr request per season, not one per episode. A season that fails
-// to resolve (network error, deleted season, unexpected zero index) is
-// logged and skipped: that episode's SeasonNumber simply stays 0 (its
-// existing "unknown" value, matching the field's omitempty contract)
-// rather than failing the whole fetch over one bad season lookup.
+// SeasonNumber. Unlike the show join (hydrateShowTitleAndRating), a
+// season's own entry is NOT guaranteed to be interleaved in every fetch's
+// result stream the way a show's is -- but when it IS present (live
+// -verified this session: a Type == "season" entry carries its own
+// "index" directly, same key GET /api/programming/seasons/{id} uses; a
+// 100-item page was observed as 100% season entries during a library
+// scan), resolving it from the already-accumulated slice costs nothing
+// and needs no HTTP call at all. So this tries that local join FIRST --
+// building a SeasonID -> index map from every Type == "season" entry
+// already in programs -- and only falls back to resolveSeasonNumber
+// (GET /api/programming/seasons/{id} per distinct SeasonID, cached) for
+// whichever SeasonIDs the local join didn't cover. Each distinct SeasonID
+// that does need the network fallback is still resolved at most once per
+// cache window either way (see resolveSeasonNumber). A season that fails
+// to resolve by either path (network error, deleted season, unexpected
+// zero index) is logged and skipped: that episode's SeasonNumber simply
+// stays 0 (its existing "unknown" value, matching the field's omitempty
+// contract) rather than failing the whole fetch over one bad season
+// lookup.
 func (r *Runner) hydrateSeasonNumbers(ctx context.Context, programs []tunarr.Program) {
-	needed := make(map[string][]int) // SeasonID -> indexes into programs needing it resolved
+	needed := make(map[string][]int) // SeasonID -> indexes into programs still needing it resolved
 	for i := range programs {
 		p := &programs[i]
 		if p.Type != "episode" || p.SeasonID == "" || p.SeasonNumber != 0 {
@@ -526,6 +561,28 @@ func (r *Runner) hydrateSeasonNumbers(ctx context.Context, programs []tunarr.Pro
 		return
 	}
 
+	// Local join first: any Type == "season" entry already in this same
+	// accumulated slice resolves its SeasonID for free, no HTTP call.
+	for i := range programs {
+		p := &programs[i]
+		if p.Type != "season" || p.Index <= 0 {
+			continue
+		}
+		id := p.GetID()
+		indexes, ok := needed[id]
+		if !ok {
+			continue
+		}
+		for _, idx := range indexes {
+			programs[idx].SeasonNumber = p.Index
+		}
+		delete(needed, id)
+	}
+	if len(needed) == 0 {
+		return
+	}
+
+	// Fallback: whichever SeasonIDs the local join didn't cover.
 	for seasonID, indexes := range needed {
 		number, ok := r.resolveSeasonNumber(ctx, seasonID)
 		if !ok {

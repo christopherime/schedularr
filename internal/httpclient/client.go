@@ -3,6 +3,8 @@ package httpclient
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -125,6 +127,27 @@ func (e *APIError) Error() string {
 // Unwrap returns the underlying error.
 func (e *APIError) Unwrap() error {
 	return e.Err
+}
+
+// IsDecodeError reports whether err represents a response body that
+// reached us and failed to decode into the expected shape (malformed
+// JSON, or a field whose type didn't match what the target struct
+// expects) -- as opposed to a connectivity failure (couldn't reach the
+// server at all: DNS, dial, timeout) or a non-2xx HTTP status (server
+// reached, but it reported its own error). Verified this session against
+// this client's actual resty-backed behavior for all three cases: a
+// decode failure surfaces as *APIError{StatusCode: 0, Err:
+// *json.UnmarshalTypeError or *json.SyntaxError}; a connectivity failure
+// surfaces as *APIError{StatusCode: 0, Err: *url.Error}; a non-2xx status
+// surfaces as *APIError{StatusCode: <code>, Err: nil}. Distinguishing the
+// first from the other two is what
+// internal/api/media.go's writeMediaAPIError uses to stop saying "tunarr
+// unreachable" for a failure where Tunarr was reached fine and the
+// problem was a response shape schedularr didn't handle.
+func IsDecodeError(err error) bool {
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
 }
 
 // newRequest creates a new resty request with context.

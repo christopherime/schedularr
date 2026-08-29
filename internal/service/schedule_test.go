@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,15 @@ import (
 // test output clean while still exercising every r.logger.* call site.
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// capturingLogger returns a *slog.Logger writing to a buffer tests can
+// inspect afterward, for the handful of tests that need to assert on an
+// emitted log record (e.g. the "dropped invalid programs" WARN) rather
+// than just discarding output like discardLogger.
+func capturingLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 }
 
 // fakeTunarr is an httptest-backed stand-in for the Tunarr API, covering
@@ -991,4 +1001,127 @@ func TestRunner_resolveSeasonNumber_CachesAcrossCalls(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, 1, requestCount,
 		"a second resolveSeasonNumber call for the same seasonID must be served from Runner's cache, issuing no new Tunarr request")
+}
+
+// TestRunner_fetchSingleLibrary_SkipsInvalidProgramsAndLogsOnce is the
+// end-to-end regression test for the pre-existing bug a growing library
+// scan exposed: live-verified this session that a real library search
+// interleaves entries of several Type values, including ones this
+// client's Program.Type oneof didn't recognize at the time (Type ==
+// "season" specifically -- now fixed, see TestValidateProgram in
+// internal/external/tunarr/client_test.go) -- and nothing guarantees
+// every value Tunarr might ever send is covered. Before this fix, ANY
+// single invalid entry made the whole page's SearchPrograms call return
+// an error, which fetchSingleLibrary treated as fatal: `return nil`,
+// discarding every already-accumulated page too, not just the one bad
+// entry. This fixture mixes a valid movie, a valid (now that the oneof is
+// fixed) season entry, and a truly-unknown-type entry: the fetch must
+// still succeed, keep the two valid entries, drop only the invalid one,
+// and log exactly one WARN summarizing the counts for the whole fetch.
+func TestRunner_fetchSingleLibrary_SkipsInvalidProgramsAndLogsOnce(t *testing.T) {
+	all := []tunarr.Program{
+		{ID: "m1", Title: "A Movie", Type: "movie", Duration: 1_800_000},
+		{UUID: "season-1", Title: "Season 1", Type: "season", Index: 1},
+		{ID: "mystery-1", Title: "Mystery Entry", Type: "definitely-not-a-real-type", Duration: 100},
+	}
+	server := newPaginatedFakeLibraryTunarr(t, all)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	logger, logBuf := capturingLogger()
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, logger, time.UTC, 0)
+
+	got := r.fetchTunarrContent(context.Background())
+	require.Len(t, got, 2, "the fetch must succeed and keep the 2 valid entries, dropping only the unknown-type one")
+
+	var haveMovie, haveSeason bool
+	for _, p := range got {
+		switch {
+		case p.ID == "m1":
+			haveMovie = true
+		case p.UUID == "season-1":
+			haveSeason = true
+		}
+	}
+	assert.True(t, haveMovie, "the valid movie must survive")
+	assert.True(t, haveSeason, `the season entry must survive now that "season" is a valid Type`)
+
+	logOutput := logBuf.String()
+	assert.Contains(t, logOutput, "dropped invalid programs", "exactly one summary WARN must be logged for the whole fetch")
+	assert.Contains(t, logOutput, "dropped_count=1")
+	assert.Contains(t, logOutput, "valid_count=2")
+}
+
+// TestRunner_hydrateSeasonNumbers_LocalJoinAvoidsNetworkFallback pins the
+// optimization half of this round's season fix: when a Type == "season"
+// entry for an episode's SeasonID is already present in the accumulated
+// slice (live-verified this session that this happens -- a 100-item page
+// was observed as 100% season entries during a library scan), resolving
+// it must cost zero Tunarr requests, not fall through to
+// resolveSeasonNumber/Client.GetSeason. The fake season endpoint here
+// would fail the test if hit (t.Error inside the handler), so a passing
+// test proves the local join path was actually taken.
+func TestRunner_hydrateSeasonNumbers_LocalJoinAvoidsNetworkFallback(t *testing.T) {
+	const seasonID = "season-1"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/programming/seasons/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("resolveSeasonNumber's network fallback must not be reached when a local season entry already resolves the SeasonID (got request for %s)", r.URL.Path)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	programs := []tunarr.Program{
+		{UUID: seasonID, Type: "season", Title: "Season 1", Index: 4},
+		{ID: "ep-1", Type: "episode", Title: "Ep 1", SeasonID: seasonID},
+		{ID: "ep-2", Type: "episode", Title: "Ep 2", SeasonID: seasonID},
+	}
+
+	r.hydrateSeasonNumbers(context.Background(), programs)
+
+	assert.Equal(t, 4, programs[1].SeasonNumber, "ep-1 resolved locally from the interleaved season entry's Index")
+	assert.Equal(t, 4, programs[2].SeasonNumber, "ep-2 resolved locally too, from the same local join")
+}
+
+// TestRunner_hydrateSeasonNumbers_LocalJoinThenNetworkFallback proves the
+// two paths compose correctly in one call: a SeasonID covered by a local
+// season entry resolves for free, while a different SeasonID with no
+// local entry still falls back to the network resolver -- "resolver stays
+// as fallback," not replaced.
+func TestRunner_hydrateSeasonNumbers_LocalJoinThenNetworkFallback(t *testing.T) {
+	const localSeasonID = "season-local"
+	const remoteSeasonID = "season-remote"
+
+	seasons := map[string]tunarr.Season{
+		remoteSeasonID: {UUID: remoteSeasonID, Title: "Season 9", SeasonNumber: 9},
+	}
+	server, _ := newFakeTunarrWithSeasons(t, nil, seasons)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+
+	programs := []tunarr.Program{
+		{UUID: localSeasonID, Type: "season", Title: "Season 1", Index: 1},
+		{ID: "ep-local", Type: "episode", Title: "Local Ep", SeasonID: localSeasonID},
+		{ID: "ep-remote", Type: "episode", Title: "Remote Ep", SeasonID: remoteSeasonID},
+	}
+
+	r.hydrateSeasonNumbers(context.Background(), programs)
+
+	assert.Equal(t, 1, programs[1].SeasonNumber, "resolved via the local join")
+	assert.Equal(t, 9, programs[2].SeasonNumber, "resolved via the network fallback, since no local season entry covered it")
 }

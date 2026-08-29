@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
+	"github.com/christopherime/schedularr/internal/httpclient"
 	"github.com/christopherime/schedularr/internal/service"
 )
 
@@ -28,11 +29,17 @@ var _ MediaAPI = (*service.Runner)(nil)
 
 // ListMediaShows implements gen.ServerInterface.
 //
-// A nil Deps.Media and a live MediaShows call failing both map to 502 with
-// title "tunarr unreachable" -- the same convention ListChannels uses
-// (tunarr.go): both mean "the library isn't available right now," and
-// Runner.MediaShows' only failure mode is fetchPrograms being unable to
-// reach Tunarr.
+// A nil Deps.Media always maps to 502 "tunarr unreachable" -- the same
+// convention ListChannels uses (tunarr.go): Tunarr integration isn't
+// configured at all, so "unreachable" is accurate. A live MediaShows call
+// failing maps to one of two distinct 502s -- see writeMediaAPIError's doc
+// comment for why a single "tunarr unreachable" wording stopped being
+// accurate for every failure this can have: Runner.fetchPrograms
+// (MediaShows/MediaMeta's shared fetch path) can fail because Tunarr
+// genuinely wasn't reachable, OR because Tunarr responded but sent a
+// response body Client.SearchPrograms/GetSeason couldn't decode --
+// live-verified this session as a real, distinguishable failure mode
+// (httpclient.IsDecodeError), not a hypothetical.
 func (h *Handlers) ListMediaShows(w http.ResponseWriter, r *http.Request) {
 	if h.d.Media == nil {
 		WriteProblem(w, r, http.StatusBadGateway, "tunarr unreachable", "tunarr not configured")
@@ -82,13 +89,32 @@ func mediaShowToGen(s service.MediaShow) gen.MediaShow {
 // response with a short, fixed detail -- err here is whatever
 // Runner.fetchPrograms surfaced, which can wrap a raw Tunarr/HTTP error, so
 // (matching writeScheduleRunnerError's convention, schedule.go) it never
-// reaches the response body. op identifies which handler failed (e.g.
-// "list_media_shows") for the server-side log line.
+// reaches the response body (no internals leaked either way -- both
+// details below stay short and fixed; only the server-side log line, not
+// the response, carries err itself). op identifies which handler failed
+// (e.g. "list_media_shows") for the server-side log line.
+//
+// Both branches are still 502 (the caller can't fix either from their
+// side) but the detail now distinguishes what actually went wrong:
+// httpclient.IsDecodeError(err) is true when Tunarr was reached and
+// responded, but its response body didn't decode into the shape
+// Client.SearchPrograms/GetSeason expected (malformed JSON or a field
+// type mismatch) -- a data-shape problem, not connectivity. Saying
+// "tunarr unreachable" for that case used to be actively misleading: an
+// operator chasing a network/connectivity problem that doesn't exist
+// wastes time no differently than one who'd be helped by knowing it's a
+// response-shape mismatch instead. Every other failure (couldn't connect
+// at all, or Tunarr itself returned a non-2xx status) keeps the original
+// "tunarr unreachable" wording, which is accurate for both.
 func (h *Handlers) writeMediaAPIError(w http.ResponseWriter, r *http.Request, op string, err error) {
 	h.d.Logger.Error("media discovery failed",
 		"op", op,
 		"request_id", RequestIDFromContext(r.Context()),
 		"error", err,
 	)
+	if httpclient.IsDecodeError(err) {
+		WriteProblem(w, r, http.StatusBadGateway, "tunarr response invalid", "tunarr returned unexpected data")
+		return
+	}
 	WriteProblem(w, r, http.StatusBadGateway, "tunarr unreachable", "unable to reach tunarr")
 }

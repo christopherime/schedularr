@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
+	"github.com/christopherime/schedularr/internal/httpclient"
 	"github.com/christopherime/schedularr/internal/service"
 	"github.com/christopherime/schedularr/internal/store"
 )
@@ -100,6 +102,28 @@ func TestListMediaShows_MediaError_BadGatewayDoesNotLeakDetail(t *testing.T) {
 	assert.NotContains(t, p.Detail, "connection refused", "the raw Tunarr error must never reach the response body")
 }
 
+// TestListMediaShows_DecodeError_DistinctBadGatewayDetail pins this
+// round's fix: a failure where Tunarr was reached and responded, but the
+// body didn't decode into the expected shape (httpclient.IsDecodeError),
+// must get a DIFFERENT 502 detail than a genuine connectivity failure --
+// "tunarr unreachable" was actively misleading for this case (see
+// writeMediaAPIError's doc comment in media.go).
+func TestListMediaShows_DecodeError_DistinctBadGatewayDetail(t *testing.T) {
+	fake := &fakeMedia{err: &httpclient.APIError{
+		Method: "POST", URL: "http://tunarr.local/api/programs/search",
+		Err: &json.UnmarshalTypeError{Value: "string", Type: reflect.TypeOf(0)},
+	}}
+	h := newTestServerWithMedia(t, fake)
+
+	w := doRequest(t, h, http.MethodGet, "/media/shows", nil)
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+
+	p := decodeProblem(t, w)
+	assert.Equal(t, "tunarr response invalid", p.Title)
+	assert.Equal(t, "tunarr returned unexpected data", p.Detail)
+	assert.NotContains(t, p.Detail, "json", "no internals leaked into the response body")
+}
+
 func TestListMediaShows_NilMedia_BadGateway(t *testing.T) {
 	h := newTestServerWithMedia(t, nil)
 
@@ -149,6 +173,23 @@ func TestGetMediaMeta_MediaError_BadGatewayDoesNotLeakDetail(t *testing.T) {
 	lower := p.Detail
 	assert.NotContains(t, lower, "sql")
 	assert.NotContains(t, lower, "driver")
+}
+
+// TestGetMediaMeta_DecodeError_DistinctBadGatewayDetail mirrors
+// TestListMediaShows_DecodeError_DistinctBadGatewayDetail for GetMediaMeta.
+func TestGetMediaMeta_DecodeError_DistinctBadGatewayDetail(t *testing.T) {
+	fake := &fakeMedia{err: &httpclient.APIError{
+		Method: "GET", URL: "http://tunarr.local/api/programming/seasons/x",
+		Err: &json.UnmarshalTypeError{Value: "string", Type: reflect.TypeOf(0)},
+	}}
+	h := newTestServerWithMedia(t, fake)
+
+	w := doRequest(t, h, http.MethodGet, "/media/meta", nil)
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+
+	p := decodeProblem(t, w)
+	assert.Equal(t, "tunarr response invalid", p.Title)
+	assert.Equal(t, "tunarr returned unexpected data", p.Detail)
 }
 
 func TestGetMediaMeta_NilMedia_BadGateway(t *testing.T) {

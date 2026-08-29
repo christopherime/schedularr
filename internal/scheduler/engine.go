@@ -661,10 +661,20 @@ func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Progr
 		return nil, errors.New("no filler list ID specified")
 	}
 
-	// Fetch filler programs from the specified list
-	fillerContent, err := e.client.GetFillerPrograms(context.Background(), block.Filler.FillerListID)
+	// Fetch filler programs from the specified list. dropped counts
+	// entries GetFillerPrograms discarded for failing validation (see its
+	// doc comment in internal/external/tunarr/client.go) -- not fatal,
+	// but worth one WARN so an operator can see it happened; a single,
+	// non-paginated call trivially satisfies "one log per fetch."
+	fillerContent, dropped, err := e.client.GetFillerPrograms(context.Background(), block.Filler.FillerListID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch filler programs: %w", err)
+	}
+	if dropped > 0 {
+		e.logger.Warn("dropped invalid filler programs",
+			"filler_list_id", block.Filler.FillerListID,
+			"valid_count", len(fillerContent),
+			"dropped_count", dropped)
 	}
 
 	if len(fillerContent) == 0 {

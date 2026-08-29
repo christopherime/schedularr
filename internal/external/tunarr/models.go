@@ -43,10 +43,34 @@ type Program struct {
 	// Genres can be simple strings or objects depending on the endpoint
 	Genres []Genre `json:"genres,omitempty"`
 
-	// Type: movie, episode, track, music_video, other_video, redirect, custom, flex, show (Tunarr may return others)
-	Type string `json:"type" validate:"omitempty,oneof=movie episode track music_video other_video redirect custom flex content show"`
+	// Type identifies what kind of entry this is. The oneof below is the
+	// full set of values a live /api/programs/search result can carry --
+	// live-verified and audited against docs/tunarr/openapi.json's
+	// per-item type enum this session (a prior round's list was missing
+	// "season", which is exactly the pre-existing bug that made a
+	// growing library's scheduled scan discard every accumulated page
+	// once season-type entries appeared: validateProgram errored on the
+	// first one, and the caller treated that as a hard fetch failure --
+	// see Client.SearchPrograms/GetFillerPrograms's doc comments for the
+	// skip-and-continue fix, which is the actual defense against any
+	// value still missing from this list). "redirect"/"custom"/"flex"/
+	// "content" are not search-result types at all -- they're Tunarr
+	// channel-programming slot types (see ChannelProgram.Type), kept
+	// here because Program doubles as UpdateSchedule's request body
+	// shape.
+	Type string `json:"type" validate:"omitempty,oneof=movie episode track music_video other_video redirect custom flex content show season album artist collection folder playlist"`
 	// Subtype is used in filler content: movie, episode, track, music_video, other_video
 	Subtype string `json:"subtype,omitempty"`
+
+	// Index is a Type == "season" (or "show") entry's own 1-based
+	// ordinal -- live-verified this session: a search result's
+	// season-type entry carries `"index": N` directly (the same wire key
+	// GET /api/programming/seasons/{id} uses -- see Season.SeasonNumber's
+	// doc comment). service.Runner.hydrateSeasonNumbers reads this to
+	// build a local SeasonID -> index map from whatever season entries
+	// already showed up in the accumulated result set, before falling
+	// back to Client.GetSeason for any SeasonID that didn't.
+	Index int `json:"index,omitempty"`
 
 	// ShowID and SeasonID are the foreign keys a live Tunarr "episode"
 	// search result actually carries -- live-verified against a real
@@ -57,13 +81,20 @@ type Program struct {
 	// Type == "show" Program entry (matched by that entry's own
 	// UUID/ID, via GetID()) that a live search interleaves in the SAME
 	// paginated result stream as episodes, not nested inside them.
-	// SeasonID points at a season with no equivalent interleaved entry at
-	// all -- it can only be resolved individually, via Client.GetSeason.
+	// SeasonID points at a Type == "season" entry the same way -- also
+	// interleaved in the same result stream (live-verified: a 100-item
+	// page can be entirely season entries), just not necessarily
+	// co-located with the episodes that reference it, and not guaranteed
+	// to appear in every fetch at all -- see hydrateShowsAndSeasons' doc
+	// comment in schedule.go for why the season-index resolver
+	// (Client.GetSeason) remains a fallback for whichever SeasonIDs the
+	// local join (via Index above) doesn't cover.
 	// service.Runner.hydrateShowsAndSeasons (internal/service/schedule.go)
 	// is the only production consumer of both: it joins ShowID against
 	// the accumulated result set's Type == "show" entries to fill
-	// ShowTitle/Rating, and resolves each distinct SeasonID through
-	// Client.GetSeason to fill SeasonNumber.
+	// ShowTitle/Rating, and resolves each distinct SeasonID -- first
+	// against any interleaved Type == "season" entry's Index, then via
+	// Client.GetSeason -- to fill SeasonNumber.
 	ShowID   string `json:"showId,omitempty"`
 	SeasonID string `json:"seasonId,omitempty"`
 	// SeasonNumber is not sent as a flat field by a live episode result at
@@ -285,6 +316,17 @@ type ProgramSearchResponse struct {
 	Page       int       `json:"page"`
 	TotalPages int       `json:"totalPages"`
 	TotalHits  int       `json:"totalHits"`
+
+	// DroppedCount is not part of the wire response (json:"-") -- it's
+	// Client.SearchPrograms' own bookkeeping, set to how many entries this
+	// page's Results originally contained that failed validateProgram and
+	// were dropped rather than aborting the whole page (see
+	// SearchPrograms' doc comment for why: one weird/unrecognized entry
+	// must never discard an entire fetch). Callers that paginate
+	// (internal/service/schedule.go's fetchSingleLibrary/
+	// fetchAllProgramsViaSearch) accumulate this across every page and
+	// log one summary WARN per whole fetch, not per page.
+	DroppedCount int `json:"-"`
 }
 
 // ScheduleSlot represents a time slot in a channel schedule.
