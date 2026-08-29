@@ -3,10 +3,11 @@
 ## Overview
 
 Schedularr provides a command-line interface for managing TV channel
-scheduling with Tunarr, plus an HTTP API server (`schedularr serve`; see
-the [API](../README.md#-api) and [Serve](../README.md#-serve-api-server--cron)
-sections of the README). All commands support the global `--config` flag
-to specify a custom app config file.
+scheduling with Tunarr, plus an HTTP API server and web UI
+(`schedularr serve`; see the [API](../README.md#-api),
+[Serve](../README.md#-serve-api-server--cron), and
+[Web UI](../README.md#-web-ui) sections of the README). All commands
+support the global `--config` flag to specify a custom app config file.
 
 ## Global Flags
 
@@ -237,6 +238,11 @@ the HTTP server).
 
 - `/healthz`, `/readyz`, `/metrics`, `/openapi.json` served unauthenticated;
   everything under `/api/v1/*` requires `Authorization: Bearer <token>`
+- Every other path serves the embedded web UI (dashboard, blocks,
+  schedule, series -- see [README's Web UI section](../README.md#-web-ui))
+  at the same origin and port, unauthenticated for the static assets
+  themselves; the UI's own API calls carry the same bearer token, pasted
+  once into the browser and kept in `localStorage`
 - Refuses to start if the effective token is empty or shorter than 32
   characters, unless `--insecure-no-auth`/`api.insecure_no_auth` is set
 - Cron loop regenerates and applies the next day's schedule on the

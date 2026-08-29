@@ -419,16 +419,26 @@ schedularr/
 │   └── config.yaml              # Example configuration
 ├── e2e/                          # Docker-based acceptance tests against a real Tunarr
 ├── web/                           # Hugo web UI, embedded via go:embed (see Web UI section)
-│   ├── hugo.toml                  # Site config (baseURL, disabled kinds)
-│   ├── package.json                # devDeps: typescript, openapi-typescript
-│   ├── tsconfig.json                # Strict TS config for web/assets/ts
-│   ├── embed.go                     # package web -- //go:embed all:public, web.Site()
-│   ├── layouts/                     # _default/baseof.html (shell), partials/nav.html, index.html, 404.html
+│   ├── DESIGN.md                    # Shipped design system: tokens, components, WCAG evidence, Alpine rules
+│   ├── hugo.toml                    # Site config (baseURL, disabled kinds)
+│   ├── package.json                  # devDeps: typescript, openapi-typescript
+│   ├── tsconfig.json                  # Strict TS config for web/assets/ts
+│   ├── embed.go                       # package web -- //go:embed all:public, web.Site()
+│   ├── layouts/                       # Hugo templates
+│   │   ├── _default/baseof.html         # Shell: header/nav/token-panel/footer, page_js hook
+│   │   ├── partials/nav.html            # Primary channel-select nav
+│   │   ├── index.html                   # Dashboard ("/")
+│   │   ├── 404.html                     # Styled not-found page, composed through baseof
+│   │   ├── blocks/list.html              # Blocks ("/blocks/")
+│   │   ├── schedule/list.html             # Schedule ("/schedule/")
+│   │   └── series/list.html               # Series ("/series/")
+│   ├── content/                       # Hugo section front matter (blocks/, schedule/, series/ _index.md)
 │   ├── assets/
-│   │   ├── css/main.css             # hand-written, one file, CSS custom properties (light/dark)
-│   │   ├── ts/                      # api.ts, token.ts, main.ts; gen/types.d.ts is generated
-│   │   └── vendor/alpine.min.js     # Alpine.js, vendored (pinned 3.16.3, no CDN)
-│   └── public/                      # Hugo build output (gitignored; placeholder committed)
+│   │   ├── css/main.css               # hand-written, one file, CSS custom properties (light/dark)
+│   │   ├── ts/                        # api.ts, token.ts, main.ts; gen/types.d.ts is generated
+│   │   │   └── pages/                   # dashboard.ts, blocks.ts, schedule.ts, series.ts
+│   │   └── vendor/alpine.min.js       # Alpine.js, vendored (pinned 3.16.3, no CDN)
+│   └── public/                        # Hugo build output (gitignored; index.html placeholder committed)
 └── docs/
     ├── ARCHITECTURE.md
     └── SPECIFICATIONS.md
@@ -770,8 +780,13 @@ restarts and logging, the same way you'd run any other Go server binary.
 
 A Hugo-built web UI lives in `web/` and is embedded into the `schedularr`
 binary via `go:embed` (`web/embed.go`, `package web`, `web.Site()`). A
-committed placeholder (`web/public/index.html`, `web/public/404.html`)
-keeps `go build ./...` working without Hugo installed.
+committed placeholder (`web/public/index.html`, force-added with `git
+add -f` since `web/public/` is otherwise gitignored) keeps `go build
+./...` working without Hugo installed; `web/public/404.html` is not
+separately committed, since `internal/api/ui.go`'s `newUIHandler`
+already falls back to a plain-text 404 when the embedded site has no
+`404.html` of its own (see below) -- a fresh clone without `make web`
+gets that fallback, not a styled 404 page.
 
 `schedularr serve` mounts `web.Site()` as `internal/api.Config.UI` and
 serves it from the router's catch-all `NotFound` handler: the four system
@@ -823,6 +838,12 @@ runs `git add -f web/public/index.html` again after a Hugo build.
 web-types`; hand-editing it is pointless since `make web` overwrites it.
 
 ### Shell, Client, and Design System
+
+**[`web/DESIGN.md`](web/DESIGN.md)** is the full design-system reference —
+token inventory, component-class catalog, the light/dark mechanism, WCAG
+contrast evidence, and the Alpine.js conventions below. This section is a
+summary; DESIGN.md is the source to check before adding a new page or
+component.
 
 The shell (`web/layouts/_default/baseof.html`, `web/layouts/partials/nav.html`)
 gives every page a header (product wordmark, primary nav, a token button),

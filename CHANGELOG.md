@@ -31,6 +31,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`internal/store`**: SQLite-backed persistence for blocks, series
   state, and schedule history (see "Changed" below).
 
+#### Web UI
+
+- **A Hugo-built web UI**, embedded into the `schedularr` binary via
+  `go:embed` (`web/embed.go`) and mounted by `schedularr serve` at the
+  same origin and port as the API, behind everything else the router
+  already handles (system routes and `/api/v1/*` still win first). Four
+  pages, each backed entirely by the existing `/api/v1` contract, no new
+  server-side endpoints:
+  - **Dashboard** (`/`) -- Tunarr reachability, server version, block
+    count, and the last 7 days of schedule history.
+  - **Blocks** (`/blocks/`) -- list, create, edit, delete, and
+    enable/disable scheduling blocks, including the full filter- and
+    series-block field sets and a plain-language cron-pattern hint.
+  - **Schedule** (`/schedule/`) -- dry-run preview of the next schedule
+    cycle per channel, then an explicit-confirmation apply.
+  - **Series** (`/series/`) -- every tracked show's season/episode
+    cursor, with inline editing and completed/disabled toggles.
+  - A single bearer token (the same one `schedularr serve` was started
+    with) unlocks the UI; it lives only in the browser's `localStorage`
+    and is never embedded in the served HTML/JS. A `401` from any API
+    call reopens the token panel automatically.
+- **`web/DESIGN.md`**: the shipped design system -- token inventory,
+  component-class catalog, the light/dark mechanism (OS/browser
+  preference only, no manual toggle), WCAG contrast evidence, and the
+  Alpine.js conventions the UI code follows.
+- See the README's [Web UI](README.md#-web-ui) section for the full page
+  tour, build instructions (`make web`), and prerequisites (Hugo ≥
+  0.120, Node/npm).
+
 ### Changed - 2026-08-28
 
 #### Module rename
