@@ -367,3 +367,4 @@ scoped-out gap.
   instead: `Dockerfile`'s Hugo stage always runs the real `hugo --minify
   -s web` before the Go build stage, so a container image can never ship
   the placeholder as its embedded site.
+- [ ] Enforce or document the reapply-interval vs apply-window constraint: `cron_interval` > the serve loop's 24h apply window exhausts the pushed lineup and Tunarr loops it back to the anchor (wall-clock drift). Clamp Days from the interval or cap the interval; at minimum document next to cron_interval in the CUE schema + docs/deployment.md. (re-review 5227c5f, Minor)
