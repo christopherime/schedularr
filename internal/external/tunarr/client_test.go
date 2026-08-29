@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/httpclient"
 )
@@ -79,21 +80,60 @@ func TestClient_GetChannels(t *testing.T) {
 }
 
 // TestClient_UpdateSchedule pins the live v1.3.13 wire contract for
-// UpdateSchedule (see ManualLineupRequest's doc comment in models.go for
-// how it was verified): POST (not PUT) to
-// /api/channels/{id}/programming, body {"type": "manual", "lineup":
-// [{"type": "content", "id": ..., "duration": ...}, ...], "append":
-// false}. The server here decodes the raw body rather than trusting
-// Client's own request-building, so a regression that reverts to the old
-// PUT-with-a-bare-[]Program-body shape fails this test on the body
-// assertions even if it somehow still hit this path.
+// UpdateSchedule (see its doc comment, and setChannelStartTime's, in
+// client.go for how both were verified): (1) GET then PUT
+// /api/channels/{id} to anchor channel.startTime, dropping the four
+// GET-only keys SaveableChannelSchema doesn't accept; (2) POST (not PUT)
+// to /api/channels/{id}/programming, body {"type": "manual", "lineup":
+// [...], "append": false}. The server here decodes the raw bodies rather
+// than trusting Client's own request-building, so a regression away from
+// either half of this contract fails on the assertions below even if it
+// somehow still reached the right routes.
 func TestClient_UpdateSchedule(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var gotStartTime int64
+	var gotStartTimeSet bool
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/channels/channel-1", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "channel-1", "name": "Test Channel", "startTime": 0,
+				// GET-only/derived fields setChannelStartTime must strip
+				// before PUTting the channel back (SaveableChannelSchema
+				// omits them) -- present here so the PUT assertion below can
+				// catch a regression that forwards them unmodified.
+				"fallback": []any{}, "programCount": 3, "transcoding": map[string]any{}, "sessions": []any{},
+			})
+		case http.MethodPut:
+			var body map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("failed to decode PUT body: %v", err)
+			}
+			for _, k := range []string{"fallback", "programCount", "transcoding", "sessions"} {
+				if _, ok := body[k]; ok {
+					t.Errorf("expected PUT body to omit %q (SaveableChannelSchema doesn't accept it), got it present", k)
+				}
+			}
+			raw, ok := body["startTime"]
+			if !ok {
+				t.Fatal("expected startTime in PUT /api/channels/channel-1 body")
+			}
+			if err := json.Unmarshal(raw, &gotStartTime); err != nil {
+				t.Fatalf("failed to decode startTime: %v", err)
+			}
+			gotStartTimeSet = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			t.Errorf("expected GET or PUT on /api/channels/channel-1, got %s", r.Method)
+		}
+	})
+	mux.HandleFunc("/api/channels/channel-1/programming", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST request, got %s", r.Method)
-		}
-		if r.URL.Path != "/api/channels/channel-1/programming" {
-			t.Errorf("expected /api/channels/channel-1/programming path, got %s", r.URL.Path)
 		}
 
 		var body ManualLineupRequest
@@ -123,29 +163,51 @@ func TestClient_UpdateSchedule(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{})
-	}))
+	})
+	server := httptest.NewServer(mux)
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	schedule := []Program{
-		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
-	}
-	err := client.UpdateSchedule(context.Background(), "channel-1", schedule)
+	anchor := time.Date(2026, 1, 12, 20, 30, 0, 0, time.UTC)
+	lineup := []LineupItem{{Type: "content", ID: "prog-1", Duration: 1800000}}
+	err := client.UpdateSchedule(context.Background(), "channel-1", anchor, lineup)
 	if err != nil {
 		t.Fatalf("UpdateSchedule returned error: %v", err)
 	}
+	if !gotStartTimeSet {
+		t.Fatal("expected channel.startTime to be set via PUT /api/channels/{id}")
+	}
+	if gotStartTime != anchor.UnixMilli() {
+		t.Errorf("expected startTime %d (anchor), got %d", anchor.UnixMilli(), gotStartTime)
+	}
 }
 
-// TestClient_UpdateSchedule_NeverSendsPUT is the regression test for the
-// bug this round fixes: a live Tunarr 1.3.13 instance has no PUT route
-// for /api/channels/{id}/programming at all (live-verified this session:
+// TestClient_UpdateSchedule_NeverPUTsTheProgrammingRoute is the regression
+// test for the bug a prior round fixed: a live Tunarr 1.3.13 instance has
+// no PUT route for /api/channels/{id}/programming at all (live-verified:
 // PUT returns 404 "Route PUT:... not found"; POST with an empty body
 // returns 400, proving the route exists). This fake mirrors exactly that
-// live behavior -- PUT is 404, POST succeeds -- so a regression back to
-// PUT fails here with the same error a real deployment would hit, instead
-// of silently passing against a fake that's more lenient than reality.
-func TestClient_UpdateSchedule_NeverSendsPUT(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// live behavior for the programming route specifically -- PUT is 404,
+// POST succeeds -- while still accepting the (correct, separate) PUT
+// UpdateSchedule now sends to the bare channel resource to anchor
+// startTime, so a regression back to PUTting the lineup itself fails here
+// with the same error a real deployment would hit.
+func TestClient_UpdateSchedule_NeverPUTsTheProgrammingRoute(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/channels/channel-1", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "channel-1", "startTime": 0})
+		case http.MethodPut:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			t.Errorf("expected GET or PUT on the channel resource, got %s", r.Method)
+		}
+	})
+	mux.HandleFunc("/api/channels/channel-1/programming", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Route PUT:/api/channels/channel-1/programming not found"})
@@ -157,16 +219,15 @@ func TestClient_UpdateSchedule_NeverSendsPUT(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{})
-	}))
+	})
+	server := httptest.NewServer(mux)
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	schedule := []Program{
-		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
-	}
-	err := client.UpdateSchedule(context.Background(), "channel-1", schedule)
+	lineup := []LineupItem{{Type: "content", ID: "prog-1", Duration: 1800000}}
+	err := client.UpdateSchedule(context.Background(), "channel-1", time.Now(), lineup)
 	if err != nil {
-		t.Fatalf("UpdateSchedule returned error: %v -- client must send POST, a PUT would 404 against a live Tunarr 1.3.13 instance", err)
+		t.Fatalf("UpdateSchedule returned error: %v -- must POST the lineup (PUT there 404s against a live Tunarr 1.3.13 instance), PUT only the channel-anchor resource", err)
 	}
 }
 
@@ -351,29 +412,14 @@ func TestClient_ContextCancellation(t *testing.T) {
 // Note: APIError tests have been moved to internal/httpclient/client_test.go
 // as APIError is now part of the shared httpclient package.
 
-func TestClient_UpdateSchedule_ValidationError(t *testing.T) {
-	channelID := "channel-1"
-	// Schedule with invalid program (missing required title)
-	schedule := []Program{
-		{ID: "prog-1", Title: "", Duration: 1800000, Type: "movie"}, // Missing required title
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Should not reach server due to validation error")
-	}))
-	defer server.Close()
-
-	client := NewClient(Config{URL: server.URL})
-	err := client.UpdateSchedule(context.Background(), channelID, schedule)
-	if err == nil {
-		t.Error("Expected validation error for invalid program, got nil")
-	}
-}
+// Note: per-program validation (missing title, negative duration, etc.)
+// happens in service.buildAnchoredLineup now, not here -- UpdateSchedule
+// takes pre-built []LineupItem, which no longer carries the Program
+// fields that validation checked. See
+// TestBuildAnchoredLineup_RejectsInvalidProgram in internal/service.
 
 func TestClient_UpdateSchedule_EmptyChannelID(t *testing.T) {
-	schedule := []Program{
-		{ID: "prog-1", Title: "Show A", Duration: 1800000, Type: "episode"},
-	}
+	lineup := []LineupItem{{Type: "content", ID: "prog-1", Duration: 1800000}}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not reach server due to empty channel ID")
@@ -381,7 +427,7 @@ func TestClient_UpdateSchedule_EmptyChannelID(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Config{URL: server.URL})
-	err := client.UpdateSchedule(context.Background(), "", schedule)
+	err := client.UpdateSchedule(context.Background(), "", time.Now(), lineup)
 	if err == nil {
 		t.Error("Expected error for empty channel ID, got nil")
 	}

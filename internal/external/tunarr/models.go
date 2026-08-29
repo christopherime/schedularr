@@ -379,17 +379,29 @@ type ManualLineupRequest struct {
 }
 
 // LineupItem is one entry of a ManualLineupRequest's "lineup" array.
-// Schedularr only ever sends "content" entries (movies/episodes/tracks
-// Tunarr already knows about, from SearchPrograms/library results) -- ID
-// must be an existing Tunarr program UUID (see Program.GetID, which
-// prefers UUID over the legacy ID field): updateLineup's
-// channelProgramToLineupItemFunc carries a content entry's "id" straight
-// through to the channel_programs.program_uuid foreign key
-// (LineupRepository.ts), so an ID Tunarr doesn't already recognize
-// produces a broken lineup entry rather than a validation error -- there
-// is no server-side existence check at this layer.
+// Schedularr sends two of CondensedChannelProgramSchema's five variants:
+//
+//   - "content": a movie/episode/track Tunarr already knows about, from
+//     SearchPrograms/library results. ID must be an existing Tunarr
+//     program UUID (see Program.GetID, which prefers UUID over the legacy
+//     ID field): updateLineup's channelProgramToLineupItemFunc
+//     (LineupRepository.ts) carries a content entry's "id" straight
+//     through to the channel_programs.program_uuid foreign key, so an ID
+//     Tunarr doesn't already recognize produces a broken lineup entry
+//     rather than a validation error -- there is no server-side existence
+//     check at this layer.
+//   - "flex": dead-air/offline padding, no ID. Source-verified,
+//     types/src/schemas/lineupPrograms.ts's FlexProgramSchema:
+//     `BaseProgramSchema.extend({type: z.literal('flex'), fillerConfig:
+//     OfflineFillerConfigSchema.optional()})` -- fillerConfig is always
+//     omitted here (falls back to Tunarr's own configured flex behavior).
+//     Duration must be strictly positive for a flex entry
+//     (BaseProgramSchema.duration is `z.number().positive()`, unlike
+//     content's `z.number().min(0)`) -- see
+//     service.buildAnchoredLineup's zero-gap guard, the only lineup
+//     builder in this repo, which never emits a zero-duration flex entry.
 type LineupItem struct {
-	Type     string  `json:"type"` // "content" -- the only kind Schedularr produces
-	ID       string  `json:"id"`
+	Type     string  `json:"type"` // "content" or "flex"
+	ID       string  `json:"id,omitempty"`
 	Duration float64 `json:"duration"` // milliseconds
 }

@@ -9,8 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.1] - 2026-08-29
 
-Two bugs found during the first live `--apply` against a real Tunarr
-1.3.13 instance and this deployment's configured (non-UTC) timezone.
+Bugs found during the first live `--apply` against a real Tunarr 1.3.13
+instance and this deployment's configured (non-UTC) timezone -- including
+one raised in review after the first round of fixes: the applied lineup
+carried no wall-clock anchoring at all, so scheduled content aired
+back-to-back from wherever the channel's playback happened to be, not at
+its block's actual cron time.
 
 ### Fixed
 
@@ -23,14 +27,50 @@ Two bugs found during the first live `--apply` against a real Tunarr
   stale vendored `docs/tunarr/openapi.json` (v1.0.16), which also
   documents this route incorrectly (it lists a required `programs`
   field the live "manual" branch never reads). `Client.UpdateSchedule`
-  now POSTs `{"type": "manual", "lineup": [{"type": "content", "id":
-  ..., "duration": ...}, ...], "append": false}`
+  now POSTs `{"type": "manual", "lineup": [...], "append": false}`
   (`types/src/api/index.ts`'s `ManualProgramLineupSchema`), matching
   what `server/src/db/channel/LineupRepository.ts`'s `updateLineup`
   actually consumes. `internal/service/schedule_test.go`'s fake Tunarr
   server now mirrors live semantics (404 on PUT, decodes and validates
   the POST body) so a regression back to PUT fails a test instead of
   silently passing.
+- **The applied lineup now carries real wall-clock anchoring instead of
+  being pushed as bare back-to-back content.** Found in review of the
+  fix above: `flattenSlots` concatenated every slot's programs in order
+  and dropped every `ScheduledSlot.StartTime`/`EndTime`, and nothing
+  ever built a "flex" (dead-air) entry -- so a `30 20 * * 6` block aired
+  whenever the channel's playback cursor happened to reach it, not at
+  20:30. Root cause, source-verified against tag `v1.3.13`: Tunarr
+  computes playback position purely from elapsed wall-clock time since
+  `channel.startTime`, modulo the pushed lineup's own total duration
+  (`server/src/stream/StreamProgramCalculator.ts`'s
+  `calculateStreamDuration`) -- there is no way to attach an absolute
+  timestamp to an individual lineup item. Fixed with two changes,
+  applied together on every `UpdateSchedule` call: (1)
+  `service.buildAnchoredLineup` (`internal/service/schedule.go`)
+  converts a channel's scheduled slots into a lineup that pads every
+  gap with a `"flex"` entry -- before the first slot, between slots, for
+  whatever's left of a slot's own nominal duration once its content runs
+  out, and a trailing pad out to the apply window's end -- so cumulative
+  item durations from offset 0 equal each item's real wall-clock offset,
+  and the pushed lineup always covers at least the entire apply window
+  (never less, preventing Tunarr from looping it back to the start
+  before the next cron re-apply replaces it); (2)
+  `tunarr.Client.UpdateSchedule` now anchors `channel.startTime` to that
+  same window-start instant before pushing the lineup, via a
+  read-modify-write round trip against `PUT /api/channels/{id}`
+  (`SaveableChannelSchema`) -- the only live-reachable way to change it
+  (`ChannelDB.updateChannelStartTime` and
+  `LineupRepository.setChannelPrograms`'s optional `startTime` parameter
+  both exist server-side but are unreachable from any HTTP route in this
+  version). `tunarr.LineupItem` (`internal/external/tunarr/models.go`)
+  now models both the `"content"` and `"flex"` wire variants; `internal/service`'s
+  fake Tunarr server mirrors both the channel-anchor round trip and the
+  lineup POST so a regression back to unanchored, flex-less pushes fails
+  a test. Documented as an explicit "channel ownership" contract --
+  every apply fully replaces the target channel's whole timeline,
+  off-hours included -- in `docs/scheduling-concepts.md` and on
+  `Client.UpdateSchedule`'s doc comment.
 - **Cron occurrence planning now honors the configured timezone instead
   of always evaluating in UTC.** `log.timezone` was loaded correctly and
   threaded all the way to `scheduler.Engine.location`, but

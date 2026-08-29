@@ -3,10 +3,12 @@ package tunarr
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/httpclient"
 	"github.com/christopherime/schedularr/internal/metrics"
@@ -276,39 +278,127 @@ func (c *Client) GetSeason(ctx context.Context, seasonID string) (*Season, error
 	return &season, nil
 }
 
-// UpdateSchedule applies a full-replacement schedule of programs to a
-// channel. POST /api/channels/{id}/programming, body {"type": "manual",
-// "lineup": [...], "append": false} -- see ManualLineupRequest's doc
-// comment for how that contract was verified. There is no PUT route for
-// this path against a live Tunarr 1.3.13 instance at all (confirmed live
-// this session: 404 "Route PUT:... not found"); an earlier version of this
-// method sent PUT, which is the bug this fixes.
-func (c *Client) UpdateSchedule(ctx context.Context, channelID string, programs []Program) error {
+// channelStartTimePUTOmitKeys are the GET /api/channels/{id} response keys
+// setChannelStartTime must strip before PUTting the object back: the PUT
+// body schema (SaveableChannelSchema, types/src/schemas/channelSchema.ts
+// at tag v1.3.13) is ChannelSchema.omit({fallback, programCount,
+// transcoding, sessions}) -- GET-only/derived fields the write side
+// doesn't accept. Zod silently strips unrecognized keys by default (no
+// `.strict()` on either schema, checked this session), so leaving them in
+// wouldn't actually break the PUT -- but dropping them keeps this call
+// honest about what it's actually allowed to send, and avoids depending on
+// that default.
+var channelStartTimePUTOmitKeys = []string{"fallback", "programCount", "transcoding", "sessions"}
+
+// setChannelStartTime anchors a channel's playback clock to anchor via a
+// read-modify-write round trip against PUT /api/channels/{id}
+// (SaveableChannelSchema) -- source-verified against tag v1.3.13
+// (github.com/chrisbenincasa/tunarr): there is no dedicated
+// "set-start-time" endpoint reachable over HTTP (ChannelDB.updateChannelStartTime
+// and LineupRepository.setChannelPrograms's optional startTime parameter
+// both exist server-side but are never called from any route in this
+// version -- grepped the whole server/src tree, checked this session), so
+// the only live-reachable way to change it is a full channel update. The
+// route itself explicitly expects and reacts to a startTime change
+// (channelsApi.ts's PUT handler compares old vs. new startTime to decide
+// whether to regenerate the channel's lineup/guide), so this is not a
+// workaround -- it's how Tunarr's own UI would make the same change.
+//
+// The response is decoded into a raw key/value map rather than a typed
+// struct so this never has to model (and risk silently dropping) every
+// field on a live Tunarr channel -- watermark, transcoding options,
+// subtitle preferences, streamMode, and so on all round-trip untouched;
+// only "startTime" is ever modified.
+//
+// See UpdateSchedule's doc comment for why this call has to happen at
+// all: without it, a freshly-pushed lineup plays back from whatever
+// position (now - channel.startTime) mod channel.duration happens to
+// land on relative to the channel's PREVIOUS startTime, not from the
+// wall-clock offsets baked into the lineup by
+// service.buildAnchoredLineup.
+func (c *Client) setChannelStartTime(ctx context.Context, channelID string, anchor time.Time) error {
+	const endpoint = "/api/channels/{id}"
+	path := "/api/channels/" + channelID
+
+	getMethod := http.MethodGet
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, getMethod).Inc()
+	getTimer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, getMethod))
+	var channel map[string]json.RawMessage
+	getErr := c.http.Get(ctx, path, &channel)
+	getTimer.ObserveDuration()
+	if getErr != nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, getMethod, "api_call_error").Inc()
+		return fmt.Errorf("failed to fetch channel %s before anchoring start time: %w", channelID, getErr)
+	}
+
+	for _, key := range channelStartTimePUTOmitKeys {
+		delete(channel, key)
+	}
+	// Tunarr's own write path (BasicChannelRepository.ts's
+	// updateRequestToChannel, tag v1.3.13) truncates startTime down to the
+	// whole minute server-side regardless of what's sent
+	// (`dayjs(startTime).second(0).millisecond(0)`) -- truncate here too so
+	// the value this call sends matches what buildAnchoredLineup's caller
+	// used as offset zero, rather than silently drifting by up to 59.999s.
+	startTimeMs, marshalErr := json.Marshal(anchor.Truncate(time.Minute).UnixMilli())
+	if marshalErr != nil {
+		return fmt.Errorf("failed to encode start time: %w", marshalErr)
+	}
+	channel["startTime"] = startTimeMs
+
+	putMethod := http.MethodPut
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, putMethod).Inc()
+	putTimer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, putMethod))
+	putErr := c.http.Put(ctx, path, channel, nil)
+	putTimer.ObserveDuration()
+	if putErr != nil {
+		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, putMethod, "api_call_error").Inc()
+		return fmt.Errorf("failed to set start time for channel %s: %w", channelID, putErr)
+	}
+
+	return nil
+}
+
+// UpdateSchedule replaces a channel's entire Tunarr-visible timeline for
+// the apply window anchor represents: it (1) anchors the channel's
+// playback clock (setChannelStartTime, see its doc comment for why this
+// is required and how it was verified) and then (2) pushes lineup as a
+// full-replacement manual lineup: POST /api/channels/{id}/programming,
+// body {"type": "manual", "lineup": [...], "append": false} -- see
+// ManualLineupRequest's doc comment for how that contract was verified.
+// There is no PUT route for the programming path against a live Tunarr
+// 1.3.13 instance at all (confirmed live this session: 404 "Route PUT:...
+// not found"); an earlier version of this method sent PUT there, which
+// was the first bug this fixes.
+//
+// lineup must already be anchor-relative -- built by
+// service.buildAnchoredLineup, the only caller, so that cumulative item
+// durations from offset 0 equal each item's intended offset from anchor,
+// with "flex" entries padding any gap and the whole lineup spanning at
+// least the full apply window. UpdateSchedule itself does no timing
+// math; it only transports what it's given. append is always false:
+// this call is a full-replacement apply, not an incremental add -- see
+// the "channel ownership" contract documented on this method and in
+// docs/scheduling-concepts.md: every Tunarr-managed channel's entire
+// timeline, including off-hours, is schedularr's alone to set on every
+// apply, and anything else on that channel (content added through
+// Tunarr's own UI, a leftover manual edit) is silently replaced.
+func (c *Client) UpdateSchedule(ctx context.Context, channelID string, anchor time.Time, lineup []LineupItem) error {
 	const endpoint = "/api/channels/{id}/programming"
 	const method = http.MethodPost
-
-	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
-	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
-	defer timer.ObserveDuration()
 
 	if channelID == "" {
 		metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "invalid_channel_id").Inc()
 		return errors.New("channel ID cannot be empty")
 	}
 
-	// Validate all programs before sending
-	lineup := make([]LineupItem, len(programs))
-	for i := range programs {
-		if err := validateProgram(&programs[i]); err != nil {
-			metrics.TunarrAPIErrorsTotal.WithLabelValues(endpoint, method, "request_validation_error").Inc()
-			return fmt.Errorf("invalid program at index %d: %w", i, err)
-		}
-		lineup[i] = LineupItem{
-			Type:     "content",
-			ID:       programs[i].GetID(),
-			Duration: programs[i].Duration,
-		}
+	if err := c.setChannelStartTime(ctx, channelID, anchor); err != nil {
+		return err
 	}
+
+	metrics.TunarrAPICallsTotal.WithLabelValues(endpoint, method).Inc()
+	timer := prometheus.NewTimer(metrics.TunarrAPICallDurationSeconds.WithLabelValues(endpoint, method))
+	defer timer.ObserveDuration()
 
 	path := "/api/channels/" + channelID + "/programming"
 	req := ManualLineupRequest{Type: "manual", Lineup: lineup, Append: false}

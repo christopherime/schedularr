@@ -19,10 +19,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/christopherime/schedularr/internal/cache"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
+	"github.com/christopherime/schedularr/internal/httpclient"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
 )
@@ -188,7 +190,15 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 		HistoryWindow: r.historyWindow,
 	})
 
-	start := time.Now()
+	// Truncated to the whole minute because it does double duty as
+	// applyChannels' lineup anchor (offset 0 of every pushed lineup, and
+	// the value written to channel.startTime): Tunarr's own channel-update
+	// write path truncates startTime to the whole minute server-side
+	// regardless of what's sent (tunarr.Client.setChannelStartTime's doc
+	// comment), so truncating here keeps this Run's own timing math
+	// (below, and in applyChannels/buildAnchoredLineup) consistent with
+	// what actually gets stored.
+	start := time.Now().Truncate(time.Minute)
 	end := start.Add(time.Duration(o.Days) * 24 * time.Hour)
 
 	// scheduler.Engine's exported methods predate this ctx-threaded
@@ -208,7 +218,7 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	}
 
 	if o.Apply {
-		if err := r.applyChannels(ctx, channels); err != nil {
+		if err := r.applyChannels(ctx, start, end, channels); err != nil {
 			return nil, err
 		}
 		if err := engine.Commit(); err != nil { //nolint:contextcheck // see GenerateForTimeRange above
@@ -234,7 +244,7 @@ func blocksForChannel(blocks []scheduler.Block, channelID string) []scheduler.Bl
 	return filtered
 }
 
-// applyChannels pushes each channel's flattened program list to Tunarr via
+// applyChannels pushes each channel's anchored lineup to Tunarr via
 // UpdateSchedule, best-effort across channels (mirroring cmd/generate.go's
 // former applySchedule): every channel is attempted even if an earlier one
 // failed. If any channel failed, it returns an aggregate error and Run
@@ -250,10 +260,26 @@ func blocksForChannel(blocks []scheduler.Block, channelID string) []scheduler.Bl
 // that channel until the next successful Run. Neither is new: the old
 // cmd/generate.go applyScheduleAndSync/applySchedule pair had the same
 // shape (loop every channel, then Commit() once only if none failed).
-func (r *Runner) applyChannels(ctx context.Context, channels map[string][]scheduler.ScheduledSlot) error {
+//
+// anchor and windowEnd are Run's own start/end (already truncated to the
+// whole minute there): every applied channel shares the same apply
+// window, and buildAnchoredLineup needs both ends to flex-pad the pushed
+// lineup across the entire window, not just up to the last scheduled
+// slot -- see its doc comment for why a partial-window lineup would drift
+// out of phase with wall-clock once Tunarr loops it.
+func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time, channels map[string][]scheduler.ScheduledSlot) error {
 	failCount := 0
 	for channelID, slots := range channels {
-		if err := r.tunarr.UpdateSchedule(ctx, channelID, flattenSlots(slots)); err != nil {
+		lineup, err := buildAnchoredLineup(anchor, windowEnd, slots)
+		if err != nil {
+			r.logger.Error("failed to build anchored lineup for channel",
+				"channel_id", channelID,
+				"error", err,
+			)
+			failCount++
+			continue
+		}
+		if err := r.tunarr.UpdateSchedule(ctx, channelID, anchor, lineup); err != nil {
 			r.logger.Error("failed to apply schedule to channel",
 				"channel_id", channelID,
 				"error", err,
@@ -269,14 +295,104 @@ func (r *Runner) applyChannels(ctx context.Context, channels map[string][]schedu
 	return nil
 }
 
-// flattenSlots concatenates every slot's programs into a single playlist,
-// in slot (chronological) order -- the shape client.UpdateSchedule expects.
-func flattenSlots(slots []scheduler.ScheduledSlot) []tunarr.Program {
-	var programs []tunarr.Program
-	for _, slot := range slots {
-		programs = append(programs, slot.Programs...)
+// buildAnchoredLineup converts one channel's scheduled slots into the
+// flex-padded manual lineup UpdateSchedule pushes, anchored so that
+// lineup offset 0 corresponds exactly to anchor (the same instant
+// UpdateSchedule writes to channel.startTime) and the lineup's total
+// duration spans at least [anchor, windowEnd) -- "at least" because
+// GenerateForTimeRange includes any occurrence whose START falls at or
+// before windowEnd even if its nominal EndTime runs past it (a block
+// starting just inside the window is allowed to complete, not be cut
+// off), so the last slot's own content can push the actual total a
+// little past windowEnd - anchor. That's fine for this function's job:
+// see the looping note below, which only requires "at least," never
+// "exactly."
+//
+// This exists because Tunarr computes channel playback position purely
+// from elapsed wall-clock time since channel.startTime, modulo the
+// pushed lineup's own total duration (source-verified against tag
+// v1.3.13, server/src/stream/StreamProgramCalculator.ts's
+// calculateStreamDuration: `elapsed = (now - channel.startTime) %
+// channel.duration`, then a binary search over the lineup's own
+// cumulative offsets) -- a lineup that's just scheduled content
+// concatenated back-to-back, with no representation of the gaps between
+// occurrences, plays every block immediately after whatever aired before
+// it, not at the block's actual cron time. There is no way to attach an
+// absolute timestamp to an individual lineup item; the only lever is
+// cumulative duration from offset 0, hence the "flex" (dead-air/offline)
+// padding entries this function inserts for every gap: before the first
+// slot, between slots, and for whatever's left of a slot's own nominal
+// duration once its scheduled programs run out (the engine already logs
+// -- but doesn't fill -- that remainder; see engine.go's "block has
+// remaining gap after filling").
+//
+// Covering at least the *entire* [anchor, windowEnd) window, not just up
+// to the last scheduled slot, matters independently of getting any single
+// occurrence's time right: Tunarr loops a lineup once elapsed wraps past
+// its total duration, so a lineup shorter than the window would start
+// repeating from anchor again before the next cron re-apply (typically
+// windowEnd - anchor later) replaces it -- silently drifting the whole
+// channel out of phase with wall-clock between applies. The trailing
+// flex entry this function appends (whenever the scheduled slots don't
+// already reach windowEnd on their own) is what prevents that.
+//
+// slots is sorted by StartTime first: scheduler.Engine.GenerateForTimeRange
+// accumulates a channel's slots in block-iteration order, not time
+// order, when more than one block targets the same channel (and
+// resolveConflicts, which runs after, preserves whatever order it's
+// given rather than sorting) -- this function is the first point in the
+// pipeline that actually needs chronological order, so it establishes it
+// itself rather than relying on an upstream guarantee that doesn't
+// exist. resolveConflicts does guarantee the sorted slots don't overlap,
+// which is what keeps every gap computed below non-negative.
+func buildAnchoredLineup(anchor, windowEnd time.Time, slots []scheduler.ScheduledSlot) ([]tunarr.LineupItem, error) {
+	sorted := make([]scheduler.ScheduledSlot, len(slots))
+	copy(sorted, slots)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].StartTime.Before(sorted[j].StartTime)
+	})
+
+	var lineup []tunarr.LineupItem
+	cursor := anchor
+	for _, slot := range sorted {
+		if gap := slot.StartTime.Sub(cursor); gap > 0 {
+			lineup = append(lineup, flexItem(gap))
+			cursor = slot.StartTime
+		}
+		for i := range slot.Programs {
+			p := &slot.Programs[i]
+			if err := httpclient.Validate(p); err != nil {
+				return nil, fmt.Errorf("invalid program %q in block %q: %w", p.GetID(), slot.Block.Name, err)
+			}
+			lineup = append(lineup, tunarr.LineupItem{
+				Type:     "content",
+				ID:       p.GetID(),
+				Duration: p.Duration,
+			})
+			cursor = cursor.Add(time.Duration(p.Duration) * time.Millisecond)
+		}
+		// Pad whatever's left of this slot's own nominal duration once its
+		// scheduled programs run out, so the NEXT slot's gap (above) is
+		// computed against this slot's intended end time, not wherever its
+		// actual content happened to stop.
+		if gap := slot.EndTime.Sub(cursor); gap > 0 {
+			lineup = append(lineup, flexItem(gap))
+			cursor = slot.EndTime
+		}
 	}
-	return programs
+	if gap := windowEnd.Sub(cursor); gap > 0 {
+		lineup = append(lineup, flexItem(gap))
+	}
+
+	return lineup, nil
+}
+
+// flexItem builds a "flex" (dead-air/offline) lineup entry of duration d.
+// d must be strictly positive -- Tunarr's FlexProgramSchema requires it
+// (source-verified, see tunarr.LineupItem's doc comment); every call site
+// in buildAnchoredLineup already guards for gap > 0 before calling this.
+func flexItem(d time.Duration) tunarr.LineupItem {
+	return tunarr.LineupItem{Type: "flex", Duration: float64(d.Milliseconds())}
 }
 
 // fetchPrograms returns the available Tunarr content to schedule against:

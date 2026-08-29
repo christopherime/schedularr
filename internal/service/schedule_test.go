@@ -49,8 +49,10 @@ type fakeTunarr struct {
 	programs []tunarr.Program
 	seasons  map[string]tunarr.Season // seasonID -> Season, served by GET /api/programming/seasons/{id}
 
-	mu      sync.Mutex
-	updates map[string][]tunarr.Program // channelID -> programs pushed via UpdateSchedule
+	mu         sync.Mutex
+	updates    map[string][]tunarr.Program    // channelID -> content programs extracted from the pushed lineup
+	lineups    map[string][]tunarr.LineupItem // channelID -> the raw lineup (content + flex) pushed via UpdateSchedule
+	startTimes map[string]int64               // channelID -> startTime (ms) set via PUT /api/channels/{id}
 }
 
 func newFakeTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Server, *fakeTunarr) {
@@ -66,7 +68,13 @@ func newFakeTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Server, *
 // season.
 func newFakeTunarrWithSeasons(t *testing.T, programs []tunarr.Program, seasons map[string]tunarr.Season) (*httptest.Server, *fakeTunarr) {
 	t.Helper()
-	f := &fakeTunarr{programs: programs, seasons: seasons, updates: make(map[string][]tunarr.Program)}
+	f := &fakeTunarr{
+		programs:   programs,
+		seasons:    seasons,
+		updates:    make(map[string][]tunarr.Program),
+		lineups:    make(map[string][]tunarr.LineupItem),
+		startTimes: make(map[string]int64),
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/media-sources", func(w http.ResponseWriter, r *http.Request) {
@@ -94,40 +102,92 @@ func newFakeTunarrWithSeasons(t *testing.T, programs []tunarr.Program, seasons m
 		})
 	})
 	mux.HandleFunc("/api/programming/seasons/", seasonsHandler(t, f.seasons))
-	// /api/channels/{id}/programming mirrors live Tunarr 1.3.13 semantics
-	// (live-verified, see tunarr.Client.UpdateSchedule's doc comment): no
-	// PUT route exists at all (404), and POST expects the manual-lineup
-	// contract ({"type": "manual", "lineup": [...], "append": ...}), not a
-	// bare []Program body. Mirroring the 404-on-PUT here specifically is
-	// what makes a regression back to PUT (this task's Bug 1) fail a test
-	// instead of silently passing against a fake more lenient than reality.
+	// /api/channels/{id} and /api/channels/{id}/programming both live under
+	// this one prefix (net/http's ServeMux takes one handler per pattern),
+	// so this dispatches on the "/programming" suffix. Both branches mirror
+	// live Tunarr 1.3.13 semantics -- source-verified, see
+	// tunarr.Client.UpdateSchedule's and setChannelStartTime's doc comments
+	// in client.go:
+	//
+	//   - /programming: no PUT route exists at all (404); POST expects the
+	//     manual-lineup contract ({"type": "manual", "lineup": [...],
+	//     "append": ...}), not a bare []Program body.
+	//   - the bare channel resource: GET then PUT
+	//     (SaveableChannelSchema, which omits fallback/programCount/
+	//     transcoding/sessions) is how UpdateSchedule anchors
+	//     channel.startTime before pushing a lineup.
+	//
+	// Mirroring both -- not just the /programming half a prior round of
+	// this fix covered -- is what makes a regression on either half (PUT
+	// reappearing on the programming route, or a lineup getting pushed
+	// without ever anchoring startTime) fail a test instead of silently
+	// passing against a fake more lenient than reality.
 	mux.HandleFunc("/api/channels/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+		if strings.HasSuffix(r.URL.Path, "/programming") {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/channels/"), "/programming")
+
+			var req tunarr.ManualLineupRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			if req.Type != "manual" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			programs := make([]tunarr.Program, 0, len(req.Lineup))
+			for _, item := range req.Lineup {
+				if item.Type != "content" {
+					continue
+				}
+				programs = append(programs, tunarr.Program{UUID: item.ID, Duration: item.Duration, Type: item.Type})
+			}
+
+			f.mu.Lock()
+			f.updates[id] = programs
+			f.lineups[id] = req.Lineup
+			f.mu.Unlock()
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+
+		id := strings.TrimPrefix(r.URL.Path, "/api/channels/")
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			// Includes the four SaveableChannelSchema-omitted keys so the PUT
+			// branch below can assert setChannelStartTime actually strips
+			// them before writing back.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": id, "name": "Fake Channel", "startTime": 0,
+				"fallback": []any{}, "programCount": 0, "transcoding": map[string]any{}, "sessions": []any{},
+			})
+		case http.MethodPut:
+			var body map[string]json.RawMessage
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			for _, k := range []string{"fallback", "programCount", "transcoding", "sessions"} {
+				if _, ok := body[k]; ok {
+					t.Errorf("fake Tunarr: PUT /api/channels/%s must not include %q (SaveableChannelSchema omits it)", id, k)
+				}
+			}
+			var startTime int64
+			require.NoError(t, json.Unmarshal(body["startTime"], &startTime), "PUT /api/channels/%s must set startTime", id)
+
+			f.mu.Lock()
+			f.startTimes[id] = startTime
+			f.mu.Unlock()
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
 			w.WriteHeader(http.StatusNotFound)
-			return
 		}
-		// path is /api/channels/{id}/programming
-		id := r.URL.Path[len("/api/channels/") : len(r.URL.Path)-len("/programming")]
-
-		var req tunarr.ManualLineupRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
-		if req.Type != "manual" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		programs := make([]tunarr.Program, len(req.Lineup))
-		for i, item := range req.Lineup {
-			programs[i] = tunarr.Program{UUID: item.ID, Duration: item.Duration, Type: item.Type}
-		}
-
-		f.mu.Lock()
-		f.updates[id] = programs
-		f.mu.Unlock()
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{})
 	})
 
 	server := httptest.NewServer(mux)
@@ -161,6 +221,27 @@ func (f *fakeTunarr) updatedChannels() map[string][]tunarr.Program {
 		out[k] = v
 	}
 	return out
+}
+
+// pushedLineup returns the raw lineup (content and flex entries, in the
+// order UpdateSchedule pushed them) most recently posted for channelID --
+// the anchoring invariant tests need the flex entries updatedChannels
+// deliberately filters out.
+func (f *fakeTunarr) pushedLineup(channelID string) []tunarr.LineupItem {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]tunarr.LineupItem, len(f.lineups[channelID]))
+	copy(out, f.lineups[channelID])
+	return out
+}
+
+// startTimeFor returns the startTime (ms) most recently PUT to
+// /api/channels/{channelID}, and whether one was ever set.
+func (f *fakeTunarr) startTimeFor(channelID string) (int64, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.startTimes[channelID]
+	return v, ok
 }
 
 // newTestRunner builds a Runner against a fresh temp-dir store and the
@@ -429,6 +510,189 @@ func TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched(t *testi
 	_, err = st.GetPersistedSeriesState(ctx, "")
 	assert.ErrorIs(t, err, store.ErrNotFound,
 		"channel-2's series block must never be planned, let alone committed, by a channel-1-scoped apply")
+}
+
+// TestBuildAnchoredLineup_CumulativeOffsetsMatchWallClock is the
+// conversion unit test for buildAnchoredLineup: given slots at known
+// wall-clock times, every "content" entry's cumulative offset from anchor
+// (the sum of every preceding lineup entry's Duration) must equal that
+// program's actual offset from anchor, and the lineup's total duration
+// must span the entire [anchor, windowEnd) apply window -- the exact
+// invariant this function exists to guarantee, since Tunarr computes
+// playback position purely from cumulative lineup-item durations past
+// channel.startTime (see UpdateSchedule's doc comment, client.go).
+//
+// The fixture below exercises every gap buildAnchoredLineup has to pad:
+// a leading gap before the first slot, an in-slot remainder once a
+// slot's own programs run out short of its nominal duration, a
+// between-slot gap, and a trailing gap out to windowEnd. Slot 1 is also
+// listed AFTER slot 2 in the input to pin the sort-by-StartTime step
+// (GenerateForTimeRange doesn't guarantee chronological order across
+// blocks sharing a channel -- see this function's doc comment in
+// schedule.go).
+func TestBuildAnchoredLineup_CumulativeOffsetsMatchWallClock(t *testing.T) {
+	anchor := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	windowEnd := anchor.Add(24 * time.Hour)
+
+	slot1 := scheduler.ScheduledSlot{
+		StartTime: anchor.Add(2 * time.Hour),                // 02:00
+		EndTime:   anchor.Add(2*time.Hour + 30*time.Minute), // 02:30 -- 30-min block
+		Block:     scheduler.Block{Name: "Slot 1"},
+		Programs: []tunarr.Program{
+			{ID: "p1", Title: "Program One", Duration: float64(20 * time.Minute.Milliseconds())}, // 20 min -- 10-min in-slot remainder
+		},
+	}
+	slot2 := scheduler.ScheduledSlot{
+		StartTime: anchor.Add(5 * time.Hour),                // 05:00
+		EndTime:   anchor.Add(5*time.Hour + 60*time.Minute), // 06:00
+		Block:     scheduler.Block{Name: "Slot 2"},
+		Programs: []tunarr.Program{
+			{ID: "p2", Title: "Program Two", Duration: float64(30 * time.Minute.Milliseconds())},
+			{ID: "p3", Title: "Program Three", Duration: float64(30 * time.Minute.Milliseconds())},
+		},
+	}
+
+	// Deliberately out of chronological order.
+	lineup, err := buildAnchoredLineup(anchor, windowEnd, []scheduler.ScheduledSlot{slot2, slot1})
+	require.NoError(t, err)
+
+	type wantItem struct {
+		typ      string
+		id       string
+		duration time.Duration
+	}
+	want := []wantItem{
+		{typ: "flex", duration: 2 * time.Hour},                 // 00:00 -> 02:00, leading gap
+		{typ: "content", id: "p1", duration: 20 * time.Minute}, // 02:00 -> 02:20
+		{typ: "flex", duration: 10 * time.Minute},              // 02:20 -> 02:30, in-slot remainder
+		{typ: "flex", duration: 2*time.Hour + 30*time.Minute},  // 02:30 -> 05:00, between-slot gap
+		{typ: "content", id: "p2", duration: 30 * time.Minute}, // 05:00 -> 05:30
+		{typ: "content", id: "p3", duration: 30 * time.Minute}, // 05:30 -> 06:00
+		{typ: "flex", duration: 18 * time.Hour},                // 06:00 -> 24:00, trailing pad to windowEnd
+	}
+	require.Len(t, lineup, len(want), "lineup: %+v", lineup)
+
+	var cursor time.Duration
+	var contentOffsets []time.Duration
+	for i, item := range lineup {
+		w := want[i]
+		assert.Equal(t, w.typ, item.Type, "item %d type", i)
+		if w.typ == "content" {
+			assert.Equal(t, w.id, item.ID, "item %d id", i)
+			contentOffsets = append(contentOffsets, cursor)
+		} else {
+			assert.Positive(t, item.Duration, "item %d (flex) must have a strictly positive duration", i)
+		}
+		assert.Equal(t, float64(w.duration.Milliseconds()), item.Duration, "item %d duration", i)
+		cursor += time.Duration(item.Duration) * time.Millisecond
+	}
+
+	// The invariant in its own terms, independent of the exact-sequence
+	// assertions above: each content entry's cumulative offset from anchor
+	// equals that slot's actual wall-clock offset from anchor.
+	assert.Equal(t, []time.Duration{2 * time.Hour, 5 * time.Hour, 5*time.Hour + 30*time.Minute}, contentOffsets)
+
+	assert.Equal(t, windowEnd.Sub(anchor), cursor, "lineup must cover the entire apply window")
+}
+
+// TestBuildAnchoredLineup_NoSlots_ReturnsWholeWindowAsFlex covers the
+// degenerate case (a channel with no occurrences in this apply window):
+// buildAnchoredLineup must still produce a lineup, spanning the entire
+// window as a single flex entry, rather than an empty one -- an empty
+// lineup would leave Tunarr's channel.duration at 0, which
+// calculateStreamDuration (StreamProgramCalculator.ts) treats as a
+// guaranteed one-day flex fallback of its own, not "nothing scheduled,
+// leave the channel alone".
+func TestBuildAnchoredLineup_NoSlots_ReturnsWholeWindowAsFlex(t *testing.T) {
+	anchor := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	windowEnd := anchor.Add(24 * time.Hour)
+
+	lineup, err := buildAnchoredLineup(anchor, windowEnd, nil)
+	require.NoError(t, err)
+
+	require.Len(t, lineup, 1)
+	assert.Equal(t, "flex", lineup[0].Type)
+	assert.Equal(t, float64((24 * time.Hour).Milliseconds()), lineup[0].Duration)
+}
+
+// TestBuildAnchoredLineup_RejectsInvalidProgram is buildAnchoredLineup's
+// half of the validation TestClient_UpdateSchedule_ValidationError used
+// to cover directly against the client (moved here because UpdateSchedule
+// no longer sees Program values at all -- see the note left in its place
+// in internal/external/tunarr/client_test.go).
+func TestBuildAnchoredLineup_RejectsInvalidProgram(t *testing.T) {
+	anchor := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	windowEnd := anchor.Add(24 * time.Hour)
+
+	slots := []scheduler.ScheduledSlot{
+		{
+			StartTime: anchor,
+			EndTime:   anchor.Add(30 * time.Minute),
+			Block:     scheduler.Block{Name: "Bad Block"},
+			Programs: []tunarr.Program{
+				{ID: "p1", Title: "", Duration: 1_800_000, Type: "movie"}, // missing required title
+			},
+		},
+	}
+
+	_, err := buildAnchoredLineup(anchor, windowEnd, slots)
+	assert.Error(t, err, "expected a validation error for the program missing a required title")
+}
+
+// TestRunner_Run_Apply_AnchorsChannelStartTimeAndPadsFullWindow is the
+// end-to-end regression test proving Runner.Run's real Apply path -- not
+// just buildAnchoredLineup in isolation -- anchors and pads the lineup it
+// pushes: the fake Tunarr server's recorded startTime (PUT
+// /api/channels/{id}) must equal the same anchor used to build the
+// lineup, and the recorded lineup (GET .../programming) must cover at
+// least the entire apply window (never less; see buildAnchoredLineup's
+// doc comment for why it can legitimately run a little over -- the
+// engine lets a block starting just inside the window complete rather
+// than cutting it off) with at least one flex entry. This Runner's
+// single hourly filter block ("0 * * * *"/60min duration against a
+// Truncate(time.Minute) anchor that's essentially never exactly on the
+// hour) always needs a leading flex entry before its first occurrence,
+// so haveFlex is a real assertion, not a tautology. A regression back to
+// flattenSlots-style concatenation (this task's Bug 1: content only, no
+// flex, no channel.startTime call) would make this test fail on both
+// counts.
+func TestRunner_Run_Apply_AnchorsChannelStartTimeAndPadsFullWindow(t *testing.T) {
+	server, fake := newFakeTunarr(t, canonicalPrograms())
+	r, _ := newTestRunner(t, server.URL)
+
+	before := time.Now().Truncate(time.Minute)
+	result, err := r.Run(context.Background(), Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+
+	startTimeMs, ok := fake.startTimeFor("channel-1")
+	require.True(t, ok, "expected channel.startTime to have been set via PUT /api/channels/channel-1")
+	gotAnchor := time.UnixMilli(startTimeMs).UTC()
+	assert.False(t, gotAnchor.Before(before), "anchor must not be before Run started")
+	assert.False(t, gotAnchor.After(time.Now()), "anchor must not be after Run finished")
+	assert.Equal(t, gotAnchor, gotAnchor.Truncate(time.Minute), "anchor must already be minute-truncated")
+
+	lineup := fake.pushedLineup("channel-1")
+	require.NotEmpty(t, lineup)
+
+	var total time.Duration
+	var haveFlex, haveContent bool
+	for _, item := range lineup {
+		switch item.Type {
+		case "content":
+			haveContent = true
+			assert.NotEmpty(t, item.ID, "a content entry must carry a program ID")
+		case "flex":
+			haveFlex = true
+			assert.Positive(t, item.Duration, "a flex entry must have a strictly positive duration")
+		default:
+			t.Errorf("unexpected lineup item type %q", item.Type)
+		}
+		total += time.Duration(item.Duration) * time.Millisecond
+	}
+	assert.True(t, haveContent, "expected at least one content entry (the hourly block's matched program)")
+	assert.True(t, haveFlex, "expected at least one flex entry -- the anchor is essentially never exactly on the hour, so a leading gap before the first occurrence is guaranteed")
+	assert.GreaterOrEqual(t, total, 24*time.Hour, "pushed lineup must cover at least the entire apply window (it may legitimately run a little over -- see buildAnchoredLineup's doc comment)")
 }
 
 // TestActiveBlocks_ExcludesDisabled verifies that ActiveBlocks (moved from

@@ -235,6 +235,18 @@ Result: Block A scheduled, Block B discarded
 
 Suggested ranges: **1-10** low priority (filler, background programming), **11-50** normal priority (regular programming), **51-100** high priority (special events, live content).
 
+## Channel ownership
+
+**Every channel Schedularr applies to is Schedularr's alone, for its entire timeline.** Applying a schedule (`--apply`, the cron loop, or `POST /schedule/apply`) doesn't layer content into gaps in whatever a channel already has — it replaces the channel's whole Tunarr lineup, off-hours included, every single time:
+
+- The apply window (`--days`, default 1) is fully covered end to end. Time your blocks don't schedule anything for isn't left alone — it's filled with **flex** (dead-air/offline) entries, so the pushed lineup always spans the entire window.
+- The channel's own playback clock (Tunarr's `channel.startTime`) is reset on every apply, anchored to the start of that window, so the flex-padded lineup actually plays back at the wall-clock times its blocks were scheduled for rather than wherever Tunarr's internal position happened to be.
+- This is a **full replacement**, not an append: anything on the channel that Schedularr didn't just schedule — a manual edit made through Tunarr's own UI, content left over from before the channel was handed to Schedularr — is gone after the next apply, without warning.
+
+The practical rule: **don't hand a channel to Schedularr and then also edit its programming by hand.** Pick one owner per channel. A channel with occasional human-curated blocks alongside Schedularr's blocks isn't supported — the next apply erases the human edits; a channel Schedularr doesn't manage at all is completely unaffected (Schedularr only ever touches channel IDs its blocks reference).
+
+This design keeps the apply model simple and its result fully predictable from the block configuration alone — what you'd get from re-running `--dry-run` is exactly what's on the channel after `--apply`, with no hidden state from a previous manual change or a prior apply's leftovers. The cost is that ownership is all-or-nothing per channel.
+
 ## Schedule history and retention
 
 Schedule history prevents content repetition. It's both an in-memory dedup check during a single generate/apply cycle (cleared on restart, keyed `channel_id:program_id`) and a persisted `schedule_history` SQLite table, queryable via `GET /history?days=N` (see the [API Reference](api-reference.md#history)), that survives restarts.

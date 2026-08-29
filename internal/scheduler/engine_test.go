@@ -642,8 +642,8 @@ func TestGenerateForTimeRange_UsesConfiguredLocationForCronOccurrences(t *testin
 	require.NotEmpty(t, slots, "expected at least one scheduled occurrence")
 
 	got := slots[0].StartTime
-	buggyUTCAnswer := time.Date(2026, 1, 12, 20, 30, 0, 0, time.UTC)   // today at 20:30 UTC -- what the pre-fix bug produced
-	correctAnswer := time.Date(2026, 1, 13, 18, 30, 0, 0, time.UTC)    // tomorrow at 20:30 in the +2h zone
+	buggyUTCAnswer := time.Date(2026, 1, 12, 20, 30, 0, 0, time.UTC) // today at 20:30 UTC -- what the pre-fix bug produced
+	correctAnswer := time.Date(2026, 1, 13, 18, 30, 0, 0, time.UTC)  // tomorrow at 20:30 in the +2h zone
 
 	assert.False(t, got.Equal(buggyUTCAnswer),
 		"next occurrence must not be today's UTC-evaluated 20:30 (%s) -- cron must be evaluated in the engine's configured location, not UTC", buggyUTCAnswer)
