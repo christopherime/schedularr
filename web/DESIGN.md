@@ -421,6 +421,37 @@ rules hold across every page (`web/assets/ts/pages/*.ts`,
    HTML-looking text renders as visible text on screen instead of
    getting parsed.
 
+## Vendored dependencies
+
+Every third-party script this UI loads is vendored into
+`web/assets/vendor/` -- pinned to an exact version, loaded via a plain
+`<script defer>` from this origin, no CDN, no npm runtime dependency (the
+files aren't `require`/`import`-ed by any bundled TS; each attaches
+itself to the global scope the way a plain `<script>` tag would). This
+table records what's pinned and its sha256, the same verification the
+Colors section above already applies to contrast pairings -- checked
+computationally, not eyeballed.
+
+| File | Version | Loaded on | sha256 |
+| ---- | ------- | --------- | ------ |
+| `alpine.min.js` | 3.16.3 | every page (`baseof.html`) | `e31d6d92aefd41979d3c66f994d3a6b77fafa5062aec67d13f3ec5099d70d5d6` |
+| `cronstrue.min.js` | 3.24.0 | blocks (`blocks/list.html`) | `f47fa32a8c38a0fd996ef386ffc8c97694e483742a3efc3e3d70d147112b8bd5` |
+
+`cronstrue.min.js` is the npm package's standalone UMD build
+(`dist/cronstrue.min.js` from the `cronstrue` tarball), English locale
+only -- not `dist/cronstrue-i18n.js`, which bundles every locale this UI
+never offers a way to select. It replaces the blocks editor's earlier
+hand-rolled `cronHint()` (a narrow parser recognizing only fixed-time/
+weekday-restricted patterns) with a universal plain-language readback for
+any valid 5-field expression, backing the Simple/Cron schedule picker's
+live readback in both modes (see `web/assets/ts/pages/blocks.ts`'s
+`cronReadback()`). MIT-licensed, same as Alpine.
+
+To re-vendor either file: download the exact pinned version's tarball
+(`npm pack <package>@<version>`), copy the standalone build from `dist/`
+into `web/assets/vendor/`, and update this table's version + sha256
+together -- never bump one without the other.
+
 ## Content-Security-Policy
 
 Every UI response (`internal/api/ui.go`'s `newUIHandler`, spec Decision 6
@@ -465,6 +496,42 @@ Verified live (`schedularr serve`, `curl -sI`) on every route
 (`/`, `/blocks/`, `/schedule/`, `/series/`, and an unknown path's 404) --
 see `internal/api/router_test.go`'s `TestRouter_UIContentSecurityPolicyHeader`
 for the automated 200-and-404 assertion.
+
+## Security: CodeQL accepted risk
+
+CodeQL alert #1 (`js/clear-text-storage-of-sensitive-data`,
+`web/assets/ts/token.ts:27` -- `setToken`'s `localStorage.setItem`) is
+**dismissed as won't-fix**, not unaddressed. `PRODUCT.md`'s "Token-once,
+same-origin" principle is the deliberate design this alert is flagging:
+there is no server session, no cookie, no CSRF surface, and a single
+pasted bearer token is the entire auth model for a single self-hosting
+operator. Storing that token anywhere client-side trips this rule by
+construction; the question this repo answered is whether the storage
+location is an acceptable risk for the actual threat model, not whether
+to avoid storing it at all.
+
+Accepted because three things are all true at once:
+
+1. **CSP is `self`-only.** `script-src 'self' 'unsafe-eval'`,
+   `connect-src 'self'` (see Content-Security-Policy above) -- there is no
+   third-party origin anywhere in the shipped site that could exfiltrate
+   `localStorage` via an injected script, since nothing but this origin's
+   own vendored/bundled JS ever runs.
+2. **No `innerHTML`/`x-html` anywhere.** Every dynamic string renders via
+   `x-text` (Alpine.js conventions above) -- there is no code path in this
+   UI that turns untrusted text into markup, which is the mechanism an XSS
+   payload would need to reach `localStorage` in the first place.
+3. **LAN-only exposure.** `PRODUCT.md`'s Operating Context: a self-hosted
+   instance on the operator's own network, not a public multi-tenant
+   service -- the realistic attacker model is not "arbitrary internet
+   script gets same-origin access," it's "someone already has a foothold
+   on this LAN," at which point the token is one of many things already
+   at risk.
+
+Revisit if either premise changes: the dismissal comment itself notes SSO
+fronting as a planned future direction, which would change the auth model
+enough to reopen this question, as would this UI ever loading a
+third-party script or gaining an `innerHTML`/`x-html` path.
 
 ## Provenance
 

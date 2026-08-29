@@ -251,7 +251,7 @@ returned by `GET /api/v1/media/shows`/`GET /api/v1/media/meta`.
   `fetchSingleLibrary` discarding every already-fetched page, not just the
   bad entry. Fixed both layers: the oneof list is now complete, and
   `SearchPrograms`/`GetFillerPrograms` skip-and-continue instead of
-  aborting (new `filterValidPrograms`/`Program.DroppedCount`) -- one
+  aborting (new `filterValidPrograms`/`ProgramSearchResponse.DroppedCount`) -- one
   malformed or genuinely-unrecognized entry now costs exactly that one
   entry, logged once per whole fetch (not per page or per entry) via a new
   WARN in `internal/service/schedule.go`.
@@ -268,6 +268,70 @@ returned by `GET /api/v1/media/shows`/`GET /api/v1/media/meta`.
   the expected shape. New `httpclient.IsDecodeError` distinguishes that
   case (`"tunarr response invalid"` / `"tunarr returned unexpected data"`)
   from genuine connectivity/status failures (unchanged wording).
+
+### Added - 2026-08-29 (UI improvement wave)
+
+#### Smart schedule picker (blocks editor)
+
+- A Simple/Cron mode toggle on the blocks editor's schedule field.
+  Simple mode is a frequency select (daily / weekdays / weekly / monthly
+  / custom days), day-of-week checkboxes (weekly/custom), and a native
+  `<input type="time">`, generating the 5-field cron string live;
+  switching from Cron to Simple mode parses the current cron back into
+  the picker when the pattern is representable, and locks to Cron mode
+  with an inline note otherwise. Storage/API are unaffected -- the cron
+  string is still the one value `POST`/`PUT /api/v1/blocks` sends.
+- **cronstrue** (vendored, `web/assets/vendor/cronstrue.min.js`, English
+  locale, MIT) replaces the editor's earlier hand-rolled `cronHint()` for
+  the plain-language readback shown live in both modes, and for the
+  blocks table's per-row cron readback -- `cronHint()` only recognized a
+  narrow subset of patterns (fixed time, optionally weekday-restricted);
+  cronstrue reads any valid 5-field expression.
+
+#### Library-aware autocomplete (blocks editor)
+
+- Series rows' show-title field, and the genre/rating fields on both the
+  filter block and the series fallback's filler filter, are now
+  `<input list=...>` fields backed by `<datalist>`s populated from `GET
+  /api/v1/media/shows`/`GET /api/v1/media/meta`, fetched once per editor
+  open and reused across every row. Free text is always accepted
+  regardless of fetch outcome; a failed fetch degrades silently (no
+  datalist, no warning, never a `.problem` panel).
+- A soft, non-blocking amber warning ("Not found in Tunarr's library.")
+  appears under a series row whose show title doesn't
+  case-insensitively match any loaded show, once the media fetch has
+  succeeded.
+
+#### UI audit + copy audit fixes
+
+Implemented every P1/P2 item from this wave's UI and copy audits
+(`.superpowers/sdd/2026-08-29-deploy/{ui-audit-impeccable,
+copy-audit-stopslop}.md`), plus all P3 items (all effort-S and adjacent
+to the above): the blocks editor now returns focus to the triggering
+button on close; the "unarmed" token status dot uses `--color-warn`
+instead of `--color-danger` (a default first-run state, not an error);
+`.btn--sm`/`.toggle` now clear WCAG 2.5.8's 24x24 CSS-px target-size
+floor; required fields carry a static `*` marker; series cursor field
+errors are wired for assistive tech (`role="alert"`, `aria-describedby`);
+the schedule/blocks error panels gained `Retry` actions; the toggle's
+"on" state changes its own label color, not just the track; the series
+Runs column is right-aligned and numerically formatted; both dialogs'
+explanatory text is now linked via `aria-describedby`; assorted P3
+polish (404 CRT scanline, `hero-panel__meta` graticule dividers, footer
+instrument-legend styling, dead-CSS documentation, real plurals
+throughout instead of a mechanical "(s)" suffix). Copy fixes: 404's
+"channel" -> "page" (was misleadingly reusing a Tunarr-channel term for
+a UI route), "arm" scoped strictly to the token panel (blocks copy now
+says "create"), consistent em dash and Title Case button labels, and the
+schedule apply-confirm's wording aligned on "Apply"/"Applied" throughout.
+
+#### Fixed
+
+- `GET /channels`'s 502 no longer echoes the wrapped Tunarr connectivity
+  error into the response `Detail` (`internal/api/tunarr.go`'s
+  `ListChannels`) -- it now logs server-side and returns the same fixed
+  "unable to reach tunarr" wording `writeMediaAPIError` already used for
+  `/media/shows`/`/media/meta`'s equivalent failure.
 
 ### Added - 2026-01-12
 

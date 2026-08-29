@@ -721,10 +721,10 @@ Notes:
 - Both return `502` (`title: "tunarr unreachable"`) under the same two
   conditions `GET /channels` does: `Deps.Media` is `nil` (`detail: "tunarr
   not configured"`), or the underlying fetch fails (`detail` is a short,
-  fixed string -- unlike `GET /channels`, the wrapped error isn't Tunarr's
-  own connectivity message, so it's logged server-side only, matching
-  `writeScheduleRunnerError`'s convention). An empty library with Tunarr
-  reachable is a normal `200` with empty arrays, not an error.
+  fixed string; the wrapped error itself is logged server-side only, never
+  echoed into the response -- `GET /channels` follows the identical
+  convention). An empty library with Tunarr reachable is a normal `200`
+  with empty arrays, not an error.
 - A live Tunarr `/api/programs/search` "episode" result never sends a flat
   `showTitle` (or `rating`, or `seasonNumber`) key at all, and it does
   **not** nest a `show` object either -- live-verified against a real
@@ -812,7 +812,7 @@ SCHEDULARR_API_TOKEN=$(openssl rand -hex 32) schedularr serve --listen :8484
 | `api.listen`           | —                      | `:8484` | Same as `--listen`; the flag wins when explicitly passed                                                                                           |
 | `api.token`            | `SCHEDULARR_API_TOKEN` | `""`    | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set                                                      |
 | `api.insecure_no_auth` | —                      | `false` | Same as `--insecure-no-auth`; either source turning it on disables auth                                                                            |
-| `cron_interval`        | —                      | `6h`    | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` -- it governs the cron loop, not the HTTP server |
+| `cron_interval`        | —                      | `6h`    | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` — it governs the cron loop, not the HTTP server |
 
 `schedularr serve` refuses to start if the effective token is empty (or
 shorter than 32 characters) and `--insecure-no-auth`/`api.insecure_no_auth`
@@ -831,7 +831,7 @@ is not set.
 ### Cron loop
 
 On an interval (`--interval`/`-i`, or the `cron_interval` config key,
-default `6h` either way -- flag wins when passed explicitly) and once
+default `6h` either way — flag wins when passed explicitly) and once
 immediately at startup, `serve` regenerates and applies the next day's
 schedule — the same `service.Runner.Run(ctx, Options{Days: 1, Apply:
 true})` call `schedularr generate --apply --yes` makes, just on a timer
@@ -865,7 +865,7 @@ prerequisite of `make build`) writes a one-line placeholder there on
 demand when it's missing, so `go build ./...` keeps working without Hugo
 installed. That placeholder has no `404.html` of its own, but
 `internal/api/ui.go`'s `newUIHandler` already falls back to a plain-text
-404 when the embedded site lacks one (see below) -- a fresh clone without
+404 when the embedded site lacks one (see below) — a fresh clone without
 `make web` gets that fallback, not a styled 404 page. A release build
 (the Docker image, see [Docker](#-docker)) always runs the real `hugo
 --minify -s web` first and never ships the placeholder.
@@ -887,14 +887,14 @@ handler serves carries `X-Content-Type-Options: nosniff`,
 Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'
 ```
 
-Every directive is `'self'`/`'none'` -- the site vendors Alpine (no CDN)
+Every directive is `'self'`/`'none'` — the site vendors Alpine (no CDN)
 and only ever calls its own origin's `/api/v1`, so there's no third-party
 origin to allow anywhere. `'unsafe-eval'` is required by Alpine.js 3,
 which evaluates directive expressions via `new Function(...)`; see
 [`web/DESIGN.md`'s Content-Security-Policy
 section](web/DESIGN.md#content-security-policy) for the full rationale,
 including the inline-`style=` footgun this policy creates for any future
-page (`style-src 'self'` silently drops inline style declarations -- use
+page (`style-src 'self'` silently drops inline style declarations — use
 a CSS class instead) and how the shipped skeleton-loading bars were fixed
 when it caught them. Content-Type comes from the resolved file's
 extension via `http.ServeContent`. An unmatched `/api/v1/*` path still
@@ -931,13 +931,13 @@ make web-build  # web-check, then hugo --minify -s web -> web/public
 `make build` depends on `web-presence`, not on a real Hugo build: it only
 requires `web/public/index.html` to exist, writing the placeholder above
 when it doesn't (see `Makefile`). This keeps `go build`/`make build`
-working on a machine without Hugo or Node installed -- the whole point of
-the placeholder -- while `web/public/` itself stays untracked, so there's
+working on a machine without Hugo or Node installed — the whole point of
+the placeholder — while `web/public/` itself stays untracked, so there's
 no committed file for a real `make web` run to dirty and nothing to
 `git restore` before committing. Run `make web` (or `make web-build`)
 whenever you want the actual UI in `web/public` instead of the
 placeholder; the release build (Docker) always does this for you, never
-the placeholder -- see [Docker](#-docker).
+the placeholder — see [Docker](#-docker).
 
 `web/assets/ts/gen/types.d.ts` is committed and regenerated by `make
 web-types`; hand-editing it is pointless since `make web` overwrites it.
@@ -1058,8 +1058,8 @@ interrupting the page for it isn't worth it), which auto-scrolls into view
 and focuses the name field when it opens.
 
 **List** — name, a type badge (`filter`/`series`), the raw cron plus a
-plain-language hint underneath it when the pattern is recognized (see
-"Cron hint" below), `channel_id`, an **Enabled/Disabled** toggle, and
+plain-language readback underneath it (**cronstrue** — see "Schedule
+picker" below), `channel_id`, an **Enabled/Disabled** toggle, and
 **Edit**/**Delete**. Delete requires a second click ("Delete" → inline
 **Confirm**/**Cancel**, not a native `confirm()` dialog) before anything is
 sent. Both the toggle and every editor save use `PUT
@@ -1069,38 +1069,61 @@ write, and this UI never relies on that default) and the toggle sends the
 block's own stored `spec` back byte-for-byte unchanged, since PUT has no
 partial-update form.
 
-**Editor — common fields**: name, cron, duration (minutes), channel,
-priority, max duration overflow (minutes), and enabled. `channel_id` is a
-`<select>` populated from `GET /api/v1/channels` when Tunarr answers with
-at least one channel; it falls back to a free-text input (with an inline
-reason) when the call fails or returns nothing — same "legitimate reading,
-not an error" treatment as the dashboard's Tunarr status. Editing a block
-whose stored `channel_id` isn't in that list keeps it selectable (labeled
-"not in Tunarr's channel list") instead of silently swapping the channel
-out from under the operator on save.
+**Editor — common fields**: name, schedule (see "Schedule picker" below),
+duration (minutes), channel, priority, max duration overflow (minutes),
+and enabled. Name, schedule, duration, and channel are marked required
+(`BlockSpec`'s own `required` list, `api/openapi.yaml`) with a static `*`
+next to the label — static, client-side feedback before a 400, not just
+after. `channel_id` is a `<select>` populated from `GET /api/v1/channels`
+when Tunarr answers with at least one channel; it falls back to a
+free-text input (with an inline reason) when the call fails or returns
+nothing — same "legitimate reading, not an error" treatment as the
+dashboard's Tunarr status. Editing a block whose stored `channel_id` isn't
+in that list keeps it selectable (labeled "not in Tunarr's channel list")
+instead of silently swapping the channel out from under the operator on
+save.
+
+**Schedule picker** — a Simple/Cron mode toggle on the schedule field.
+Simple mode is a frequency select (daily / weekdays / weekly / monthly /
+custom days), day-of-week checkboxes (weekly/custom only), and a native
+`<input type="time">`, which together generate the 5-field cron string
+live as the operator adjusts them; Cron mode is the raw text field, with a
+permanent format caption (`min hour day-of-month month day-of-week (* =
+any)`) underneath it. Switching from Cron to Simple mode parses the
+current cron string back into the picker's fields when the pattern is one
+Simple mode can represent (a plain fixed time, optionally restricted to
+specific weekdays or a single day-of-month); anything else — a
+day-of-month combined with a weekday restriction, a month restriction, a
+list/range/step on minute or hour — locks the field to Cron mode with an
+inline note rather than rendering a lossy guess. A plain-language readback
+(**cronstrue**, vendored — see `web/DESIGN.md`'s "Vendored dependencies")
+renders live under the field in both modes, replacing this UI's earlier
+hand-rolled `cronHint()` (which only recognized a narrow subset of
+patterns) with a reader that understands any valid 5-field expression.
+Storage is unaffected either way: the cron string is still the one value
+submitted, whichever mode produced it.
 
 **Editor — type**: `filter` shows genres/ratings/title-pattern(regex)/year
 range/duration range/tags (comma-separated inputs map to arrays; an empty
-input omits the field, it is never sent as `[]`). `GET /api/v1/media/shows`
-and `GET /api/v1/media/meta` (see Media Discovery Endpoints above) now
-exist to back a future autocomplete on these free-text genre/rating/show-title
-fields, which this UI doesn't call yet. `series` shows repeating
-rows (show title, episodes per block, start season/episode, on-complete,
-skip-episodes, max runs — add/remove freely) plus a fallback section
-(redistribute/filler, with a nested filter subset when filler is chosen).
-A **Filler** section (enabled, filler list ID, max filler time, min gap
-time) is available for either type, since `BlockSpec.filler` isn't gated
-by `type` in the schema. Every section maps 1:1 onto `BlockSpec` — nothing
-is invented, and the submitted JSON only ever contains fields the operator
-actually filled in, plus `type` and `enabled` (always explicit).
-
-**Cron hint** — a small hand-rolled reader for common 5-field patterns
-(fixed time, optionally restricted to specific weekdays: `"0 20 * * 6"` →
-"Saturdays at 20:00", `"0 6 * * *"` → "Daily at 06:00", weekday/weekend
-groups collapse to "Weekdays"/"Weekends"), not a cron-parsing dependency.
-Anything outside that shape (a day-of-month/month restriction, a list on
-minute/hour) shows no hint — only the raw cron — rather than guessing
-wrong.
+input omits the field, it is never sent as `[]`). Genres and ratings are
+`<input list=...>` fields backed by a `<datalist>` populated from `GET
+/api/v1/media/meta` (see Media Discovery Endpoints above), fetched once
+per editor open; free text is always accepted regardless. `series` shows
+repeating rows (show title, episodes per block, start season/episode,
+on-complete, skip-episodes, max runs — add/remove freely) plus a fallback
+section (redistribute/filler, with a nested filter subset when filler is
+chosen). Show title is the same `<input list=...>` pattern, backed by `GET
+/api/v1/media/shows`: an amber, non-blocking note ("Not found in Tunarr's
+library.") appears under a row whose typed title doesn't case-insensitively
+match any loaded show, as long as the media fetch itself succeeded — a
+failed fetch degrades silently to plain free text, with no datalist and no
+warning, never a `.problem` panel (this is a convenience layer over an
+editor that already works entirely with free text). A **Filler** section
+(enabled, filler list ID, max filler time, min gap time) is available for
+either type, since `BlockSpec.filler` isn't gated by `type` in the schema.
+Every section maps 1:1 onto `BlockSpec` — nothing is invented, and the
+submitted JSON only ever contains fields the operator actually filled in,
+plus `type` and `enabled` (always explicit).
 
 **Validation** — `skip_episodes` is checked client-side against `SxxExx`
 (e.g. `S01E05`) before submit, with the exact invalid token(s) named
@@ -1157,8 +1180,8 @@ per action rather than once per process. Clicking **Apply** opens a
 native `<dialog>` confirmation naming the scope exactly: **"Apply ALL
 channels"** or **"Apply channel `<id>`"**, plus a real slot/channel count
 summary — or, when the previewed plan has no channels, **"There is
-nothing to apply for this scope"** (applying an empty plan is allowed,
-it's just a no-op against Tunarr). Confirming sends `POST /api/v1/apply`
+nothing to apply for this scope"** (applying an empty plan is allowed — it's
+a no-op against Tunarr). Confirming sends `POST /api/v1/apply`
 with the *identical* body the preview used — note that `/apply` does not
 replay the previewed plan; it independently re-runs the same
 generate-and-push workflow server-side (`internal/service.Runner.Run`),
