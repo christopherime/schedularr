@@ -296,17 +296,6 @@ None block the current close-out; each is a known, scoped-out gap.
   decode-target struct's optional fields, so an omitted field stays
   genuinely absent through to CUE.
 
-- **Dockerfile `main.Version` -\> `cmd.Version`.** `Dockerfile` builds with
-  `-ldflags "... -X main.Version=${VERSION} ..."`, but `main` (`main.go`)
-  declares no `Version` variable at all -- the actual symbol
-  `GET /api/v1/status` reports is `cmd.Version`
-  (`var Version = "dev"` in `cmd/serve.go`, set via
-  `-X github.com/christopherime/schedularr/cmd.Version=...`). The
-  Dockerfile's `-X` flag is a no-op today: every container-built binary
-  reports `"dev"` regardless of `${VERSION}`. Fix as sub-project 4's first
-  commit: repoint the Dockerfile's `-X` target at
-  `github.com/christopherime/schedularr/cmd.Version`.
-
 - **Duplicate `generate config` command.** `cmd/config.go`'s
   `config generate` and `cmd/generate.go`'s `generate config` are the same
   operation (`cueconfig.NewValidator().GenerateConfigWithOverrides`)
@@ -362,38 +351,19 @@ scoped-out gap.
   silently drift. Add a CI step that runs `make web-types` and fails the
   build on a resulting `git diff`.
 
-- **SP4 inherits: Docker build must run the real `make web`, never embed
-  the placeholder.** Today's `make build` only depends on `web-presence`
-  (a non-empty `web/public`, which the committed placeholder alone
-  satisfies -- see the spec-deviation note below), so nothing forces a
-  container image build to have actually run Hugo. Sub-project 4's
-  Dockerfile stage must run the full `make web` (or `web-build`) before
-  `make build`/`go build`, so a release binary can never ship with the
-  literal "Schedularr UI not built — run `make web`." placeholder as its
-  embedded site.
-
-- **SP4 inherits: untrack the placeholder, generate it on demand.** The
-  structural fix for the placeholder-workflow trap (`web/public/index.html`
-  git-tracked inside an otherwise-gitignored `web/public/`, so every
-  `make web-build` dirties a tracked file -- see README.md's Building the
-  UI section for the two interim workarounds this fix wave documented,
-  `git restore` vs. `git update-index --skip-worktree`) is: untrack
-  `web/public/index.html` entirely, and have `web-presence` (or a new
-  Makefile target) generate the placeholder file on demand when
-  `web/public/` is missing or empty, instead of relying on a committed
-  blob. Explicitly deferred to sub-project 4 -- not done in this fix
-  wave, which only improved the documentation of the current workaround.
-
-- **Spec deviation, recorded not fixed: `make build` depends on a
+- **Spec deviation, accepted permanently: `make build` depends on a
   web-presence check, not the web build itself.** Spec Decision 4 (`docs/
   superpowers/specs/2026-08-28-web-ui-design.md`) describes `make build`
   as depending on the web build; the shipped Makefile instead makes
-  `build` depend on `web-presence` (a cheap non-empty-directory check
-  that the committed placeholder alone satisfies), not on `web-build`
-  itself running Hugo. This is accepted as-is: it keeps `go build`/`make
-  build` working on a machine without Hugo installed, which the
-  placeholder mechanism exists to guarantee in the first place -- forcing
-  a real Hugo build on every `make build` would defeat that. The actual
-  release-safety guarantee (a shipped binary never embeds the placeholder)
-  is sub-project 4's Docker stage's job, per the item above, not `make
-  build`'s.
+  `build` depend on `web-presence`, which writes a one-line placeholder
+  on demand when `web/public/index.html` doesn't exist yet (untracked as
+  of Task 1, `docs/superpowers/plans/2026-08-29-deploy.md` -- no
+  committed blob involved), not on `web-build` itself running Hugo. This
+  stays accepted: it keeps `go build`/`make build` working on a machine
+  without Hugo installed, which the placeholder mechanism exists to
+  guarantee in the first place -- forcing a real Hugo build on every
+  `make build` would defeat that. The release-safety guarantee (a
+  shipped binary never embeds the placeholder) is the Docker image's job
+  instead: `Dockerfile`'s Hugo stage always runs the real `hugo --minify
+  -s web` before the Go build stage, so a container image can never ship
+  the placeholder as its embedded site.
