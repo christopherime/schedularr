@@ -1,0 +1,58 @@
+site_name: Schedularr
+site_description: Cron-based content scheduling for Tunarr TV channels
+site_url: https://christopherime.github.io/schedularr/
+repo_url: https://github.com/christopherime/schedularr
+repo_name: christopherime/schedularr
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+exclude_docs: |
+  superpowers/
+  tunarr/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Web UI Guide: web-ui-guide.md
+  - Scheduling Concepts: scheduling-concepts.md
+  - CLI Reference: cli-reference.md
+  - API Reference: api-reference.md
+  - Architecture: architecture.md
+  - Design System: design-system.md
+  - Deployment: deployment.md

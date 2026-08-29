@@ -1,0 +1,247 @@
+# Scheduling Concepts
+
+A **block** is a scheduling rule: a cron trigger, a duration, a target Tunarr channel, a priority, and either a content **filter** or a list of **series** to progress through. Blocks live in the SQLite store, not in a file — `scheduler.yaml` is a first-run *import* format only (see [Getting Started](getting-started.md)); manage blocks going forward through the `/api/v1/blocks` HTTP API or the [Web UI](web-ui-guide.md).
+
+## Block structure
+
+```yaml
+blocks:
+  - name: string # Required: human-readable block identifier
+    type: string # "filter" or "series" -- required in scheduler.yaml (see note below)
+    cron: string # Required: 5-field cron expression
+    duration: int # Required: block duration in minutes
+    channel_id: string # Required: target Tunarr channel ID
+    priority: int # Required: conflict-resolution priority (higher wins)
+    max_duration_overflow_minutes: int # Optional: max minutes actual duration can exceed planned duration (default 0)
+
+    filter: { ... } # Choose one: filter-based block (see below)
+    series: [ ... ] # Choose one: series-based block (see below)
+
+    fallback: { ... } # Optional, series blocks only: strategy when series content doesn't fill the block
+    filler: { ... } # Optional, either type: fills small residual gaps
+```
+
+Each block's `type` field (`filter` or `series`) has a CUE schema default, but the `scheduler.yaml` import path decodes each block into a Go struct before CUE-validating it, which turns an omitted `type` into an explicit empty string rather than an absent field — CUE only applies a default to a genuinely absent field, so an empty string fails the `"filter" | "series"` check. Always set `type` explicitly in `scheduler.yaml`. `POST /api/v1/blocks`'s JSON body doesn't have this problem; `type` there can be omitted.
+
+## Filter-based blocks
+
+Applies filter criteria to available programs, in AND logic across criteria (a program must match every specified criterion). Matching content is randomized, checked against schedule history to avoid recent repeats, and greedily selected to fill the block's duration.
+
+```yaml
+filter:
+  title_pattern: string # Regex pattern for title matching (Go regex syntax)
+  genres: []string # OR logic within the list -- matches ANY of these genres
+  ratings: []string # OR logic within the list
+  year_from: int # Minimum release year
+  year_to: int # Maximum release year
+  min_duration: int # Minimum duration, minutes
+  max_duration: int # Maximum duration, minutes
+  tags: []string # Custom tags, AND logic (matches ALL specified tags)
+```
+
+| Field | Example | Notes |
+| --- | --- | --- |
+| `title_pattern` | `"^Star"`, `"(Trek\|Wars)"`, `"\\d+$"` | Go regex |
+| `genres` | `["Action", "Adventure", "Sci-Fi"]` | Matches any listed genre |
+| `ratings` | `["PG", "PG-13", "TV-PG"]` | TV: TV-Y…TV-MA; movie: G…NC-17; or NR/Unrated |
+| `year_from` / `year_to` | `1980` / `1999` | Inclusive range |
+| `min_duration` / `max_duration` | `90` / `150` | Minutes; stored in Tunarr as milliseconds internally |
+| `tags` | `["christmas", "family-favorite"]` | All listed tags must match |
+
+**Example — Saturday night sci-fi marathon:**
+
+```yaml
+blocks:
+  - name: "Saturday Night Sci-Fi"
+    type: filter
+    cron: "0 20 * * 6" # Saturdays at 8 PM
+    duration: 360 # 6 hours
+    channel_id: "channel-1"
+    filter:
+      genres: ["Science Fiction"]
+      min_duration: 90
+      year_from: 1980
+```
+
+## Series-based blocks
+
+Schedules sequential episodes from one or more shows with state tracking and flexible fallback. Unlike filter blocks, which pick content at random, series blocks track exactly where each show is and play episodes in order — ideal for marathons, daily continuations, or thematic runs across multiple related shows.
+
+```yaml
+series:
+  - show_title: string # Required: must match Tunarr's show title
+    episodes_per_block: int # Required: episodes to attempt per block occurrence
+    start_season: int # Optional, default 1
+    start_episode: int # Optional, default 1
+    on_complete: string # Optional: "continue" (default), "restart", or "disable"
+    skip_episodes: []string # Optional: e.g. ["S01E03", "S02E07"]
+    max_runs: int # Optional: cap on restarts before auto-disable (0 = unlimited)
+```
+
+### Multiple series per block
+
+List several `series` entries in one block; Schedularr schedules episodes from each in listed order, cyclically, until the block's duration (plus `max_duration_overflow_minutes`) is met:
+
+```yaml
+series:
+  - show_title: "Series A"
+    episodes_per_block: 2
+  - show_title: "Series B"
+    episodes_per_block: 1
+  - show_title: "Series C"
+    episodes_per_block: 2
+```
+
+### Starting position
+
+A new series starts at S01E01 by default. Override with `start_season`/`start_episode` to begin partway through — useful when you've already watched part of a show.
+
+### Completion actions (`on_complete`)
+
+When a series runs out of episodes (every season and episode scheduled):
+
+- **`continue`** (default) — marked `completed`, stays active in the block; future attempts for this series fall straight through to `fallback`.
+- **`restart`** — state resets to `start_season`/`start_episode` (or S01E01), `completed` clears, `run_count` increments, the series becomes active again.
+- **`disable`** — marked `disabled`, no longer considered for scheduling in this block; the block falls through to `fallback` if no other series can fill the time.
+
+`max_runs` (used with `on_complete: "restart"`) caps how many times a series restarts. Once `run_count` reaches `max_runs`, the series is disabled automatically. `0` means unlimited restarts.
+
+### Skipping episodes
+
+`skip_episodes` takes a list in `SxxEyy` form (season and episode padded to two digits), e.g. `["S01E03", "S02E07"]` — useful for filler episodes, problematic content, or anything watched too many times already.
+
+### Flexible duration
+
+`max_duration_overflow_minutes` (block-level) lets actual scheduled duration exceed `duration` by a set amount, since episode lengths vary and cutting one short is undesirable. The scheduler prioritizes fitting whole episodes: if adding one would push the block past `duration` but still within `duration + max_duration_overflow_minutes`, it's included; once that overflow happens, no further series programs are added (fallback/filler may still be considered for time remaining within `duration` before the overflow item).
+
+### Fallback strategies
+
+Used when series content can't fill the block's duration — a series completes without restarting, or there aren't enough episodes to meet `episodes_per_block`:
+
+```yaml
+fallback:
+  mode: string # "redistribute" (default) or "filler"
+  filler_filter: { ... } # Required if mode is "filler" -- same fields as a filter block's `filter`
+```
+
+- **`redistribute`** (default) — remaining time goes implicitly to other active series in the same block; with no other active series, the block ends early.
+- **`filler`** — remaining time fills with content matching `fallback.filler_filter`, a targeted catch-all for gaps from series completion or exhaustion.
+
+### State management
+
+Current season/episode, completion status, and run count persist per show in SQLite (`series_state` table), across restarts. State changes are pending in memory until the schedule applies successfully to Tunarr — commit on success, rollback (discard) on failure. See the [Web UI's Series page](web-ui-guide.md#series-series) for inline cursor editing, or `schedularr state` in the [CLI Reference](cli-reference.md#series-state) for the command-line equivalent.
+
+**Example — Sunday sitcom marathon, unlimited restarts:**
+
+```yaml
+blocks:
+  - name: "Sunday Sitcom Marathon"
+    type: series
+    cron: "0 12 * * 0" # Every Sunday at 12 PM
+    duration: 240 # 4-hour block
+    channel_id: "comedy-channel"
+    priority: 40
+    series:
+      - show_title: "The Office (US)"
+        episodes_per_block: 4
+        on_complete: "restart"
+        max_runs: 0
+    filler:
+      enabled: true
+      filler_list_id: "comedy-bumps"
+      min_gap_time: 5
+```
+
+**Example — daily documentary continuation with filler fallback:**
+
+```yaml
+blocks:
+  - name: "Daily Docs"
+    type: series
+    cron: "0 19 * * 1-5" # Weekdays at 7 PM
+    duration: 90
+    channel_id: "documentary-channel"
+    priority: 60
+    max_duration_overflow_minutes: 10
+    series:
+      - show_title: "Planet Earth"
+        episodes_per_block: 2
+        on_complete: "disable" # Play once, then stop
+    fallback:
+      mode: "filler"
+      filler_filter:
+        genres: ["Nature", "Documentary"]
+        max_duration: 20
+    filler:
+      enabled: true
+      filler_list_id: "doc-promos"
+      min_gap_time: 2
+```
+
+## Filler content
+
+Fills time gaps after primary content (and, for series blocks, `fallback`) has been scheduled — commercials, bumpers, promos, PSAs:
+
+```yaml
+filler:
+  enabled: bool
+  filler_list_id: string # Required if enabled -- a Tunarr filler list ID
+  max_filler_time: int # Optional: cap filler duration, minutes (0 = unlimited)
+  min_gap_time: int # Optional: minimum gap before adding filler, minutes (default 0)
+```
+
+Behavior: after scheduling main content, compute the remaining gap, cap it at `max_filler_time` if set, fetch and shuffle the filler list's programs, then greedily add filler until the gap is filled or the cap is reached.
+
+## Cron scheduling
+
+Standard 5-field cron expressions, validated by `github.com/robfig/cron/v3`:
+
+```text
+┌─────────── minute (0-59)
+│ ┌───────── hour (0-23)
+│ │ ┌─────── day of month (1-31)
+│ │ │ ┌───── month (1-12)
+│ │ │ │ ┌─── day of week (0-7, Sunday = 0 or 7)
+* * * * *
+```
+
+`*` (any value), `,` (list, `1,3,5`), `-` (range, `1-5`), `/` (step, `*/15`).
+
+```yaml
+cron: "0 6 * * *"        # Every day at 6 AM
+cron: "0 21 * * 1-5"     # Weekdays at 9 PM
+cron: "0 8,14 * * 6-7"   # Weekends at 8 AM and 2 PM
+cron: "0 */2 * * *"      # Every 2 hours
+cron: "0 0 1 * *"        # First of the month at midnight
+cron: "30 19 * * 1,3,5"  # Mon/Wed/Fri at 7:30 PM
+```
+
+Validate with `schedularr validate scheduler.yaml` before deploying — see the [CLI Reference](cli-reference.md#validation).
+
+The [Web UI's blocks editor](web-ui-guide.md#schedule-picker) offers a Simple mode alternative to hand-writing cron: a frequency select, day-of-week checkboxes, and a time input that generate the cron string live. It parses back from an existing cron string when the pattern is representable in Simple mode (a fixed time, optionally restricted to weekdays or a single day-of-month); anything more complex — a day-of-month combined with a weekday restriction, a month restriction, a list/range/step on minute or hour — stays in Cron mode. A plain-language readback (cronstrue) renders under the field in both modes.
+
+## Priority and conflict resolution
+
+When multiple blocks schedule content for overlapping time periods, the higher `priority` value wins; the conflicting lower-priority block is discarded entirely, and the resolution is logged.
+
+```text
+Block A: [10:00-12:00], priority 10
+Block B: [11:00-13:00], priority 5
+
+Overlap: [11:00-12:00]
+Winner: Block A
+Result: Block A scheduled, Block B discarded
+```
+
+Suggested ranges: **1-10** low priority (filler, background programming), **11-50** normal priority (regular programming), **51-100** high priority (special events, live content).
+
+## Schedule history and retention
+
+Schedule history prevents content repetition. It's both an in-memory dedup check during a single generate/apply cycle (cleared on restart, keyed `channel_id:program_id`) and a persisted `schedule_history` SQLite table, queryable via `GET /history?days=N` (see the [API Reference](api-reference.md#history)), that survives restarts.
+
+- **Window**: `maintenance.history_retention` (default `168h`, 7 days) — see the [Deployment config reference](deployment.md#configuration-reference).
+- **Before scheduling**: recently-played programs are excluded from candidates (in-memory check, then a `schedule_history` lookup).
+- **After scheduling**: program + timestamp recorded, both in-memory and, on `Engine.Commit()`, persisted.
+- **Cleanup**: every successful apply deletes `schedule_history` rows older than the retention window.
+
+`GET /history?days=N` can only return data as far back as `history_retention` allows — `?days=90` needs `history_retention` set to at least `2160h` to actually have 90 days of persisted rows; the 7-day default limits queries to the last 7 days regardless of what `days` the caller requests.

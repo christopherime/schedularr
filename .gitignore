@@ -94,6 +94,11 @@ _site/
 public/
 docs/_build/
 
+# mkdocs build output (docs/ is the mkdocs docs_dir; this is its `mkdocs
+# build` output directory, deployed by .github/workflows/pages.yaml -- not
+# committed)
+/site/
+
 # Temporary files
 *.tmp
 *.bak
