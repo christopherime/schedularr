@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-29
+
+Series-based scheduling now works end-to-end against a live Tunarr
+instance: two pre-existing bugs are fixed (the show/season ID join, and a
+program-type validator that discarded an entire fetched page instead of
+skipping the one entry it didn't recognize). Also in this release: a
+Simple-mode schedule picker, library-aware show/genre/rating autocomplete
+backed by two new read-only API endpoints, a full UI/copy polish pass, an
+MkDocs documentation site, and a `kin-openapi` dependency bump that closes
+both open Dependabot alerts.
+
 ### Added - 2026-08-28
 
 #### HTTP API Server
@@ -130,6 +141,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The interval-based daemon command is gone; see "`serve` replaces
   `run`" above.
+
+### Added - 2026-08-29 (media discovery API)
+
+#### Media discovery endpoints
+
+- **`GET /api/v1/media/shows`** and **`GET /api/v1/media/meta`**: the first
+  deliberate post-v1 contract change to `api/openapi.yaml`. `listMediaShows`
+  returns every distinct show title Runner's Tunarr fetch has seen, grouped
+  from `Type == "episode"` programs, with each show's episode count
+  (`MediaShow{title, episode_count}`); `getMediaMeta` returns the distinct
+  `genres`/`ratings` observed across every fetched program
+  (`MediaMeta{genres, ratings}`), both sorted ascending. Both reuse
+  `Runner.fetchPrograms` -- the same fetch-then-cache path `generate` uses
+  to build its scheduling candidate pool -- so neither issues an extra
+  Tunarr request beyond warming or reading the existing 1h content cache.
+  A `nil` `Deps.Media` (Tunarr not configured) and a live fetch failure
+  both return `502`; the latter distinguishes "tunarr unreachable" from
+  "tunarr response invalid" (`httpclient.IsDecodeError`) the same way
+  `GET /channels` already did.
+- These two endpoints are what the blocks editor's library-aware
+  autocomplete (see the UI improvement wave below) reads from.
 
 ### Fixed - 2026-08-29
 
@@ -523,6 +555,28 @@ For users upgrading from previous versions:
   (`docs/architecture.md`, `docs/scheduling-concepts.md`,
   `docs/cli-reference.md`) with content merged/deduped, not just moved.
 
+### Changed - 2026-08-29 (release prep)
+
+- `assets/demo.gif` and `assets/screenshots/{dashboard,blocks,schedule,
+  series}.png` (and their `docs/assets/` copies) re-captured against the UI
+  improvement wave: the blocks screenshot/GIF now show the editor open in
+  Simple mode (schedule picker) on the series block, with the show-title
+  field populated from the library-aware autocomplete's data source.
+
+### Security - 2026-08-29 (release prep)
+
+- Bumped `github.com/getkin/kin-openapi` (transitive, via `oapi-codegen`)
+  from `v0.142.0` to `v0.144.0`, closing both open Dependabot alerts: a
+  critical fail-open authentication bypass in
+  `openapi3filter.ValidationHandler` (`NoopAuthenticationFunc` default) and
+  a medium-severity nil-pointer panic in the same package when validating a
+  `content` parameter whose media type has no schema. Neither code path is
+  reachable from this repo -- `kin-openapi`'s only consumer is
+  `internal/api/gen/server.gen.go`'s embedded-spec loader (`openapi3.T` /
+  `GetSpec`), which never touches `openapi3filter`. `make generate`'s
+  output is unchanged byte-for-byte after the bump (two consecutive runs
+  diffed clean against each other and against the pre-bump output).
+
 ---
 
 ## [0.1.0] - 2026-01-XX (Previous Release)
@@ -536,5 +590,6 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/geekxflood/schedularr/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/geekxflood/schedularr/releases/tag/v0.1.0
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/christopherime/schedularr/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/christopherime/schedularr/releases/tag/v0.1.0
