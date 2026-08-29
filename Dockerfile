@@ -27,17 +27,25 @@
 # libc between build and run.
 #
 # Hugo acquisition: the pinned official GitHub release binary, not a
-# third-party image (e.g. hugomods/hugo). Reasons: (1) exact version *and*
-# edition parity with the toolchain `make web-build` requires locally --
-# `hugo version` on the dev machine that authored this Dockerfile reports
-# `v0.165.0+extended`, HUGO_VERSION below pins the same release; (2) a
-# first-party sha256 (from the release's own checksums.txt) to verify
-# against, rather than trusting a third party's image build; (3) no
-# dependency on hugomods' own image-refresh cadence lagging or diverging
-# from upstream Hugo releases. The site itself only uses Hugo Pipes
-# (resources.Get/minify/fingerprint) and js.Build (esbuild, pure Go) --
-# neither requires the "extended" edition -- but pinning extended anyway
-# keeps prod and dev bit-for-bit on tooling rather than "works today."
+# third-party image (e.g. hugomods/hugo). Reasons: (1) exact version parity
+# with the toolchain `make web-build` requires locally -- `hugo version` on
+# the dev machine that authored this Dockerfile reports `v0.165.0+extended`,
+# HUGO_VERSION below pins the same release number; (2) a first-party
+# sha256 (from the release's own checksums.txt) to verify against, rather
+# than trusting a third party's image build; (3) no dependency on
+# hugomods' own image-refresh cadence lagging or diverging from upstream
+# Hugo releases.
+#
+# Plain (non-"extended") binary, deliberately: the site only uses Hugo
+# Pipes (resources.Get/minify/fingerprint) and js.Build (esbuild, pure
+# Go) -- no Sass anywhere (`grep -r` over web/assets confirms it) -- so
+# it needs none of what "extended" adds. That distinction is load-bearing
+# on Alpine, not just a size optimization: upstream's "extended" Linux
+# binaries are cgo-built against glibc (for embedded libsass) and do not
+# run against musl without a compat shim (verified: `hugo version` inside
+# a bare alpine:3.20 stage fails "not found" -- the classic ELF-interpreter-
+# not-found symptom -- on the extended binary). The plain binary is
+# CGO_ENABLED=0 static Go and runs on Alpine unmodified.
 
 ARG GO_VERSION=1.27
 ARG NODE_VERSION=22
@@ -64,11 +72,11 @@ ARG HUGO_VERSION
 ARG TARGETARCH
 RUN apk add --no-cache curl && \
     case "${TARGETARCH}" in \
-      amd64) HUGO_SHA256=f43494894cdf4a8630a201d5c828051c77f523cc66bb3938b30806835470ac20 ;; \
-      arm64) HUGO_SHA256=f40ebc44dfda3896cecd3ae7ed44f5c44c4b4a30a2b7d976ece6da62da699a58 ;; \
+      amd64) HUGO_SHA256=5c3a37a5450b3e386e5b75a87a790fea2d04a796d75e171216c80ef48a32b432 ;; \
+      arm64) HUGO_SHA256=65c9fdd75e82d5f1eaf565f6e9fede6c0ceecaa267798e10c73068986996b77d ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac && \
-    curl -fsSLo /tmp/hugo.tgz "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-${TARGETARCH}.tar.gz" && \
+    curl -fsSLo /tmp/hugo.tgz "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_linux-${TARGETARCH}.tar.gz" && \
     echo "${HUGO_SHA256}  /tmp/hugo.tgz" | sha256sum -c - && \
     tar -xzf /tmp/hugo.tgz -C /usr/local/bin hugo && \
     rm /tmp/hugo.tgz
