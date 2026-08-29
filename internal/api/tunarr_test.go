@@ -80,7 +80,11 @@ func TestListChannels_TunarrError_BadGateway(t *testing.T) {
 	p := decodeProblem(t, w)
 	assert.Equal(t, "tunarr unreachable", p.Title)
 	assert.Equal(t, http.StatusBadGateway, p.Status)
-	assert.Contains(t, p.Detail, "connection refused")
+	// Detail is a fixed, non-leaking string (matches writeMediaAPIError's
+	// convention, media.go) -- the wrapped connectivity error goes to the
+	// server-side log only, never the response body.
+	assert.Equal(t, "unable to reach tunarr", p.Detail)
+	assert.NotContains(t, p.Detail, "connection refused")
 }
 
 func TestListChannels_NilTunarr_BadGateway(t *testing.T) {

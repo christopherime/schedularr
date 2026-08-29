@@ -33,11 +33,20 @@ func (h *Handlers) ListChannels(w http.ResponseWriter, r *http.Request) {
 
 	channels, err := h.d.Tunarr.GetChannels(r.Context())
 	if err != nil {
-		// err.Error() here is an upstream connectivity message (e.g. "dial
-		// tcp: connection refused"), not an internal driver/schema leak, so
-		// it's safe to surface -- unlike the 500 convention in
-		// logAndWriteInternalError, which never repeats internal errors.
-		WriteProblem(w, r, http.StatusBadGateway, "tunarr unreachable", err.Error())
+		// Matches writeMediaAPIError's convention (media.go): err (an
+		// upstream connectivity message, e.g. "dial tcp: connection
+		// refused") is logged server-side only, never echoed into the
+		// response Detail. This used to treat a connectivity message as
+		// safe to surface verbatim; media.go's later, more careful
+		// handling of the same 502 class established that a wrapped
+		// error should never reach the response body, so this now
+		// follows that rule too.
+		h.d.Logger.Error("tunarr channel list failed",
+			"op", "list_channels",
+			"request_id", RequestIDFromContext(r.Context()),
+			"error", err,
+		)
+		WriteProblem(w, r, http.StatusBadGateway, "tunarr unreachable", "unable to reach tunarr")
 		return
 	}
 
