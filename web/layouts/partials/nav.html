@@ -1,10 +1,10 @@
 {{- /*
   Primary channel-select nav. Items are hardcoded (not derived from Hugo
-  sections) because Tasks 5-7 haven't built /blocks/, /schedule/, /series/
-  yet -- linking to them now is deliberate and forward-looking: the shell
-  is done before the pages are, and the router's UI 404 page handles an
-  unbuilt route until then. Active state is server-rendered (aria-current,
-  no JS) so it's correct even if a page's script fails to load.
+  sections) because the nav is simple enough that deriving it from Hugo's
+  section tree would add indirection without buying anything -- four fixed
+  destinations, known up front. Active state is server-rendered
+  (aria-current, no JS) so it's correct even if a page's script fails to
+  load.
 */ -}}
 {{- $current := .RelPermalink -}}
 {{- $items := slice

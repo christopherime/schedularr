@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -315,6 +317,42 @@ func TestRouter_UIHealthzStillWorks(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestRouter_APIPostWithUIStillWorks confirms mounting the UI doesn't just
+// leave /api/v1/* reads working (TestRouter_UIAPIv1StillRequiresBearerToken
+// only exercises a GET) but a real write too: a valid POST /api/v1/blocks
+// with a correct bearer token still reaches gen.HandlerFromMux's own
+// registered route and returns 201, proving newUIHandler -- installed as
+// the router's catch-all NotFound -- never shadows a matched /api/v1/*
+// route regardless of method.
+func TestRouter_APIPostWithUIStillWorks(t *testing.T) {
+	r, err := NewRouter(Config{Token: routerTestToken, UI: testUIFS()}, Deps{Store: newRouterTestStore(t), Logger: slog.Default()})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(filterBlockWrite("ui-mounted-post", "0 6 * * *"))
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/blocks", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+routerTestToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+}
+
+// TestRouter_UIHeadIndex confirms a HEAD / against the mounted UI behaves
+// like the GET / case in TestRouter_UIServesIndexAtRoot minus the body:
+// same status and Content-Type, but http.ServeContent (which newUIHandler
+// delegates to) never writes a body for HEAD.
+func TestRouter_UIHeadIndex(t *testing.T) {
+	r := newUIRouterTest(t)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodHead, "/", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "text/html; charset=utf-8", w.Header().Get("Content-Type"))
+	assert.Empty(t, w.Body.String())
 }
 
 // TestRouter_NilUIKeepsPreviousNotFoundBehavior confirms Config.UI == nil
