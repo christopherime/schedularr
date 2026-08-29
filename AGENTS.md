@@ -19,7 +19,7 @@ Entry point sits in `main.go` with Cobra commands in `cmd/`, while `internal/sch
 - `make validate`: `cue vet` the files in `configs/` to keep published samples legal.
 - `make e2e-up && make e2e-test && make e2e-down`: start docker-compose, execute `e2e/test.sh`, then tear down; `make e2e-clean` wipes volumes.
 - `make web`: regenerate `web/assets/ts/gen/types.d.ts` from `api/openapi.yaml`, type-check with `tsc --noEmit`, then build the Hugo site into `web/public`; `make web-types`/`web-check`/`web-build` run the individual steps. Requires Hugo `>= 0.120` and Node/npm; `web-check` (and its use inside `make lint`) is skipped with a notice when npm is absent.
-- `make docker-build` (`VERSION=...`): build the container image (`Dockerfile`, CGO-enabled multi-stage, `alpine` final -- `mattn/go-sqlite3` rules out distroless); runs the real Hugo build in-image, never the placeholder. See README's [Docker](README.md#-docker) section.
+- `make docker-build` (`VERSION=...`): build the container image (`Dockerfile`, CGO-enabled multi-stage, `alpine` final -- `mattn/go-sqlite3` rules out distroless); runs the real Hugo build in-image, never the placeholder. See the docs site's [Deployment](https://christopherime.github.io/schedularr/deployment/) page.
 
 ## Coding Style & Naming Conventions
 
@@ -35,4 +35,4 @@ History favors `type(scope): imperative summary` (e.g., `feat(api): …`), so ke
 
 ## Security & Configuration Tips
 
-Never commit real Tunarr credentials — keep examples redacted in `configs/` and store machine-specific overrides in `~/.schedularr.yaml`. Run `make validate` around schema changes so CUE stays synced with the samples. Docker resources assume localhost; if you expose ports externally, audit the mounted config and the `SCHEDULARR_API_TOKEN`/`docker run -e` values described in README's [Docker](README.md#-docker) section, rotate keys, and delete stray environment files before merging.
+Never commit real Tunarr credentials — keep examples redacted in `configs/` and store machine-specific overrides in `~/.schedularr.yaml`. Run `make validate` around schema changes so CUE stays synced with the samples. Docker resources assume localhost; if you expose ports externally, audit the mounted config and the `SCHEDULARR_API_TOKEN`/`docker run -e` values described in the docs site's [Deployment](https://christopherime.github.io/schedularr/deployment/) page, rotate keys, and delete stray environment files before merging.

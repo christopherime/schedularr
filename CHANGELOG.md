@@ -490,6 +490,41 @@ For users upgrading from previous versions:
 
 ---
 
+### Added - 2026-08-29 (docs site)
+
+- **MkDocs Material documentation site** (`mkdocs.yml`, `docs/*.md`), published
+  to GitHub Pages by `.github/workflows/pages.yaml` (push to `main` touching
+  `docs/**`/`mkdocs.yml`/`assets/**`, plus `workflow_dispatch`). Nine pages —
+  Home, Getting Started, Web UI Guide, Scheduling Concepts, CLI Reference, API
+  Reference, Architecture, Design System, Deployment — replace the
+  everything-in-README approach. `docs/` is the site's `docs_dir`;
+  `docs/superpowers/` and `docs/tunarr/` (internal SDD planning artifacts and a
+  captured Tunarr OpenAPI spec) are excluded from the build via
+  `exclude_docs` and stay where they were.
+- `docs/assets/` — a working copy of `demo.gif`, `cli.gif`, and the four
+  `screenshots/*.png` the site's pages embed, so the same relative image
+  paths render both on the built site and in GitHub's repo view of
+  `docs/*.md`.
+
+### Changed - 2026-08-29 (docs site)
+
+- **README.md**: slimmed to logo/badges/hero GIF, a one-paragraph
+  description, a short feature list, a `docker run` quickstart, and links to
+  the docs site/chart/releases. Everything else (full config reference,
+  Web UI page tour, API endpoint tables, CLI reference, architecture,
+  examples) moved to the docs site — each topic now has exactly one home.
+- `AGENTS.md`: its two links to README's old `#-docker` section now point at
+  the docs site's Deployment page instead.
+
+### Removed - 2026-08-29 (docs site)
+
+- `docs/ARCHITECTURE.md`, `docs/SPECIFICATIONS.md`, `docs/CLI_REFERENCE.md`,
+  `docs/SERIES_SCHEDULING_GUIDE.md` — fully absorbed into the docs site
+  (`docs/architecture.md`, `docs/scheduling-concepts.md`,
+  `docs/cli-reference.md`) with content merged/deduped, not just moved.
+
+---
+
 ## [0.1.0] - 2026-01-XX (Previous Release)
 
 ### Added
