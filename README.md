@@ -5,13 +5,14 @@
 
 ## Content Scheduling for Tunarr
 
+[![CI](https://github.com/christopherime/schedularr/actions/workflows/ci.yaml/badge.svg)](https://github.com/christopherime/schedularr/actions/workflows/ci.yaml)
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/christopherime/schedularr/pulls)
 
 **Cron-based content scheduling for [Tunarr](https://tunarr.com) TV channels, driven by rule-based blocks and content filters.**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [API](#-api) • [Serve](#-serve-api-server--cron) • [Docker](#-docker) • [Contributing](#-contributing)
+[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#️-configuration) • [Examples](#-examples) • [API](#-api) • [Serve](#-serve-api-server--cron) • [Docker](#-docker) • [Release Process](#️-release-process) • [Contributing](#-contributing)
 
 </div>
 
@@ -1190,6 +1191,68 @@ and its `HEALTHCHECK` polls `GET /healthz` on that port.
 
 `make docker-build` is a thin wrapper (`DOCKER_IMAGE`/`DOCKER_TAG`/`VERSION`
 Makefile variables, default `schedularr:latest`/`dev`).
+
+---
+
+## 🏷️ Release Process
+
+Two workflows in `.github/workflows/` (GitHub-authored actions only —
+`actions/checkout`, `actions/setup-go`, `actions/setup-node` — no
+third-party marketplace actions):
+
+### `ci.yaml` — every push and PR to `main`
+
+| Job      | Checks                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------ |
+| `go`     | `golangci-lint run` (pinned to match local, config `.golangci.yml`), `gosec ./...`, `govulncheck ./...`, `go test -race ./...` |
+| `drift`  | `make generate` and `make web-types` must produce **no diff** against the committed `internal/api/gen/` and `web/assets/ts/gen/` output |
+| `web`    | `tsc --noEmit` against the freshly regenerated TS types                                          |
+| `docker` | `docker build --build-arg VERSION=ci .` (no push) — proves the image still builds                |
+
+Go tool versions are pinned in `ci.yaml`'s `env:` block and installed with
+`go install ...@<version>` (not a marketplace action) so CI enforces
+exactly what `make lint` enforces on a dev machine. Bump them there
+alongside any local upgrade.
+
+### `release.yaml` — on `v*` tag push
+
+Builds the image with `--build-arg VERSION=<tag>` (stamps `cmd.Version`,
+see [Docker](#-docker)) and pushes two tags to GHCR:
+
+```bash
+ghcr.io/christopherime/schedularr:<tag>   # e.g. v0.1.0
+ghcr.io/christopherime/schedularr:latest
+```
+
+Auth is a plain `docker login ghcr.io -u ${{ github.actor }} -p
+${{ secrets.GITHUB_TOKEN }}` with `permissions: contents: read, packages:
+write` — no PAT, no `docker/login-action`.
+
+### Cutting a release
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Watch it with `gh run watch` or `gh run list --workflow=release.yaml`.
+The tag is the only source of truth for the image version — there is no
+separate "bump version" commit.
+
+### Package visibility
+
+`schedularr` is a **private** repository; a package published to GHCR
+from a private repo defaults to **private** as well, which the cluster's
+anonymous `imagePullPolicy` can't pull. Making the package public is a
+one-time, human-only step (not automatable via API or PAT — GitHub
+requires the interactive confirmation):
+
+**GitHub UI → repo → Packages → `schedularr` → Package settings → Danger
+Zone → Change visibility → Public**
+
+Do this once after the first `release.yaml` run publishes the package.
+Source code visibility is unaffected — only the container package
+becomes public.
 
 ---
 

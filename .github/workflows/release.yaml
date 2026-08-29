@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Only GitHub-authored actions are used (actions/checkout); build,
+      # login, and push are plain shell against the runner's preinstalled
+      # Docker, so nothing depends on third-party (docker/*) actions being
+      # downloadable -- the christopherime/bench house pattern.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and push image
+        env:
+          REGISTRY: ghcr.io
+          IMAGE_NAME: christopherime/schedularr
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}"
+
+          echo "${GHCR_TOKEN}" | docker login "${REGISTRY}" -u "${ACTOR}" --password-stdin
+
+          docker build \
+            --build-arg VERSION="${VERSION}" \
+            -t "${image}:${VERSION}" \
+            -t "${image}:latest" \
+            .
+
+          docker push "${image}:${VERSION}"
+          docker push "${image}:latest"
