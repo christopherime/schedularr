@@ -71,6 +71,18 @@ type SeriesFallback struct {
 
 // Block defines a scheduled programming block
 type Block struct {
+	// ID is the block's stable store identity (store.BlockRecord.ID, a
+	// UUID) -- populated by service.ActiveBlocks from the store record
+	// this Spec came from, since scheduler.yaml-imported/test-constructed
+	// Blocks have no such identity of their own. Unlike Name (unique, but
+	// renameable), ID never changes across a block's lifetime, which is
+	// what keys series_occurrence_snapshots by (see
+	// Engine.planSeriesOccurrences and StateStore.GetOccurrenceSnapshot's
+	// doc comments) rather than Name -- a rename would otherwise orphan
+	// every not-yet-aired occurrence's stored cursor snapshot. May be
+	// empty for a Block never sourced from the store (e.g. some tests) --
+	// callers that key off it must tolerate that.
+	ID                         string         `mapstructure:"-" yaml:"-" json:"-"`
 	Type                       BlockType      `mapstructure:"type" yaml:"type" json:"type"` // "filter" or "series", default "filter"
 	Name                       string         `mapstructure:"name" yaml:"name" json:"name"`
 	Cron                       string         `mapstructure:"cron" yaml:"cron" json:"cron"`             // Cron expression for start time

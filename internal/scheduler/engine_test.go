@@ -939,7 +939,7 @@ func TestGetFiller_Success(t *testing.T) {
 	}
 
 	// Request 30 minutes of filler (1800000 ms)
-	filler, err := engine.getFiller(block, 1800000)
+	filler, err := engine.getFiller(block, 1800000, nil)
 	require.NoError(t, err, "getFiller failed")
 	assert.NotEmpty(t, filler, "Expected filler programs")
 
@@ -962,7 +962,7 @@ func TestGetFiller_NoFillerListID(t *testing.T) {
 		},
 	}
 
-	_, err := engine.getFiller(block, 1800000)
+	_, err := engine.getFiller(block, 1800000, nil)
 	require.Error(t, err, "Expected error for empty filler list ID")
 	assert.Contains(t, err.Error(), "no filler list ID")
 }
@@ -985,7 +985,7 @@ func TestGetFiller_EmptyFillerList(t *testing.T) {
 		},
 	}
 
-	_, err := engine.getFiller(block, 1800000)
+	_, err := engine.getFiller(block, 1800000, nil)
 	require.Error(t, err, "Expected error for empty filler list")
 	assert.Contains(t, err.Error(), "is empty")
 }
@@ -1006,7 +1006,7 @@ func TestGetFiller_APIError(t *testing.T) {
 		},
 	}
 
-	_, err := engine.getFiller(block, 1800000)
+	_, err := engine.getFiller(block, 1800000, nil)
 	require.Error(t, err, "Expected error from API")
 	assert.Contains(t, err.Error(), "failed to fetch filler")
 }
@@ -1038,7 +1038,7 @@ func TestGetFiller_MaxFillerTime(t *testing.T) {
 	}
 
 	// Request 30 minutes, but max filler is 10 minutes
-	filler, err := engine.getFiller(block, 1800000)
+	filler, err := engine.getFiller(block, 1800000, nil)
 	require.NoError(t, err, "getFiller failed")
 
 	totalDuration := int64(0)
@@ -1080,7 +1080,7 @@ func TestApplyBlockFiller_Success(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(2400000) // 40 minutes target, 10 minute gap
 
-	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
+	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration, nil)
 
 	assert.Greater(t, len(playlist), len(initialPlaylist), "Expected filler to be added to playlist")
 	assert.Greater(t, finalDuration, currentDuration, "Expected duration to increase after adding filler")
@@ -1105,7 +1105,7 @@ func TestApplyBlockFiller_GapTooSmall(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(2100000) // 35 minutes target, 5 minute gap (less than minimum)
 
-	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
+	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration, nil)
 
 	// Should not add filler because gap is too small
 	assert.Len(t, playlist, len(initialPlaylist), "Expected no filler to be added (gap too small)")
@@ -1129,7 +1129,7 @@ func TestApplyBlockFiller_FillerDisabled(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(3600000)
 
-	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration)
+	playlist, finalDuration := engine.applyBlockFiller(block, initialPlaylist, currentDuration, targetDuration, nil)
 
 	assert.Len(t, playlist, len(initialPlaylist), "Expected no filler to be added (filler disabled)")
 	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
@@ -1160,7 +1160,7 @@ func TestApplySeriesFallback_FillerMode(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(3000000) // 50 minutes, needs 20 minutes more
 
-	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration)
+	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration, nil)
 
 	assert.Greater(t, len(playlist), len(initialPlaylist), "Expected fallback filler to be added")
 	assert.Greater(t, finalDuration, currentDuration, "Expected duration to increase after fallback")
@@ -1177,7 +1177,7 @@ func TestApplySeriesFallback_NoFallbackNeeded(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(1800000) // Already at target
 
-	playlist, finalDuration := engine.applySeriesFallback(Block{}, []tunarr.Program{}, initialPlaylist, currentDuration, targetDuration)
+	playlist, finalDuration := engine.applySeriesFallback(Block{}, []tunarr.Program{}, initialPlaylist, currentDuration, targetDuration, nil)
 
 	assert.Len(t, playlist, len(initialPlaylist), "Expected no fallback when at target duration")
 	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
@@ -1204,7 +1204,7 @@ func TestApplySeriesFallback_NotFillerMode(t *testing.T) {
 	currentDuration := int64(1800000)
 	targetDuration := int64(3000000)
 
-	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration)
+	playlist, finalDuration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, currentDuration, targetDuration, nil)
 
 	assert.Len(t, playlist, len(initialPlaylist), "Expected no fallback when not in filler mode")
 	assert.Equal(t, currentDuration, finalDuration, "Expected duration to remain unchanged")
@@ -1630,7 +1630,7 @@ func TestApplySeriesFallback_FilterErrorLogged(t *testing.T) {
 	}
 
 	// Should not panic, just log and return original
-	playlist, duration := engine.applySeriesFallback(block, []tunarr.Program{}, initialPlaylist, 1800000, 3600000)
+	playlist, duration := engine.applySeriesFallback(block, []tunarr.Program{}, initialPlaylist, 1800000, 3600000, nil)
 
 	assert.Len(t, playlist, 1, "Expected original playlist returned on filter error")
 	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on filter error")
@@ -1661,7 +1661,7 @@ func TestApplySeriesFallback_NoMatchingContent(t *testing.T) {
 		{ID: "p0", Title: "Initial", Duration: 1800000, Type: "episode"},
 	}
 
-	playlist, duration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, 1800000, 3600000)
+	playlist, duration := engine.applySeriesFallback(block, availablePrograms, initialPlaylist, 1800000, 3600000, nil)
 
 	assert.Len(t, playlist, 1, "Expected original playlist when no content matches filter")
 	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged when no content matches")
@@ -1693,7 +1693,7 @@ func TestApplyBlockFiller_FetchErrorLogged(t *testing.T) {
 	}
 
 	// Should not panic, just return original playlist
-	playlist, duration := engine.applyBlockFiller(block, initialPlaylist, 1800000, 3600000)
+	playlist, duration := engine.applyBlockFiller(block, initialPlaylist, 1800000, 3600000, nil)
 
 	assert.Len(t, playlist, 1, "Expected original playlist returned on filler fetch error")
 	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on filler fetch error")
@@ -1726,7 +1726,7 @@ func TestApplyBlockFiller_EmptyFillerList(t *testing.T) {
 	}
 
 	// Should not panic, just return original playlist
-	playlist, duration := engine.applyBlockFiller(block, initialPlaylist, 1800000, 3600000)
+	playlist, duration := engine.applyBlockFiller(block, initialPlaylist, 1800000, 3600000, nil)
 
 	assert.Len(t, playlist, 1, "Expected original playlist returned on empty filler list")
 	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on empty filler list")

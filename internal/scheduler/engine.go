@@ -3,8 +3,10 @@ package scheduler
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"math/rand"
 	"time"
@@ -39,9 +41,10 @@ type Engine struct {
 }
 
 // occurrenceSnapshotRecord is one pending SaveOccurrenceSnapshot call,
-// queued during planning and flushed by Commit().
+// queued during planning and flushed by Commit(). Keyed by blockID, not
+// blockName -- see StateStore.GetOccurrenceSnapshot's doc comment.
 type occurrenceSnapshotRecord struct {
-	blockName       string
+	blockID         string
 	occurrenceStart time.Time
 	snapshot        map[string]SeriesStateSnapshot
 }
@@ -91,6 +94,42 @@ type occurrenceKey struct {
 
 func keyFor(slot ScheduledSlot) occurrenceKey {
 	return occurrenceKey{blockName: slot.Block.Name, startUnixNano: slot.StartTime.UnixNano()}
+}
+
+// occurrenceRand returns a *rand.Rand deterministically seeded from
+// (blockID, occurrenceStart), for filler/fallback content shuffling
+// within a series occurrence's planning. Re-deriving the same
+// not-yet-aired occurrence on a later apply (see
+// Engine.planSeriesOccurrences) must pick the SAME filler/fallback
+// content again given the same inputs, not reshuffle randomly each time
+// -- otherwise a filler-enabled series block would never be
+// apply-idempotent even though its episode selection is. blockID (not
+// Name) so a rename doesn't change the seed for an occurrence that's
+// otherwise identical -- consistent with keying
+// series_occurrence_snapshots by block ID (see StateStore.
+// GetOccurrenceSnapshot's doc comment).
+func occurrenceRand(blockID string, occurrenceStart time.Time) *rand.Rand {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(blockID))
+	_, _ = h.Write([]byte{0}) // separator, so e.g. "ab"+"" and "a"+"b" can't collide
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(occurrenceStart.UnixNano()))
+	_, _ = h.Write(buf[:])
+	// #nosec G404 -- deterministic-by-design PRNG for reproducible content
+	// shuffling across re-applies of the same occurrence, not a
+	// security-sensitive value.
+	return rand.New(rand.NewSource(int64(h.Sum64())))
+}
+
+// shuffleWith shuffles using rng if non-nil, else the global math/rand
+// source -- see occurrenceRand's doc comment for when each applies.
+func shuffleWith(rng *rand.Rand, n int, swap func(i, j int)) {
+	if rng != nil {
+		rng.Shuffle(n, swap)
+		return
+	}
+	// #nosec G404 - content shuffle for programming variety, not a security-sensitive value
+	rand.Shuffle(n, swap)
 }
 
 // EngineOptions contains optional configuration for the scheduling engine.
@@ -217,7 +256,18 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 	// below stays in e.location for the rest of the loop.
 	start = start.In(e.location)
 
-	// Phase 1: occurrence shells, no content yet.
+	// Phase 1: occurrence shells, no content yet. Each block also gets an
+	// on-air predecessor shell injected first, if one exists -- an
+	// occurrence whose [start, start+duration) window contains `start`
+	// itself, i.e. something that started airing before this apply but
+	// hasn't finished yet. Without it, a channel's pushed lineup (see
+	// service.buildAnchoredLineup/applyChannels, which anchor at the
+	// earliest surviving slot's StartTime) would never represent whatever
+	// Tunarr is currently playing at all -- every apply would anchor at
+	// `start` and cut the on-air occurrence off mid-episode. This
+	// occurrence is never re-planned once it has a snapshot (see
+	// planSeriesOccurrences/PlanBlock's "aired" handling): its content
+	// comes verbatim from committed history.
 	perBlockShells := make([][]ScheduledSlot, len(e.blocks))
 	channelShells := make(map[string][]ScheduledSlot)
 
@@ -229,11 +279,18 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 			return nil, nil, fmt.Errorf("invalid cron '%s' for block %s: %w", block.Cron, block.Name, err)
 		}
 
+		duration := time.Duration(block.Duration) * time.Minute
+		if onAirStart, ok := onAirOccurrenceStart(scheduleObj, duration, start); ok {
+			shell := ScheduledSlot{StartTime: onAirStart, EndTime: onAirStart.Add(duration), Block: block}
+			perBlockShells[i] = append(perBlockShells[i], shell)
+			channelShells[block.ChannelID] = append(channelShells[block.ChannelID], shell)
+		}
+
 		nextTime := scheduleObj.Next(start.Add(-1 * time.Second))
 		for !nextTime.After(end) {
 			shell := ScheduledSlot{
 				StartTime: nextTime,
-				EndTime:   nextTime.Add(time.Duration(block.Duration) * time.Minute),
+				EndTime:   nextTime.Add(duration),
 				Block:     block,
 			}
 			perBlockShells[i] = append(perBlockShells[i], shell)
@@ -255,14 +312,36 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 	}
 
 	// Phase 3: plan content, one block at a time in that block's own
-	// chronological order, skipping anything phase 2 dropped.
+	// chronological order, skipping anything phase 2 dropped. Series
+	// blocks are planned as a whole chain (planSeriesOccurrences) so a
+	// not-yet-aired occurrence's baseline always reflects an earlier
+	// occurrence's ACTUAL (possibly re-derived) end state, not a stale
+	// snapshot of its own -- see planSeriesOccurrences' doc comment.
+	// Filter blocks have no such chain to maintain, so they keep the
+	// simpler per-occurrence PlanBlock call.
 	resolvedSchedule := make(map[string][]ScheduledSlot)
 	for i, block := range e.blocks {
+		var survivingShells []ScheduledSlot
 		for _, shell := range perBlockShells[i] {
-			if !survived[keyFor(shell)] {
-				continue
+			if survived[keyFor(shell)] {
+				survivingShells = append(survivingShells, shell)
 			}
+		}
+		if len(survivingShells) == 0 {
+			continue
+		}
 
+		if block.Type == BlockTypeSeries && e.store != nil {
+			planned, err := e.planSeriesOccurrences(block, availablePrograms, survivingShells, start) //nolint:contextcheck // see PlanBlock's doc comment
+			if err != nil {
+				metrics.ScheduleErrorsTotal.WithLabelValues("plan_block_error").Inc()
+				return nil, nil, fmt.Errorf("failed to plan block %s: %w", block.Name, err)
+			}
+			resolvedSchedule[block.ChannelID] = append(resolvedSchedule[block.ChannelID], planned...)
+			continue
+		}
+
+		for _, shell := range survivingShells {
 			planned, err := e.PlanBlock(block, availablePrograms, shell.StartTime, start)
 			if err != nil {
 				metrics.ScheduleErrorsTotal.WithLabelValues("plan_block_error").Inc()
@@ -275,6 +354,34 @@ func (e *Engine) GenerateForTimeRange(start, end time.Time, availablePrograms []
 	}
 
 	return resolvedSchedule, warnings, nil
+}
+
+// onAirOccurrenceStart returns the start time of the occurrence of a
+// schedule (with the given duration) that is on air at now -- its [start,
+// start+duration) window contains now -- if any. Used by
+// GenerateForTimeRange's phase 1 to inject that occurrence's shell even
+// though its start is before the window: see the call site's doc comment
+// for why.
+//
+// robfig/cron only offers Next (no "previous occurrence" query), so this
+// finds the on-air candidate by asking for the first occurrence strictly
+// after (now - duration - 1s): if one exists, starts before now, and its
+// own [start, start+duration) window still contains now, it's on air.
+// candidate.Before(now) is strict (not !After) so an occurrence starting
+// exactly at now -- which the caller's own normal sweep already covers --
+// is never double-counted here.
+func onAirOccurrenceStart(scheduleObj cron.Schedule, duration time.Duration, now time.Time) (time.Time, bool) {
+	if duration <= 0 {
+		return time.Time{}, false
+	}
+	candidate := scheduleObj.Next(now.Add(-duration - time.Second))
+	if !candidate.Before(now) {
+		return time.Time{}, false
+	}
+	if !candidate.Add(duration).After(now) {
+		return time.Time{}, false
+	}
+	return candidate, true
 }
 
 // Commit persists all pending state changes to the store: series cursor
@@ -296,8 +403,8 @@ func (e *Engine) Commit() error {
 		}
 	}
 	for _, snap := range e.pendingSnapshots {
-		if err := e.store.SaveOccurrenceSnapshot(ctx, snap.blockName, snap.occurrenceStart, snap.snapshot); err != nil {
-			return fmt.Errorf("failed to save occurrence snapshot for block %q: %w", snap.blockName, err)
+		if err := e.store.SaveOccurrenceSnapshot(ctx, snap.blockID, snap.occurrenceStart, snap.snapshot); err != nil {
+			return fmt.Errorf("failed to save occurrence snapshot for block %q: %w", snap.blockID, err)
 		}
 	}
 	for _, rep := range e.pendingReplacements {
@@ -307,6 +414,9 @@ func (e *Engine) Commit() error {
 	}
 	if _, err := e.store.CleanupScheduleHistory(ctx, e.history.Window()); err != nil {
 		return fmt.Errorf("failed to cleanup schedule history: %w", err)
+	}
+	if _, err := e.store.CleanupOccurrenceSnapshots(ctx, e.history.Window()); err != nil {
+		return fmt.Errorf("failed to cleanup occurrence snapshots: %w", err)
 	}
 	// Clear pending state after commit
 	e.pendingStates = make(map[string]*SeriesState)
@@ -322,6 +432,18 @@ func (e *Engine) Commit() error {
 // all; API callers (POST /generate, POST /apply) now get the same
 // information back in the response instead of needing server-side log
 // access to notice a block's occurrence never made it into the schedule.
+//
+// The inner scan restarts (from the same index, not the beginning -- see
+// below) after every eviction rather than stopping at the first overlap
+// found: an incoming slot can overlap *more than one* already-resolved
+// slot (three or more mutually-overlapping occurrences on the same
+// channel, or one long block spanning several shorter ones). Stopping
+// after the first eviction used to leave the incoming slot in `resolved`
+// even though it still overlapped a second, undefeated entry -- two
+// overlapping slots surviving into the returned schedule, silently
+// violating the non-overlap invariant buildAnchoredLineup
+// (internal/service/schedule.go) depends on to compute non-negative
+// gaps, and the second overlap's drop never got a Warning either.
 func (e *Engine) resolveConflicts(slots []ScheduledSlot) (kept []ScheduledSlot, dropped []Warning) {
 	if len(slots) == 0 {
 		return slots, nil
@@ -333,43 +455,50 @@ func (e *Engine) resolveConflicts(slots []ScheduledSlot) (kept []ScheduledSlot, 
 	for i := range slots {
 		shouldInclude := true
 
-		// Check against already resolved slots
-		for j := range resolved {
-			if slotsOverlap(slots[i], resolved[j]) {
-				conflicts++
-				// Higher priority wins (higher number = higher priority)
-				if slots[i].Block.Priority > resolved[j].Block.Priority {
-					metrics.ConflictsResolvedTotal.Inc()
-					// Remove the lower priority slot and add the higher one
-					e.logger.Info("scheduling conflict resolved by priority",
-						"winner_block", slots[i].Block.Name,
-						"winner_priority", slots[i].Block.Priority,
-						"loser_block", resolved[j].Block.Name,
-						"loser_priority", resolved[j].Block.Priority,
-						"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
-					dropped = append(dropped, Warning{
-						BlockName:         resolved[j].Block.Name,
-						OccurrenceStart:   resolved[j].StartTime,
-						BlockingBlockName: slots[i].Block.Name,
-					})
-					resolved = append(resolved[:j], resolved[j+1:]...)
-					break
-				} else {
-					e.logger.Info("scheduling conflict - block blocked by higher priority",
-						"blocked_block", slots[i].Block.Name,
-						"blocked_priority", slots[i].Block.Priority,
-						"blocking_block", resolved[j].Block.Name,
-						"blocking_priority", resolved[j].Block.Priority,
-						"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
-					dropped = append(dropped, Warning{
-						BlockName:         slots[i].Block.Name,
-						OccurrenceStart:   slots[i].StartTime,
-						BlockingBlockName: resolved[j].Block.Name,
-					})
-					shouldInclude = false
-					break
-				}
+		// Check against already resolved slots. j is not incremented after
+		// an eviction: resolved[j] now holds what was resolved[j+1], so
+		// re-checking the same index continues the scan correctly without
+		// needing a full restart from 0 (removing an element never changes
+		// whether an earlier, already-checked element overlaps slots[i]).
+		for j := 0; j < len(resolved); {
+			if !slotsOverlap(slots[i], resolved[j]) {
+				j++
+				continue
 			}
+
+			conflicts++
+			// Higher priority wins (higher number = higher priority)
+			if slots[i].Block.Priority > resolved[j].Block.Priority {
+				metrics.ConflictsResolvedTotal.Inc()
+				// Remove the lower priority slot and add the higher one
+				e.logger.Info("scheduling conflict resolved by priority",
+					"winner_block", slots[i].Block.Name,
+					"winner_priority", slots[i].Block.Priority,
+					"loser_block", resolved[j].Block.Name,
+					"loser_priority", resolved[j].Block.Priority,
+					"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
+				dropped = append(dropped, Warning{
+					BlockName:         resolved[j].Block.Name,
+					OccurrenceStart:   resolved[j].StartTime,
+					BlockingBlockName: slots[i].Block.Name,
+				})
+				resolved = append(resolved[:j], resolved[j+1:]...)
+				continue // re-check index j (now the next element), don't increment
+			}
+
+			e.logger.Info("scheduling conflict - block blocked by higher priority",
+				"blocked_block", slots[i].Block.Name,
+				"blocked_priority", slots[i].Block.Priority,
+				"blocking_block", resolved[j].Block.Name,
+				"blocking_priority", resolved[j].Block.Priority,
+				"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
+			dropped = append(dropped, Warning{
+				BlockName:         slots[i].Block.Name,
+				OccurrenceStart:   slots[i].StartTime,
+				BlockingBlockName: resolved[j].Block.Name,
+			})
+			shouldInclude = false
+			break
 		}
 
 		if shouldInclude {
@@ -398,15 +527,13 @@ func slotsOverlap(a, b ScheduledSlot) bool {
 // which is what "has this occurrence aired yet" needs to mean consistently
 // across a whole GenerateForTimeRange call.
 //
-// This is idempotent per (block.Name, occurrenceStart): block.Name is
-// unique (enforced by the blocks table) and occurrenceStart doesn't
-// change no matter how many times or how much later this same occurrence
-// gets planned again, so the pair identifies one specific real-world
-// occurrence across every apply that ever sees it. That matters because
-// the schedule-generation window is 24h and re-applies happen more often
-// than that (the serve cron loop's default 6h interval), so the same
-// future occurrence falls inside several consecutive applies' windows --
-// naive re-planning on every one of them used to advance a series block's
+// This is idempotent per (block.Name, occurrenceStart) for filter blocks,
+// and per (block.ID, occurrenceStart) for series blocks (see why the key
+// differs in StateStore.GetOccurrenceSnapshot's doc comment): the
+// schedule-generation window is 24h and re-applies happen more often than
+// that (the serve cron loop's default 6h interval), so the same future
+// occurrence falls inside several consecutive applies' windows -- naive
+// re-planning on every one of them used to advance a series block's
 // episode cursor and write a new schedule_history row each time, for
 // content that was never actually going to air differently, since the
 // *next* apply would just overwrite it again. A Saturday-8pm block
@@ -428,18 +555,21 @@ func slotsOverlap(a, b ScheduledSlot) bool {
 // episodes_per_block/duration -- so freezing the final program list
 // verbatim (like filter blocks) isn't good enough: it would silently
 // ignore such an edit until the stale occurrence ages out of the window
-// entirely. planSeriesOccurrence implements the three-way split that
-// supports that: never-seen (plan for real, advancing the cursor and
-// capturing a snapshot), already-seen-but-still-future (re-derive from
-// the *stored, immutable* snapshot plus the *current* spec, never
-// touching the global cursor), and already-seen-and-now-aired (frozen,
-// replayed verbatim like a filter block, since an aired occurrence is
-// historical fact a later spec edit cannot retroactively change).
+// entirely. This single-occurrence entry point delegates to
+// planSeriesOccurrences (a single-element shell slice) for that --
+// GenerateForTimeRange's phase 3 calls planSeriesOccurrences directly
+// with a whole block's surviving occurrences at once instead, which is
+// what actually matters for correctness: see its own doc comment for why
+// a single-occurrence view (this method, or a naive per-occurrence loop)
+// isn't sufficient on its own once more than one not-yet-aired occurrence
+// of the same block is in play.
 //
-// GenerateForTimeRange's phase 3 (the only production caller) only calls
-// this for occurrences that survived conflict resolution, so a
-// conflict-dropped occurrence never reaches here at all -- it can't
-// advance a cursor, capture a snapshot, or get recorded either. See
+// GenerateForTimeRange's phase 3 (the only production caller of the
+// underlying planning, whether through this method for filter blocks or
+// directly through planSeriesOccurrences for series ones) only plans
+// occurrences that survived conflict resolution, so a conflict-dropped
+// occurrence never reaches either path at all -- it can't advance a
+// cursor, capture a snapshot, or get recorded either. See
 // GenerateForTimeRange's own doc comment for why that ordering (resolve
 // conflicts, *then* plan content) matters.
 func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program, occurrenceStart, now time.Time) ([]tunarr.Program, error) {
@@ -450,12 +580,19 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program, occu
 		return e.planFilterBlock(block, availablePrograms, occurrenceStart)
 	}
 
-	ctx := context.Background()
-
 	if block.Type == BlockTypeSeries {
-		return e.planSeriesOccurrence(ctx, block, availablePrograms, occurrenceStart, now)
+		shell := ScheduledSlot{StartTime: occurrenceStart, Block: block}
+		planned, err := e.planSeriesOccurrences(block, availablePrograms, []ScheduledSlot{shell}, now)
+		if err != nil {
+			return nil, err
+		}
+		if len(planned) == 0 {
+			return nil, nil
+		}
+		return planned[0].Programs, nil
 	}
 
+	ctx := context.Background()
 	committed, ok, err := e.store.GetCommittedOccurrence(ctx, block.Name, occurrenceStart)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check committed occurrence for block %q at %s: %w", block.Name, occurrenceStart, err)
@@ -466,89 +603,170 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program, occu
 	return e.planFilterBlock(block, availablePrograms, occurrenceStart)
 }
 
-// planSeriesOccurrence implements the three-way idempotence split
-// PlanBlock's doc comment describes for series blocks.
-func (e *Engine) planSeriesOccurrence(ctx context.Context, block Block, availablePrograms []tunarr.Program, occurrenceStart, now time.Time) ([]tunarr.Program, error) {
-	snapshot, hasSnapshot, err := e.store.GetOccurrenceSnapshot(ctx, block.Name, occurrenceStart)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check occurrence snapshot for block %q at %s: %w", block.Name, occurrenceStart, err)
+// planSeriesOccurrences plans every one of shells -- one series block's
+// surviving occurrences, which the caller must already have sorted
+// chronologically (GenerateForTimeRange's perBlockShells is, by
+// construction; PlanBlock's single-occurrence delegation trivially
+// satisfies it too) -- chaining cursor state across them within this one
+// call.
+//
+// This exists because per-occurrence planning (each occurrence
+// independently loading only its OWN stored snapshot) breaks once an
+// earlier occurrence gets re-derived: a later occurrence's snapshot was
+// captured assuming the pre-edit result, and nothing ever updates it, so
+// it keeps re-deriving against a now-stale baseline. Concretely:
+// block.Series == [A, B, C], duration fits 2 of 3 episodes per
+// occurrence. Occurrence 1 originally aired [A, B] (C didn't fit);
+// occurrence 2's stored snapshot was captured assuming that, i.e. "C
+// hasn't aired yet." Now reorder block.Series to [C, A, B] and re-apply:
+// occurrence 1 re-derives to [C, A] (C now fits first) -- but occurrence
+// 2, re-planned from its OWN unchanged stored snapshot, still thinks C
+// hasn't aired and airs C a SECOND time, while B -- which occurrence 1 no
+// longer includes -- never gets picked up at all.
+//
+// The fix: maintain one running `chain` (nil until first used) across
+// this whole call, in occurrence order. The first occurrence reached
+// while chain is still nil either seeds it from its own stored snapshot
+// (a re-derive) or, if it has never been snapshotted by any apply at all,
+// plans for real against the true global cursor (pendingStates/the
+// authoritative store -- the one case that actually advances the
+// persisted series_state) and seeds chain from the result. Every
+// subsequent occurrence in this call then always uses `chain` directly --
+// never its own, possibly-stale, stored snapshot -- and (for a
+// not-yet-aired occurrence) has its stored snapshot rewritten to match:
+// "rewrite later not-yet-aired occurrences' snapshots when an earlier one
+// is re-derived."
+//
+// An aired occurrence (its start is at or before now -- see PlanBlock's
+// doc comment for what "aired" means here, notably that it includes an
+// on-air occurrence GenerateForTimeRange's phase 1 injects so a mid-apply
+// doesn't cut off whatever Tunarr is currently playing) is never
+// re-derived, regardless of chain state: its content is replayed verbatim
+// from committed history via airedSeriesOccurrenceContent (empty if that
+// history has since been pruned -- what actually aired is historical
+// fact a later apply cannot invent). It still advances `chain`, though,
+// so a not-yet-aired occurrence right after it chains from the correct
+// baseline -- the same planning function runs once against it, content
+// discarded, keeping only the resulting state.
+func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.Program, shells []ScheduledSlot, now time.Time) ([]ScheduledSlot, error) {
+	ctx := context.Background()
+	var chain map[string]*SeriesState
+
+	out := make([]ScheduledSlot, 0, len(shells))
+	for _, shell := range shells {
+		occurrenceStart := shell.StartTime
+		aired := !occurrenceStart.After(now)
+
+		if chain == nil {
+			snapshot, hasSnapshot, err := e.store.GetOccurrenceSnapshot(ctx, block.ID, occurrenceStart) //nolint:contextcheck // see PlanBlock's doc comment
+			if err != nil {
+				return nil, fmt.Errorf("failed to check occurrence snapshot for block %q at %s: %w", block.Name, occurrenceStart, err)
+			}
+
+			switch {
+			case hasSnapshot:
+				chain = statesFromSnapshot(snapshot)
+
+			case aired:
+				// Never snapshotted, but already aired: its real content
+				// (if it ever had any) is frozen history that must never
+				// be (re)planned -- see airedSeriesOccurrenceContent's and
+				// PlanBlock's doc comments, "guard by time." Seed the
+				// chain from CLONES of the current live state, unconsumed
+				// -- no real planning pass runs on this occurrence's
+				// account -- so a not-yet-aired occurrence later in this
+				// same batch still has a starting point. Falls through to
+				// the shared aired-handling block below, which supplies
+				// this occurrence's own content (verbatim replay, or nil
+				// if that too has been pruned) and advances the chain.
+				cloned, err := e.cloneLiveSeriesStates(block)
+				if err != nil {
+					return nil, err
+				}
+				chain = cloned
+
+			default:
+				// Genuinely never seen by any apply AND not yet aired:
+				// the one case that really advances the persisted cursor.
+				before, err := e.captureSeriesSnapshot(block)
+				if err != nil {
+					return nil, err
+				}
+
+				rng := occurrenceRand(block.ID, occurrenceStart)
+				content := e.planSeriesBlockWithContext(engineSeriesContext{e}, block, availablePrograms, rng)
+				e.recordHistory(content, block.ChannelID, block.Name, time.Now(), occurrenceStart)
+				e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
+					blockID: block.ID, occurrenceStart: occurrenceStart, snapshot: before,
+				})
+
+				// Seed the chain for subsequent occurrences from CLONES of
+				// the just-updated real state, never the live
+				// *SeriesState pointers themselves -- chain-mode planning
+				// must never be able to mutate e.pendingStates through an
+				// aliased pointer.
+				chain, err = e.cloneLiveSeriesStates(block)
+				if err != nil {
+					return nil, err
+				}
+
+				shell.Programs = content
+				out = append(out, shell)
+				continue
+			}
+		}
+
+		rng := occurrenceRand(block.ID, occurrenceStart)
+
+		if aired {
+			content, err := e.airedSeriesOccurrenceContent(ctx, block, availablePrograms, occurrenceStart) //nolint:contextcheck // see PlanBlock's doc comment
+			if err != nil {
+				return nil, err
+			}
+			// Advance the chain past this frozen occurrence (content
+			// discarded -- only the resulting state matters here) so a
+			// not-yet-aired occurrence right after it chains correctly.
+			_ = e.planSeriesBlockWithContext(&snapshotSeriesContext{states: chain}, block, availablePrograms, rng)
+			shell.Programs = content
+			out = append(out, shell)
+			continue
+		}
+
+		before := snapshotFromStates(cloneStates(chain)) // clone before planning mutates chain in place
+		content := e.planSeriesBlockWithContext(&snapshotSeriesContext{states: chain}, block, availablePrograms, rng)
+		e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
+			blockID: block.ID, occurrenceStart: occurrenceStart, snapshot: before,
+		})
+		entries := makeHistoryEntries(content, block.ChannelID, block.Name, time.Now(), occurrenceStart)
+		e.pendingReplacements = append(e.pendingReplacements, occurrenceReplacement{
+			blockName: block.Name, occurrenceStart: occurrenceStart, entries: entries,
+		})
+
+		shell.Programs = content
+		out = append(out, shell)
 	}
 
-	if !hasSnapshot {
-		// planSeriesBlockFirstTime (like planSeriesBlock/planFilterBlock
-		// below it, and every content-planning method on Engine) predates
-		// ctx-threading and uses context.Background() internally -- see
-		// service/schedule.go's own //nolint:contextcheck on
-		// GenerateForTimeRange/Commit for the same, repo-wide, "out of
-		// scope for this task" note.
-		return e.planSeriesBlockFirstTime(block, availablePrograms, occurrenceStart) //nolint:contextcheck
-	}
+	return out, nil
+}
 
-	if occurrenceStart.After(now) {
-		// Still in the future: re-derive from the fixed stored snapshot
-		// plus whatever the block spec currently says, never touching the
-		// global cursor chain.
-		return e.planSeriesBlockFromSnapshot(block, availablePrograms, occurrenceStart, snapshot) //nolint:contextcheck // see above
-	}
-
-	// Aired: replay the frozen assignment verbatim, exactly like a filter
-	// block's committed occurrence.
+// airedSeriesOccurrenceContent returns an aired (or on-air) series
+// occurrence's frozen assignment, replayed verbatim from committed
+// history -- never re-derived, regardless of whether a cursor snapshot
+// or the block spec has since changed: what actually aired is historical
+// fact. If that history has since been pruned (CleanupScheduleHistory),
+// this returns (nil, nil) -- an honest "nothing to replay" -- rather than
+// falling back to fabricating fresh content from the current spec, which
+// would silently violate "aired occurrences never re-plan" the moment
+// retention pruned their record.
+func (e *Engine) airedSeriesOccurrenceContent(ctx context.Context, block Block, availablePrograms []tunarr.Program, occurrenceStart time.Time) ([]tunarr.Program, error) {
 	committed, ok, err := e.store.GetCommittedOccurrence(ctx, block.Name, occurrenceStart)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check committed occurrence for block %q at %s: %w", block.Name, occurrenceStart, err)
 	}
 	if !ok {
-		// Has a snapshot but somehow no recorded assignment -- shouldn't
-		// happen, since planSeriesBlockFirstTime/planSeriesBlockFromSnapshot
-		// always write both together, but re-derive from the snapshot
-		// rather than erroring outright if it ever does.
-		return e.planSeriesBlockFromSnapshot(block, availablePrograms, occurrenceStart, snapshot) //nolint:contextcheck // see above
+		return nil, nil
 	}
 	return resolveCommittedPrograms(committed, availablePrograms), nil
-}
-
-// planSeriesBlockFirstTime is the only path that ever really advances a
-// series cursor: it captures every show block.Series references' current
-// state as this occurrence's permanent snapshot (via the same chain
-// e.getSeriesState always uses -- pendingStates first, so it correctly
-// builds on an earlier occurrence of this same block already planned in
-// this same Run, then falling back to the authoritative persisted store),
-// then plans normally, which is what actually mutates pendingStates
-// (committed for real by Engine.Commit) and pendingHistory.
-func (e *Engine) planSeriesBlockFirstTime(block Block, availablePrograms []tunarr.Program, occurrenceStart time.Time) ([]tunarr.Program, error) {
-	snapshotBefore, err := e.captureSeriesSnapshot(block)
-	if err != nil {
-		return nil, err
-	}
-
-	playlist := e.planSeriesBlockWithContext(engineSeriesContext{e}, block, availablePrograms)
-	e.recordHistory(playlist, block.ChannelID, block.Name, time.Now(), occurrenceStart)
-	e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
-		blockName:       block.Name,
-		occurrenceStart: occurrenceStart,
-		snapshot:        snapshotBefore,
-	})
-	return playlist, nil
-}
-
-// planSeriesBlockFromSnapshot re-derives a not-yet-aired occurrence's
-// content from its fixed, previously-captured snapshot and the CURRENT
-// block spec -- via a scratch snapshotSeriesContext, so this never reads
-// or mutates the global cursor chain (e.pendingStates/the authoritative
-// store) at all. The result replaces this occurrence's stored assignment
-// (pendingReplacements, flushed by Commit via
-// StateStore.ReplaceOccurrenceHistory) rather than appending to it.
-func (e *Engine) planSeriesBlockFromSnapshot(block Block, availablePrograms []tunarr.Program, occurrenceStart time.Time, snapshot map[string]SeriesStateSnapshot) ([]tunarr.Program, error) {
-	scratch := newSnapshotSeriesContext(snapshot)
-	playlist := e.planSeriesBlockWithContext(scratch, block, availablePrograms)
-
-	entries := makeHistoryEntries(playlist, block.ChannelID, block.Name, time.Now(), occurrenceStart)
-	e.pendingReplacements = append(e.pendingReplacements, occurrenceReplacement{
-		blockName:       block.Name,
-		occurrenceStart: occurrenceStart,
-		entries:         entries,
-	})
-	return playlist, nil
 }
 
 // captureSeriesSnapshot reads the current cursor for every show
@@ -558,24 +776,33 @@ func (e *Engine) planSeriesBlockFromSnapshot(block Block, availablePrograms []tu
 // unaffected by whatever mutation the planning pass this feeds is about
 // to perform on the live *SeriesState.
 func (e *Engine) captureSeriesSnapshot(block Block) (map[string]SeriesStateSnapshot, error) {
-	snapshot := make(map[string]SeriesStateSnapshot, len(block.Series))
+	states, err := e.cloneLiveSeriesStates(block)
+	if err != nil {
+		return nil, err
+	}
+	return snapshotFromStates(states), nil
+}
+
+// cloneLiveSeriesStates returns cloned (never aliased) *SeriesState
+// pointers for every show block.Series references, read from the live
+// cursor via e.getSeriesState. Used to seed a scratch chain (or a
+// SeriesStateSnapshot, via captureSeriesSnapshot) from the current real
+// state without letting scratch-mode planning mutate the real state
+// through an aliased pointer -- see planSeriesOccurrences' doc comment.
+func (e *Engine) cloneLiveSeriesStates(block Block) (map[string]*SeriesState, error) {
+	states := make(map[string]*SeriesState, len(block.Series))
 	for _, sc := range block.Series {
-		if _, ok := snapshot[sc.ShowTitle]; ok {
+		if _, ok := states[sc.ShowTitle]; ok {
 			continue
 		}
 		state, err := e.getSeriesState(sc.ShowTitle)
 		if err != nil {
-			return nil, fmt.Errorf("failed to snapshot series state for %q: %w", sc.ShowTitle, err)
+			return nil, fmt.Errorf("failed to read live series state for %q: %w", sc.ShowTitle, err)
 		}
-		snapshot[sc.ShowTitle] = SeriesStateSnapshot{
-			CurrentSeason:  state.CurrentSeason,
-			CurrentEpisode: state.CurrentEpisode,
-			Completed:      state.Completed,
-			Disabled:       state.Disabled,
-			RunCount:       state.RunCount,
-		}
+		cloned := *state
+		states[sc.ShowTitle] = &cloned
 	}
-	return snapshot, nil
+	return states, nil
 }
 
 // resolveCommittedPrograms upgrades a committed occurrence's stored
@@ -683,7 +910,12 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 
 	// Check if we should add filler content
 	if block.Filler.Enabled && gapMinutes >= block.Filler.MinGapTime {
-		fillerPrograms, err := e.getFiller(block, gapDuration)
+		// nil rng: a filter block's content (this included) is frozen
+		// verbatim after its first commit, never re-derived (see
+		// PlanBlock's doc comment), so filler non-determinism here can't
+		// break apply-idempotence the way it can for a re-derived series
+		// occurrence -- global math/rand is fine.
+		fillerPrograms, err := e.getFiller(block, gapDuration, nil)
 		if err != nil {
 			e.logger.Warn("failed to get filler for block",
 				"block_name", block.Name,
@@ -754,25 +986,71 @@ type snapshotSeriesContext struct {
 	states map[string]*SeriesState
 }
 
+// seededMarker is the non-nil, non-zero LastAired value
+// newSnapshotSeriesContext assigns to a reconstructed *SeriesState whose
+// snapshot says the underlying cursor was already initialized -- see
+// SeriesStateSnapshot.Seeded's doc comment. Its exact value is
+// meaningless (initializeSeriesState only checks LastAired != nil &&
+// !LastAired.IsZero()); it exists only to be a fixed, non-zero instant.
+var seededMarker = time.Unix(0, 0)
+
 func newSnapshotSeriesContext(snapshot map[string]SeriesStateSnapshot) *snapshotSeriesContext {
+	return &snapshotSeriesContext{states: statesFromSnapshot(snapshot)}
+}
+
+// statesFromSnapshot reconstructs live *SeriesState values from a
+// persisted SeriesStateSnapshot map -- see SeriesStateSnapshot.Seeded's
+// doc comment for why LastAired is set (to seededMarker, an arbitrary
+// fixed non-zero instant) exactly when Seeded is true, rather than always
+// left nil.
+func statesFromSnapshot(snapshot map[string]SeriesStateSnapshot) map[string]*SeriesState {
 	states := make(map[string]*SeriesState, len(snapshot))
 	for showTitle, s := range snapshot {
-		states[showTitle] = &SeriesState{
+		state := &SeriesState{
 			ShowTitle:      showTitle,
 			CurrentSeason:  s.CurrentSeason,
 			CurrentEpisode: s.CurrentEpisode,
 			Completed:      s.Completed,
 			Disabled:       s.Disabled,
 			RunCount:       s.RunCount,
-			// LastAired is deliberately left nil: it exists to make
-			// initializeSeriesState a one-time-only start-position
-			// override, and every snapshotSeriesContext's states already
-			// reflect wherever the show's cursor legitimately stood, so
-			// treating this as "first time seeing this show" (nil
-			// LastAired) is correct here too.
+		}
+		if s.Seeded {
+			state.LastAired = &seededMarker
+		}
+		states[showTitle] = state
+	}
+	return states
+}
+
+// cloneStates deep-copies a chain state map so mutating the copy (or the
+// original) afterward can never affect the other -- used to capture a
+// series occurrence's "before" snapshot immediately before the SAME chain
+// map is handed to planning, which mutates it in place.
+func cloneStates(states map[string]*SeriesState) map[string]*SeriesState {
+	clone := make(map[string]*SeriesState, len(states))
+	for title, s := range states {
+		cp := *s
+		clone[title] = &cp
+	}
+	return clone
+}
+
+// snapshotFromStates is statesFromSnapshot's inverse: converts live
+// *SeriesState values into the persisted, value-only SeriesStateSnapshot
+// shape (Seeded standing in for LastAired -- see its doc comment).
+func snapshotFromStates(states map[string]*SeriesState) map[string]SeriesStateSnapshot {
+	snapshot := make(map[string]SeriesStateSnapshot, len(states))
+	for title, s := range states {
+		snapshot[title] = SeriesStateSnapshot{
+			CurrentSeason:  s.CurrentSeason,
+			CurrentEpisode: s.CurrentEpisode,
+			Completed:      s.Completed,
+			Disabled:       s.Disabled,
+			RunCount:       s.RunCount,
+			Seeded:         s.LastAired != nil,
 		}
 	}
-	return &snapshotSeriesContext{states: states}
+	return snapshot
 }
 
 func (c *snapshotSeriesContext) get(showTitle string) (*SeriesState, error) {
@@ -789,18 +1067,27 @@ func (c *snapshotSeriesContext) set(showTitle string, state *SeriesState) {
 // planSeriesBlock is the store-less fallback path (e.store == nil): plans
 // fresh against the engine's real state chain every time, exactly like
 // before idempotent apply existed. Store-backed callers use
-// planSeriesBlockFirstTime/planSeriesBlockFromSnapshot instead (see
-// PlanBlock).
+// planSeriesOccurrences instead (see PlanBlock).
 func (e *Engine) planSeriesBlock(block Block, availablePrograms []tunarr.Program, occurrenceStart time.Time) ([]tunarr.Program, error) {
-	playlist := e.planSeriesBlockWithContext(engineSeriesContext{e}, block, availablePrograms)
+	// nil rng: no store means no idempotent-apply guarantee to uphold here
+	// anyway (see planSeriesOccurrences' doc comment on why a re-derive
+	// needs a deterministic seed) -- global math/rand is fine.
+	playlist := e.planSeriesBlockWithContext(engineSeriesContext{e}, block, availablePrograms, nil)
 	e.recordHistory(playlist, block.ChannelID, block.Name, time.Now(), occurrenceStart)
 	return playlist, nil
 }
 
 // planSeriesBlockWithContext is the actual series-block planning
 // algorithm, parameterized over where its per-show cursor state comes
-// from and goes -- see seriesPlanContext's doc comment.
-func (e *Engine) planSeriesBlockWithContext(ctx seriesPlanContext, block Block, availablePrograms []tunarr.Program) []tunarr.Program {
+// from and goes (see seriesPlanContext's doc comment) and over the source
+// of randomness fallback/filler content shuffling draws from: rng nil
+// means "use the global math/rand source" (fine for a block that's only
+// ever planned once, like a first-time occurrence, or the store-less
+// path); a non-nil, occurrence-seeded rng (see occurrenceRand) is what
+// makes a re-derived occurrence's filler/fallback pick the SAME content
+// again given the same inputs, instead of reshuffling differently on
+// every apply.
+func (e *Engine) planSeriesBlockWithContext(ctx seriesPlanContext, block Block, availablePrograms []tunarr.Program, rng *rand.Rand) []tunarr.Program {
 	var playlist []tunarr.Program
 	var currentDuration int64
 	targetDuration := int64(block.Duration) * 60000 // ms
@@ -815,8 +1102,8 @@ func (e *Engine) planSeriesBlockWithContext(ctx seriesPlanContext, block Block, 
 		}
 	}
 
-	playlist, currentDuration = e.applySeriesFallback(block, availablePrograms, playlist, currentDuration, targetDuration)
-	playlist, _ = e.applyBlockFiller(block, playlist, currentDuration, targetDuration)
+	playlist, currentDuration = e.applySeriesFallback(block, availablePrograms, playlist, currentDuration, targetDuration, rng)
+	playlist, _ = e.applyBlockFiller(block, playlist, currentDuration, targetDuration, rng)
 
 	return playlist
 }
@@ -998,7 +1285,7 @@ func (e *Engine) markSeriesCompleted(ctx seriesPlanContext, seriesConf SeriesCon
 	ctx.set(seriesConf.ShowTitle, state)
 }
 
-func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Program, playlist []tunarr.Program, currentDuration, targetDuration int64) ([]tunarr.Program, int64) {
+func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Program, playlist []tunarr.Program, currentDuration, targetDuration int64, rng *rand.Rand) ([]tunarr.Program, int64) {
 	if currentDuration >= targetDuration {
 		return playlist, currentDuration
 	}
@@ -1023,8 +1310,7 @@ func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Pro
 		return playlist, currentDuration
 	}
 
-	// #nosec G404 - content shuffle for programming variety, not a security-sensitive value
-	rand.Shuffle(len(candidates), func(i, j int) {
+	shuffleWith(rng, len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
 
@@ -1041,14 +1327,14 @@ func (e *Engine) applySeriesFallback(block Block, availablePrograms []tunarr.Pro
 	return playlist, currentDuration
 }
 
-func (e *Engine) applyBlockFiller(block Block, playlist []tunarr.Program, currentDuration, targetDuration int64) ([]tunarr.Program, int64) {
+func (e *Engine) applyBlockFiller(block Block, playlist []tunarr.Program, currentDuration, targetDuration int64, rng *rand.Rand) ([]tunarr.Program, int64) {
 	gapDuration := targetDuration - currentDuration
 	gapMinutes := int(gapDuration / 60000)
 	if !block.Filler.Enabled || gapMinutes < block.Filler.MinGapTime {
 		return playlist, currentDuration
 	}
 
-	fillerPrograms, err := e.getFiller(block, gapDuration)
+	fillerPrograms, err := e.getFiller(block, gapDuration, rng)
 	if err != nil {
 		metrics.ScheduleFallbacksTotal.WithLabelValues(block.ChannelID, block.Name, "filler_fetch_error").Inc()
 		e.logger.Warn("failed to fetch filler content for series block",
@@ -1166,8 +1452,10 @@ func (e *Engine) filterByHistory(programs []tunarr.Program, channelID string) []
 	return filtered
 }
 
-// getFiller retrieves filler content to fill the remaining time
-func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Program, error) {
+// getFiller retrieves filler content to fill the remaining time. rng nil
+// uses the global math/rand source; see planSeriesBlockWithContext's doc
+// comment for when a non-nil, occurrence-seeded one matters.
+func (e *Engine) getFiller(block Block, remainingDuration int64, rng *rand.Rand) ([]tunarr.Program, error) {
 	if block.Filler.FillerListID == "" {
 		return nil, errors.New("no filler list ID specified")
 	}
@@ -1205,8 +1493,7 @@ func (e *Engine) getFiller(block Block, remainingDuration int64) ([]tunarr.Progr
 	}
 
 	// Shuffle filler content for variety
-	// #nosec G404 - content shuffle for programming variety, not a security-sensitive value
-	rand.Shuffle(len(fillerContent), func(i, j int) {
+	shuffleWith(rng, len(fillerContent), func(i, j int) {
 		fillerContent[i], fillerContent[j] = fillerContent[j], fillerContent[i]
 	})
 

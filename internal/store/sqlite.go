@@ -260,43 +260,79 @@ func (s *Store) GetCommittedOccurrence(ctx context.Context, blockName string, oc
 }
 
 // GetOccurrenceSnapshot returns the per-show cursor snapshot captured the
-// first time a series block's occurrence (blockName, occurrenceStart) was
+// first time a series block's occurrence (blockID, occurrenceStart) was
 // ever planned. See scheduler.SeriesStateSnapshot's and
-// scheduler.Engine.PlanBlock's doc comments for the mechanism.
-func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockName string, occurrenceStart time.Time) (map[string]scheduler.SeriesStateSnapshot, bool, error) {
+// scheduler.Engine.planSeriesOccurrences' doc comments for the mechanism.
+func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time) (map[string]scheduler.SeriesStateSnapshot, bool, error) {
 	var raw string
 	err := s.db.GetContext(ctx, &raw, `
 		SELECT snapshot_json FROM series_occurrence_snapshots
-		WHERE block_name = ? AND occurrence_start = ?`, blockName, occurrenceStart)
+		WHERE block_id = ? AND occurrence_start = ?`, blockID, occurrenceStart)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
 		}
-		return nil, false, fmt.Errorf("failed to query occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+		return nil, false, fmt.Errorf("failed to query occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
 
 	var snapshot map[string]scheduler.SeriesStateSnapshot
 	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
-		return nil, false, fmt.Errorf("failed to decode occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+		return nil, false, fmt.Errorf("failed to decode occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
 	return snapshot, true, nil
 }
 
 // SaveOccurrenceSnapshot persists a series block occurrence's cursor
-// snapshot the first (and only) time it's planned. A second call for the
-// same (blockName, occurrenceStart) -- which callers should never make,
-// see SaveOccurrenceSnapshot's interface doc comment -- fails on the
-// table's primary key rather than silently overwriting what's meant to
-// stay fixed.
-func (s *Store) SaveOccurrenceSnapshot(ctx context.Context, blockName string, occurrenceStart time.Time, snapshot map[string]scheduler.SeriesStateSnapshot) error {
+// snapshot. It upserts: a not-yet-aired occurrence's snapshot can be
+// rewritten when an earlier occurrence of the same block is re-derived
+// and its actual end-state is carried forward as this occurrence's new
+// baseline (see Engine.planSeriesOccurrences' chain mechanism) -- so a
+// second call for the same (blockID, occurrenceStart) is expected, not a
+// bug. An aired occurrence's snapshot is never written to again because
+// aired occurrences are never re-derived in the first place.
+func (s *Store) SaveOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time, snapshot map[string]scheduler.SeriesStateSnapshot) error {
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
-		return fmt.Errorf("failed to encode occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+		return fmt.Errorf("failed to encode occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO series_occurrence_snapshots (block_name, occurrence_start, snapshot_json)
-		VALUES (?, ?, ?)`, blockName, occurrenceStart, string(raw)); err != nil {
-		return fmt.Errorf("failed to save occurrence snapshot for block %q at %s: %w", blockName, occurrenceStart, err)
+		INSERT INTO series_occurrence_snapshots (block_id, occurrence_start, snapshot_json, recorded_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (block_id, occurrence_start) DO UPDATE SET snapshot_json = excluded.snapshot_json, recorded_at = excluded.recorded_at`,
+		blockID, occurrenceStart, string(raw), time.Now()); err != nil {
+		return fmt.Errorf("failed to save occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
+	}
+	return nil
+}
+
+// CleanupOccurrenceSnapshots deletes occurrence snapshot rows written
+// (recorded_at, refreshed on every upsert) more than window ago,
+// mirroring CleanupScheduleHistory's retention window and, like it,
+// keying off a real-wall-clock write timestamp rather than
+// occurrence_start -- see the recorded_at column's doc comment in
+// migration 000005 for why. Returns the number of rows deleted.
+func (s *Store) CleanupOccurrenceSnapshots(ctx context.Context, window time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-window)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM series_occurrence_snapshots WHERE recorded_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup occurrence snapshots: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read occurrence snapshot cleanup result: %w", err)
+	}
+	return affected, nil
+}
+
+// DeleteFutureOccurrenceSnapshots deletes every occurrence snapshot for
+// blockID with occurrence_start > now -- see the interface doc comment
+// (internal/scheduler/interfaces.go) for when and why callers do this.
+func (s *Store) DeleteFutureOccurrenceSnapshots(ctx context.Context, blockID string, now time.Time) error {
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM series_occurrence_snapshots WHERE block_id = ? AND occurrence_start > ?`,
+		blockID, now); err != nil {
+		return fmt.Errorf("failed to delete future occurrence snapshots for block %q: %w", blockID, err)
 	}
 	return nil
 }

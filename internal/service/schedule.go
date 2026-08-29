@@ -135,7 +135,13 @@ func ActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error
 		if !rec.Enabled {
 			continue
 		}
-		blocks = append(blocks, rec.Spec)
+		spec := rec.Spec
+		// rec.Spec (the stored JSON blob) never carries the record's own
+		// store ID -- copy it in here so the engine can key series
+		// occurrence snapshots by it (stable across a rename, unlike
+		// Name) -- see scheduler.Block.ID's doc comment.
+		spec.ID = rec.ID
+		blocks = append(blocks, spec)
 	}
 	return blocks, nil
 }

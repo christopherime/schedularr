@@ -23,12 +23,30 @@ type SeriesState struct {
 // not-yet-aired occurrence that still lets a block spec edited before it
 // airs (series reordered, added, removed, episodes_per_block or duration
 // changed) change that occurrence's content. It's a value-only subset of
-// SeriesState -- no ShowTitle (implied by its map key) and no LastAired
-// (irrelevant to a frozen planning input).
+// SeriesState -- no ShowTitle (implied by its map key) -- except Seeded,
+// which stands in for LastAired.
+//
+// Seeded records whether the captured *SeriesState already had a non-nil
+// LastAired (i.e. was already past its one-time start_season/start_episode
+// initialization) at the moment of capture -- see
+// Engine.initializeSeriesState: it only applies start_season/start_episode
+// when LastAired is nil, treating that as "never initialized." A
+// reconstructed snapshot used to always leave LastAired nil (see
+// newSnapshotSeriesContext), which made initializeSeriesState re-apply
+// start_season/start_episode on *every* re-derive of a not-yet-aired
+// occurrence, silently re-pinning its cursor back to the configured start
+// position regardless of how far the snapshot had actually progressed
+// (e.g. start_episode: 5 configured, occurrence legitimately at E6 --
+// every re-apply re-derived it back to E5). Seeded fixes that: a
+// reconstructed SeriesState gets a non-nil marker LastAired exactly when
+// the snapshot says the underlying cursor was already initialized, so
+// initializeSeriesState correctly treats it as "already past the start
+// position," same as the live cursor it was captured from.
 type SeriesStateSnapshot struct {
 	CurrentSeason  int  `json:"current_season"`
 	CurrentEpisode int  `json:"current_episode"`
 	Completed      bool `json:"completed"`
 	Disabled       bool `json:"disabled"`
 	RunCount       int  `json:"run_count"`
+	Seeded         bool `json:"seeded"`
 }
