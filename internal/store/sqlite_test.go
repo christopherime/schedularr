@@ -235,6 +235,88 @@ func TestStore_DeleteFutureOccurrenceSnapshots(t *testing.T) {
 	assert.True(t, ok, "a different block's snapshot must be untouched")
 }
 
+// TestStore_InvalidationCutoff_WidensPastStartToPastFinish pins round-3
+// finding 2's core cutoff-math fix directly: DeleteFutureOccurrenceSnapshots
+// deletes rows with occurrence_start > cutoff, so passing "now" as the
+// cutoff only ever catches occurrences that HAVEN'T STARTED yet.
+// InvalidationCutoff(now, duration) must shift the cutoff back by
+// duration, so it also catches one that's ON AIR (started, but not yet
+// finished) without also catching one that's already finished.
+func TestStore_InvalidationCutoff_WidensPastStartToPastFinish(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	now := time.Now()
+	onAirStart := now.Add(-10 * time.Minute)   // 10min into a 30min occurrence: on air
+	finishedStart := now.Add(-2 * time.Hour)   // well past a 30min occurrence's end
+	notYetStarted := now.Add(20 * time.Minute) // hasn't started yet
+
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", onAirStart, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", finishedStart, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", notYetStarted, snapshot))
+
+	require.NoError(t, s.DeleteFutureOccurrenceSnapshots(ctx, "block-a", InvalidationCutoff(now, 30)))
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-a", onAirStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "the on-air occurrence's snapshot must be invalidated -- it hasn't FINISHED yet")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", finishedStart)
+	require.NoError(t, err)
+	assert.True(t, ok, "an already-finished occurrence's snapshot must survive")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", notYetStarted)
+	require.NoError(t, err)
+	assert.False(t, ok, "a not-yet-started occurrence's snapshot must still be invalidated too")
+}
+
+// TestStore_InvalidateSeriesOccurrenceSnapshots pins round-3 finding 8's
+// underlying store-level mechanism directly (shared by
+// api.PatchSeriesState and the CLI's `state reset`/`state set`, which
+// both call this exact method): it must match blocks by Series show
+// title (not block ID), leave unrelated shows/blocks alone, and use the
+// same widened (on-air-inclusive) cutoff as UpdateBlock/DeleteBlock.
+func TestStore_InvalidateSeriesOccurrenceSnapshots(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	require.NoError(t, s.CreateBlock(ctx, &BlockRecord{
+		ID: "block-a", Name: "Block A", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Block A", Type: scheduler.BlockTypeSeries, Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1",
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Show A", EpisodesPerBlock: 1}},
+		},
+	}))
+	require.NoError(t, s.CreateBlock(ctx, &BlockRecord{
+		ID: "block-b", Name: "Block B", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Block B", Type: scheduler.BlockTypeSeries, Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1",
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Show B", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	now := time.Now()
+	onAirStart := now.Add(-10 * time.Minute) // 10min into block-a's 30min duration: on air
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", onAirStart, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-b", onAirStart, snapshot))
+
+	require.NoError(t, s.InvalidateSeriesOccurrenceSnapshots(ctx, "Show A"))
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-a", onAirStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "block-a references Show A, and its on-air occurrence must be invalidated (widened cutoff)")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-b", onAirStart)
+	require.NoError(t, err)
+	assert.True(t, ok, "block-b references a different show (Show B) and must be untouched")
+}
+
 // TestStore_CleanupOccurrenceSnapshots pins finding 4's GC fix, and
 // specifically that it prunes by recorded_at (a real wall-clock write
 // timestamp), not occurrence_start -- see migration 000005's recorded_at

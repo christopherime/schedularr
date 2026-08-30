@@ -337,6 +337,78 @@ func (s *Store) DeleteFutureOccurrenceSnapshots(ctx context.Context, blockID str
 	return nil
 }
 
+// InvalidationCutoff returns the "now" DeleteFutureOccurrenceSnapshots
+// should be called with to invalidate every occurrence of a
+// durationMinutes-long block that hasn't FINISHED yet -- not just ones
+// that haven't STARTED yet. DeleteFutureOccurrenceSnapshots deletes rows
+// with occurrence_start > cutoff; passing now - duration makes that
+// condition equivalent to occurrence_start + duration > now, i.e. "still
+// airing, or entirely in the future," instead of "hasn't started."
+//
+// Without this, invalidating a show's (or block's) occurrence snapshots
+// while one of its occurrences is CURRENTLY on air never touches that
+// specific occurrence's own snapshot at all: its occurrence_start is
+// already in the past by definition, so a plain "occurrence_start > now"
+// cutoff always excludes it. The on-air occurrence then keeps re-deriving
+// from its stale pre-change cursor snapshot -- see
+// scheduler.advanceStateFromCommittedContent's doc comment for the
+// clobbering bug that causes -- until it finishes airing on its own and
+// a later occurrence finally picks up the change. Every caller that
+// invalidates snapshots outside the normal apply flow needs this: an
+// operator's PATCH /state/series or a block edit/delete
+// (internal/api/state.go, internal/api/blocks.go), and the CLI's
+// `schedularr state reset`/`state set` (cmd/state.go, via
+// InvalidateSeriesOccurrenceSnapshots below).
+func InvalidationCutoff(now time.Time, durationMinutes int) time.Time {
+	return now.Add(-time.Duration(durationMinutes) * time.Minute)
+}
+
+// InvalidateSeriesOccurrenceSnapshots deletes every not-yet-FINISHED
+// occurrence snapshot (see InvalidationCutoff) for every block whose
+// Series config references showTitle -- the store-level mechanism behind
+// every caller that changes a show's series_state outside the normal
+// apply flow and needs its not-yet-aired (and on-air) occurrences to
+// re-derive against the new value instead of a stale cached snapshot:
+// api.PatchSeriesState (internal/api/state.go) and the CLI's
+// `schedularr state reset`/`state set` (cmd/state.go) both call this
+// directly; api.UpdateBlock/DeleteBlock (internal/api/blocks.go)
+// invalidate by block ID directly instead, since they already know
+// exactly which block changed and don't need this show-title-based
+// lookup.
+//
+// Matches by scanning every block's Spec.Series (there is no reverse
+// index from show_title to block IDs; the blocks table is small enough
+// -- one row per configured block -- that a full scan on an infrequent
+// operator/CLI action like this is the right tradeoff over adding one).
+func (s *Store) InvalidateSeriesOccurrenceSnapshots(ctx context.Context, showTitle string) error {
+	blocks, err := s.ListBlocks(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list blocks while invalidating occurrence snapshots for %q: %w", showTitle, err)
+	}
+
+	now := time.Now()
+	for _, b := range blocks {
+		if !blockReferencesShow(b.Spec, showTitle) {
+			continue
+		}
+		if err := s.DeleteFutureOccurrenceSnapshots(ctx, b.ID, InvalidationCutoff(now, b.Spec.Duration)); err != nil {
+			return fmt.Errorf("failed to invalidate occurrence snapshots for block %q: %w", b.Name, err)
+		}
+	}
+	return nil
+}
+
+// blockReferencesShow reports whether spec's Series config lists
+// showTitle -- non-series blocks (an empty Series slice) trivially don't.
+func blockReferencesShow(spec scheduler.Block, showTitle string) bool {
+	for _, sc := range spec.Series {
+		if sc.ShowTitle == showTitle {
+			return true
+		}
+	}
+	return false
+}
+
 // ReplaceOccurrenceHistory atomically replaces every schedule_history row
 // for one occurrence (blockName, occurrenceStart) with entries -- see its
 // interface doc comment (internal/scheduler/interfaces.go) for why a

@@ -262,6 +262,89 @@ testing against a real Tunarr 1.3.13 instance.
     `DELETE /blocks/{id}` actually invalidating future occurrence
     snapshots (previously only the SQL primitive had a test); and a
     zero-program on-air anchor/flex-merging check.
+- **A third release-review pass found the fix above (chain-mode
+  planning syncing `e.pendingStates`) itself broken three ways -- all
+  new regressions in that exact mechanism.** Root cause, shared across
+  all three: the aired-occurrence chain advance was a fresh re-plan
+  against the *current* spec, whose result then got persisted. Fixed by
+  replacing the re-plan with a pure derivation from what actually aired:
+  - **Re-applying during a single on-air occurrence, repeatedly, walked
+    the cursor forward on every apply (E2 -> E5 across three applies)
+    and churned the NEXT occurrence's content each time.** Case-2 chain
+    seeding (`establishSeriesChain`, no snapshot but committed history
+    survives -- migration `000005`'s `DROP TABLE` on deploy day, or any
+    later apply of the same on-air occurrence, since the aired branch
+    never re-snapshots itself) already reflects that occurrence's own
+    prior consumption; re-deriving it via a scratch re-plan and
+    persisting the result advanced it a second (and third...) time on
+    top of that. New `scheduler.advanceStateFromCommittedContent`
+    derives each show's cursor purely from the occurrence's own frozen
+    committed content and its `occurrenceStart` (never a re-plan), and
+    is *advance-only*: a candidate is applied only if it's genuinely
+    ahead of the current cursor, so re-deriving the same frozen content
+    twice is a no-op and the cursor (and every chained-forward
+    occurrence) stabilizes after the first apply.
+  - **An operator's `PATCH /state/series` (cursor jump + `disabled`)
+    issued while a show's occurrence was on air got silently reverted by
+    the very next apply.** Root cause was two-fold: (1) syncing copied
+    the WHOLE chain-derived `SeriesState`, including `Completed`/
+    `Disabled` -- fields an aired occurrence's content can never
+    legitimately imply anything about; (2)
+    `DeleteFutureOccurrenceSnapshots`' plain `occurrence_start > now`
+    cutoff never reaches an occurrence that's *currently* on air (its
+    `occurrence_start` is already in the past), so its stale pre-PATCH
+    snapshot survived and kept re-deriving from the old baseline. Fixed:
+    `syncPendingStatesFromChain` now writes only `CurrentSeason`/
+    `CurrentEpisode`/`LastAired`, and only for shows
+    `advanceStateFromCommittedContent` actually advanced -- never
+    `Completed`/`Disabled`/`RunCount`; new `store.InvalidationCutoff`
+    widens the cutoff by the block's own duration (`now - duration`,
+    i.e. "not yet *finished*," not just "not yet started"), used by
+    `PatchSeriesState`, `UpdateBlock`/`DeleteBlock`, and the CLI's
+    `state reset`/`state set` (via new `store.InvalidateSeriesOccurrenceSnapshots`,
+    now the single shared implementation all four call). Combined with
+    the advance-only rule above, a patched cursor that's ahead of what
+    an on-air occurrence's frozen content implies is never clobbered
+    back down.
+  - **Editing a block's `episodes_per_block` (e.g. 1 -> 4) after an
+    occurrence had already aired retroactively changed how far its
+    cursor advanced** (E2 -> E5, even though only one episode had
+    actually aired), because the chain advance re-planned against the
+    *current* (edited) spec instead of the occurrence's own frozen
+    content. Fixed by the same content-only derivation above: a spec
+    edit can no longer affect an already-aired occurrence's contribution
+    to the cursor at all.
+  - **The `Seeded`-snapshot marker (round 2 finding 1's fix, a fixed
+    unix-epoch sentinel meaning "already initialized") could leak into
+    persisted `series_state.last_aired` as `1970-01-01`.** Structurally
+    impossible now: `syncPendingStatesFromChain` only ever reads
+    `LastAired` for shows `advanceStateFromCommittedContent` just
+    advanced, and that function always stamps a fresh, real value
+    (`occurrenceStart`) in the same step -- the sentinel is never in the
+    value it reads.
+  - **`last_aired` stayed frozen in steady state** (cursor kept
+    advancing E2 -> E5 while `last_aired` never moved, going stale in
+    `GET /state/series`) -- now stamped from the occurrence's own
+    `occurrenceStart` every time a show is genuinely advanced:
+    deterministic (same occurrence always stamps the same value) and
+    keeps moving forward as later occurrences age into aired.
+  - `TestRunner_Run_Apply_IsIdempotentPerOccurrence`
+    (`internal/service/schedule_test.go`) now pins `Runner.now` (new
+    field, defaults to `time.Now`) to a fixed instant inside the test
+    block's on-air window, so it deterministically exercises the
+    on-air code path on every run instead of only when the real wall
+    clock happened to land there (~half the time before this).
+  - Regression tests: direct unit tests for
+    `advanceStateFromCommittedContent`'s determinism, advance-only rule,
+    and Seeded-marker non-leak; end-to-end triple-reapply-during-on-air
+    (stable cursor + stable next-occurrence content), PATCH-during-on-air
+    (cursor and `disabled` both survive), and spec-edit-after-aired
+    checks; handler-level coverage for the widened on-air invalidation
+    cutoff and for the log-and-continue fix actually firing (a new
+    `corruptOccurrenceSnapshotsTable` test helper drops just that one
+    table so only the invalidation step fails, not the primary
+    mutation); and store-level coverage for `InvalidationCutoff`/
+    `InvalidateSeriesOccurrenceSnapshots` directly.
 
 ## [0.2.1] - 2026-08-29
 

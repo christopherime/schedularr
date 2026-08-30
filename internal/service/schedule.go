@@ -86,6 +86,13 @@ type Runner struct {
 	loc           *time.Location
 	cache         *cache.Cache // nil if cache.New failed; fetch then always hits Tunarr
 	historyWindow time.Duration
+	// now returns the current time -- defaults to time.Now (set by
+	// NewRunner) and is the sole clock Run reads. Tests in this package
+	// override it directly (an unexported field, same package) to pin
+	// "now" to a fixed instant, e.g. one that deterministically falls
+	// inside a block's on-air window instead of depending on whatever the
+	// real wall clock happens to be when the test runs.
+	now func() time.Time
 }
 
 var _ ScheduleRunner = (*Runner)(nil)
@@ -115,7 +122,7 @@ func NewRunner(st *store.Store, tc *tunarr.Client, l *slog.Logger, loc *time.Loc
 		c = nil
 	}
 
-	return &Runner{store: st, tunarr: tc, logger: l, loc: loc, cache: c, historyWindow: historyWindow}
+	return &Runner{store: st, tunarr: tc, logger: l, loc: loc, cache: c, historyWindow: historyWindow, now: time.Now}
 }
 
 // ActiveBlocks returns the Spec of every enabled block in the store.
@@ -210,7 +217,7 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	// comment), so truncating here keeps this Run's own timing math
 	// (below, and in applyChannels/buildAnchoredLineup) consistent with
 	// what actually gets stored.
-	start := time.Now().Truncate(time.Minute)
+	start := r.now().Truncate(time.Minute)
 	end := start.Add(time.Duration(o.Days) * 24 * time.Hour)
 
 	// scheduler.Engine's exported methods predate this ctx-threaded

@@ -24,7 +24,7 @@ Every write path (`POST`/`PUT`) validates the block spec against the CUE schedul
 - `POST`/`PUT` return `400` for a spec that fails CUE validation (e.g. a missing `cron` or a non-positive `duration`) or a malformed JSON body.
 - `POST` returns `409` for a duplicate block name; `PUT` returns `409` if the request body's `spec.name` differs from the existing block's name and collides with another block. A `PUT` whose `spec.name` differs from the current name without colliding renames the block.
 - `POST`/`PUT` also return `400` for a series block (`spec.type: series`) whose `series[].show_title` is empty. The CUE scheduler schema types `show_title` as a bare `string` with no non-empty constraint, so this case would otherwise pass CUE validation — the check is applied in Go on both block-ingestion paths (here, and `blocks/import` below).
-- `PUT`/`DELETE` on a series block also invalidate every not-yet-aired occurrence's cursor snapshot for that block (see [Scheduling Concepts' idempotent-apply section](scheduling-concepts.md#idempotent-apply-and-editing-a-block-before-it-airs)), so the next apply re-derives those occurrences against the spec you just changed instead of a snapshot captured under the old one.
+- `PUT`/`DELETE` on a series block also invalidate every not-yet-*finished* occurrence's cursor snapshot for that block — including one currently on air, not just occurrences that haven't started yet (see [Scheduling Concepts' idempotent-apply section](scheduling-concepts.md#idempotent-apply-and-editing-a-block-before-it-airs)) — so the next apply re-derives those occurrences against the spec you just changed instead of a snapshot captured under the old one.
 
 ## Import / export
 
@@ -75,7 +75,7 @@ Lists and patches the per-show `series_state` tracking rows (current season/epis
 
 - `PATCH` applies a partial update: only fields present in the request body (`current_season`, `current_episode`, `completed`, `disabled`) change, and a body with none of them set returns `400`, as does a malformed JSON body.
 - `PATCH` returns `404` for a `show_title` with no persisted `series_state` row — the store fabricates nothing for the API.
-- A successful `PATCH` also invalidates every not-yet-aired occurrence snapshot for every block that schedules `show_title`, so a manual cursor reset takes effect on the next apply instead of being shadowed by an already-captured snapshot for up to the schedule-generation window (see [Scheduling Concepts' idempotent-apply section](scheduling-concepts.md#idempotent-apply-and-editing-a-block-before-it-airs)).
+- A successful `PATCH` also invalidates every not-yet-*finished* occurrence snapshot for every block that schedules `show_title` — including a currently on-air occurrence — so a manual cursor reset takes effect on the very next apply and stays in effect, instead of being shadowed by (or overwritten back to) an already-captured snapshot for up to the schedule-generation window. `schedularr state reset`/`state set` (see the [CLI Reference](cli-reference.md)) do the same invalidation directly against the store. See [Scheduling Concepts' idempotent-apply section](scheduling-concepts.md#idempotent-apply-and-editing-a-block-before-it-airs).
 
 ## Channels and status
 

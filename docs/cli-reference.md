@@ -108,6 +108,8 @@ schedularr state import backup-2026-01-12.json               # Import (overwrite
 schedularr state backup full-backup-2026-01-12.db             # Whole-database SQLite backup (VACUUM INTO, safe against a live database)
 ```
 
+`set` and `reset` both invalidate every not-yet-*finished* occurrence's cursor snapshot for every block that schedules the show — including one currently on air — the same way `PATCH /state/series/{show_title}` does (see the [API Reference](api-reference.md#series-state)), so the change takes effect on the very next apply and stays in effect. A failure at that invalidation step (rare — the show/season/episode change itself has already been saved by then) prints a warning to stderr rather than failing the command.
+
 ## API server + cron
 
 ### `serve`

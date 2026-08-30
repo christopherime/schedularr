@@ -91,12 +91,15 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // does, so a rename that collides with another block's name surfaces as
 // ErrConflict -> 409, same as a colliding create.
 //
-// After a successful update, every not-yet-aired occurrence snapshot for
-// this block ID is deleted (DeleteFutureOccurrenceSnapshots) so the next
-// apply re-derives those occurrences from the just-edited spec instead of
-// silently keeping a snapshot/committed assignment captured under the OLD
-// spec until it ages out of the schedule-generation window on its own --
-// see StateStore.DeleteFutureOccurrenceSnapshots' doc comment. This is a
+// After a successful update, every not-yet-FINISHED occurrence snapshot
+// for this block ID is deleted (DeleteFutureOccurrenceSnapshots, with
+// store.InvalidationCutoff's widened cutoff -- see its doc comment for
+// why "not yet finished" and not just "not yet started") so the next
+// apply re-derives those occurrences from the
+// just-edited spec instead of silently keeping a snapshot/committed
+// assignment captured under the OLD spec until it ages out of the
+// schedule-generation window on its own -- see
+// StateStore.DeleteFutureOccurrenceSnapshots' doc comment. This is a
 // series-only mechanism (only series blocks have occurrence snapshots at
 // all), but it's harmless -- a no-op deleting zero rows -- to call
 // unconditionally for a filter block too, so this doesn't special-case on
@@ -145,7 +148,7 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, time.Now()); err != nil {
+	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, store.InvalidationCutoff(time.Now(), existing.Spec.Duration)); err != nil {
 		h.logInternalError(r, "update_block_invalidate_snapshots", err)
 	}
 
@@ -154,25 +157,34 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 
 // DeleteBlock implements gen.ServerInterface.
 //
-// After a successful delete, every not-yet-aired occurrence snapshot for
-// this block ID is also deleted (DeleteFutureOccurrenceSnapshots) -- see
-// UpdateBlock's doc comment for why a block mutation needs this (including
-// why a failure here is logged and not surfaced as a response error). A
-// deleted block can never generate a future occurrence again, so this is
-// mostly tidiness rather than a live correctness bug the way UpdateBlock's
-// case is, but it's the same one-line cleanup and keeps the invariant
-// "a block ID with no corresponding block record has no leftover
-// snapshots either" from silently drifting false over time (e.g. a block
-// deleted and later re-created would otherwise never collide on ID -- IDs
-// are fresh UUIDs -- but leaving orphaned rows around for a since-deleted
-// ID serves no purpose).
+// After a successful delete, every not-yet-FINISHED occurrence snapshot
+// for this block ID is also deleted (DeleteFutureOccurrenceSnapshots,
+// same widened cutoff as UpdateBlock) -- see UpdateBlock's doc comment
+// for why a block mutation needs this (including why a failure here is
+// logged and not surfaced as a response error). A deleted block can
+// never generate a future occurrence again, so this is mostly tidiness
+// rather than a live correctness bug the way UpdateBlock's case is, but
+// it's the same one-line cleanup and keeps the invariant "a block ID with
+// no corresponding block record has no leftover snapshots either" from
+// silently drifting false over time (e.g. a block deleted and later
+// re-created would otherwise never collide on ID -- IDs are fresh UUIDs
+// -- but leaving orphaned rows around for a since-deleted ID serves no
+// purpose). The block is looked up BEFORE deleting it -- its Duration is
+// needed to compute the cutoff, and it's gone from the store once
+// DeleteBlock succeeds.
 func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string) {
+	existing, err := h.d.Store.GetBlock(r.Context(), id)
+	if err != nil {
+		h.writeBlockStoreError(w, r, "delete_block_lookup", err)
+		return
+	}
+
 	if err := h.d.Store.DeleteBlock(r.Context(), id); err != nil {
 		h.writeBlockStoreError(w, r, "delete_block", err)
 		return
 	}
 
-	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, time.Now()); err != nil {
+	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, store.InvalidationCutoff(time.Now(), existing.Spec.Duration)); err != nil {
 		h.logInternalError(r, "delete_block_invalidate_snapshots", err)
 	}
 

@@ -1519,6 +1519,17 @@ func TestRunner_hydrateSeasonNumbers_LocalJoinThenNetworkFallback(t *testing.T) 
 // true) calls over the same window must instead produce byte-identical
 // plans, and the second must leave series state exactly as the first left
 // it.
+//
+// r.now is pinned to a fixed instant 10 minutes into the current hour --
+// round-3 finding 6: with the hourly ("0 * * * *"), 30min block this test
+// uses, that guarantees an on-air occurrence exists (its own [start,
+// start+30min) window always contains a fixed "now" 10 minutes past the
+// hour boundary), so this test always exercises GenerateForTimeRange's
+// on-air-shell code path deterministically -- before this fix, the test
+// only exercised it whenever the REAL wall clock happened to land in
+// roughly the first half of an hour (~50% of runs), which is how a
+// regression in that path (round-2's LastAired bump, round-3's cursor
+// double-advance) could pass locally and only fail intermittently in CI.
 func TestRunner_Run_Apply_IsIdempotentPerOccurrence(t *testing.T) {
 	episodes := []tunarr.Program{
 		{ID: "ep-1", Title: "Pilot", Type: "episode", ShowTitle: "The Office", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000},
@@ -1542,6 +1553,8 @@ func TestRunner_Run_Apply_IsIdempotentPerOccurrence(t *testing.T) {
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
 	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	fixedNow := time.Now().UTC().Truncate(time.Hour).Add(10 * time.Minute)
+	r.now = func() time.Time { return fixedNow }
 
 	result1, err := r.Run(ctx, Options{Days: 1, Apply: true})
 	require.NoError(t, err)
@@ -1572,7 +1585,30 @@ func TestRunner_Run_Apply_IsIdempotentPerOccurrence(t *testing.T) {
 
 	state2, err := st.GetPersistedSeriesState(ctx, "The Office")
 	require.NoError(t, err)
-	assert.Equal(t, state1, state2,
+
+	// A third apply, compared against the SECOND, not the first: apply 1's
+	// on-air occurrence is genuinely brand new (no committed history yet
+	// exists for it anywhere), so it legitimately takes a one-time "plan
+	// for real" path (Engine.establishSeriesChain's virgin branch) that
+	// stamps LastAired from time.Now() at plan time -- different, on
+	// purpose, from every later re-derive of that SAME (now frozen,
+	// historical) occurrence, which instead derives purely from its own
+	// committed content and stamps LastAired from the occurrence's own
+	// airtime (see planSeriesOccurrences' aired branch and
+	// advanceStateFromCommittedContent's doc comments). The idempotency
+	// invariant this test exists to pin is about REPEATED re-applies of
+	// an already-committed occurrence, which apply-2-vs-apply-3 tests
+	// directly without that one-time, legitimate transition in the way.
+	result3, err := r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.True(t, result3.Applied)
+
+	assert.Equal(t, result2.Channels, result3.Channels,
+		"re-applying over the same window must reuse every already-committed occurrence's assignment byte-for-byte, not re-plan it")
+
+	state3, err := st.GetPersistedSeriesState(ctx, "The Office")
+	require.NoError(t, err)
+	assert.Equal(t, state2, state3,
 		"series state must not advance again for an occurrence that was already committed")
 }
 

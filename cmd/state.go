@@ -166,6 +166,21 @@ Example:
 			return fmt.Errorf("failed to reset state: %w", err)
 		}
 
+		// Mirrors api.PatchSeriesState's own invalidation call: without
+		// it, a not-yet-FINISHED (including currently on-air) occurrence
+		// snapshot captured before this reset keeps re-deriving from the
+		// stale pre-reset cursor instead of the value just set here --
+		// the exact same shadowing bug a PATCH through the API would have
+		// had. See store.InvalidateSeriesOccurrenceSnapshots' doc comment.
+		// A failure here is a warning, not a command failure: the reset
+		// itself already committed successfully, so returning an error
+		// here would misreport that (and could break a script checking
+		// this command's exit code) -- matches PatchSeriesState's own
+		// log-and-continue treatment of the identical failure mode.
+		if err := s.InvalidateSeriesOccurrenceSnapshots(ctx, showTitle); err != nil {
+			fmt.Fprintf(os.Stderr, "%s reset succeeded, but failed to invalidate occurrence snapshots: %v\n", warningStyle.Render("! Warning:"), err)
+		}
+
 		fmt.Printf("Reset series state for \"%s\" to S01E01\n", showTitle)
 		return nil
 	},
@@ -239,6 +254,14 @@ Example:
 		ctx := context.Background()
 		if err := s.SetSeriesState(ctx, showTitle, stateSetSeason, stateSetEpisode); err != nil {
 			return fmt.Errorf("failed to set state: %w", err)
+		}
+
+		// See stateResetCmd's identical call for why: without it, a
+		// not-yet-FINISHED occurrence snapshot shadows this set (and can
+		// clobber it right back on the next apply) until it ages out on
+		// its own.
+		if err := s.InvalidateSeriesOccurrenceSnapshots(ctx, showTitle); err != nil {
+			fmt.Fprintf(os.Stderr, "%s set succeeded, but failed to invalidate occurrence snapshots: %v\n", warningStyle.Render("! Warning:"), err)
 		}
 
 		fmt.Printf("Set series state for \"%s\" to S%02dE%02d\n", showTitle, stateSetSeason, stateSetEpisode)

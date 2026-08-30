@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -444,6 +446,123 @@ func TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
 	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
 	require.NoError(t, err)
 	assert.False(t, ok, "DELETE must invalidate every not-yet-aired occurrence snapshot for the deleted block")
+}
+
+// TestUpdateBlock_InvalidatesOnAirOccurrenceSnapshot and
+// TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot are round-3 finding
+// 2's API-layer regressions: DeleteFutureOccurrenceSnapshots' plain
+// "occurrence_start > now" cutoff never catches an occurrence that's
+// CURRENTLY on air (its own occurrence_start is already in the past) --
+// UpdateBlock/DeleteBlock must widen the cutoff by the block's own
+// Duration (invalidationCutoff, internal/api/state.go) so an edit/delete
+// also reaches it, not just strictly future occurrences.
+func TestUpdateBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	// seriesBlockWrite's cron ("0 20 * * 6") / duration (90min) don't
+	// matter here: the snapshot's occurrence_start is set directly,
+	// independent of what the block's own schedule would generate.
+	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into a 90min block: on air
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
+
+	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, onAirStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "PUT must invalidate the on-air occurrence's own snapshot too, not just strictly future ones")
+}
+
+func TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	onAirStart := time.Now().Add(-10 * time.Minute)
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
+
+	wd := doRequest(t, h, http.MethodDelete, "/blocks/"+created.Id, nil)
+	require.Equal(t, http.StatusNoContent, wd.Code)
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, onAirStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "DELETE must invalidate the on-air occurrence's own snapshot too, not just strictly future ones")
+}
+
+// corruptOccurrenceSnapshotsTable drops the series_occurrence_snapshots
+// table via a raw connection to the SAME sqlite file dsn points at, so a
+// later DeleteFutureOccurrenceSnapshots call against a *store.Store
+// opened on that same file fails -- without touching any OTHER table
+// (UpdateBlock/DeleteBlock/CreateBlock/UpdateSeriesState never reference
+// series_occurrence_snapshots), letting a test isolate "the primary
+// mutation succeeds but the post-mutation invalidation step fails"
+// (round-3 finding 7) without making the WHOLE store unusable the way
+// newClosedStoreServer's closed connection would (that would fail the
+// primary mutation too, not just the invalidation step).
+func corruptOccurrenceSnapshotsTable(t *testing.T, dsn string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", dsn)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(`DROP TABLE series_occurrence_snapshots`)
+	require.NoError(t, err, "test setup: failed to drop series_occurrence_snapshots")
+}
+
+// TestUpdateBlock_SucceedsEvenWhenSnapshotInvalidationFails and
+// TestDeleteBlock_SucceedsEvenWhenSnapshotInvalidationFails are round-3
+// finding 7's regressions: round-2 fixed UpdateBlock/DeleteBlock to log
+// (not 500) a failed post-mutation snapshot invalidation, since the
+// primary mutation had already committed by then -- but no test actually
+// forced that failure path before this. corruptOccurrenceSnapshotsTable
+// makes DeleteFutureOccurrenceSnapshots specifically fail while every
+// other store call keeps working.
+func TestUpdateBlock_SucceedsEvenWhenSnapshotInvalidationFails(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.New(dsn)
+	require.NoError(t, err, "failed to create test store")
+	t.Cleanup(func() { _ = s.Close() })
+	h := gen.HandlerFromMux(NewHandlers(Deps{Store: s, Logger: slog.Default(), Version: "test"}), chi.NewRouter())
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	corruptOccurrenceSnapshotsTable(t, dsn)
+
+	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
+	assert.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
+	updated := decodeBlockRecord(t, wu)
+	assert.Equal(t, created.Id, updated.Id, "the update itself must still have succeeded and be reflected in the response")
+}
+
+func TestDeleteBlock_SucceedsEvenWhenSnapshotInvalidationFails(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.New(dsn)
+	require.NoError(t, err, "failed to create test store")
+	t.Cleanup(func() { _ = s.Close() })
+	h := gen.HandlerFromMux(NewHandlers(Deps{Store: s, Logger: slog.Default(), Version: "test"}), chi.NewRouter())
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	corruptOccurrenceSnapshotsTable(t, dsn)
+
+	wd := doRequest(t, h, http.MethodDelete, "/blocks/"+created.Id, nil)
+	assert.Equal(t, http.StatusNoContent, wd.Code, wd.Body.String())
+
+	wg := doRequest(t, h, http.MethodGet, "/blocks/"+created.Id, nil)
+	assert.Equal(t, http.StatusNotFound, wg.Code, "the delete itself must still have succeeded")
 }
 
 func TestListBlocks_SortedByNameAndEmpty(t *testing.T) {

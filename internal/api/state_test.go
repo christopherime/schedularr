@@ -244,3 +244,107 @@ func TestPatchSeriesState_InvalidatesFutureOccurrenceSnapshotsForReferencingBloc
 	require.NoError(t, err)
 	assert.True(t, ok, "block-2 does not reference Show A and must be untouched")
 }
+
+// TestPatchSeriesState_InvalidatesOnAirOccurrenceSnapshot is round-3
+// finding 2's API-layer regression: DeleteFutureOccurrenceSnapshots'
+// plain "occurrence_start > now" cutoff never catches an occurrence
+// that's CURRENTLY on air (its own occurrence_start is already in the
+// past) -- invalidateSeriesOccurrenceSnapshots must widen the cutoff by
+// the block's own Duration (invalidationCutoff) so a PATCH also reaches
+// it, not just strictly future occurrences. Without this, an operator's
+// cursor-jump PATCH issued mid-episode would be silently reverted by the
+// next apply -- see scheduler.advanceStateFromCommittedContent's doc
+// comment for the clobbering mechanism this prevents.
+func TestPatchSeriesState_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1,
+	}))
+	require.NoError(t, s.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Block One", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Block One", Type: scheduler.BlockTypeSeries, Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1",
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Show A", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into a 30min block: on air
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-1", onAirStart, snapshot))
+
+	season := 20
+	body := gen.SeriesStatePatch{CurrentSeason: &season}
+	w := doRequest(t, h, http.MethodPatch, patchPath("Show A"), body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-1", onAirStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "the on-air occurrence's own snapshot must be invalidated too, not just strictly future ones")
+}
+
+// TestPatchSeriesState_DoesNotInvalidateAlreadyFinishedOccurrenceSnapshot
+// is invalidationCutoff's other boundary: an occurrence that has already
+// FINISHED airing (not just started) must be left alone -- the widened
+// cutoff (round-3 finding 2) is "not yet finished," not "any time in the
+// past."
+func TestPatchSeriesState_DoesNotInvalidateAlreadyFinishedOccurrenceSnapshot(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1,
+	}))
+	require.NoError(t, s.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Block One", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Block One", Type: scheduler.BlockTypeSeries, Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1",
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Show A", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	finishedStart := time.Now().Add(-2 * time.Hour) // finished well over an hour ago (30min block)
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-1", finishedStart, snapshot))
+
+	season := 20
+	body := gen.SeriesStatePatch{CurrentSeason: &season}
+	w := doRequest(t, h, http.MethodPatch, patchPath("Show A"), body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-1", finishedStart)
+	require.NoError(t, err)
+	assert.True(t, ok, "an already-finished occurrence's snapshot must survive -- only not-yet-finished ones are invalidated")
+}
+
+// TestPatchSeriesState_SucceedsEvenWhenSnapshotInvalidationFails is
+// round-3 finding 7's regression: PatchSeriesState logs (not 500s) a
+// failed post-mutation snapshot invalidation, since UpdateSeriesState has
+// already committed by then -- but no test forced that failure path
+// before this. corruptOccurrenceSnapshotsTable (blocks_test.go) makes
+// DeleteFutureOccurrenceSnapshots specifically fail while every other
+// store call keeps working.
+func TestPatchSeriesState_SucceedsEvenWhenSnapshotInvalidationFails(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.New(dsn)
+	require.NoError(t, err, "failed to create test store")
+	t.Cleanup(func() { _ = s.Close() })
+	h := gen.HandlerFromMux(NewHandlers(Deps{Store: s, Logger: slog.Default(), Version: "test"}), chi.NewRouter())
+	ctx := t.Context()
+
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1,
+	}))
+
+	corruptOccurrenceSnapshotsTable(t, dsn)
+
+	season := 3
+	body := gen.SeriesStatePatch{CurrentSeason: &season}
+	w := doRequest(t, h, http.MethodPatch, patchPath("Show A"), body)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	persisted, err := s.GetPersistedSeriesState(ctx, "Show A")
+	require.NoError(t, err)
+	assert.Equal(t, 3, persisted.CurrentSeason, "the PATCH itself must still have succeeded and persisted")
+}

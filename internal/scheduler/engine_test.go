@@ -898,6 +898,12 @@ func TestPlanSeriesOccurrences_PersistedCursorAdvancesAsOccurrencesAge(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, 3, state.CurrentEpisode,
 		"persisted cursor must reflect BOTH aired occurrences (e1, e2 consumed -> next is e3), not stay frozen at whatever the first real plan produced")
+	require.NotNil(t, state.LastAired)
+	assert.False(t, state.LastAired.IsZero() || state.LastAired.Unix() == 0,
+		"round-3 finding 4: LastAired must never be the epoch (1970-01-01) Seeded-marker sentinel")
+	assert.True(t, state.LastAired.Equal(occ2),
+		"round-3 finding 5: LastAired must be stamped from the most recently aired occurrence's own airtime (occ2), deterministically")
+	lastAiredAfterApply2 := *state.LastAired
 
 	// Apply 3: occ3 also ages into aired.
 	_, err = engine.planSeriesOccurrences(block, availablePrograms, shells, occ3.Add(1*time.Minute))
@@ -907,57 +913,263 @@ func TestPlanSeriesOccurrences_PersistedCursorAdvancesAsOccurrencesAge(t *testin
 	state, err = store.GetSeriesState(ctx, "Cursor Show")
 	require.NoError(t, err)
 	assert.Equal(t, 4, state.CurrentEpisode, "persisted cursor must keep advancing as MORE occurrences age into aired")
+	require.NotNil(t, state.LastAired)
+	assert.True(t, state.LastAired.Equal(occ3), "round-3 finding 5: LastAired must update again (to occ3) as yet another occurrence ages into aired, not stay frozen at apply 2's value")
+	assert.False(t, state.LastAired.Equal(lastAiredAfterApply2), "LastAired must have moved forward between applies, not stayed frozen in steady state")
 }
 
-// TestPlanSeriesOccurrences_AiredOccurrenceReapply_DoesNotBumpLastAired is
-// a companion to the cursor-advancement test above, catching an idempotency
-// regression finding 1's own fix (syncPendingStatesFromChain) could have
-// introduced: the scratch chain-advance that runs for every aired
-// occurrence always stamps LastAired with a fresh time.Now(), same as a
-// real plan would -- but unlike a real plan, that scratch advance runs on
-// EVERY apply that still covers an already-settled occurrence, not just
-// the first. Naively copying that timestamp into e.pendingStates would
-// bump the persisted LastAired on every idempotent re-apply, breaking
-// "re-applying an already-committed occurrence must leave series_state
-// exactly as it was" (TestRunner_Run_Apply_IsIdempotentPerOccurrence,
-// internal/service/schedule_test.go -- which is wall-clock-dependent,
-// only actually exercising an on-air occurrence roughly half the time;
-// this test forces the on-air condition deterministically instead).
-func TestPlanSeriesOccurrences_AiredOccurrenceReapply_DoesNotBumpLastAired(t *testing.T) {
+// TestAdvanceStateFromCommittedContent_DerivesFromContentDeterministically
+// is the direct unit test for the function round-3 findings 1 and 3
+// center on: given an occurrence's frozen committed content and its own
+// occurrenceStart, the derived per-show advance must be a pure,
+// deterministic function of those two inputs alone -- never re-run
+// planning against the current spec, and identical no matter how many
+// times it's called for the same (content, occurrenceStart) pair.
+func TestAdvanceStateFromCommittedContent_DerivesFromContentDeterministically(t *testing.T) {
+	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
+	content := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "filler-1", Type: "movie", Title: "Filler", Duration: 900_000}, // non-episode content must be ignored
+	}
+
+	chain := map[string]*SeriesState{
+		"Show A": {ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1},
+	}
+	advanced := advanceStateFromCommittedContent(chain, content, occurrenceStart)
+	require.True(t, advanced["Show A"])
+	require.Equal(t, 1, chain["Show A"].CurrentSeason)
+	require.Equal(t, 2, chain["Show A"].CurrentEpisode)
+	require.NotNil(t, chain["Show A"].LastAired)
+	require.True(t, chain["Show A"].LastAired.Equal(occurrenceStart))
+
+	// Calling it again for the SAME (content, occurrenceStart) against
+	// the ALREADY-advanced chain must be a no-op (idempotent): the
+	// candidate (season 1, episode 2) is no longer ahead of the current
+	// value.
+	advancedAgain := advanceStateFromCommittedContent(chain, content, occurrenceStart)
+	assert.False(t, advancedAgain["Show A"], "re-deriving the same content a second time must not advance further")
+	assert.Equal(t, 2, chain["Show A"].CurrentEpisode)
+}
+
+// TestAdvanceStateFromCommittedContent_AdvanceOnly_NeverRegresses is
+// round-3 finding 2's core mechanism, tested directly: a candidate
+// derived from an occurrence's frozen content must never overwrite a
+// cursor that's already further along -- exactly what protects an
+// operator's PATCH /state/series cursor jump from being clobbered by a
+// stale on-air occurrence's own historical content on the next apply.
+func TestAdvanceStateFromCommittedContent_AdvanceOnly_NeverRegresses(t *testing.T) {
+	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
+	content := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Show A", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+	}
+
+	// Chain already sits at S1E20 -- e.g. an operator's manual PATCH.
+	chain := map[string]*SeriesState{
+		"Show A": {ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 20, Disabled: true},
+	}
+	advanced := advanceStateFromCommittedContent(chain, content, occurrenceStart)
+
+	assert.False(t, advanced["Show A"], "a candidate behind the current cursor must not be applied")
+	assert.Equal(t, 20, chain["Show A"].CurrentEpisode, "the patched cursor must survive untouched")
+	assert.True(t, chain["Show A"].Disabled, "fields this function never touches must survive untouched too")
+}
+
+// TestAdvanceStateFromCommittedContent_NeverLeaksSeededMarker is round-3
+// finding 4's direct unit test: a chain entry reconstructed from a
+// Seeded snapshot (statesFromSnapshot) carries a fixed, meaningless
+// sentinel LastAired (the unix-epoch seededMarker, "1970-01-01") purely
+// to mark "already initialized" for initializeSeriesState -- it must
+// never reach persisted series_state. Since this function always
+// stamps LastAired fresh (from occurrenceStart) for any show it
+// genuinely advances, and the caller (syncPendingStatesFromChain) only
+// ever reads LastAired for shows in the returned `advanced` set, the
+// stale seededMarker can't survive the round trip.
+func TestAdvanceStateFromCommittedContent_NeverLeaksSeededMarker(t *testing.T) {
+	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
+	chain := map[string]*SeriesState{
+		"Pinned Show": {ShowTitle: "Pinned Show", CurrentSeason: 1, CurrentEpisode: 6, LastAired: &seededMarker},
+	}
+	content := []tunarr.Program{
+		{ID: "p-s1e6", Type: "episode", ShowTitle: "Pinned Show", SeasonNumber: 1, EpisodeNumber: 6, Duration: 1_800_000},
+	}
+
+	advanced := advanceStateFromCommittedContent(chain, content, occurrenceStart)
+
+	require.True(t, advanced["Pinned Show"])
+	state := chain["Pinned Show"]
+	assert.Equal(t, 7, state.CurrentEpisode)
+	require.NotNil(t, state.LastAired)
+	assert.True(t, state.LastAired.Equal(occurrenceStart))
+	assert.False(t, state.LastAired.Equal(seededMarker), "must never leak the Seeded-marker sentinel (1970-01-01) forward")
+}
+
+// TestPlanSeriesOccurrences_TripleReapplyDuringOnAir_StableCursorAndNextOccurrence
+// pins round-3 finding 1's fix against the reviewer's own probe: chain
+// case 2 (establishSeriesChain seeding from live series_state, because
+// this occurrence's snapshot is gone but its committed history survives
+// -- exactly migration 000005's DROP TABLE on deploy day, or
+// CleanupOccurrenceSnapshots' retention GC) already reflects the
+// occurrence's OWN prior consumption once synced once; re-deriving it
+// again from the SAME frozen content must not advance a second (or
+// third) time, and the NEXT (not-yet-aired) occurrence chained after it
+// must not churn either.
+func TestPlanSeriesOccurrences_TripleReapplyDuringOnAir_StableCursorAndNextOccurrence(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
 	ctx := context.Background()
 
 	availablePrograms := []tunarr.Program{
-		{ID: "a-s1e1", Type: "episode", ShowTitle: "Stable Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Steady Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "a-s1e2", Type: "episode", ShowTitle: "Steady Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+		{ID: "a-s1e3", Type: "episode", ShowTitle: "Steady Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1_800_000},
 	}
 	block := Block{
-		ID: "stable-block", Name: "Stable Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
-		Series: []SeriesConfig{{ShowTitle: "Stable Show", EpisodesPerBlock: 1}},
+		ID: "steady-block", Name: "Steady Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Steady Show", EpisodesPerBlock: 1}},
 	}
 	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
 
-	occStart := time.Now().Add(-10 * time.Minute) // already on air
+	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into a 30min block
+	nextStart := onAirStart.Add(1 * time.Hour)      // the next, not-yet-aired occurrence
+	shells := []ScheduledSlot{{StartTime: onAirStart, Block: block}, {StartTime: nextStart, Block: block}}
+
+	firstNow := onAirStart.Add(5 * time.Minute)
+	first, err := engine.planSeriesOccurrences(block, availablePrograms, shells, firstNow)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"a-s1e1"}, programIDs(first[0].Programs))
+	require.Equal(t, []string{"a-s1e2"}, programIDs(first[1].Programs))
+
+	// Simulate migration 000005's DROP TABLE: only the on-air occurrence's
+	// snapshot is gone; its own committed history survives.
+	require.NoError(t, store.DeleteFutureOccurrenceSnapshots(ctx, block.ID, onAirStart.Add(-time.Second)))
+
+	var lastState *SeriesState
+	var lastNext []string
+	for i := range 3 {
+		reapplyNow := firstNow.Add(time.Duration(i+1) * time.Minute) // still on-air throughout
+		result, err := engine.planSeriesOccurrences(block, availablePrograms, shells, reapplyNow)
+		require.NoError(t, err)
+		require.NoError(t, engine.Commit())
+
+		require.Equal(t, []string{"a-s1e1"}, programIDs(result[0].Programs), "on-air occurrence's content must stay the verbatim replay, apply %d", i)
+
+		state, err := store.GetSeriesState(ctx, "Steady Show")
+		require.NoError(t, err)
+		if lastState != nil {
+			assert.Equal(t, lastState, state, "cursor must not drift on repeated re-applies of the same on-air occurrence, apply %d", i)
+		}
+		lastState = state
+
+		nextContent := programIDs(result[1].Programs)
+		if lastNext != nil {
+			assert.Equal(t, lastNext, nextContent, "the NEXT (not-yet-aired) occurrence's content must not churn either, apply %d", i)
+		}
+		lastNext = nextContent
+	}
+
+	assert.Equal(t, 2, lastState.CurrentEpisode, "cursor should settle at episode 2 (one past what actually aired), not walk further (e.g. to 5) on repeated re-applies")
+}
+
+// TestPlanSeriesOccurrences_PatchDuringOnAir_CursorAndDisabledSurvive
+// pins round-3 finding 2's fix against the reviewer's own probe: an
+// operator's PATCH /state/series (current_episode: 20, disabled: true)
+// while a show's occurrence is on air must survive the next apply --
+// neither field reverts to whatever the on-air occurrence's OWN frozen
+// content implies. Mirrors api.PatchSeriesState's store-level effects
+// directly (UpdateSeriesState, then DeleteFutureOccurrenceSnapshots with
+// a cutoff that also catches the still-on-air occurrence, not just
+// future ones -- see api/state.go's invalidateSeriesOccurrenceSnapshots)
+// rather than going through the HTTP handler, to isolate the engine-side
+// mechanism; TestPatchSeriesState_InvalidatesOnAirOccurrenceSnapshot
+// (internal/api/state_test.go) covers the handler's own widened cutoff.
+func TestPlanSeriesOccurrences_PatchDuringOnAir_CursorAndDisabledSurvive(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Patched Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+	}
+	block := Block{
+		ID: "patched-block", Name: "Patched Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Patched Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	onAirStart := time.Now().Add(-10 * time.Minute)
+	now := onAirStart.Add(5 * time.Minute)
+
+	_, err := engine.PlanBlock(block, availablePrograms, onAirStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	// Operator PATCHes the show while it's still on air.
+	require.NoError(t, store.UpdateSeriesState(ctx, &SeriesState{
+		ShowTitle: "Patched Show", CurrentSeason: 1, CurrentEpisode: 20, Disabled: true,
+	}))
+	require.NoError(t, store.DeleteFutureOccurrenceSnapshots(ctx, block.ID, onAirStart.Add(-time.Second)))
+
+	second, err := engine.PlanBlock(block, availablePrograms, onAirStart, now.Add(1*time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	assert.Equal(t, []string{"a-s1e1"}, programIDs(second), "the on-air occurrence's content must still be the verbatim replay")
+
+	state, err := store.GetSeriesState(ctx, "Patched Show")
+	require.NoError(t, err)
+	assert.Equal(t, 20, state.CurrentEpisode, "the operator's cursor jump must survive the next apply")
+	assert.True(t, state.Disabled, "the operator's disable must survive the next apply")
+}
+
+// TestPlanSeriesOccurrences_SpecEditAfterAired_AdvancesOnlyByCommittedContent
+// pins round-3 finding 3's fix against the reviewer's own probe: editing
+// a block's episodes_per_block AFTER an occurrence has already aired must
+// not retroactively change how far its cursor advances -- the
+// occurrence's own frozen, committed content (not the edited spec) is
+// what the persisted cursor derives from.
+func TestPlanSeriesOccurrences_SpecEditAfterAired_AdvancesOnlyByCommittedContent(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Edited Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 600_000},
+		{ID: "a-s1e2", Type: "episode", ShowTitle: "Edited Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 600_000},
+		{ID: "a-s1e3", Type: "episode", ShowTitle: "Edited Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 600_000},
+		{ID: "a-s1e4", Type: "episode", ShowTitle: "Edited Show", SeasonNumber: 1, EpisodeNumber: 4, Duration: 600_000},
+	}
+	block := Block{
+		ID: "edited-block", Name: "Edited Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Edited Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	occStart := time.Now().Add(-10 * time.Minute)
 	now := occStart.Add(5 * time.Minute)
 
-	_, err := engine.PlanBlock(block, availablePrograms, occStart, now)
+	first, err := engine.PlanBlock(block, availablePrograms, occStart, now)
 	require.NoError(t, err)
 	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"a-s1e1"}, programIDs(first))
 
-	state1, err := store.GetSeriesState(ctx, "Stable Show")
-	require.NoError(t, err)
-	require.NotNil(t, state1.LastAired, "test setup: the first (real) plan must have set LastAired")
+	// Operator edits the block AFTER this occurrence aired: bumps
+	// episodes_per_block from 1 to 4, and (mirroring UpdateBlock)
+	// invalidates the occurrence's snapshot -- its widened cutoff
+	// catching the still-on-air occurrence too.
+	editedBlock := block
+	editedBlock.Series = []SeriesConfig{{ShowTitle: "Edited Show", EpisodesPerBlock: 4}}
+	require.NoError(t, store.DeleteFutureOccurrenceSnapshots(ctx, block.ID, occStart.Add(-time.Second)))
 
-	// Re-apply the SAME already-aired occurrence a bit later, still on air.
-	second, err := engine.PlanBlock(block, availablePrograms, occStart, now.Add(1*time.Minute))
+	second, err := engine.PlanBlock(editedBlock, availablePrograms, occStart, now.Add(1*time.Minute))
 	require.NoError(t, err)
 	require.NoError(t, engine.Commit())
-	require.Equal(t, []string{"a-s1e1"}, programIDs(second), "content must still be the verbatim replay")
+	assert.Equal(t, []string{"a-s1e1"}, programIDs(second),
+		"an aired occurrence's content must stay the verbatim replay regardless of a later spec edit")
 
-	state2, err := store.GetSeriesState(ctx, "Stable Show")
+	state, err := store.GetSeriesState(ctx, "Edited Show")
 	require.NoError(t, err)
-	assert.Equal(t, state1, state2,
-		"re-applying an already-aired occurrence must leave series_state -- including LastAired -- exactly as it was, not bump it to a fresh timestamp on every re-apply")
+	assert.Equal(t, 2, state.CurrentEpisode,
+		"the persisted cursor must advance only by what actually aired (1 episode), not by the edited spec's episodes_per_block (4)")
 }
 
 // TestPlanSeriesOccurrences_SnapshotWipedButHistoryRemains_ReplacesNotAppends
