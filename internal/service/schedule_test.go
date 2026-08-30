@@ -529,7 +529,10 @@ func TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched(t *testi
 // listed AFTER slot 2 in the input to pin the sort-by-StartTime step
 // (GenerateForTimeRange doesn't guarantee chronological order across
 // blocks sharing a channel -- see this function's doc comment in
-// schedule.go).
+// schedule.go). The in-slot remainder and the following between-slot gap
+// are two SEPARATE calls that both append flex, back to back -- appendFlex
+// merges them into one entry (see its doc comment), so the expected
+// lineup below has one flex item spanning both, not two.
 func TestBuildAnchoredLineup_CumulativeOffsetsMatchWallClock(t *testing.T) {
 	anchor := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
 	windowEnd := anchor.Add(24 * time.Hour)
@@ -564,8 +567,7 @@ func TestBuildAnchoredLineup_CumulativeOffsetsMatchWallClock(t *testing.T) {
 	want := []wantItem{
 		{typ: "flex", duration: 2 * time.Hour},                 // 00:00 -> 02:00, leading gap
 		{typ: "content", id: "p1", duration: 20 * time.Minute}, // 02:00 -> 02:20
-		{typ: "flex", duration: 10 * time.Minute},              // 02:20 -> 02:30, in-slot remainder
-		{typ: "flex", duration: 2*time.Hour + 30*time.Minute},  // 02:30 -> 05:00, between-slot gap
+		{typ: "flex", duration: 2*time.Hour + 40*time.Minute},  // 02:20 -> 05:00, in-slot remainder + between-slot gap merged into one entry
 		{typ: "content", id: "p2", duration: 30 * time.Minute}, // 05:00 -> 05:30
 		{typ: "content", id: "p3", duration: 30 * time.Minute}, // 05:30 -> 06:00
 		{typ: "flex", duration: 18 * time.Hour},                // 06:00 -> 24:00, trailing pad to windowEnd
@@ -593,6 +595,77 @@ func TestBuildAnchoredLineup_CumulativeOffsetsMatchWallClock(t *testing.T) {
 	assert.Equal(t, []time.Duration{2 * time.Hour, 5 * time.Hour, 5*time.Hour + 30*time.Minute}, contentOffsets)
 
 	assert.Equal(t, windowEnd.Sub(anchor), cursor, "lineup must cover the entire apply window")
+}
+
+// TestAnchorForChannel_SkipsSlotWithZeroPrograms pins round-2 finding 7's
+// fix: an on-air occurrence whose committed history has since been pruned
+// (or predates the occurrence_start column -- migration 000003's
+// legacy-epoch sentinel rows) resolves to zero Programs. Anchoring the
+// channel to such a slot's StartTime anyway shifts playback to line up
+// with nothing -- dead air, no real content whose mid-episode position
+// needs to keep making sense. anchorForChannel must skip it, even though
+// its StartTime is otherwise the earliest.
+func TestAnchorForChannel_SkipsSlotWithZeroPrograms(t *testing.T) {
+	anchor := time.Date(2026, 1, 12, 14, 30, 0, 0, time.UTC)
+
+	onAirZeroContent := scheduler.ScheduledSlot{
+		StartTime: anchor.Add(-20 * time.Minute), // earliest, but nothing to show
+		EndTime:   anchor.Add(40 * time.Minute),
+		Block:     scheduler.Block{Name: "Pruned On-Air"},
+		Programs:  nil,
+	}
+	normal := scheduler.ScheduledSlot{
+		StartTime: anchor.Add(time.Hour),
+		EndTime:   anchor.Add(2 * time.Hour),
+		Block:     scheduler.Block{Name: "Later Block"},
+		Programs:  []tunarr.Program{{ID: "p1", Duration: 1_800_000}},
+	}
+
+	got := anchorForChannel(anchor, []scheduler.ScheduledSlot{onAirZeroContent, normal})
+	assert.True(t, got.Equal(anchor), "a zero-program on-air occurrence must not shift the anchor, even though its StartTime is earliest")
+
+	// Sanity check the opposite: an on-air occurrence WITH content still
+	// shifts the anchor exactly like before this fix.
+	onAirWithContent := scheduler.ScheduledSlot{
+		StartTime: anchor.Add(-20 * time.Minute),
+		EndTime:   anchor.Add(40 * time.Minute),
+		Block:     scheduler.Block{Name: "Real On-Air"},
+		Programs:  []tunarr.Program{{ID: "p2", Duration: 1_800_000}},
+	}
+	got2 := anchorForChannel(anchor, []scheduler.ScheduledSlot{onAirWithContent, normal})
+	assert.True(t, got2.Equal(onAirWithContent.StartTime), "an on-air occurrence WITH content must still shift the anchor to its own StartTime")
+}
+
+// TestBuildAnchoredLineup_ZeroProgramSlot_MergesAdjacentFlexEntries is
+// round-2 finding 7's other half: even with anchorForChannel no longer
+// anchoring to it, a zero-program slot sitting between anchor and
+// windowEnd still needs padding -- and, without merging, that padding
+// comes out as TWO separate, directly adjacent flex entries (the leading
+// gap up to the slot's own StartTime, immediately followed by the
+// trailing gap covering the slot's own content-less span, with nothing
+// -- no content item -- between them). appendFlex must merge them into
+// one.
+func TestBuildAnchoredLineup_ZeroProgramSlot_MergesAdjacentFlexEntries(t *testing.T) {
+	anchor := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	windowEnd := anchor.Add(2 * time.Hour)
+
+	zeroContent := scheduler.ScheduledSlot{
+		StartTime: anchor.Add(20 * time.Minute),
+		EndTime:   anchor.Add(50 * time.Minute),
+		Block:     scheduler.Block{Name: "Pruned On-Air"},
+		Programs:  nil,
+	}
+
+	lineup, err := buildAnchoredLineup(anchor, windowEnd, []scheduler.ScheduledSlot{zeroContent})
+	require.NoError(t, err)
+
+	// Without merging this would be THREE separate flex entries back to
+	// back (leading gap to the slot's start, the slot's own
+	// content-less span, and the trailing pad to windowEnd) -- all dead
+	// air, nothing separating them. Merged, it must be exactly one.
+	require.Len(t, lineup, 1, "lineup: %+v", lineup)
+	assert.Equal(t, "flex", lineup[0].Type)
+	assert.Equal(t, float64(windowEnd.Sub(anchor).Milliseconds()), lineup[0].Duration)
 }
 
 // TestBuildAnchoredLineup_NoSlots_ReturnsWholeWindowAsFlex covers the

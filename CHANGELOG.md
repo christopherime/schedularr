@@ -191,6 +191,70 @@ testing against a real Tunarr 1.3.13 instance.
     `block_id` keying, `DeleteFutureOccurrenceSnapshots`, and
     `CleanupOccurrenceSnapshots`' `recorded_at`-based pruning (none of
     which had a dedicated SQL-level test before this round).
+- **A second release-review pass on the fixes directly above found 8
+  more issues, introduced by that fix architecture itself.** All in
+  `internal/scheduler/engine.go` unless noted:
+  - **Chain-mode planning (the scratch `snapshotSeriesContext` path)
+    never wrote `e.pendingStates`, so `series_state` froze at whatever
+    the very first real plan produced, no matter how many further
+    occurrences actually aired afterward** (probe: cursor stuck at
+    S1E2 while e1..e4 had genuinely aired). Compounded with a block
+    edit's snapshot invalidation, this could re-air an already-aired
+    episode once its stale cursor was next used for a real plan. Fixed:
+    `planSeriesOccurrences` now syncs `e.pendingStates` (cloned, never
+    aliased) from the chain every time it processes an aired/on-air
+    occurrence, since that occurrence's content is settled historical
+    fact by then.
+  - **`establishSeriesChain`'s "no snapshot" branch assumed that meant
+    "never planned before," which `DeleteFutureOccurrenceSnapshots`
+    breaks: it deletes only the snapshot, never the paired
+    `schedule_history` rows.** Re-deriving after such a wipe appended a
+    second, overlapping set of history rows on top of the first instead
+    of replacing them (probe: `GetCommittedOccurrence` returned two
+    generations mixed together for the same occurrence), and -- for an
+    on-air occurrence specifically -- silently replaced already-aired
+    content with something freshly (and differently) picked, reintroducing
+    the exact mid-episode-cutoff bug fixed earlier in this same release.
+    Fixed by unifying both cases into one rule: an occurrence with
+    existing committed history is never real-planned again, aired or
+    not -- an aired one always replays verbatim via
+    `airedSeriesOccurrenceContent`; a not-yet-aired one re-derives from
+    the (now kept-accurate, see above) live `series_state` and replaces
+    its stored assignment via `ReplaceOccurrenceHistory`, never appends.
+  - **`resolveConflicts` could leave an earlier eviction committed even
+    after its evictor itself lost to a still-higher-priority slot**
+    (probe: A/C don't overlap, both overlap B; B evicts A then loses to
+    C -- A stayed dropped despite never conflicting with the real
+    survivor C, and its `Warning` blamed B, which was never even
+    scheduled). Rewritten entirely: slots are now processed
+    highest-priority-first and only ever greedily kept if they overlap
+    nothing already kept -- once kept, a slot can never be beaten by
+    anything considered afterward, so the "evict then lose" case can't
+    happen at all.
+  - **`api/blocks.go`'s `UpdateBlock`/`DeleteBlock` (and, for
+    consistency, `api/state.go`'s `PatchSeriesState`) turned a failed
+    post-mutation snapshot invalidation into a `500` for a write that
+    had already committed successfully.** Now logged and NOT surfaced
+    as a response error -- the primary mutation is authoritative by
+    then, and there is no compensating client action anyway (the call
+    is naturally idempotent, so a retry repeats it for free).
+  - **An on-air occurrence whose committed history has been pruned (or
+    predates the `occurrence_start` column) resolves to zero programs,
+    but was still used to anchor the channel** -- pointless (there is no
+    real content whose mid-episode position needs to keep making sense)
+    and produced two directly-adjacent `"flex"` lineup entries with no
+    content between them. `service.anchorForChannel`
+    (`internal/service/schedule.go`) now skips a zero-program slot when
+    choosing the anchor; `buildAnchoredLineup`'s new `appendFlex` helper
+    merges directly-adjacent flex entries into one wherever they occur.
+  - Regression tests: a three-apply cursor-advances-as-occurrences-age
+    check; a snapshot-wiped-but-history-remains no-double-history check;
+    a post-migration on-air-with-no-snapshot verbatim-replay check; a
+    three-slot evict-then-lose priority conflict check; handler-level
+    coverage for `PATCH /state/series`, `PUT /blocks/{id}`, and
+    `DELETE /blocks/{id}` actually invalidating future occurrence
+    snapshots (previously only the SQL primitive had a test); and a
+    zero-program on-air anchor/flex-merging check.
 
 ## [0.2.1] - 2026-08-29
 

@@ -100,7 +100,12 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // series-only mechanism (only series blocks have occurrence snapshots at
 // all), but it's harmless -- a no-op deleting zero rows -- to call
 // unconditionally for a filter block too, so this doesn't special-case on
-// existing.Spec.Type.
+// existing.Spec.Type. A failure at this step is logged and NOT surfaced
+// as a response error: store.UpdateBlock has already committed by then,
+// so the write genuinely succeeded, and returning 500 for it would be
+// both wrong (the caller's PUT did what it asked) and unhelpful (there's
+// no compensating action for the caller to take -- see logInternalError's
+// doc comment).
 func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
@@ -141,8 +146,7 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 	}
 
 	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, time.Now()); err != nil {
-		h.logAndWriteInternalError(w, r, "update_block_invalidate_snapshots", err)
-		return
+		h.logInternalError(r, "update_block_invalidate_snapshots", err)
 	}
 
 	writeJSON(w, http.StatusOK, toGen(*existing))
@@ -152,7 +156,8 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 //
 // After a successful delete, every not-yet-aired occurrence snapshot for
 // this block ID is also deleted (DeleteFutureOccurrenceSnapshots) -- see
-// UpdateBlock's doc comment for why a block mutation needs this. A
+// UpdateBlock's doc comment for why a block mutation needs this (including
+// why a failure here is logged and not surfaced as a response error). A
 // deleted block can never generate a future occurrence again, so this is
 // mostly tidiness rather than a live correctness bug the way UpdateBlock's
 // case is, but it's the same one-line cleanup and keeps the invariant
@@ -168,8 +173,7 @@ func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string
 	}
 
 	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, time.Now()); err != nil {
-		h.logAndWriteInternalError(w, r, "delete_block_invalidate_snapshots", err)
-		return
+		h.logInternalError(r, "delete_block_invalidate_snapshots", err)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -219,12 +223,24 @@ func (h *Handlers) writeBlockStoreError(w http.ResponseWriter, r *http.Request, 
 // record of what actually failed. op identifies which handler code path
 // produced the error (e.g. "list_blocks", "update_block_lookup").
 func (h *Handlers) logAndWriteInternalError(w http.ResponseWriter, r *http.Request, op string, err error) {
+	h.logInternalError(r, op, err)
+	WriteProblem(w, r, http.StatusInternalServerError, "internal server error", "")
+}
+
+// logInternalError is logAndWriteInternalError's log-only half, for a
+// caller that must NOT turn err into a 500 -- see e.g. UpdateBlock's and
+// DeleteBlock's own DeleteFutureOccurrenceSnapshots calls: their primary
+// mutation already succeeded and is authoritative by the time this runs,
+// so a failure here (a best-effort consistency step, and one a retry --
+// the call is naturally idempotent -- repeats for free) must not turn a
+// successful write into a client-facing failure. Same log shape as
+// logAndWriteInternalError, just without the response.
+func (h *Handlers) logInternalError(r *http.Request, op string, err error) {
 	h.d.Logger.Error("internal error",
 		"op", op,
 		"request_id", RequestIDFromContext(r.Context()),
 		"error", err,
 	)
-	WriteProblem(w, r, http.StatusInternalServerError, "internal server error", "")
 }
 
 // writeJSON writes body as an application/json response with the given

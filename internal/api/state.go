@@ -54,7 +54,10 @@ func (h *Handlers) ListSeriesState(w http.ResponseWriter, r *http.Request) {
 // that already has a snapshot, so an operator's manual cursor reset would
 // have no visible effect until every affected occurrence aged out of the
 // window on its own. See StateStore.DeleteFutureOccurrenceSnapshots' doc
-// comment.
+// comment. A failure at this step is logged, not surfaced as a response
+// error: UpdateSeriesState has already committed by then, so the PATCH
+// genuinely succeeded, and there's no compensating action for the caller
+// to take (see logInternalError's doc comment, internal/api/blocks.go).
 func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, showTitle string) {
 	var patch gen.SeriesStatePatch
 	dec := json.NewDecoder(r.Body)
@@ -98,8 +101,7 @@ func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, show
 	}
 
 	if err := h.invalidateSeriesOccurrenceSnapshots(r.Context(), showTitle); err != nil {
-		h.logAndWriteInternalError(w, r, "patch_series_state_invalidate_snapshots", err)
-		return
+		h.logInternalError(r, "patch_series_state_invalidate_snapshots", err)
 	}
 
 	writeJSON(w, http.StatusOK, seriesStateToGen(*current))

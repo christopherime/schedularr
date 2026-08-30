@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -192,4 +193,54 @@ func TestListSeriesState_InternalErrorDoesNotLeakDetail(t *testing.T) {
 
 	w := doRequest(t, h, http.MethodGet, "/state/series", nil)
 	assertGenericInternalErrorProblem(t, w)
+}
+
+// TestPatchSeriesState_InvalidatesFutureOccurrenceSnapshotsForReferencingBlocks
+// is the handler-level regression for round-2 finding 5: only the SQL
+// primitive (StateStore.DeleteFutureOccurrenceSnapshots) had a dedicated
+// test before this -- nothing exercised the actual PATCH
+// /state/series/{show_title} handler end to end to confirm it really
+// calls it, for the right blocks, and leaves an unrelated block's
+// snapshot alone.
+func TestPatchSeriesState_InvalidatesFutureOccurrenceSnapshotsForReferencingBlocks(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1,
+	}))
+
+	require.NoError(t, s.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Block One", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Block One", Type: scheduler.BlockTypeSeries, Cron: "0 20 * * *", Duration: 30, ChannelID: "channel-1",
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Show A", EpisodesPerBlock: 1}},
+		},
+	}))
+	// A block that does NOT reference Show A must be untouched.
+	require.NoError(t, s.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-2", Name: "Block Two", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Block Two", Type: scheduler.BlockTypeSeries, Cron: "0 21 * * *", Duration: 30, ChannelID: "channel-1",
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Show B", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	future := time.Now().Add(24 * time.Hour)
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-1", future, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-2", future, snapshot))
+
+	season := 3
+	body := gen.SeriesStatePatch{CurrentSeason: &season}
+	w := doRequest(t, h, http.MethodPatch, patchPath("Show A"), body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-1", future)
+	require.NoError(t, err)
+	assert.False(t, ok, "block-1 references Show A and must have its future occurrence snapshot invalidated by the PATCH")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-2", future)
+	require.NoError(t, err)
+	assert.True(t, ok, "block-2 does not reference Show A and must be untouched")
 }

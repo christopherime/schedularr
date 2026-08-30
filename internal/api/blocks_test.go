@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -392,6 +393,57 @@ func TestDeleteBlock_ThenNotFound(t *testing.T) {
 
 	wd2 := doRequest(t, h, http.MethodDelete, "/blocks/"+created.Id, nil)
 	require.Equal(t, http.StatusNotFound, wd2.Code, "deleting an already-deleted block should 404")
+}
+
+// TestUpdateBlock_InvalidatesFutureOccurrenceSnapshots and
+// TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots are the
+// handler-level regressions for round-2 finding 5: only the SQL
+// primitive (StateStore.DeleteFutureOccurrenceSnapshots) had a dedicated
+// test before this -- nothing exercised PUT/DELETE /blocks/{id} end to
+// end to confirm they really invalidate a not-yet-aired occurrence
+// snapshot for the mutated block.
+func TestUpdateBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	future := time.Now().Add(24 * time.Hour)
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, future, snapshot))
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
+	require.NoError(t, err)
+	require.True(t, ok, "test setup: snapshot must exist before the update")
+
+	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, created.Id, future)
+	require.NoError(t, err)
+	assert.False(t, ok, "PUT must invalidate every not-yet-aired occurrence snapshot for the updated block")
+}
+
+func TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	future := time.Now().Add(24 * time.Hour)
+	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, future, snapshot))
+
+	wd := doRequest(t, h, http.MethodDelete, "/blocks/"+created.Id, nil)
+	require.Equal(t, http.StatusNoContent, wd.Code)
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
+	require.NoError(t, err)
+	assert.False(t, ok, "DELETE must invalidate every not-yet-aired occurrence snapshot for the deleted block")
 }
 
 func TestListBlocks_SortedByNameAndEmpty(t *testing.T) {

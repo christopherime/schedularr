@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/christopherime/schedularr/internal/external/tunarr"
@@ -449,90 +450,90 @@ func (e *Engine) Commit() error {
 }
 
 // resolveConflicts resolves overlapping slots by priority, returning both
-// the surviving slots and a Warning for every one dropped -- the INFO log
-// lines below were, before Warning existed, the only record of a drop at
-// all; API callers (POST /generate, POST /apply) now get the same
-// information back in the response instead of needing server-side log
-// access to notice a block's occurrence never made it into the schedule.
+// the surviving slots and a Warning for every one dropped -- API callers
+// (POST /generate, POST /apply) get this back in the response, not just a
+// server-side log line, so a block's occurrence never making it into the
+// schedule is visible without log access.
 //
-// The inner scan restarts (from the same index, not the beginning -- see
-// below) after every eviction rather than stopping at the first overlap
-// found: an incoming slot can overlap *more than one* already-resolved
-// slot (three or more mutually-overlapping occurrences on the same
-// channel, or one long block spanning several shorter ones). Stopping
-// after the first eviction used to leave the incoming slot in `resolved`
-// even though it still overlapped a second, undefeated entry -- two
-// overlapping slots surviving into the returned schedule, silently
-// violating the non-overlap invariant buildAnchoredLineup
-// (internal/service/schedule.go) depends on to compute non-negative
-// gaps, and the second overlap's drop never got a Warning either.
+// Processes slots highest-priority-first (a stable sort, so equal
+// priorities keep their original "first submitted" relative order --
+// matching the old strict `>` comparison's tie-break) and greedily keeps
+// a slot only if it overlaps nothing already kept. Once a slot is kept it
+// can never be dropped later: everything considered afterward has equal
+// or lower priority, so nothing left to process could ever outrank it.
+//
+// This -- not an evict-as-you-go scan over slots in their original order
+// -- is deliberate: an earlier version let an incoming slot evict a
+// lower-priority kept one immediately, only to itself lose to a still
+// -higher-priority slot considered later in the SAME original-order pass,
+// without ever undoing that eviction. A slot that never even overlapped
+// the eventual survivor could end up dropped anyway, its Warning blaming
+// the slot that evicted it -- which, having itself lost, was never even
+// scheduled. Concretely: A and C don't overlap, but both overlap B; B
+// (priority 2) evicts A (priority 1), then loses to C (priority 3). The
+// old scan (processing order A, C, B) evicted A on B's behalf and never
+// reinstated it once B itself lost, and blamed B -- not C, the actual
+// final winner -- in A's Warning. Sorting by priority first sidesteps the
+// whole "evict then lose" case: C is considered before B, so B never gets
+// the chance to evict anything C would have beaten anyway.
 func (e *Engine) resolveConflicts(slots []ScheduledSlot) (kept []ScheduledSlot, dropped []Warning) {
 	if len(slots) == 0 {
 		return slots, nil
 	}
 
+	order := make([]int, len(slots))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return slots[order[a]].Block.Priority > slots[order[b]].Block.Priority
+	})
+
 	var resolved []ScheduledSlot
-	conflicts := 0
+	for _, i := range order {
+		slot := slots[i]
 
-	for i := range slots {
-		shouldInclude := true
-
-		// Check against already resolved slots. j is not incremented after
-		// an eviction: resolved[j] now holds what was resolved[j+1], so
-		// re-checking the same index continues the scan correctly without
-		// needing a full restart from 0 (removing an element never changes
-		// whether an earlier, already-checked element overlaps slots[i]).
-		for j := 0; j < len(resolved); {
-			if !slotsOverlap(slots[i], resolved[j]) {
-				j++
-				continue
-			}
-
-			conflicts++
-			// Higher priority wins (higher number = higher priority)
-			if slots[i].Block.Priority > resolved[j].Block.Priority {
-				metrics.ConflictsResolvedTotal.Inc()
-				// Remove the lower priority slot and add the higher one
-				e.logger.Info("scheduling conflict resolved by priority",
-					"winner_block", slots[i].Block.Name,
-					"winner_priority", slots[i].Block.Priority,
-					"loser_block", resolved[j].Block.Name,
-					"loser_priority", resolved[j].Block.Priority,
-					"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
-				dropped = append(dropped, Warning{
-					BlockName:         resolved[j].Block.Name,
-					OccurrenceStart:   resolved[j].StartTime,
-					BlockingBlockName: slots[i].Block.Name,
-				})
-				resolved = append(resolved[:j], resolved[j+1:]...)
-				continue // re-check index j (now the next element), don't increment
-			}
-
-			e.logger.Info("scheduling conflict - block blocked by higher priority",
-				"blocked_block", slots[i].Block.Name,
-				"blocked_priority", slots[i].Block.Priority,
-				"blocking_block", resolved[j].Block.Name,
-				"blocking_priority", resolved[j].Block.Priority,
-				"start_time", slots[i].StartTime.Format("2006-01-02 15:04"))
-			dropped = append(dropped, Warning{
-				BlockName:         slots[i].Block.Name,
-				OccurrenceStart:   slots[i].StartTime,
-				BlockingBlockName: resolved[j].Block.Name,
-			})
-			shouldInclude = false
-			break
+		blocker, blocked := firstOverlapping(slot, resolved)
+		if !blocked {
+			resolved = append(resolved, slot)
+			continue
 		}
 
-		if shouldInclude {
-			resolved = append(resolved, slots[i])
-		}
+		metrics.ConflictsResolvedTotal.Inc()
+		e.logger.Info("scheduling conflict - block blocked by higher priority",
+			"blocked_block", slot.Block.Name,
+			"blocked_priority", slot.Block.Priority,
+			"blocking_block", blocker.Block.Name,
+			"blocking_priority", blocker.Block.Priority,
+			"start_time", slot.StartTime.Format("2006-01-02 15:04"))
+		dropped = append(dropped, Warning{
+			BlockName:         slot.Block.Name,
+			OccurrenceStart:   slot.StartTime,
+			BlockingBlockName: blocker.Block.Name,
+		})
 	}
 
-	if conflicts > 0 {
-		e.logger.Info("resolved scheduling conflicts using priority", "conflict_count", conflicts)
+	if len(dropped) > 0 {
+		e.logger.Info("resolved scheduling conflicts using priority", "conflict_count", len(dropped))
 	}
 
 	return resolved, dropped
+}
+
+// firstOverlapping returns the first slot in resolved that overlaps slot,
+// if any -- resolveConflicts' only use of overlap once slots are
+// processed in priority order: a candidate is dropped the moment it
+// overlaps ANYTHING already kept (which, by construction, is always
+// equal-or-higher priority), so which specific kept slot is named as the
+// blocker in that case is arbitrary among ties but always a real,
+// surviving one -- never a slot that itself later lost.
+func firstOverlapping(slot ScheduledSlot, resolved []ScheduledSlot) (ScheduledSlot, bool) {
+	for _, r := range resolved {
+		if slotsOverlap(slot, r) {
+			return r, true
+		}
+	}
+	return ScheduledSlot{}, false
 }
 
 // slotsOverlap returns true if two slots overlap in time
@@ -648,16 +649,15 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program, occu
 //
 // The fix: maintain one running `chain` (nil until first used) across
 // this whole call, in occurrence order. The first occurrence reached
-// while chain is still nil either seeds it from its own stored snapshot
-// (a re-derive) or, if it has never been snapshotted by any apply at all,
-// plans for real against the true global cursor (pendingStates/the
-// authoritative store -- the one case that actually advances the
-// persisted series_state) and seeds chain from the result. Every
-// subsequent occurrence in this call then always uses `chain` directly --
-// never its own, possibly-stale, stored snapshot -- and (for a
-// not-yet-aired occurrence) has its stored snapshot rewritten to match:
-// "rewrite later not-yet-aired occurrences' snapshots when an earlier one
-// is re-derived."
+// while chain is still nil seeds it via establishSeriesChain (its own
+// stored snapshot; or, lacking one, its already-committed content if it
+// has any; or, lacking both, a real plan against the true global cursor
+// -- see establishSeriesChain's doc comment for why the distinction
+// matters). Every subsequent occurrence in this call then always uses
+// `chain` directly -- never its own, possibly-stale, stored snapshot --
+// and (for a not-yet-aired occurrence) has its stored snapshot rewritten
+// to match: "rewrite later not-yet-aired occurrences' snapshots when an
+// earlier one is re-derived."
 //
 // An aired occurrence (its start is at or before now -- see PlanBlock's
 // doc comment for what "aired" means here, notably that it includes an
@@ -669,7 +669,18 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program, occu
 // fact a later apply cannot invent). It still advances `chain`, though,
 // so a not-yet-aired occurrence right after it chains from the correct
 // baseline -- the same planning function runs once against it, content
-// discarded, keeping only the resulting state.
+// discarded, keeping only the resulting state. That resulting state is
+// ALSO synced into e.pendingStates (persisted for real by Commit(), like
+// engineSeriesContext's real-plan path already was) -- an aired
+// occurrence's content is settled historical fact, so its post-state is
+// exactly what series_state should reflect as of "now," not just a
+// scratch value discarded at the end of this call. Without this,
+// series_state stays frozen at whatever the very first real plan
+// produced: every later occurrence that only ever advanced the scratch
+// chain (which is the common case once a block has been running a
+// while -- chain is seeded from a stored snapshot far more often than
+// from a genuinely fresh real plan) left the persisted cursor further
+// and further behind reality.
 
 // seriesChainResult is establishSeriesChain's result, bundled into one
 // struct to stay within revive's 3-result-limit (chain, content, and
@@ -683,27 +694,53 @@ type seriesChainResult struct {
 
 // establishSeriesChain is planSeriesOccurrences' "chain is still nil"
 // step, factored out on its own: given the FIRST shell of a batch, it
-// either seeds the chain from that occurrence's own stored snapshot
-// (planned=false -- the caller still needs to run the shared
-// aired/not-aired handling for this same shell), or -- when no snapshot
-// exists at all -- genuinely plans the occurrence for real against the
-// true global cursor and seeds the chain from the result (planned=true --
-// content is this occurrence's final answer, nothing left for the caller
-// to do for it). See planSeriesOccurrences' doc comment for why only the
-// "no snapshot" case ever touches real persisted state, regardless of
-// whether occurrenceStart happens to already be <= now: there is no
-// committed history to preserve for an occurrence that was never through
-// this pipeline before, so there's nothing for a "guard by time" to
-// protect -- that guard only matters once a snapshot DOES exist but its
-// paired schedule_history rows have since been pruned (the aired branch
-// in planSeriesOccurrences, via airedSeriesOccurrenceContent).
+// seeds the chain one of three ways, cheapest/safest first:
+//
+//  1. This occurrence already has a stored snapshot: seed chain from it
+//     (planned=false -- the caller runs the shared aired/not-aired
+//     handling for this same shell).
+//  2. No snapshot, but StateStore.GetCommittedOccurrence already has rows
+//     for it: this occurrence WAS planned by some earlier apply -- only
+//     its snapshot is gone, via DeleteFutureOccurrenceSnapshots (an
+//     operator's PATCH /state/series, or a block edit/delete) or
+//     CleanupOccurrenceSnapshots' retention GC -- so it must NOT be
+//     real-planned again (planned=false, same as case 1): for an
+//     aired/on-air occurrence that would silently replace already-aired,
+//     historical content with something freshly (and differently)
+//     picked, cutting Tunarr over mid-episode into DIFFERENT content on
+//     top of it; for either aired or not-yet-aired it would call
+//     recordHistory (append-only, RecordScheduleHistory) on rows that
+//     already exist, producing a doubled/duplicate assignment for the
+//     same occurrence once GetCommittedOccurrence reads it back. Both
+//     were reviewer-probed directly. Chain seeds from the current live
+//     series_state instead of a snapshot that no longer exists --
+//     planSeriesOccurrences' own aired branch keeps that live state
+//     accurate as of the most recently aired/on-air occurrence (see its
+//     doc comment), so it's a safe substitute, not a stale one.
+//  3. Neither exists: genuinely never planned by any apply at all -- the
+//     one case that really advances the persisted cursor and appends
+//     (rather than replaces) schedule_history.
 func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Program, occurrenceStart time.Time) (seriesChainResult, error) {
-	snapshot, hasSnapshot, err := e.store.GetOccurrenceSnapshot(context.Background(), block.ID, occurrenceStart)
+	ctx := context.Background()
+
+	snapshot, hasSnapshot, err := e.store.GetOccurrenceSnapshot(ctx, block.ID, occurrenceStart)
 	if err != nil {
 		return seriesChainResult{}, fmt.Errorf("failed to check occurrence snapshot for block %q at %s: %w", block.Name, occurrenceStart, err)
 	}
 	if hasSnapshot {
 		return seriesChainResult{chain: statesFromSnapshot(snapshot)}, nil
+	}
+
+	_, hasCommitted, err := e.store.GetCommittedOccurrence(ctx, block.Name, occurrenceStart)
+	if err != nil {
+		return seriesChainResult{}, fmt.Errorf("failed to check committed occurrence for block %q at %s: %w", block.Name, occurrenceStart, err)
+	}
+	if hasCommitted {
+		chain, err := e.cloneLiveSeriesStates(block)
+		if err != nil {
+			return seriesChainResult{}, err
+		}
+		return seriesChainResult{chain: chain}, nil
 	}
 
 	before, err := e.captureSeriesSnapshot(block)
@@ -767,6 +804,11 @@ func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.P
 			// discarded -- only the resulting state matters here) so a
 			// not-yet-aired occurrence right after it chains correctly.
 			_ = e.planSeriesBlockWithContext(&snapshotSeriesContext{states: chain}, block, availablePrograms, rng)
+			// This occurrence really aired: persist the chain's resulting
+			// state for real too -- see this function's doc comment for
+			// why (series_state must not stay frozen at whatever the
+			// last genuinely-fresh real plan produced).
+			e.syncPendingStatesFromChain(chain)
 			shell.Programs = content
 			out = append(out, shell)
 			continue
@@ -843,6 +885,25 @@ func (e *Engine) cloneLiveSeriesStates(block Block) (map[string]*SeriesState, er
 		states[sc.ShowTitle] = &cloned
 	}
 	return states, nil
+}
+
+// syncPendingStatesFromChain writes CLONES of chain's current per-show
+// states into e.pendingStates, so Commit() persists them for real via
+// UpdateSeriesState (the same path engineSeriesContext's real-plan path
+// already uses) -- called after processing an aired/on-air occurrence in
+// planSeriesOccurrences' main loop, since that occurrence's content is
+// now settled historical fact and the chain's resulting state is exactly
+// what series_state should reflect as of "now." Clones, never aliases
+// chain's own *SeriesState pointers directly: chain keeps mutating in
+// place as later occurrences in this same batch are processed (including
+// not-yet-aired ones, which must never be able to touch persisted state),
+// and pendingStates must never be able to see those FUTURE mutations
+// through a shared pointer.
+func (e *Engine) syncPendingStatesFromChain(chain map[string]*SeriesState) {
+	for title, state := range chain {
+		cloned := *state
+		e.pendingStates[title] = &cloned
+	}
 }
 
 // resolveCommittedPrograms upgrades a committed occurrence's stored

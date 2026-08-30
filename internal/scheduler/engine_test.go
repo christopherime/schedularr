@@ -841,6 +841,196 @@ func TestPlanBlock_SeriesFillerFallback_TwoApplies_ByteIdenticalContent(t *testi
 		"re-deriving an unchanged not-yet-aired occurrence with filler fallback enabled must produce byte-identical content, including filler order/selection")
 }
 
+// TestPlanSeriesOccurrences_PersistedCursorAdvancesAsOccurrencesAge pins
+// round-2 finding 1's fix: chain-mode planning (the scratch
+// snapshotSeriesContext path) only ever mutated the local `chain` map,
+// never e.pendingStates -- so series_state stayed frozen at whatever the
+// very first real plan produced, no matter how many further occurrences
+// actually aired afterward (reviewer probe: cursor stuck at S1E2 while
+// e1..e4 had genuinely aired). Fixed by syncing e.pendingStates from the
+// chain every time planSeriesOccurrences processes an aired/on-air
+// occurrence, since that occurrence's content is settled historical fact
+// by then.
+//
+// Simulated across three separate applies of the SAME four-occurrence
+// batch, with "now" moving forward each time so one more occurrence ages
+// from not-yet-aired into aired -- exactly the reviewer's repro shape,
+// not just a single apply.
+func TestPlanSeriesOccurrences_PersistedCursorAdvancesAsOccurrencesAge(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "s-e1", Type: "episode", ShowTitle: "Cursor Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "s-e2", Type: "episode", ShowTitle: "Cursor Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+		{ID: "s-e3", Type: "episode", ShowTitle: "Cursor Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1_800_000},
+		{ID: "s-e4", Type: "episode", ShowTitle: "Cursor Show", SeasonNumber: 1, EpisodeNumber: 4, Duration: 1_800_000},
+		{ID: "s-e5", Type: "episode", ShowTitle: "Cursor Show", SeasonNumber: 1, EpisodeNumber: 5, Duration: 1_800_000},
+	}
+	block := Block{
+		ID: "cursor-block", Name: "Cursor Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Cursor Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	base := time.Now()
+	occ1 := base.Add(1 * time.Hour)
+	occ2 := base.Add(2 * time.Hour)
+	occ3 := base.Add(3 * time.Hour)
+	occ4 := base.Add(4 * time.Hour)
+	shells := []ScheduledSlot{
+		{StartTime: occ1, Block: block}, {StartTime: occ2, Block: block},
+		{StartTime: occ3, Block: block}, {StartTime: occ4, Block: block},
+	}
+
+	// Apply 1: nothing has aired yet.
+	_, err := engine.planSeriesOccurrences(block, availablePrograms, shells, base)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	// Apply 2: occ1 and occ2 have now aired (occ3, occ4 haven't).
+	_, err = engine.planSeriesOccurrences(block, availablePrograms, shells, occ2.Add(1*time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	state, err := store.GetSeriesState(ctx, "Cursor Show")
+	require.NoError(t, err)
+	assert.Equal(t, 3, state.CurrentEpisode,
+		"persisted cursor must reflect BOTH aired occurrences (e1, e2 consumed -> next is e3), not stay frozen at whatever the first real plan produced")
+
+	// Apply 3: occ3 also ages into aired.
+	_, err = engine.planSeriesOccurrences(block, availablePrograms, shells, occ3.Add(1*time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	state, err = store.GetSeriesState(ctx, "Cursor Show")
+	require.NoError(t, err)
+	assert.Equal(t, 4, state.CurrentEpisode, "persisted cursor must keep advancing as MORE occurrences age into aired")
+}
+
+// TestPlanSeriesOccurrences_SnapshotWipedButHistoryRemains_ReplacesNotAppends
+// pins round-2 finding 2's fix: establishSeriesChain's "no snapshot"
+// branch used to assume that meant "never planned before" unconditionally,
+// so it called the append-only recordHistory path -- but
+// DeleteFutureOccurrenceSnapshots (an operator's PATCH /state/series, or a
+// block edit) deletes ONLY the snapshot, never the schedule_history rows
+// a not-yet-aired occurrence's earlier commit also wrote. Re-deriving
+// after such a wipe used to append a second, overlapping set of history
+// rows on top of the first instead of replacing them (reviewer probe:
+// GetCommittedOccurrence returned [a-s1e3, a-s1e2] -- two generations
+// mixed together for the same occurrence).
+func TestPlanSeriesOccurrences_SnapshotWipedButHistoryRemains_ReplacesNotAppends(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Wipe Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "a-s1e2", Type: "episode", ShowTitle: "Wipe Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+		{ID: "a-s1e3", Type: "episode", ShowTitle: "Wipe Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1_800_000},
+	}
+	block := Block{
+		ID: "wipe-block", Name: "Wipe Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Wipe Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	now := time.Now()
+	occStart := now.Add(1 * time.Hour) // not yet aired throughout this test
+
+	// First apply: commits e1.
+	first, err := engine.PlanBlock(block, availablePrograms, occStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"a-s1e1"}, programIDs(first))
+
+	// Simulate an operator PATCH/block-edit invalidation: wipe just this
+	// occurrence's snapshot (now < occStart makes it "future").
+	require.NoError(t, store.DeleteFutureOccurrenceSnapshots(ctx, block.ID, now))
+
+	_, hasSnapshot, err := store.GetOccurrenceSnapshot(ctx, block.ID, occStart)
+	require.NoError(t, err)
+	require.False(t, hasSnapshot, "test setup: snapshot must be wiped")
+	_, hasCommitted, err := store.GetCommittedOccurrence(ctx, block.Name, occStart)
+	require.NoError(t, err)
+	require.True(t, hasCommitted, "test setup: committed history must survive the snapshot wipe")
+
+	// Second apply: same occurrence, same "now" -- re-derive.
+	second, err := engine.PlanBlock(block, availablePrograms, occStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	// The critical assertion: exactly what was just re-derived, nothing
+	// more -- not the first apply's content ALSO still sitting there.
+	committed, ok, err := store.GetCommittedOccurrence(ctx, block.Name, occStart)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, programIDs(second), programIDs(committed),
+		"the occurrence's committed assignment must have been REPLACED by the re-derive, not appended to")
+	assert.Len(t, committed, 1, "must be exactly one program's worth of committed rows -- a doubled result mixing the old and new generations is exactly the reviewer's probe")
+}
+
+// TestPlanSeriesOccurrences_OnAirWithCommittedHistoryButNoSnapshot_NeverRealPlans
+// pins round-2 finding 3's fix: establishSeriesChain's "no snapshot"
+// branch used to real-plan UNCONDITIONALLY, bypassing PlanBlock's own
+// aired guard entirely -- so the first apply after every snapshot was
+// wiped (e.g. migration 000005's DROP TABLE on deploy day) real-planned
+// even an ON-AIR occurrence, replacing its already-aired, committed
+// content with something freshly (and differently) picked, and appending
+// a duplicate history row on top of the original. This is the exact
+// mid-episode-cutoff bug finding 7 (round 1) fixed, reintroduced by a gap
+// in how "no snapshot" was handled. Fix: an occurrence with existing
+// committed history is never real-planned, aired or not -- an aired one
+// always replays verbatim via airedSeriesOccurrenceContent.
+func TestPlanSeriesOccurrences_OnAirWithCommittedHistoryButNoSnapshot_NeverRealPlans(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "On Air Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "a-s1e2", Type: "episode", ShowTitle: "On Air Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+	}
+	block := Block{
+		ID: "onair-block", Name: "On Air Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "On Air Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	occStart := time.Now().Add(-10 * time.Minute) // already started
+	firstNow := occStart.Add(5 * time.Minute)     // 5min into a 30min block: on air
+
+	first, err := engine.PlanBlock(block, availablePrograms, occStart, firstNow)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"a-s1e1"}, programIDs(first))
+
+	// Simulate migration 000005's DROP TABLE (or any other GC that clears
+	// the snapshot but leaves committed history intact): now < occStart
+	// makes this occurrence's own snapshot "future" and eligible for the
+	// wipe.
+	require.NoError(t, store.DeleteFutureOccurrenceSnapshots(ctx, block.ID, occStart.Add(-time.Second)))
+	_, hasSnapshot, err := store.GetOccurrenceSnapshot(ctx, block.ID, occStart)
+	require.NoError(t, err)
+	require.False(t, hasSnapshot, "test setup: snapshot must be gone")
+
+	// Re-apply later, still on air (25min in, still within the 30min
+	// block).
+	secondNow := occStart.Add(25 * time.Minute)
+	second, err := engine.PlanBlock(block, availablePrograms, occStart, secondNow)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	assert.Equal(t, []string{"a-s1e1"}, programIDs(second),
+		"an on-air occurrence with committed history must be replayed verbatim, snapshot or not -- never re-planned into DIFFERENT content")
+
+	committed, ok, err := store.GetCommittedOccurrence(ctx, block.Name, occStart)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Len(t, committed, 1, "must not have doubled/duplicated the committed row")
+}
+
 func TestGenerateForTimeRange(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
@@ -1077,6 +1267,48 @@ func TestResolveConflicts_RestartsScanAfterEviction_HandlesThreeMutualOverlaps(t
 			assert.False(t, slotsOverlap(resolved[i], resolved[j]), "resolved slots must never overlap")
 		}
 	}
+}
+
+// TestResolveConflicts_EvictThenLose_DoesNotLeaveEarlierEvictionCommitted
+// pins round-2 finding 4's fix: the round-1 restart-scan version above
+// still processed slots in their ORIGINAL order and evicted immediately,
+// so a mid-priority slot could evict a lower-priority one and then, later
+// in that same original-order pass, itself lose to a still-higher
+// slot -- without ever undoing the eviction it caused. Reviewer probe:
+// A(p1) and C(p3) do NOT overlap each other, but both overlap B(p2);
+// processed in order [A, C, B], B evicts A, then B itself loses to C.
+// The old code left A dropped anyway (despite never actually conflicting
+// with the real survivor C) and blamed B -- which itself never
+// survived -- in A's Warning. Fixed by processing highest-priority-first
+// and never evicting at all: a slot already kept can't be beaten by
+// anything considered afterward.
+func TestResolveConflicts_EvictThenLose_DoesNotLeaveEarlierEvictionCommitted(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	engine := NewEngine(client, []Block{}, store, slog.Default(), time.UTC)
+
+	base := time.Date(2026, 1, 12, 9, 0, 0, 0, time.UTC)
+	slotA := ScheduledSlot{StartTime: base, EndTime: base.Add(60 * time.Minute), Block: Block{Name: "A", Priority: 1}}
+	slotC := ScheduledSlot{StartTime: base.Add(90 * time.Minute), EndTime: base.Add(150 * time.Minute), Block: Block{Name: "C", Priority: 3}}
+	slotB := ScheduledSlot{StartTime: base.Add(30 * time.Minute), EndTime: base.Add(120 * time.Minute), Block: Block{Name: "B", Priority: 2}}
+
+	require.False(t, slotsOverlap(slotA, slotC), "test setup: A and C must not overlap each other")
+	require.True(t, slotsOverlap(slotA, slotB), "test setup: A and B must overlap")
+	require.True(t, slotsOverlap(slotB, slotC), "test setup: B and C must overlap")
+
+	resolved, dropped := engine.resolveConflicts([]ScheduledSlot{slotA, slotC, slotB})
+
+	names := make([]string, len(resolved))
+	for i, s := range resolved {
+		names[i] = s.Block.Name
+	}
+	assert.ElementsMatch(t, []string{"A", "C"}, names,
+		"A does not overlap the real survivor C and must be kept, even though B would have evicted it before B itself lost to C")
+
+	require.Len(t, dropped, 1, "only B (which loses to C) should be dropped")
+	assert.Equal(t, "B", dropped[0].BlockName)
+	assert.Equal(t, "C", dropped[0].BlockingBlockName,
+		"the warning must name C -- the actual final blocker -- not A's would-be evictor B, which itself never survived")
 }
 
 // TestGenerateForTimeRange_OnAirOccurrence_StaysInLineupAtOriginalStart

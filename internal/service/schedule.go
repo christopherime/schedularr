@@ -334,8 +334,27 @@ func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time,
 // A channel with no on-air occurrence is unaffected: every slot's
 // StartTime is already >= anchor, so the loop never lowers it, and this
 // returns anchor unchanged -- exactly the pre-finding-7 behavior.
+//
+// A slot with zero resolved Programs is skipped entirely, even if its
+// StartTime is the earliest: an on-air occurrence whose committed history
+// has since been pruned (CleanupScheduleHistory's retention window) or
+// predates the occurrence_start column (migration 000003's legacy-epoch
+// sentinel rows) resolves to no content at all -- see
+// airedSeriesOccurrenceContent's doc comment (internal/scheduler/
+// engine.go). Anchoring at such an occurrence's StartTime anyway would
+// shift the whole channel's playback position to line up with nothing --
+// dead air the operator gets no benefit from being "anchored" to, since
+// there's no real content whose mid-episode position needs to keep making
+// sense. Falling back toward the global anchor (or a later on-air
+// occurrence's StartTime, if this channel has more than one block) still
+// produces a correct lineup either way: buildAnchoredLineup pads any gap
+// -- including one before a zero-content slot's own StartTime -- with
+// flex, it just isn't specially anchored to it.
 func anchorForChannel(anchor time.Time, slots []scheduler.ScheduledSlot) time.Time {
 	for _, slot := range slots {
+		if len(slot.Programs) == 0 {
+			continue
+		}
 		if slot.StartTime.Before(anchor) {
 			anchor = slot.StartTime
 		}
@@ -404,7 +423,7 @@ func buildAnchoredLineup(anchor, windowEnd time.Time, slots []scheduler.Schedule
 	cursor := anchor
 	for _, slot := range sorted {
 		if gap := slot.StartTime.Sub(cursor); gap > 0 {
-			lineup = append(lineup, flexItem(gap))
+			lineup = appendFlex(lineup, gap)
 			cursor = slot.StartTime
 		}
 		for i := range slot.Programs {
@@ -424,12 +443,12 @@ func buildAnchoredLineup(anchor, windowEnd time.Time, slots []scheduler.Schedule
 		// computed against this slot's intended end time, not wherever its
 		// actual content happened to stop.
 		if gap := slot.EndTime.Sub(cursor); gap > 0 {
-			lineup = append(lineup, flexItem(gap))
+			lineup = appendFlex(lineup, gap)
 			cursor = slot.EndTime
 		}
 	}
 	if gap := windowEnd.Sub(cursor); gap > 0 {
-		lineup = append(lineup, flexItem(gap))
+		lineup = appendFlex(lineup, gap)
 	}
 
 	return lineup, nil
@@ -438,9 +457,28 @@ func buildAnchoredLineup(anchor, windowEnd time.Time, slots []scheduler.Schedule
 // flexItem builds a "flex" (dead-air/offline) lineup entry of duration d.
 // d must be strictly positive -- Tunarr's FlexProgramSchema requires it
 // (source-verified, see tunarr.LineupItem's doc comment); every call site
-// in buildAnchoredLineup already guards for gap > 0 before calling this.
+// (via appendFlex) already guards for gap > 0 before calling this.
 func flexItem(d time.Duration) tunarr.LineupItem {
 	return tunarr.LineupItem{Type: "flex", Duration: float64(d.Milliseconds())}
+}
+
+// appendFlex appends a flex entry of duration d to lineup, merging it
+// into the trailing entry instead of adding a new one whenever that
+// trailing entry is ALSO flex, rather than leaving two separate,
+// adjacent flex items. This can happen even under normal operation --
+// e.g. a slot with zero resolved Programs (see anchorForChannel's doc
+// comment for when: a pruned or legacy on-air occurrence) sits right
+// before a genuine schedule gap, and each independently contributes its
+// own flex entry via the two separate call sites above. Two adjacent
+// flex entries aren't wrong (Tunarr plays them back to back, functionally
+// identical to one longer one), but merging keeps the pushed lineup
+// minimal and its item count predictable.
+func appendFlex(lineup []tunarr.LineupItem, d time.Duration) []tunarr.LineupItem {
+	if n := len(lineup); n > 0 && lineup[n-1].Type == "flex" {
+		lineup[n-1].Duration += float64(d.Milliseconds())
+		return lineup
+	}
+	return append(lineup, flexItem(d))
 }
 
 // fetchPrograms returns the available Tunarr content to schedule against:
