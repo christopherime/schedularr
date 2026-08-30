@@ -49,6 +49,7 @@ cmd/                          # CLI commands (Cobra)
     └── scheduler.cue
 internal/
 ├── config/                   # CUE-based config loading (see internal/cueconfig)
+├── cueconfig/                # CUE schema validation, generation, loading (schemas in cmd/schema/)
 ├── scheduler/                # Core scheduling engine
 │   ├── engine.go             # GenerateForTimeRange, PlanBlock, PlanSeriesBlock
 │   ├── filter.go             # Genre/rating/year/duration/title filters
@@ -59,6 +60,8 @@ internal/
 ├── store/                    # SQLite state persistence (blocks, series state, history)
 │   └── migrations/           # DB migrations
 ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
+├── problem/                  # RFC 7807 problem+json error body (shared by api + middleware)
+├── metrics/                  # Prometheus metrics instrumentation
 ├── service/                  # Schedule generate/apply workflow (shared by CLI + API)
 ├── blockio/                  # scheduler.yaml parse/render + first-run store import
 ├── cache/                    # In-memory caching

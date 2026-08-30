@@ -65,11 +65,15 @@ func initConfig() {
 	configPath := config.FindConfigFile(cfgFile)
 
 	if configPath != "" {
-		// Load config using CUE validation and defaults
+		// Load config using CUE validation and defaults. A config file that
+		// exists but fails to parse or CUE-validate is fatal: silently
+		// proceeding with a nil config (what an earlier version did) left
+		// every downstream command either nil-panicking or acting as if no
+		// config file was ever given, with zero diagnostic.
 		cfg, err := config.Load(configPath)
 		if err != nil {
-			// Config file exists but failed to load - this is an error
-			return
+			_, _ = fmt.Fprintf(os.Stderr, "Error: failed to load config %s: %v\n", configPath, err)
+			os.Exit(1)
 		}
 		appConfig = cfg
 	}

@@ -19,7 +19,7 @@ All commands support the global `--config` flag to specify a custom app config f
 
 ### `config generate [filename]`
 
-Generates an application configuration file from the CUE schema with default values. Also available as `generate config --output <filename>` (same generator, different subcommand tree).
+Generates an application configuration file from the CUE schema with default values.
 
 ```bash
 schedularr config generate                 # Default config.yaml

@@ -106,6 +106,8 @@ When a series runs out of episodes (every season and episode scheduled):
 
 `max_runs` (used with `on_complete: "restart"`) caps how many times a series restarts. Once `run_count` reaches `max_runs`, the series is disabled automatically. `0` means unlimited restarts.
 
+**Shared shows need agreeing policies.** Series state is keyed by show title, shared across every block that schedules the show — `on_complete` included. Two blocks giving the same show *contradictory* policies (one `disable`, another `restart` or `continue`) fight over that shared state: whichever block plans latest re-applies its own policy, so a show one block disabled can come back active the next time the other block completes it. Give a show the same `on_complete` in every block that schedules it.
+
 ### Skipping episodes
 
 `skip_episodes` takes a list in `SxxEyy` form (season and episode padded to two digits), e.g. `["S01E03", "S02E07"]` — useful for filler episodes, problematic content, or anything watched too many times already.

@@ -153,3 +153,30 @@ func TestResolveCronInterval_DefaultsTo6hWhenNothingSet(t *testing.T) {
 		t.Errorf("expected 6h default when nothing is set, got %v", got)
 	}
 }
+
+// TestApplyWindowDays pins the interval->window derivation: sub-24h
+// intervals keep the historical 1-day window; anything at or past 24h gets
+// a window that always exceeds the interval (floor(interval/24h)+1 days),
+// so Tunarr can never exhaust the pushed lineup and loop the channel back
+// to its anchor before the next tick lands.
+func TestApplyWindowDays(t *testing.T) {
+	cases := []struct {
+		interval time.Duration
+		want     int
+	}{
+		{6 * time.Hour, 1},
+		{23 * time.Hour, 1},
+		{24 * time.Hour, 2},
+		{25 * time.Hour, 2},
+		{48 * time.Hour, 3},
+		{7 * 24 * time.Hour, 8},
+	}
+	for _, c := range cases {
+		if got := applyWindowDays(c.interval); got != c.want {
+			t.Errorf("applyWindowDays(%v) = %d, want %d", c.interval, got, c.want)
+		}
+		if window := time.Duration(applyWindowDays(c.interval)) * 24 * time.Hour; window <= c.interval {
+			t.Errorf("applyWindowDays(%v): window %v does not exceed the interval", c.interval, window)
+		}
+	}
+}

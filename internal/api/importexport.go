@@ -40,24 +40,20 @@ const maxImportBodyBytes = 1 << 20 // 1MiB
 //     Any failure -> 400.
 //  4. Pre-check every parsed block's name against the store's existing
 //     block names. Any collision -> 409 listing the colliding name(s),
-//     with zero writes: this is the transactional-batch alternative Task 9
-//     parked (see writeBlockStoreError's doc comment) -- since blocks CRUD
-//     writes one row per call with no batch/transaction primitive in
-//     internal/store, the only way to guarantee "nothing partially
-//     imported" without adding one is to make the collision impossible
-//     before the first write.
+//     with zero writes -- the friendly-diagnostic path, since it can name
+//     every colliding block at once.
 //  5. dry_run=true (default false) stops here and reports the would-be
 //     result without writing anything.
 //  6. Otherwise, create every parsed block (uuid.NewString ID, Enabled
 //     true -- imported blocks start active, matching Bootstrap's behavior
-//     in blockio/bootstrap.go). Given step 4's pre-check, a create failure
-//     here is unexpected (e.g. a genuine store/driver fault, or a name
-//     collision from a concurrent request racing this one); either way it
-//     is logged and reported as a generic 500, matching every other
+//     in blockio/bootstrap.go) via store.CreateBlocks, a single
+//     transaction: all blocks land or none do. Given step 4's pre-check, a
+//     failure here is unexpected -- a name collision from a concurrent
+//     request racing this one maps to 409 (with nothing imported, thanks
+//     to the transaction's rollback); any other store/driver fault is
+//     logged and reported as a generic 500, matching every other
 //     unexpected-store-error path in this package
-//     (logAndWriteInternalError). A batch transaction that could roll back
-//     a partial write on such a race stays out of scope, per the same
-//     parked ruling step 4 references.
+//     (logAndWriteInternalError).
 func (h *Handlers) ImportBlocks(w http.ResponseWriter, r *http.Request, params gen.ImportBlocksParams) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportBodyBytes)
 	data, err := io.ReadAll(r.Body)
@@ -110,19 +106,8 @@ func (h *Handlers) ImportBlocks(w http.ResponseWriter, r *http.Request, params g
 
 	dryRun := params.DryRun != nil && *params.DryRun
 
-	if !dryRun {
-		for _, b := range blocks {
-			rec := &store.BlockRecord{
-				ID:      uuid.NewString(),
-				Name:    b.Name,
-				Enabled: true,
-				Spec:    b,
-			}
-			if err := h.d.Store.CreateBlock(r.Context(), rec); err != nil {
-				h.logAndWriteInternalError(w, r, "import_blocks_create", err)
-				return
-			}
-		}
+	if !dryRun && !h.createImportedBlocks(w, r, blocks) {
+		return
 	}
 
 	writeJSON(w, http.StatusOK, gen.ImportResult{
@@ -130,6 +115,34 @@ func (h *Handlers) ImportBlocks(w http.ResponseWriter, r *http.Request, params g
 		DryRun:   dryRun,
 		Names:    &names,
 	})
+}
+
+// createImportedBlocks persists every parsed block in one CreateBlocks
+// transaction (step 6 of ImportBlocks' binding order -- all blocks land or
+// none do) and reports whether it succeeded, writing the error response
+// itself when it didn't. ErrConflict here means a concurrent create raced
+// past step 4's pre-existing-name check; the transaction rolled the whole
+// batch back, so nothing was imported.
+func (h *Handlers) createImportedBlocks(w http.ResponseWriter, r *http.Request, blocks []scheduler.Block) bool {
+	recs := make([]*store.BlockRecord, 0, len(blocks))
+	for _, b := range blocks {
+		recs = append(recs, &store.BlockRecord{
+			ID:      uuid.NewString(),
+			Name:    b.Name,
+			Enabled: true,
+			Spec:    b,
+		})
+	}
+	if err := h.d.Store.CreateBlocks(r.Context(), recs); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			WriteProblem(w, r, http.StatusConflict, "block name already exists",
+				"a block name collided during import; nothing was imported")
+			return false
+		}
+		h.logAndWriteInternalError(w, r, "import_blocks_create", err)
+		return false
+	}
+	return true
 }
 
 // validateImportedShowTitles runs validateSeriesShowTitles (blocks.go) over

@@ -18,7 +18,11 @@ package schema
 	// Interval between cron-driven schedule regenerate-and-apply cycles
 	// (the `serve` command's cron loop). Not under `api` since it governs
 	// the scheduler, not the HTTP server -- `serve --interval` overrides
-	// this value when explicitly passed.
+	// this value when explicitly passed. The apply window each tick
+	// generates scales with this automatically (floor(interval/24h)+1
+	// days, see cmd/serve.go's applyWindowDays): the pushed lineup always
+	// outlasts the gap between ticks, so intervals past 24h don't make
+	// Tunarr exhaust the lineup and loop the channel back to its anchor.
 	cron_interval: string | *"6h"
 
 	// Maintenance configuration for background tasks

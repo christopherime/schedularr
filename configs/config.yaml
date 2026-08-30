@@ -6,12 +6,14 @@ log:
   level: info
   format: text
   timezone: Local
-  file: schedularr.log
 
 database: schedularr.db
 scheduler_file: scheduler.yaml
 # How often `schedularr serve`'s cron loop regenerates and applies the
 # schedule. `serve --interval`/`-i` overrides this when passed explicitly.
+# The apply window scales with this automatically (floor(interval/24h)+1
+# days), so intervals past 24h stay safe -- the pushed lineup always
+# outlasts the gap between ticks.
 cron_interval: 6h
 
 # how long schedule_history rows are kept -- also bounds how far back

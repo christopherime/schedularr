@@ -309,3 +309,35 @@ func TestBlockCRUD_TableDriven(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateBlocks_RollsBackWholeBatchOnConflict pins CreateBlocks'
+// all-or-nothing contract: a name collision anywhere in the batch (here,
+// with a pre-existing block) rolls back every earlier insert from the same
+// batch.
+func TestCreateBlocks_RollsBackWholeBatchOnConflict(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.CreateBlock(ctx, &store.BlockRecord{ID: "pre", Name: "Existing"}))
+
+	err := s.CreateBlocks(ctx, []*store.BlockRecord{
+		{ID: "new-1", Name: "Fresh"},
+		{ID: "new-2", Name: "Existing"}, // collides with the pre-existing block
+	})
+	require.ErrorIs(t, err, store.ErrConflict)
+
+	// The colliding batch must have left nothing behind -- "Fresh" included.
+	recs, listErr := s.ListBlocks(ctx)
+	require.NoError(t, listErr)
+	require.Len(t, recs, 1)
+	require.Equal(t, "Existing", recs[0].Name)
+
+	// A clean batch lands whole.
+	require.NoError(t, s.CreateBlocks(ctx, []*store.BlockRecord{
+		{ID: "new-1", Name: "Fresh"},
+		{ID: "new-3", Name: "Also Fresh"},
+	}))
+	recs, listErr = s.ListBlocks(ctx)
+	require.NoError(t, listErr)
+	require.Len(t, recs, 3)
+}

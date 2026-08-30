@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
@@ -72,6 +73,15 @@ func channelToGen(c tunarr.Channel) gen.Channel {
 	}
 }
 
+// statusProbeTimeout bounds GetStatus's Tunarr liveness probe. Without it,
+// a slow-but-not-dead Tunarr instance makes /status itself slow: the probe
+// otherwise inherits only r.Context() plus whatever retry/backoff budget
+// internal/httpclient imposes, neither of which caps a single slow
+// response. 5s is generous for a same-cluster GetChannels round-trip while
+// keeping /status's worst-case latency bounded and independent of
+// Tunarr's.
+const statusProbeTimeout = 5 * time.Second
+
 // GetStatus implements gen.ServerInterface. Unlike every other handler in
 // this package, it never returns a problem+json error response: Tunarr
 // reachability is a probe result reported in the body (tunarr_reachable /
@@ -82,11 +92,14 @@ func channelToGen(c tunarr.Channel) gen.Channel {
 func (h *Handlers) GetStatus(w http.ResponseWriter, r *http.Request) {
 	status := gen.Status{Version: h.d.Version}
 
+	probeCtx, cancel := context.WithTimeout(r.Context(), statusProbeTimeout)
+	defer cancel()
+
 	if h.d.Tunarr == nil {
 		notConfigured := "not configured"
 		status.TunarrReachable = false
 		status.TunarrError = &notConfigured
-	} else if _, err := h.d.Tunarr.GetChannels(r.Context()); err != nil {
+	} else if _, err := h.d.Tunarr.GetChannels(probeCtx); err != nil {
 		errMsg := err.Error()
 		status.TunarrReachable = false
 		status.TunarrError = &errMsg

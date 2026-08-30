@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The cron loop's apply window now scales with `cron_interval`**
+  (`floor(interval/24h)+1` days instead of a fixed 1 day), so an interval
+  past 24h can no longer exhaust the pushed lineup between ticks and make
+  Tunarr silently loop the channel back to its anchor. Sub-24h intervals
+  (the 6h default included) keep the historical 1-day window.
+  (`cmd/serve.go` `applyWindowDays`, documented in `cmd/schema/config.cue`
+  and docs/deployment.md.)
+- **`POST /blocks/import` is transactional**: blocks are persisted via a
+  single-transaction `store.CreateBlocks`, so a name collision from a
+  concurrent create racing the pre-check rolls the whole batch back (409,
+  nothing imported) instead of leaving earlier blocks half-imported.
+  (`internal/store/blocks.go`, `internal/api/importexport.go`.)
+
+### Removed
+
+- **`schedularr generate config`** — it was the same generator as
+  `schedularr config generate` reachable a second way; the nested-under-
+  `generate` variant is gone per the no-legacy-aliases policy. Use
+  `schedularr config generate`. Also dropped the stray `log.file` key from
+  `configs/config.yaml` (never defined by the schema, never read by code).
+
 ### Fixed
+
+- **A config file that exists but fails to parse or CUE-validate is now a
+  fatal, diagnosed error** instead of being silently discarded — the old
+  bare `return` in `cmd/root.go`'s `initConfig` left every downstream
+  command either nil-panicking or acting as if no config file was given.
+- **`GET /status`'s Tunarr probe is bounded by a 5s timeout**, so a
+  slow-but-not-dead Tunarr can no longer make `/status` itself hang for
+  the client. (`internal/api/tunarr.go`.)
 
 - **Deleting or disabling a channel's last block now clears the channel in
   Tunarr.** A channel with no remaining occurrences simply dropped out of

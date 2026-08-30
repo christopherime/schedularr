@@ -228,7 +228,7 @@ func serveUntil(ctx context.Context, p serveParams) error {
 	cronDone := make(chan struct{})
 	go func() {
 		defer close(cronDone)
-		runCronLoop(cronCtx, p.runner, p.cronInterval, p.logger)
+		runCronLoop(cronCtx, p.runner, p.cronInterval, applyWindowDays(p.cronInterval), p.logger)
 	}()
 
 	var result error
@@ -272,15 +272,34 @@ func serveUntil(ctx context.Context, p serveParams) error {
 	return result
 }
 
+// applyWindowDays converts the cron-loop interval into the Days window
+// each tick generates and applies. The pushed lineup must always outlast
+// the gap until the next tick re-pushes it: Tunarr loops a lineup once
+// wall-clock elapsed wraps past its total duration (see
+// service.buildAnchoredLineup's doc comment), so an interval longer than
+// the window would exhaust the lineup between ticks and silently loop the
+// channel back to its anchor. interval/24h rounded down plus one full day
+// guarantees window > interval for every allowed interval while keeping
+// the historical 1-day window for every sub-24h interval (the 6h
+// default included).
+func applyWindowDays(interval time.Duration) int {
+	days := int(interval/(24*time.Hour)) + 1
+	if days < 1 {
+		return 1
+	}
+	return days
+}
+
 // runCronLoop runs one schedule generate-and-apply cycle immediately, then
 // again every interval, until ctx is canceled. This is the same shape the
 // removed cmd/run.go's runDaemonLoop had (immediate run, then
 // ticker-driven, cancelable) -- minus SIGHUP (serve has no config-reload
 // story) and minus --once (serve is always long-running, never a one-shot
 // invocation). interval is resolveCronInterval's result (flag > config >
-// 6h default), threaded in from runServe via serveUntil.
-func runCronLoop(ctx context.Context, runner service.ScheduleRunner, interval time.Duration, logger *slog.Logger) {
-	runScheduleTick(ctx, runner, logger)
+// 6h default), threaded in from runServe via serveUntil; days is
+// applyWindowDays(interval), computed once at loop start.
+func runCronLoop(ctx context.Context, runner service.ScheduleRunner, interval time.Duration, days int, logger *slog.Logger) {
+	runScheduleTick(ctx, runner, days, logger)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -288,7 +307,7 @@ func runCronLoop(ctx context.Context, runner service.ScheduleRunner, interval ti
 	for {
 		select {
 		case <-ticker.C:
-			runScheduleTick(ctx, runner, logger)
+			runScheduleTick(ctx, runner, days, logger)
 		case <-ctx.Done():
 			return
 		}
@@ -296,15 +315,14 @@ func runCronLoop(ctx context.Context, runner service.ScheduleRunner, interval ti
 }
 
 // runScheduleTick runs a single generate-and-apply cycle for the next
-// day's schedule, mirroring cmd/generate.go's ProcessSchedule call
-// (service.Options{Days: 1, Apply: true}) -- the same call the removed
-// daemon loop made via ProcessSchedule(cfg, true, false) on every tick. A
-// failure is logged and the loop continues; it doesn't stop the server or
-// retry early, matching the old daemon's behavior of just waiting for the
-// next tick.
-func runScheduleTick(ctx context.Context, runner service.ScheduleRunner, logger *slog.Logger) {
+// days' worth of schedule (applyWindowDays' result -- 1 for every sub-24h
+// interval, matching cmd/generate.go's ProcessSchedule call
+// service.Options{Days: 1, Apply: true}). A failure is logged and the
+// loop continues; it doesn't stop the server or retry early, matching the
+// old daemon's behavior of just waiting for the next tick.
+func runScheduleTick(ctx context.Context, runner service.ScheduleRunner, days int, logger *slog.Logger) {
 	logger.Info("cron: running schedule generation")
-	if _, err := runner.Run(ctx, service.Options{Days: 1, Apply: true}); err != nil {
+	if _, err := runner.Run(ctx, service.Options{Days: days, Apply: true}); err != nil {
 		logger.Error("cron: schedule generation failed", "error", err)
 		return
 	}

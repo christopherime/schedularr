@@ -116,6 +116,51 @@ func (s *Store) CreateBlock(ctx context.Context, rec *BlockRecord) error {
 	return nil
 }
 
+// CreateBlocks inserts every record in recs in a single transaction:
+// either all of them are persisted or none are, mirroring
+// RecordScheduleHistory's and ImportSeriesStates' transactional pattern
+// (sqlite.go). This is what makes POST /blocks/import all-or-nothing even
+// when a concurrent create races past the handler's pre-existing-name
+// check: the racing name's unique-constraint violation rolls the whole
+// batch back instead of leaving earlier blocks from the same request
+// half-imported. Returns ErrConflict when any record's name already exists
+// (or duplicates another record in the same batch).
+func (s *Store) CreateBlocks(ctx context.Context, recs []*BlockRecord) error {
+	if len(recs) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	for _, rec := range recs {
+		specJSON, err := json.Marshal(rec.Spec)
+		if err != nil {
+			return fmt.Errorf("failed to marshal block spec: %w", err)
+		}
+		rec.CreatedAt = now
+		rec.UpdatedAt = now
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO blocks (id, name, enabled, spec_json, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			rec.ID, rec.Name, rec.Enabled, string(specJSON), rec.CreatedAt, rec.UpdatedAt); err != nil {
+			if isUniqueConstraintErr(err) {
+				return ErrConflict
+			}
+			return fmt.Errorf("failed to create block %q: %w", rec.Name, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit block batch: %w", err)
+	}
+	return nil
+}
+
 // UpdateBlock updates an existing block's fields and bumps UpdatedAt.
 // Returns ErrNotFound if no block with the given ID exists, or ErrConflict
 // if the update would violate the unique name constraint.

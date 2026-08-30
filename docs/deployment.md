@@ -67,7 +67,7 @@ maintenance:
   history_retention: "168h" # How long schedule_history rows are kept; also bounds GET /history?days=N
   cleanup_enabled: true
 
-cron_interval: "6h" # `serve`'s cron loop cadence; `serve --interval`/`-i` overrides it
+cron_interval: "6h" # `serve`'s cron loop cadence; `serve --interval`/`-i` overrides it. The apply window scales with it (floor(interval/24h)+1 days), so >24h intervals stay safe
 
 api: # the `serve` command's HTTP server
   listen: ":8484"
@@ -82,7 +82,7 @@ There is no `metrics_port` config key: `schedularr serve` exposes Prometheus met
 | `api.listen` | — | `:8484` | Same as `--listen`; the flag wins when explicitly passed |
 | `api.token` | `SCHEDULARR_API_TOKEN` | `""` | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set |
 | `api.insecure_no_auth` | — | `false` | Same as `--insecure-no-auth`; either source turning it on disables auth |
-| `cron_interval` | — | `6h` | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` — it governs the cron loop, not the HTTP server |
+| `cron_interval` | — | `6h` | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` — it governs the cron loop, not the HTTP server. Each tick's apply window is derived from it (floor(interval/24h)+1 days) so the pushed lineup always outlasts the gap between ticks |
 
 `schedularr serve` refuses to start if the effective token is empty (or shorter than 32 characters) and `--insecure-no-auth`/`api.insecure_no_auth` is not set.
 
