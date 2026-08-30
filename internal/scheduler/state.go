@@ -76,9 +76,13 @@ type SeriesStateSnapshot struct {
 // OccurrenceSnapshot is everything persisted per series-block occurrence
 // in series_occurrence_snapshots: the per-show cursor the occurrence
 // plans FROM (PreStates -- the seed, captured at first plan and
-// rewritten only when an earlier occurrence's re-derivation shifts this
-// occurrence's baseline), the per-show cursor it ends AT (PostStates,
-// captured at that same plan time), and when that plan was last written
+// rewritten when an earlier occurrence's re-derivation shifts this
+// occurrence's baseline, when a series ADDED to the block's spec is
+// backfilled from its live cursor (Engine.backfillChainFromLive), or --
+// by omission -- when a series REMOVED from the spec is scoped out of the
+// re-captured seed (Engine.specStates)), the per-show cursor it ends AT
+// (PostStates, captured at that same plan time and scoped the same way),
+// and when that plan was last written
 // (RecordedAt -- the occurrence's commit stamp, refreshed on every
 // upsert; an aired occurrence's row is never written again, so it
 // freezes at the plan the occurrence actually aired with).

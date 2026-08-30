@@ -74,39 +74,45 @@ func ParseYAML(data []byte) ([]scheduler.Block, error) {
 		return nil, fmt.Errorf("failed to validate blocks: duplicate block name(s): %s", strings.Join(dupes, ", "))
 	}
 
-	if err := ValidateOnCompleteAgreement(cfg.Blocks); err != nil {
-		return nil, err
-	}
-
 	// Mirror #Block's `*"filter"` default into the decoded structs: raw
 	// validation above accepted an omitted `type`, so fill in what the
 	// schema says an absent field means (matching the JSON API path's
-	// normalization in internal/api's fromGen).
+	// normalization in internal/api's fromGen). Runs before the
+	// agreement check below so that check always sees resolved types.
 	for i := range cfg.Blocks {
 		if cfg.Blocks[i].Type == "" {
 			cfg.Blocks[i].Type = scheduler.BlockTypeFilter
 		}
 	}
 
+	if err := ValidateSharedShowAgreement(cfg.Blocks); err != nil {
+		return nil, err
+	}
+
 	return cfg.Blocks, nil
 }
 
-// ValidateOnCompleteAgreement rejects a set of co-active blocks in which
-// the same show carries contradictory on_complete policies. Series state
+// ValidateSharedShowAgreement rejects a set of co-active blocks in which
+// the same show carries contradictory completion policies. Series state
 // is keyed by show title and shared across every block that schedules the
-// show, on_complete handling included -- two blocks giving one show
+// show -- completion handling included -- so two blocks giving one show
 // different policies fight over that shared state (whichever block plans
-// latest re-applies its own policy, so a show one block disabled can come
-// back active when the other completes it). Like duplicateBlockNames,
+// latest re-applies its own policy: a show one block disabled can come
+// back active when the other completes it, or one block's max_runs cap
+// can globally disable a show another block asked to restart forever).
+// The policy compared is the pair (on_complete, max_runs) -- max_runs
+// only participates when the action is "restart", the only case the
+// engine reads it (see markSeriesCompleted). Like duplicateBlockNames,
 // this is a cross-block rule CUE cannot express (#Block validates each
 // block independently), so it lives here and is shared by every write
 // path: ParseYAML (Bootstrap, POST /blocks/import) checks the file/batch
 // internally, and blocks CRUD (internal/api) checks an incoming spec
 // against the store's enabled blocks. An empty on_complete means the CUE
 // default, "continue".
-func ValidateOnCompleteAgreement(blocks []scheduler.Block) error {
+func ValidateSharedShowAgreement(blocks []scheduler.Block) error {
 	type policy struct {
 		action    scheduler.CompletionAction
+		maxRuns   int
 		blockName string
 	}
 	seen := make(map[string]policy)
@@ -120,19 +126,27 @@ func ValidateOnCompleteAgreement(blocks []scheduler.Block) error {
 			if action == "" {
 				action = scheduler.CompletionActionContinue
 			}
+			maxRuns := 0
+			if action == scheduler.CompletionActionRestart {
+				maxRuns = sc.MaxRuns
+			}
 			prev, ok := seen[sc.ShowTitle]
 			if !ok {
-				seen[sc.ShowTitle] = policy{action: action, blockName: b.Name}
+				seen[sc.ShowTitle] = policy{action: action, maxRuns: maxRuns, blockName: b.Name}
 				continue
 			}
-			if prev.action != action {
-				conflicts = append(conflicts, fmt.Sprintf("%q is %q in block %q but %q in block %q",
+			switch {
+			case prev.action != action:
+				conflicts = append(conflicts, fmt.Sprintf("%q is on_complete=%q in block %q but %q in block %q",
 					sc.ShowTitle, prev.action, prev.blockName, action, b.Name))
+			case prev.maxRuns != maxRuns:
+				conflicts = append(conflicts, fmt.Sprintf("%q restarts with max_runs=%d in block %q but max_runs=%d in block %q",
+					sc.ShowTitle, prev.maxRuns, prev.blockName, maxRuns, b.Name))
 			}
 		}
 	}
 	if len(conflicts) > 0 {
-		return fmt.Errorf("failed to validate blocks: contradictory on_complete for shared show(s): %s -- series state is shared by show title, so give a show the same on_complete in every block that schedules it",
+		return fmt.Errorf("failed to validate blocks: contradictory completion policy for shared show(s): %s -- series state is shared by show title, so give a show the same on_complete (and, for restart, max_runs) in every block that schedules it",
 			strings.Join(conflicts, "; "))
 	}
 	return nil

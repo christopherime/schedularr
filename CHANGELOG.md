@@ -14,9 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   title, so two co-active blocks giving one show different policies fight
   over it; block create/update (against every enabled block), `POST
   /blocks/import`, and `scheduler.yaml` import now return a 400 naming
-  the show and both blocks. A disabled block doesn't participate;
-  re-enabling it re-validates. (`blockio.ValidateOnCompleteAgreement`,
-  `internal/api` `checkSharedShowPolicies`.)
+  the show and both blocks. The compared policy is the pair
+  (`on_complete`, and `max_runs` when the action is `restart` -- one
+  block's cap would otherwise globally disable a show another block asked
+  to restart forever). A disabled block doesn't participate; re-enabling
+  it re-validates. NOTE for existing stores: a contradiction created
+  before this shipped makes writes to any enabled series block name the
+  two offending blocks until one of them is fixed.
+  (`blockio.ValidateSharedShowAgreement`, `internal/api`
+  `checkSharedShowPolicies`.)
 
 ### Fixed
 
@@ -25,9 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documented v0.2.3 "re-airs its pilot once" operator caveat is gone.
   Shows the stored seed knows keep replaying the seed unchanged.
   (`scheduler.Engine.backfillChainFromLive`.)
-- **Shutdown's wait for an in-flight cron tick is now bounded (30s)**:
-  past the bound, serve logs and exits instead of relying solely on the
-  supervisor's SIGKILL. (`cmd/serve.go` `cronDrainTimeout`.)
+- **Shutdown's wait for an in-flight cron tick is now bounded (10s,
+  inside Kubernetes' default 30s grace)**: past the bound, serve logs and
+  exits non-zero via os.Exit -- deliberately WITHOUT closing the store,
+  since unwinding into st.Close mid-Engine.Commit would tear the commit
+  (an advanced cursor with no snapshot/history rows). (`cmd/serve.go`
+  `cronDrainTimeout`; review finding.)
+- **A series removed from a block and later re-added now resumes from its
+  live cursor**: seed and post-state captures are scoped to the current
+  spec's shows (`specStates`), so a removed show's stale entry no longer
+  lingers in the seed to defeat the live-cursor backfill on re-add.
+  (Review finding.)
 - The `max()` direction of the real-plan provenance stamp (a plan may
   raise, never lower, a cursor's `cursor_plan_seq`) is now pinned by a
   test modeling an imported fast-clock stamp.

@@ -276,7 +276,7 @@ func TestParseYAML_RejectsContradictoryOnComplete(t *testing.T) {
 `
 	_, err := blockio.ParseYAML([]byte(yaml))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "contradictory on_complete")
+	assert.Contains(t, err.Error(), "contradictory completion policy")
 	assert.Contains(t, err.Error(), "Shared Show")
 }
 

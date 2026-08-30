@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -42,11 +43,12 @@ const shutdownTimeout = 15 * time.Second
 // cronDrainTimeout bounds how long shutdown waits for an in-flight cron
 // schedule tick after cancelCron fires. The wait is normally near-zero
 // (the loop's own ctx.Done select); only a tick already inside Runner.Run
-// -- which is not cancelable past its own ctx-check points -- can hold
-// it. Past this bound, shutdown logs and returns rather than blocking
-// until an external supervisor (Kubernetes' termination grace period)
-// SIGKILLs the process; the abandoned goroutine dies with the process.
-const cronDrainTimeout = 30 * time.Second
+// -- which is not cancelable past its own ctx-check points, notably
+// Engine.Commit's sqlite writes -- can hold it. Sized so the worst-case
+// graceful path (shutdownTimeout 15s + this) stays under Kubernetes'
+// default 30s termination grace period, so this bound actually fires
+// before the external SIGKILL would.
+const cronDrainTimeout = 10 * time.Second
 
 var (
 	serveListen         string
@@ -272,14 +274,24 @@ func serveUntil(ctx context.Context, p serveParams) error {
 	// flight (runScheduleTick's Runner.Run, e.g. mid Tunarr UpdateSchedule
 	// call), which is not itself context-aware past what Run already does
 	// (see service.Runner.Run's own doc comment on ctx) and so runs to
-	// completion rather than being interrupted. cronDrainTimeout bounds
-	// that case so shutdown is self-containedly finite instead of relying
-	// only on the external supervisor's SIGKILL backstop.
+	// completion rather than being interrupted.
+	//
+	// On timeout, exit the PROCESS (non-zero) rather than returning:
+	// returning would unwind runServe's deferred st.Close() while the tick
+	// may be mid-Engine.Commit -- Commit is a sequence of independent
+	// sqlite statements, not one transaction, and closing the DB under it
+	// tears the commit (an advanced cursor with no snapshot/history rows:
+	// the exact skipped-episodes failure mode UpdateBlock's doc comment
+	// records as a past live bug), while the process would still exit 0.
+	// os.Exit skips the defers, so the store stays open until process
+	// death -- the same semantics an external SIGKILL would impose, but
+	// self-contained, logged, and with an honest exit code.
 	select {
 	case <-cronDone:
 	case <-time.After(cronDrainTimeout):
-		p.logger.Warn("serve: cron tick still in flight after drain timeout; abandoning it",
+		p.logger.Error("serve: cron tick still in flight after drain timeout; exiting without closing the store",
 			"timeout", cronDrainTimeout.String())
+		os.Exit(1)
 	}
 
 	return result

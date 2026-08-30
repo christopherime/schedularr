@@ -896,11 +896,23 @@ func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.P
 
 		seq := e.nextPlanSeq()
 		rng := occurrenceRand(block.ID, occurrenceStart)
-		before := snapshotFromStates(chain) // value-only copies: planning's in-place chain mutation can't touch them
+		// Captures are scoped to the CURRENT spec's shows (specStates):
+		// the working chain can carry entries for shows since REMOVED from
+		// block.Series (its seed source predates the edit, and
+		// applyPostStates re-adds whatever an aired snapshot held).
+		// Persisting those into this occurrence's new seed would make a
+		// remove-then-re-add resume from the stale removed-era cursor
+		// instead of the live one -- backfillChainFromLive skips titles
+		// the seed already has. Scoping the captured maps (not the chain
+		// itself: aired replays later in the batch still need their own
+		// stored post-states applied over it) keeps "added to the spec" and
+		// "re-added to the spec" the same case: absent from the seed, so
+		// planned from the live cursor.
+		before := specStates(chain, block) // value-only copies: planning's in-place chain mutation can't touch them
 		content := e.planSeriesBlockWithContext(&snapshotSeriesContext{states: chain}, block, availablePrograms, rng)
 		e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
 			blockID: block.ID, occurrenceStart: occurrenceStart,
-			snapshot: OccurrenceSnapshot{PreStates: before, PostStates: snapshotFromStates(chain), PlanSeq: seq},
+			snapshot: OccurrenceSnapshot{PreStates: before, PostStates: specStates(chain, block), PlanSeq: seq},
 		})
 		entries := makeHistoryEntries(content, block.ChannelID, block.Name, time.Now(), occurrenceStart)
 		e.pendingReplacements = append(e.pendingReplacements, occurrenceReplacement{
@@ -1363,6 +1375,23 @@ func stateFromSnapshot(showTitle string, s SeriesStateSnapshot) *SeriesState {
 		state.LastAired = &seededMarker
 	}
 	return state
+}
+
+// specStates is snapshotFromStates scoped to the shows the block's
+// CURRENT spec schedules: chain entries for shows not (or no longer) in
+// block.Series are left out of the captured map. Used for the seed and
+// post-state captures of a not-yet-aired re-derive, so a stored seed only
+// ever describes shows the spec it was captured against actually knows --
+// see the call-site comment in planSeriesOccurrences for the
+// remove-then-re-add case this scoping exists for.
+func specStates(chain map[string]*SeriesState, block Block) map[string]SeriesStateSnapshot {
+	scoped := make(map[string]*SeriesState, len(block.Series))
+	for _, sc := range block.Series {
+		if s, ok := chain[sc.ShowTitle]; ok {
+			scoped[sc.ShowTitle] = s
+		}
+	}
+	return snapshotFromStates(scoped)
 }
 
 // snapshotFromStates is statesFromSnapshot's inverse: converts live

@@ -231,3 +231,32 @@ func TestExportBlocks_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, blocks)
 }
+
+// TestImportBlocks_ContradictoryWithStoreRejected pins the import path's
+// shared-show policy agreement: a batch whose policy for a show
+// contradicts an enabled stored block is rejected whole -- on the real
+// import AND on dry_run, whose entire purpose is previewing exactly this
+// kind of rejection.
+func TestImportBlocks_ContradictoryWithStoreRejected(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("stored", "Shared Show", gen.Restart))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	batch := `blocks:
+  - name: "Imported"
+    type: series
+    cron: "0 21 * * 6"
+    duration: 90
+    channel_id: "channel-1"
+    series:
+      - show_title: "Shared Show"
+        episodes_per_block: 1
+        on_complete: disable
+`
+	for _, path := range []string{"/blocks/import", "/blocks/import?dry_run=true"} {
+		w := doYAMLRequest(t, h, http.MethodPost, path, batch)
+		require.Equal(t, http.StatusBadRequest, w.Code, "%s: %s", path, w.Body.String())
+		assert.Contains(t, w.Body.String(), "contradictory completion policy")
+	}
+}

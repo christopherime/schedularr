@@ -338,8 +338,8 @@ func validateSeriesShowTitles(b scheduler.Block) error {
 }
 
 // checkSharedShowPolicies rejects a write whose blocks would leave two
-// co-active blocks giving one show contradictory on_complete policies
-// (blockio.ValidateOnCompleteAgreement -- see its doc comment for why
+// co-active blocks giving one show contradictory completion policies
+// (blockio.ValidateSharedShowAgreement -- see its doc comment for why
 // that state is incoherent). incoming is the spec(s) this request wants
 // active: they are checked against each other AND against every enabled
 // block already in the store except excludeID (the record being updated,
@@ -363,7 +363,7 @@ func (h *Handlers) checkSharedShowPolicies(w http.ResponseWriter, r *http.Reques
 		active = append(active, spec)
 	}
 	active = append(active, incoming...)
-	if err := blockio.ValidateOnCompleteAgreement(active); err != nil {
+	if err := blockio.ValidateSharedShowAgreement(active); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return false
 	}

@@ -3304,6 +3304,7 @@ func TestPlanBlock_SeriesAddedAfterSeed_DerivesFromLiveCursor(t *testing.T) {
 		{ID: "m-e2", Type: "episode", ShowTitle: "Main Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
 		{ID: "a-e1", Type: "episode", ShowTitle: "Added Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
 		{ID: "a-e5", Type: "episode", ShowTitle: "Added Show", SeasonNumber: 1, EpisodeNumber: 5, Duration: 1_800_000},
+		{ID: "a-e7", Type: "episode", ShowTitle: "Added Show", SeasonNumber: 1, EpisodeNumber: 7, Duration: 1_800_000},
 	}
 
 	// The added show's live cursor is far past its pilot.
@@ -3340,15 +3341,42 @@ func TestPlanBlock_SeriesAddedAfterSeed_DerivesFromLiveCursor(t *testing.T) {
 	require.NoError(t, engine.Commit())
 	assert.Equal(t, []string{"m-e1", "a-e5"}, programIDs(second),
 		"the added show must resume from its live cursor (E5), not re-air its pilot; the seeded show must replay its seed unchanged")
+
+	// Remove-then-re-add: dropping Added Show from the spec must scope it
+	// OUT of the re-captured seed (specStates), so re-adding it later
+	// picks up the then-current live cursor -- not the stale seed entry
+	// from the earlier add. Fresh engines per phase, matching how real
+	// edits land across separate serve ticks.
+	removed := original
+	engine2 := NewEngine(client, []Block{removed}, store, slog.Default(), time.UTC)
+	third, err := engine2.PlanBlock(removed, availablePrograms, occ, now)
+	require.NoError(t, err)
+	require.NoError(t, engine2.Commit())
+	require.Equal(t, []string{"m-e1"}, programIDs(third), "removed show must drop out of the occurrence")
+
+	// The show's live cursor moves on elsewhere (another block, an
+	// operator PATCH) while it is out of this block's spec...
+	store.States["Added Show"] = &SeriesState{
+		ShowTitle: "Added Show", CurrentSeason: 1, CurrentEpisode: 7, LastAired: &lastAired,
+	}
+
+	// ...and re-adding it must resume from THAT cursor, not the seed
+	// entry captured back when it was first added.
+	engine3 := NewEngine(client, []Block{edited}, store, slog.Default(), time.UTC)
+	fourth, err := engine3.PlanBlock(edited, availablePrograms, occ, now)
+	require.NoError(t, err)
+	require.NoError(t, engine3.Commit())
+	assert.Equal(t, []string{"m-e1", "a-e7"}, programIDs(fourth),
+		"a re-added show must plan from the live cursor (E7), not the stale seed from its earlier stint in the block")
 }
 
-// TestPlanSeriesOccurrences_ProvenanceStampNeverMovesBackward pins the
+// TestPlanBlock_ProvenanceStampNeverMovesBackward pins the
 // max()-direction half of the real-plan provenance stamp (the
 // `seq > st.CursorPlanSeq` guard): a live cursor already carrying a
 // HIGHER provenance than this plan's own sequence -- e.g. an imported
 // cursor_plan_seq written on a machine with a fast clock -- must keep its
 // stamp; a plan may only ever raise provenance, never lower it.
-func TestPlanSeriesOccurrences_ProvenanceStampNeverMovesBackward(t *testing.T) {
+func TestPlanBlock_ProvenanceStampNeverMovesBackward(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
 
@@ -3374,9 +3402,13 @@ func TestPlanSeriesOccurrences_ProvenanceStampNeverMovesBackward(t *testing.T) {
 
 	now := time.Now()
 	occ := now.Add(1 * time.Hour)
-	_, err := engine.PlanBlock(block, availablePrograms, occ, now)
+	planned, err := engine.PlanBlock(block, availablePrograms, occ, now)
 	require.NoError(t, err)
 	require.NoError(t, engine.Commit())
+	// The plan must actually schedule (and so advance) the show --
+	// otherwise the before==after early-continue fires and this test
+	// never reaches the guard it exists to pin.
+	require.Equal(t, []string{"f-e1"}, programIDs(planned))
 
 	state, ok := store.States["Fast Clock Show"]
 	require.True(t, ok)

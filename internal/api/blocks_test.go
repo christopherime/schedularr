@@ -790,7 +790,7 @@ func TestCreateBlock_ContradictoryOnCompleteRejected(t *testing.T) {
 
 	w = doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("second", "Shared Show", gen.Disable))
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "contradictory on_complete")
+	assert.Contains(t, w.Body.String(), "contradictory completion policy")
 	assert.Contains(t, w.Body.String(), "Shared Show")
 
 	// The same policy (or the equivalent default) is fine.
@@ -819,5 +819,43 @@ func TestCreateBlock_ContradictoryOnCompleteAllowedWhenOtherDisabled(t *testing.
 	enable := seriesBlockWriteWithPolicy("first", "Shared Show", gen.Restart)
 	w = doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, enable)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "contradictory on_complete")
+	assert.Contains(t, w.Body.String(), "contradictory completion policy")
+}
+
+// TestUpdateBlock_ChangingOwnSharedShowPolicySucceeds pins
+// checkSharedShowPolicies' excludeID: a PUT that changes a shared show's
+// policy must not 400 against the block's OWN stored spec (which the
+// update is replacing).
+func TestUpdateBlock_ChangingOwnSharedShowPolicySucceeds(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("solo", "Solo Show", gen.Restart))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	w = doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWriteWithPolicy("solo", "Solo Show", gen.Disable))
+	require.Equal(t, http.StatusOK, w.Code,
+		"changing a block's own policy must not conflict with the stored spec it replaces: %s", w.Body.String())
+}
+
+// TestUpdateBlock_DisablingSkipsSharedShowPolicyCheck: a PUT that leaves
+// the block disabled is never policy-checked -- a disabled block plans
+// nothing and fights nobody, even when its spec contradicts a live one.
+func TestUpdateBlock_DisablingSkipsSharedShowPolicyCheck(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("live", "Shared Show", gen.Restart))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("other", "Other Show", gen.Restart))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	other := decodeBlockRecord(t, w)
+
+	// Repoint "other" at the shared show with a CONTRADICTORY policy --
+	// but disabled, which must succeed.
+	disabled := false
+	contradicting := seriesBlockWriteWithPolicy("other", "Shared Show", gen.Disable)
+	contradicting.Enabled = &disabled
+	w = doRequest(t, h, http.MethodPut, "/blocks/"+other.Id, contradicting)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
