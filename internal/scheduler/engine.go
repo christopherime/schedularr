@@ -808,7 +808,9 @@ func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.P
 			// state for real too -- see this function's doc comment for
 			// why (series_state must not stay frozen at whatever the
 			// last genuinely-fresh real plan produced).
-			e.syncPendingStatesFromChain(chain)
+			if err := e.syncPendingStatesFromChain(chain); err != nil {
+				return nil, err
+			}
 			shell.Programs = content
 			out = append(out, shell)
 			continue
@@ -899,11 +901,38 @@ func (e *Engine) cloneLiveSeriesStates(block Block) (map[string]*SeriesState, er
 // not-yet-aired ones, which must never be able to touch persisted state),
 // and pendingStates must never be able to see those FUTURE mutations
 // through a shared pointer.
-func (e *Engine) syncPendingStatesFromChain(chain map[string]*SeriesState) {
+//
+// LastAired is deliberately NOT taken from chain: the scratch replay that
+// advances chain past a frozen occurrence (planSeriesOccurrences' aired
+// branch) always stamps it with a fresh time.Now(), same as a real plan
+// would -- but unlike a real plan, this runs on EVERY apply that still
+// covers an already-settled occurrence, not just the first. Copying that
+// timestamp through verbatim would bump the persisted LastAired on every
+// idempotent re-apply, which breaks "re-applying an already-committed
+// occurrence must leave series_state exactly as it was" (see PlanBlock's
+// doc comment; TestRunner_Run_Apply_IsIdempotentPerOccurrence). Instead
+// this preserves whatever LastAired the show already has (via
+// e.getSeriesState, which checks e.pendingStates first -- so multiple
+// aired occurrences of the same show within one batch chain correctly
+// too), falling back to chain's value only the first time a show is ever
+// synced at all (existing.LastAired == nil): that first transition still
+// needs to happen, since a show consumed for the first time only via
+// this aired-branch path (never through a real plan) would otherwise
+// never get its "initialized" marker set at all.
+func (e *Engine) syncPendingStatesFromChain(chain map[string]*SeriesState) error {
 	for title, state := range chain {
+		existing, err := e.getSeriesState(title)
+		if err != nil {
+			return fmt.Errorf("failed to read existing series state for %q: %w", title, err)
+		}
+
 		cloned := *state
+		if existing.LastAired != nil {
+			cloned.LastAired = existing.LastAired
+		}
 		e.pendingStates[title] = &cloned
 	}
+	return nil
 }
 
 // resolveCommittedPrograms upgrades a committed occurrence's stored

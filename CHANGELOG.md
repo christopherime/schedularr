@@ -204,7 +204,14 @@ testing against a real Tunarr 1.3.13 instance.
     `planSeriesOccurrences` now syncs `e.pendingStates` (cloned, never
     aliased) from the chain every time it processes an aired/on-air
     occurrence, since that occurrence's content is settled historical
-    fact by then.
+    fact by then. Caught (via CI, wall-clock-dependent) and fixed a
+    second issue in the same mechanism during this same round: the
+    chain-advance that runs for an aired occurrence always stamps
+    `LastAired` with a fresh `time.Now()`, so a naive sync bumped it on
+    every idempotent re-apply of an already-settled occurrence, not just
+    the first time. `syncPendingStatesFromChain` now preserves the
+    already-persisted `LastAired` instead, only adopting the chain's
+    value the very first time a show is synced at all.
   - **`establishSeriesChain`'s "no snapshot" branch assumed that meant
     "never planned before," which `DeleteFutureOccurrenceSnapshots`
     breaks: it deletes only the snapshot, never the paired

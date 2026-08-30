@@ -909,6 +909,57 @@ func TestPlanSeriesOccurrences_PersistedCursorAdvancesAsOccurrencesAge(t *testin
 	assert.Equal(t, 4, state.CurrentEpisode, "persisted cursor must keep advancing as MORE occurrences age into aired")
 }
 
+// TestPlanSeriesOccurrences_AiredOccurrenceReapply_DoesNotBumpLastAired is
+// a companion to the cursor-advancement test above, catching an idempotency
+// regression finding 1's own fix (syncPendingStatesFromChain) could have
+// introduced: the scratch chain-advance that runs for every aired
+// occurrence always stamps LastAired with a fresh time.Now(), same as a
+// real plan would -- but unlike a real plan, that scratch advance runs on
+// EVERY apply that still covers an already-settled occurrence, not just
+// the first. Naively copying that timestamp into e.pendingStates would
+// bump the persisted LastAired on every idempotent re-apply, breaking
+// "re-applying an already-committed occurrence must leave series_state
+// exactly as it was" (TestRunner_Run_Apply_IsIdempotentPerOccurrence,
+// internal/service/schedule_test.go -- which is wall-clock-dependent,
+// only actually exercising an on-air occurrence roughly half the time;
+// this test forces the on-air condition deterministically instead).
+func TestPlanSeriesOccurrences_AiredOccurrenceReapply_DoesNotBumpLastAired(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "a-s1e1", Type: "episode", ShowTitle: "Stable Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+	}
+	block := Block{
+		ID: "stable-block", Name: "Stable Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Stable Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	occStart := time.Now().Add(-10 * time.Minute) // already on air
+	now := occStart.Add(5 * time.Minute)
+
+	_, err := engine.PlanBlock(block, availablePrograms, occStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	state1, err := store.GetSeriesState(ctx, "Stable Show")
+	require.NoError(t, err)
+	require.NotNil(t, state1.LastAired, "test setup: the first (real) plan must have set LastAired")
+
+	// Re-apply the SAME already-aired occurrence a bit later, still on air.
+	second, err := engine.PlanBlock(block, availablePrograms, occStart, now.Add(1*time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"a-s1e1"}, programIDs(second), "content must still be the verbatim replay")
+
+	state2, err := store.GetSeriesState(ctx, "Stable Show")
+	require.NoError(t, err)
+	assert.Equal(t, state1, state2,
+		"re-applying an already-aired occurrence must leave series_state -- including LastAired -- exactly as it was, not bump it to a fresh timestamp on every re-apply")
+}
+
 // TestPlanSeriesOccurrences_SnapshotWipedButHistoryRemains_ReplacesNotAppends
 // pins round-2 finding 2's fix: establishSeriesChain's "no snapshot"
 // branch used to assume that meant "never planned before" unconditionally,
