@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-08-30
+
+### Changed
+
+- **Theme-fit brand mark** (operator-directed): the header logo is now a
+  transparent, duotone rendering of the project mark — accent-tinted per
+  palette (`brand-dark.png` / `brand-light.png` behind a
+  `prefers-color-scheme` `<picture>`), derived from `assets/logo.svg` by
+  a luminance-keyed duotone (light fills become negative space, dark
+  fills the theme accent). The favicon and apple-touch icon were rebuilt
+  the same way (favicon transparent on the dark accent; touch icon on a
+  dark bezel tile, since iOS flattens transparency to black). The old
+  multi-color square renders clashed with the signal-bench palette.
+
 ## [0.5.3] - 2026-08-30
 
 ### Changed
@@ -1840,7 +1854,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/christopherime/schedularr/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/christopherime/schedularr/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/christopherime/schedularr/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/christopherime/schedularr/compare/v0.5.0...v0.5.1

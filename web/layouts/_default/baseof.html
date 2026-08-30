@@ -51,7 +51,15 @@ carrying its provenance.
 <div class="shell">
   <header class="bezel">
     <a href="/" class="wordmark">
-      <img src="/favicon.png" alt="" width="24" height="24" class="wordmark__mark">
+      {{- /* Theme-aware duotone brand mark: transparent background,
+           accent-tinted per palette (brand-dark = dark accent #3ddc84,
+           brand-light = light accent #0f6b3c), derived from
+           assets/logo.svg by luminance-keyed duotone. The favicon keeps
+           the dark-accent variant (reads on both browser tab chromes). */}}
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="/brand-dark.png">
+        <img src="/brand-light.png" alt="" width="24" height="24" class="wordmark__mark">
+      </picture>
       Schedularr
       <span class="wordmark__tag">Tunarr scheduler</span>
     </a>
