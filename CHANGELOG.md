@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **v1.0 product-intake planning docs** (docs-only, no code):
+  `docs/superpowers/specs/2026-08-30-v1-station-terminology-media-history-design.md`
+  designs three operator-directed streams — station-lingo terminology
+  (broadcast-sourced research validating "block", renaming the block
+  types), scheduling any Tunarr media kind (converging with the v0.4
+  metadata theme; enrichment, tags, a media-kind criterion, and ordered
+  movie sequences as a Sequence variant), and `/series` becoming
+  `/history` (one page absorbing the planned `/log/`, plus
+  remove-from-history and range cleanup). It ends in eleven Open
+  Questions the operator answers before any slice starts.
+
+### Changed
+
+- **`docs/roadmap.md` reshaped around the three streams**: the v0.4 theme
+  now carries the any-media criteria work; a new v0.6.0 holds the
+  breaking terminology rename and a new v0.6.1 holds media sequences,
+  pushing operations/observability to v0.7.0; the v0.5 train records its
+  **third** insertion — v0.5.4 shipped as the brand-mark slice, so draft
+  & apply and every later slice shift one more number down (the v0.5
+  spec's §9 renumber note and `nav.html`'s comments still carry the
+  pre-shift numbers).
+- **`TODO.md` gains a "v1.0 product intake" section** pointing at the
+  spec, one line per stream.
+
+Three code-level findings surfaced by the audit behind these docs, each
+verified and now recorded rather than fixed here: `filter.tags` is
+accepted by the API, CUE, and the store but never evaluated by
+`matchesFilter` (and `docs/scheduling-concepts.md` documents it as
+working); `Program.Type` is never consulted, so "movies only" cannot be
+expressed; and `MaxPlanSeq` derives the engine's allocator floor from a
+`MAX(...)` over rows a future deletion feature would remove.
+
 ## [0.5.4] - 2026-08-30
 
 ### Changed

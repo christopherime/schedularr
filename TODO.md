@@ -1,5 +1,31 @@
 # Project TODOs
 
+## v1.0 product intake (2026-08-30)
+
+Three operator-directed product streams, designed in
+`docs/superpowers/specs/2026-08-30-v1-station-terminology-media-history-design.md`
+and slotted into `docs/roadmap.md`. Each is blocked on the Open Questions
+at the end of that spec (Q1–Q11) — nothing starts before the operator
+answers them.
+
+- **Station lingo (→ v0.6.0).** "Block" validated against broadcast
+  sources and kept; `type: "series"` → `"sequence"` (fixed); `type:
+  "filter"` → a criteria-programming word (`rotation` recommended, Q1).
+  Hard rename across OpenAPI + generated code, CUE, `scheduler.yaml`,
+  `blocks.spec_json`, two DB tables, the web UI, and the docs — must land
+  before the v0.9.0 freeze.
+- **Any Tunarr media kind (→ v0.4.x, then v0.6.1).** Movies already reach
+  the candidate pool; the gaps are the criteria — no media-kind field,
+  `filter.tags` accepted but never evaluated, raw genres, no
+  `/media/movies`. Converges with the v0.4 metadata theme (movie lookups,
+  enrichment store, normalized genres/ratings, tags), with ordered movie
+  sequences as a Sequence variant at v0.6.1.
+- **`/series` → `/history` (→ v0.5.6, tools at v0.5.9).** One searchable
+  page absorbing the planned `/log/`: TRACKED sequences, AS-RUN airings,
+  apply RUNS. Adds remove-from-history and range cleanup, which need the
+  plan-sequence floor moved into `app_meta` and a transactional delete
+  path first — see the spec's I1–I5 invariant audit.
+
 ## Library Adoption Analysis Summary
 
 This document identifies opportunities to reduce custom code complexity through strategic adoption of well-maintained external libraries. All recommendations are refactoring-only - no behavior changes are proposed.
