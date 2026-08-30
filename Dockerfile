@@ -89,6 +89,7 @@ WORKDIR /src/web
 COPY web/config ./config
 COPY web/content ./content
 COPY web/layouts ./layouts
+COPY web/static ./static
 COPY web/assets/css ./assets/css
 COPY web/assets/vendor ./assets/vendor
 COPY --from=webtypes /src/web/assets/ts ./assets/ts
