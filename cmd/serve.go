@@ -39,6 +39,15 @@ const defaultCronInterval = 6 * time.Hour
 // HTTP requests to finish before giving up.
 const shutdownTimeout = 15 * time.Second
 
+// cronDrainTimeout bounds how long shutdown waits for an in-flight cron
+// schedule tick after cancelCron fires. The wait is normally near-zero
+// (the loop's own ctx.Done select); only a tick already inside Runner.Run
+// -- which is not cancelable past its own ctx-check points -- can hold
+// it. Past this bound, shutdown logs and returns rather than blocking
+// until an external supervisor (Kubernetes' termination grace period)
+// SIGKILLs the process; the abandoned goroutine dies with the process.
+const cronDrainTimeout = 30 * time.Second
+
 var (
 	serveListen         string
 	serveInsecureNoAuth bool
@@ -257,17 +266,21 @@ func serveUntil(ctx context.Context, p serveParams) error {
 	}
 
 	cancelCron()
-	// Unbounded wait: runCronLoop's own select on cronCtx.Done() returns as
+	// Bounded wait: runCronLoop's own select on cronCtx.Done() returns as
 	// soon as cancelCron above fires, so in practice this returns almost
 	// immediately -- the one exception is a schedule tick already in
 	// flight (runScheduleTick's Runner.Run, e.g. mid Tunarr UpdateSchedule
 	// call), which is not itself context-aware past what Run already does
 	// (see service.Runner.Run's own doc comment on ctx) and so runs to
-	// completion rather than being interrupted. Unlike the HTTP server
-	// above, there is no separate timeout guarding this wait; the backstop
-	// is external -- Kubernetes (or any process supervisor) SIGKILLs the
-	// process once its termination grace period elapses.
-	<-cronDone
+	// completion rather than being interrupted. cronDrainTimeout bounds
+	// that case so shutdown is self-containedly finite instead of relying
+	// only on the external supervisor's SIGKILL backstop.
+	select {
+	case <-cronDone:
+	case <-time.After(cronDrainTimeout):
+		p.logger.Warn("serve: cron tick still in flight after drain timeout; abandoning it",
+			"timeout", cronDrainTimeout.String())
+	}
 
 	return result
 }

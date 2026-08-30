@@ -36,15 +36,16 @@ for every configuration the API already accepts.
   replans from the live cursor (documented operator caveat). Re-key
   not-yet-aired occurrence snapshots to the new occurrence starts instead,
   killing the "never change cron while an occurrence is committed" rule.
-- **Contradictory `on_complete` validation.** Shared-show blocks with
-  disagreeing policies currently fight over shared state (documented
-  caveat) — reject or warn at block write time.
+- ~~**Contradictory `on_complete` validation.**~~ Done (first v0.3.0
+  slice): every write path rejects disagreeing shared-show policies with
+  a 400 naming the conflict.
 - **Residue hardening from the v0.2.2 gate:** backward-CAS coincidence
-  (a wrap-lap landing exactly on a frozen baseline), pin the `max()`
-  provenance guard with a test, bounded `cronDone` shutdown wait.
-- **Added-series caveat.** A series added to a block with a pending seeded
-  occurrence airs S01E01 once — derive its seed from the live cursor at
-  plan time instead.
+  (a wrap-lap landing exactly on a frozen baseline) — remaining; ~~pin
+  the `max()` provenance guard with a test~~ and ~~bounded `cronDone`
+  shutdown wait~~ done (first v0.3.0 slice).
+- ~~**Added-series caveat.**~~ Done (first v0.3.0 slice): a series added
+  to a block with a pending seeded occurrence now plans from its live
+  cursor instead of re-airing S01E01.
 
 ## v0.4.0 — Metadata engine (sub-project 3)
 

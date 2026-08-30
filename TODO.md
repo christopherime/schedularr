@@ -259,19 +259,6 @@ None block the current close-out; each is a known, scoped-out gap.
   `govulncheck ./...` output on every `kin-openapi` bump in case a future
   advisory does land in a reachable path.
 
-- **Bounded `cronDone` wait.** `cmd/serve.go`'s `serveUntil` waits on
-  `<-cronDone` with no timeout after `cancelCron()` -- see the comment
-  added at that line in this fix wave. In practice this returns almost
-  immediately (the cron loop's own `ctx.Done()` select fires as soon as
-  `cancelCron` runs) except when a schedule tick is already in flight, in
-  which case shutdown blocks until that `Runner.Run` call finishes end to
-  end. The current backstop is external (Kubernetes SIGKILLs the process
-  once its termination grace period elapses). Fix, if this needs a
-  self-contained bound: race `<-cronDone` against a
-  `time.After(someBound)` and log (not force-kill) if the bound is hit,
-  since there's no way to cancel a `Runner.Run` already past its own
-  ctx-check points.
-
 ## Deferred (Web UI sub-project close-out)
 
 Recorded at the end of the web-UI final fix wave
@@ -295,4 +282,4 @@ scoped-out gap.
   instead: `Dockerfile`'s Hugo stage always runs the real `hugo --minify
   -s web` before the Go build stage, so a container image can never ship
   the placeholder as its embedded site.
-- [ ] Residue from v0.2.2 final gate (adjudicated non-blocking): (a) backward-CAS coincidence — a wrap-lap landing exactly on a slow shared-show block's frozen baseline lands a partial-lap rewind (self-healing; needs restart + shared show_title + far-future occurrence); (b) shared-show blocks with contradictory on_complete policies let the newest plan re-enable a show the other disabled (documented in docs/scheduling-concepts.md "Shared shows need agreeing policies"; validation still open); (c) the max() half of the provenance stamp (engine.go:835) is unpinned by tests (unreachable-by-construction today).
+- [ ] Residue from v0.2.2 final gate, last open item: (a) backward-CAS coincidence — a wrap-lap landing exactly on a slow shared-show block's frozen baseline lands a partial-lap rewind (self-healing; needs restart + shared show_title + far-future occurrence). Address with the v0.3.x seed-machinery slice. ((b) contradictory on_complete now REJECTED at write time; (c) provenance stamp direction now test-pinned — both shipped in the v0.3.0 slice.)

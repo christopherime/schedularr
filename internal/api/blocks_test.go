@@ -758,3 +758,66 @@ func TestGetBlock_InternalErrorDoesNotLeakDetail(t *testing.T) {
 	w := doRequest(t, h, http.MethodGet, "/blocks/some-id", nil)
 	assertGenericInternalErrorProblem(t, w)
 }
+
+// seriesBlockWriteWithPolicy is seriesBlockWrite with an explicit show
+// title and on_complete policy, for the shared-show agreement tests.
+func seriesBlockWriteWithPolicy(name, show string, policy gen.SeriesConfigOnComplete) gen.BlockWrite {
+	seriesType := gen.BlockSpecTypeSeries
+	return gen.BlockWrite{
+		Spec: gen.BlockSpec{
+			Name:      name,
+			Cron:      "0 20 * * 6",
+			Duration:  90,
+			ChannelId: "channel-1",
+			Type:      &seriesType,
+			Series: &[]gen.SeriesConfig{
+				{ShowTitle: show, EpisodesPerBlock: 1, OnComplete: &policy},
+			},
+		},
+	}
+}
+
+// TestCreateBlock_ContradictoryOnCompleteRejected pins the shared-show
+// policy agreement rule (blockio.ValidateOnCompleteAgreement): two enabled
+// blocks giving the same show different on_complete policies fight over
+// the show's shared series state, so the second write is rejected with a
+// 400 naming the conflict.
+func TestCreateBlock_ContradictoryOnCompleteRejected(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("first", "Shared Show", gen.Restart))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("second", "Shared Show", gen.Disable))
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "contradictory on_complete")
+	assert.Contains(t, w.Body.String(), "Shared Show")
+
+	// The same policy (or the equivalent default) is fine.
+	w = doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("third", "Shared Show", gen.Restart))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+}
+
+// TestCreateBlock_ContradictoryOnCompleteAllowedWhenOtherDisabled: a
+// disabled block plans nothing and fights nobody, so only ENABLED blocks
+// participate in the agreement check.
+func TestCreateBlock_ContradictoryOnCompleteAllowedWhenOtherDisabled(t *testing.T) {
+	h := newTestServer(t)
+
+	disabled := false
+	first := seriesBlockWriteWithPolicy("first", "Shared Show", gen.Restart)
+	first.Enabled = &disabled
+	w := doRequest(t, h, http.MethodPost, "/blocks", first)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	w = doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("second", "Shared Show", gen.Disable))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	// But re-ENABLING the first block now must be rejected: it would
+	// bring the contradiction live.
+	enable := seriesBlockWriteWithPolicy("first", "Shared Show", gen.Restart)
+	w = doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, enable)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "contradictory on_complete")
+}

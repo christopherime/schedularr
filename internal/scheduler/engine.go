@@ -781,7 +781,11 @@ func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Pr
 		return seriesChainResult{}, fmt.Errorf("failed to check occurrence snapshot for block %q at %s: %w", block.Name, occurrenceStart, err)
 	}
 	if hasSnapshot {
-		return seriesChainResult{chain: statesFromSnapshot(snapshot.PreStates)}, nil
+		chain := statesFromSnapshot(snapshot.PreStates)
+		if err := e.backfillChainFromLive(chain, block); err != nil {
+			return seriesChainResult{}, err
+		}
+		return seriesChainResult{chain: chain}, nil
 	}
 
 	_, hasCommitted, err := e.store.GetCommittedOccurrence(ctx, block.Name, occurrenceStart)
@@ -1007,6 +1011,30 @@ func (e *Engine) cloneLiveSeriesStates(block Block) (map[string]*SeriesState, er
 		states[sc.ShowTitle] = &cloned
 	}
 	return states, nil
+}
+
+// backfillChainFromLive fills chain with a live-cursor clone for every
+// show in block.Series that the stored seed doesn't know -- a series
+// added to the block AFTER the occurrence was first planned. Without
+// this, an added show planned from the snapshot chain fell through to
+// snapshotSeriesContext.get's fresh S01E01 default, re-airing its pilot
+// once even when the live cursor was far ahead (the documented v0.2.3
+// operator caveat this removes). Titles the seed does know are never
+// touched: the stored seed stays authoritative for everything it
+// captured, so this changes nothing for an unedited block.
+func (e *Engine) backfillChainFromLive(chain map[string]*SeriesState, block Block) error {
+	for _, sc := range block.Series {
+		if _, ok := chain[sc.ShowTitle]; ok {
+			continue
+		}
+		state, err := e.getSeriesState(sc.ShowTitle)
+		if err != nil {
+			return fmt.Errorf("failed to read live series state for added show %q: %w", sc.ShowTitle, err)
+		}
+		cloned := *state
+		chain[sc.ShowTitle] = &cloned
+	}
+	return nil
 }
 
 // applyPostStates overwrites chain's entry for every show in post with

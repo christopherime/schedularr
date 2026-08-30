@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Contradictory shared-show `on_complete` policies are now rejected at
+  write time** (was: documented caveat). Series state is shared by show
+  title, so two co-active blocks giving one show different policies fight
+  over it; block create/update (against every enabled block), `POST
+  /blocks/import`, and `scheduler.yaml` import now return a 400 naming
+  the show and both blocks. A disabled block doesn't participate;
+  re-enabling it re-validates. (`blockio.ValidateOnCompleteAgreement`,
+  `internal/api` `checkSharedShowPolicies`.)
+
+### Fixed
+
+- **A series added to a block with a pending seeded occurrence now plans
+  from its live cursor** instead of the seed path's S01E01 default — the
+  documented v0.2.3 "re-airs its pilot once" operator caveat is gone.
+  Shows the stored seed knows keep replaying the seed unchanged.
+  (`scheduler.Engine.backfillChainFromLive`.)
+- **Shutdown's wait for an in-flight cron tick is now bounded (30s)**:
+  past the bound, serve logs and exits instead of relying solely on the
+  supervisor's SIGKILL. (`cmd/serve.go` `cronDrainTimeout`.)
+- The `max()` direction of the real-plan provenance stamp (a plan may
+  raise, never lower, a cursor's `cursor_plan_seq`) is now pinned by a
+  test modeling an imported fast-clock stamp.
+
 ## [0.2.6] - 2026-08-30
 
 ### Added

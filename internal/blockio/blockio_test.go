@@ -247,3 +247,63 @@ func TestParseYAML_ExplicitEmptyTypeStillRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to validate blocks")
 }
+
+// TestParseYAML_RejectsContradictoryOnComplete pins the shared-show
+// policy agreement rule within one file: two blocks in the same
+// scheduler.yaml giving one show different on_complete policies would
+// fight over the show's shared series state, so the file is rejected
+// before anything imports.
+func TestParseYAML_RejectsContradictoryOnComplete(t *testing.T) {
+	yaml := `blocks:
+  - name: "First"
+    type: series
+    cron: "0 20 * * 6"
+    duration: 90
+    channel_id: "channel-1"
+    series:
+      - show_title: "Shared Show"
+        episodes_per_block: 1
+        on_complete: restart
+  - name: "Second"
+    type: series
+    cron: "0 22 * * 6"
+    duration: 90
+    channel_id: "channel-1"
+    series:
+      - show_title: "Shared Show"
+        episodes_per_block: 1
+        on_complete: disable
+`
+	_, err := blockio.ParseYAML([]byte(yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contradictory on_complete")
+	assert.Contains(t, err.Error(), "Shared Show")
+}
+
+// TestParseYAML_OmittedOnCompleteAgreesWithExplicitContinue: an omitted
+// on_complete means the CUE default ("continue"), so it agrees with an
+// explicit "continue" in another block.
+func TestParseYAML_OmittedOnCompleteAgreesWithExplicitContinue(t *testing.T) {
+	yaml := `blocks:
+  - name: "First"
+    type: series
+    cron: "0 20 * * 6"
+    duration: 90
+    channel_id: "channel-1"
+    series:
+      - show_title: "Shared Show"
+        episodes_per_block: 1
+  - name: "Second"
+    type: series
+    cron: "0 22 * * 6"
+    duration: 90
+    channel_id: "channel-1"
+    series:
+      - show_title: "Shared Show"
+        episodes_per_block: 1
+        on_complete: continue
+`
+	blocks, err := blockio.ParseYAML([]byte(yaml))
+	require.NoError(t, err)
+	require.Len(t, blocks, 2)
+}

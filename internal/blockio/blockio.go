@@ -74,6 +74,10 @@ func ParseYAML(data []byte) ([]scheduler.Block, error) {
 		return nil, fmt.Errorf("failed to validate blocks: duplicate block name(s): %s", strings.Join(dupes, ", "))
 	}
 
+	if err := ValidateOnCompleteAgreement(cfg.Blocks); err != nil {
+		return nil, err
+	}
+
 	// Mirror #Block's `*"filter"` default into the decoded structs: raw
 	// validation above accepted an omitted `type`, so fill in what the
 	// schema says an absent field means (matching the JSON API path's
@@ -85,6 +89,53 @@ func ParseYAML(data []byte) ([]scheduler.Block, error) {
 	}
 
 	return cfg.Blocks, nil
+}
+
+// ValidateOnCompleteAgreement rejects a set of co-active blocks in which
+// the same show carries contradictory on_complete policies. Series state
+// is keyed by show title and shared across every block that schedules the
+// show, on_complete handling included -- two blocks giving one show
+// different policies fight over that shared state (whichever block plans
+// latest re-applies its own policy, so a show one block disabled can come
+// back active when the other completes it). Like duplicateBlockNames,
+// this is a cross-block rule CUE cannot express (#Block validates each
+// block independently), so it lives here and is shared by every write
+// path: ParseYAML (Bootstrap, POST /blocks/import) checks the file/batch
+// internally, and blocks CRUD (internal/api) checks an incoming spec
+// against the store's enabled blocks. An empty on_complete means the CUE
+// default, "continue".
+func ValidateOnCompleteAgreement(blocks []scheduler.Block) error {
+	type policy struct {
+		action    scheduler.CompletionAction
+		blockName string
+	}
+	seen := make(map[string]policy)
+	var conflicts []string
+	for _, b := range blocks {
+		if b.Type != scheduler.BlockTypeSeries {
+			continue
+		}
+		for _, sc := range b.Series {
+			action := sc.OnComplete
+			if action == "" {
+				action = scheduler.CompletionActionContinue
+			}
+			prev, ok := seen[sc.ShowTitle]
+			if !ok {
+				seen[sc.ShowTitle] = policy{action: action, blockName: b.Name}
+				continue
+			}
+			if prev.action != action {
+				conflicts = append(conflicts, fmt.Sprintf("%q is %q in block %q but %q in block %q",
+					sc.ShowTitle, prev.action, prev.blockName, action, b.Name))
+			}
+		}
+	}
+	if len(conflicts) > 0 {
+		return fmt.Errorf("failed to validate blocks: contradictory on_complete for shared show(s): %s -- series state is shared by show title, so give a show the same on_complete in every block that schedules it",
+			strings.Join(conflicts, "; "))
+	}
+	return nil
 }
 
 // duplicateBlockNames returns the names that appear more than once in

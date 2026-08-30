@@ -104,6 +104,15 @@ func (h *Handlers) ImportBlocks(w http.ResponseWriter, r *http.Request, params g
 		return
 	}
 
+	// Imported blocks all start enabled, so they must agree with the
+	// store's enabled blocks on shared-show on_complete policies
+	// (ParseYAML already checked the batch internally). Runs before the
+	// dry-run early-out on purpose: a dry run exists to preview exactly
+	// this kind of rejection.
+	if !h.checkSharedShowPolicies(w, r, blocks, "") {
+		return
+	}
+
 	dryRun := params.DryRun != nil && *params.DryRun
 
 	if !dryRun && !h.createImportedBlocks(w, r, blocks) {

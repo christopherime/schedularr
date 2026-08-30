@@ -56,10 +56,15 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	enabled := blockEnabled(body.Enabled)
+	if enabled && !h.checkSharedShowPolicies(w, r, []scheduler.Block{spec}, "") {
+		return
+	}
+
 	rec := &store.BlockRecord{
 		ID:      uuid.NewString(),
 		Name:    spec.Name,
-		Enabled: blockEnabled(body.Enabled),
+		Enabled: enabled,
 		Spec:    spec,
 	}
 
@@ -107,15 +112,12 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // silently SKIPPING those episodes forever. Invalidation belongs only
 // where the seed ITSELF must be overridden -- an operator cursor write
 // (api.PatchSeriesState, the CLI's `state set`/`state reset`/`state
-// import`) -- and to DeleteBlock's orphan cleanup below. The one spec
-// edit that changes what a seed means -- ADDING a series the seed has no
-// entry for -- re-derives that show from the seed path's S01E01 default.
-// NOTE this differs from an unseeded occurrence, which plans a new show
-// from its persisted cursor: in a seeded pending occurrence the added
-// show can therefore re-air an episode its live cursor has moved past
-// (once, for that occurrence only -- the missing-baseline guard keeps
-// the replay from touching live state). Accepted trade-off; deleting
-// the other shows' seeds to avoid it would reintroduce the skip bug.
+// import`) -- and to DeleteBlock's orphan cleanup below. A series ADDED
+// to the block -- one the stored seed has no entry for -- plans from its
+// LIVE cursor (scheduler.Engine.backfillChainFromLive), the same place an
+// unseeded occurrence would read it, so it resumes where it left off
+// rather than re-airing its pilot; shows the seed does know keep
+// replaying the seed unchanged.
 func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
@@ -146,8 +148,13 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	enabled := blockEnabled(body.Enabled)
+	if enabled && !h.checkSharedShowPolicies(w, r, []scheduler.Block{spec}, existing.ID) {
+		return
+	}
+
 	existing.Name = spec.Name
-	existing.Enabled = blockEnabled(body.Enabled)
+	existing.Enabled = enabled
 	existing.Spec = spec
 
 	if err := h.d.Store.UpdateBlock(r.Context(), existing); err != nil {
@@ -328,6 +335,39 @@ func validateSeriesShowTitles(b scheduler.Block) error {
 		}
 	}
 	return nil
+}
+
+// checkSharedShowPolicies rejects a write whose blocks would leave two
+// co-active blocks giving one show contradictory on_complete policies
+// (blockio.ValidateOnCompleteAgreement -- see its doc comment for why
+// that state is incoherent). incoming is the spec(s) this request wants
+// active: they are checked against each other AND against every enabled
+// block already in the store except excludeID (the record being updated,
+// whose stored spec is being replaced). A request that would leave its
+// own block disabled should not call this at all -- a disabled block
+// plans nothing and fights nobody. Writes the 400 response itself and
+// reports whether the caller may proceed.
+func (h *Handlers) checkSharedShowPolicies(w http.ResponseWriter, r *http.Request, incoming []scheduler.Block, excludeID string) bool {
+	recs, err := h.d.Store.ListBlocks(r.Context())
+	if err != nil {
+		h.logAndWriteInternalError(w, r, "shared_show_policy_list", err)
+		return false
+	}
+	active := make([]scheduler.Block, 0, len(recs)+len(incoming))
+	for _, rec := range recs {
+		if !rec.Enabled || rec.ID == excludeID {
+			continue
+		}
+		spec := rec.Spec
+		spec.Name = rec.Name
+		active = append(active, spec)
+	}
+	active = append(active, incoming...)
+	if err := blockio.ValidateOnCompleteAgreement(active); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
+		return false
+	}
+	return true
 }
 
 // fromGen converts a gen.BlockSpec (the API wire shape) into a

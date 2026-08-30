@@ -3288,3 +3288,98 @@ func TestApplyBlockFiller_EmptyFillerList(t *testing.T) {
 	assert.Len(t, playlist, 1, "Expected original playlist returned on empty filler list")
 	assert.Equal(t, int64(1800000), duration, "Expected duration unchanged on empty filler list")
 }
+
+// TestPlanBlock_SeriesAddedAfterSeed_DerivesFromLiveCursor pins
+// backfillChainFromLive: a series added to a block AFTER an occurrence
+// was first planned (its stored seed doesn't know the show) must plan
+// from the show's LIVE cursor, not from snapshotSeriesContext.get's fresh
+// S01E01 default -- the documented v0.2.3 "re-airs its pilot once"
+// operator caveat this removes.
+func TestPlanBlock_SeriesAddedAfterSeed_DerivesFromLiveCursor(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "m-e1", Type: "episode", ShowTitle: "Main Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "m-e2", Type: "episode", ShowTitle: "Main Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+		{ID: "a-e1", Type: "episode", ShowTitle: "Added Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "a-e5", Type: "episode", ShowTitle: "Added Show", SeasonNumber: 1, EpisodeNumber: 5, Duration: 1_800_000},
+	}
+
+	// The added show's live cursor is far past its pilot.
+	lastAired := time.Now().Add(-24 * time.Hour)
+	store.States["Added Show"] = &SeriesState{
+		ShowTitle: "Added Show", CurrentSeason: 1, CurrentEpisode: 5, LastAired: &lastAired,
+	}
+
+	original := Block{
+		ID: "added-block", Name: "Added Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Main Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{original}, store, slog.Default(), time.UTC)
+
+	now := time.Now()
+	occ := now.Add(2 * time.Hour)
+
+	first, err := engine.PlanBlock(original, availablePrograms, occ, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"m-e1"}, programIDs(first), "original spec plans Main Show alone")
+
+	// Seed-preserving spec edit: the operator adds Added Show (and widens
+	// the block to fit it). The stored seed for occ knows only Main Show.
+	edited := original
+	edited.Duration = 60
+	edited.Series = []SeriesConfig{
+		{ShowTitle: "Main Show", EpisodesPerBlock: 1},
+		{ShowTitle: "Added Show", EpisodesPerBlock: 1},
+	}
+
+	second, err := engine.PlanBlock(edited, availablePrograms, occ, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	assert.Equal(t, []string{"m-e1", "a-e5"}, programIDs(second),
+		"the added show must resume from its live cursor (E5), not re-air its pilot; the seeded show must replay its seed unchanged")
+}
+
+// TestPlanSeriesOccurrences_ProvenanceStampNeverMovesBackward pins the
+// max()-direction half of the real-plan provenance stamp (the
+// `seq > st.CursorPlanSeq` guard): a live cursor already carrying a
+// HIGHER provenance than this plan's own sequence -- e.g. an imported
+// cursor_plan_seq written on a machine with a fast clock -- must keep its
+// stamp; a plan may only ever raise provenance, never lower it.
+func TestPlanSeriesOccurrences_ProvenanceStampNeverMovesBackward(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "f-e1", Type: "episode", ShowTitle: "Fast Clock Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "f-e2", Type: "episode", ShowTitle: "Fast Clock Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+	}
+
+	block := Block{
+		ID: "prov-block", Name: "Prov Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Fast Clock Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	// Written AFTER engine construction, so NewEngine's plan-seq floor
+	// seeding (MaxPlanSeq) can't have absorbed it -- modeling an import
+	// landing while the engine is already running. 1<<62 is far above any
+	// wall-clock-nanosecond-derived sequence (~1.8e18 in 2026).
+	const futureStamp = int64(1) << 62
+	store.States["Fast Clock Show"] = &SeriesState{
+		ShowTitle: "Fast Clock Show", CurrentSeason: 1, CurrentEpisode: 1, CursorPlanSeq: futureStamp,
+	}
+
+	now := time.Now()
+	occ := now.Add(1 * time.Hour)
+	_, err := engine.PlanBlock(block, availablePrograms, occ, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	state, ok := store.States["Fast Clock Show"]
+	require.True(t, ok)
+	assert.Equal(t, futureStamp, state.CursorPlanSeq,
+		"a real plan must never lower an already-higher cursor provenance stamp")
+}
