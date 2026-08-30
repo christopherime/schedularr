@@ -1,0 +1,24 @@
+-- Plan provenance: makes the aired-occurrence anti-drag-back guard
+-- provenance-scoped instead of value-scoped.
+--
+-- A value-scoped guard ("only move the cursor forward") silently dropped
+-- a legitimate on_complete:restart wrap (post-state S01E01 after
+-- S01E05), freezing the persisted cursor at the pre-wrap high-water mark
+-- -- and the next snapshot invalidation (operator write, block edit, or
+-- retention GC) then re-derived from that frozen cursor, regressing onto
+-- already-aired episodes permanently.
+--
+-- plan_seq stamps each series_occurrence_snapshots row with the
+-- engine-allocated, strictly monotonic sequence of the plan generation
+-- that wrote it; cursor_plan_seq on series_state records the sequence of
+-- the plan whose post-state last wrote the live cursor. A replay wins
+-- exactly when its plan_seq is newer than the live cursor's provenance
+-- -- in either direction, so wraps land -- and a stale, older-plan
+-- replay (e.g. a slower block sharing the show) is rejected. Rows
+-- written before this migration default to 0: their replays never beat
+-- an established provenance (and tie at 0 against a fresh cursor, i.e.
+-- contribute no advance), the same graceful no-advance degradation as
+-- pre-000006 rows; future occurrences self-heal on their next
+-- re-derivation.
+ALTER TABLE series_occurrence_snapshots ADD COLUMN plan_seq INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE series_state ADD COLUMN cursor_plan_seq INTEGER NOT NULL DEFAULT 0;

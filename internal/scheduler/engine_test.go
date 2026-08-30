@@ -919,70 +919,136 @@ func TestPlanSeriesOccurrences_PersistedCursorAdvancesAsOccurrencesAge(t *testin
 	assert.False(t, state.LastAired.Equal(lastAiredAfterApply2), "LastAired must have moved forward between applies, not stayed frozen in steady state")
 }
 
-// TestSyncPostStates_WritesCursorOnly_StampsLastAiredFromOccurrenceStart
-// is the direct unit test for the aired-branch persistence primitive:
-// syncPostStates writes CurrentSeason/CurrentEpisode from the stored
-// post-state and stamps LastAired from the occurrence's own airtime (a
-// pure function of its inputs, so replaying the same occurrence on every
-// apply is idempotent) -- never Completed/Disabled/RunCount, and never a
-// Seeded pre-state's sentinel LastAired (the unix-epoch seededMarker),
-// which by construction can't reach persistence since LastAired is
-// always freshly stamped here.
-func TestSyncPostStates_WritesCursorOnly_StampsLastAiredFromOccurrenceStart(t *testing.T) {
+// TestSyncPostStates_WritesPostState_StampsLastAiredAndProvenance is
+// the direct unit test for the aired-branch persistence primitive:
+// syncPostStates writes CurrentSeason/CurrentEpisode, Completed,
+// Disabled, and RunCount (via max, never backward) from the stored
+// post-state, stamps LastAired from the occurrence's own airtime (a pure
+// function of its inputs, so replaying the same occurrence on every
+// apply is idempotent -- and never the Seeded pre-state's sentinel), and
+// records the plan's provenance (CursorPlanSeq). Round-6 finding 2:
+// excluding the completion fields made on_complete:disable never disable
+// and max_runs never trip in persisted state -- the operator-wins stamp,
+// not a blanket exclusion, is what protects operator PATCHes now.
+func TestSyncPostStates_WritesPostState_StampsLastAiredAndProvenance(t *testing.T) {
 	store := NewMockStateStore()
 	engine := NewEngine(&tunarr.Client{}, nil, store, slog.Default(), time.UTC)
 	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
-	committedAt := occurrenceStart.Add(-1 * time.Hour)
 
 	store.States["Show A"] = &SeriesState{
-		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1, Disabled: true, RunCount: 3,
+		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 1, RunCount: 3, CursorPlanSeq: 10,
 	}
 
-	post := map[string]SeriesStateSnapshot{
-		"Show A": {CurrentSeason: 1, CurrentEpisode: 3, Completed: true, RunCount: 9, Seeded: true},
+	snap := OccurrenceSnapshot{
+		PostStates: map[string]SeriesStateSnapshot{
+			"Show A": {CurrentSeason: 1, CurrentEpisode: 3, Completed: true, Disabled: true, RunCount: 9, Seeded: true},
+		},
+		RecordedAt: occurrenceStart.Add(-1 * time.Hour),
+		PlanSeq:    20,
 	}
-	require.NoError(t, engine.syncPostStates(post, committedAt, occurrenceStart))
+	require.NoError(t, engine.syncPostStates(snap, occurrenceStart))
 
 	state := engine.pendingStates["Show A"]
-	require.NotNil(t, state, "an ahead post-state must be queued for persistence")
+	require.NotNil(t, state, "a newer-plan post-state must be queued for persistence")
 	assert.Equal(t, 1, state.CurrentSeason)
 	assert.Equal(t, 3, state.CurrentEpisode)
 	require.NotNil(t, state.LastAired)
 	assert.True(t, state.LastAired.Equal(occurrenceStart), "LastAired must be stamped from the occurrence's own airtime")
 	assert.False(t, state.LastAired.Equal(seededMarker), "the Seeded-marker sentinel must never leak into persistence")
-	assert.False(t, state.Completed, "Completed must ride through from live state, not the post-state")
-	assert.True(t, state.Disabled, "Disabled must ride through from live state untouched")
-	assert.Equal(t, 3, state.RunCount, "RunCount must ride through from live state, not the post-state")
+	assert.True(t, state.Completed, "Completed must come from the post-state -- plan-time completion is real state")
+	assert.True(t, state.Disabled, "Disabled must come from the post-state -- on_complete:disable must persist")
+	assert.Equal(t, 9, state.RunCount, "RunCount must adopt the post-state's higher value")
+	assert.Equal(t, int64(20), state.CursorPlanSeq, "the winning plan's sequence must become the cursor's provenance")
+
+	// RunCount is max(), never backward: a post-state carrying a LOWER
+	// run count than the live row (e.g. live already advanced by a later
+	// occurrence whose provenance was since invalidated back) must not
+	// regress it.
+	store.States["Show B"] = &SeriesState{ShowTitle: "Show B", CurrentSeason: 1, CurrentEpisode: 1, RunCount: 5}
+	snapB := OccurrenceSnapshot{
+		PostStates: map[string]SeriesStateSnapshot{"Show B": {CurrentSeason: 1, CurrentEpisode: 2, RunCount: 2}},
+		RecordedAt: occurrenceStart.Add(-1 * time.Hour),
+		PlanSeq:    20,
+	}
+	require.NoError(t, engine.syncPostStates(snapB, occurrenceStart))
+	require.NotNil(t, engine.pendingStates["Show B"])
+	assert.Equal(t, 5, engine.pendingStates["Show B"].RunCount, "RunCount must never move backward")
 }
 
-// TestSyncPostStates_MonotonicNeverRegressesLiveCursor pins the
-// monotonic guard: two blocks scheduling the SAME show plan occurrences
-// independently, so replaying a slower block's on-air occurrence (post-
-// state E3) after another block already advanced the live cursor to E7
-// must be a complete no-op -- the round-4 review's probe had it dragging
-// the cursor back to E3 and re-airing E3-E6.
-func TestSyncPostStates_MonotonicNeverRegressesLiveCursor(t *testing.T) {
+// TestSyncPostStates_ProvenanceRejectsStalePlan pins one half of the
+// provenance guard (round-6 finding 1's replacement for the value-scoped
+// monotonic check): a replay whose plan is OLDER than the plan that last
+// wrote the live cursor is rejected outright -- even when its cursor
+// value is AHEAD. Two blocks scheduling the same show plan occurrences
+// independently; replaying the slower block's on-air occurrence must not
+// override what a newer plan already established, in either value
+// direction.
+func TestSyncPostStates_ProvenanceRejectsStalePlan(t *testing.T) {
 	store := NewMockStateStore()
 	engine := NewEngine(&tunarr.Client{}, nil, store, slog.Default(), time.UTC)
 	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
 
-	store.States["Show A"] = &SeriesState{ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 7}
+	store.States["Show A"] = &SeriesState{ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 2, CursorPlanSeq: 100}
 
-	post := map[string]SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 3}}
-	require.NoError(t, engine.syncPostStates(post, occurrenceStart.Add(-time.Hour), occurrenceStart))
-
+	// Value AHEAD (E10 > E2) but plan OLDER (50 < 100): must be skipped.
+	snap := OccurrenceSnapshot{
+		PostStates: map[string]SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 10}},
+		RecordedAt: occurrenceStart.Add(-1 * time.Hour),
+		PlanSeq:    50,
+	}
+	require.NoError(t, engine.syncPostStates(snap, occurrenceStart))
 	_, pending := engine.pendingStates["Show A"]
-	assert.False(t, pending, "a post-state behind the live cursor must not even queue a write")
+	assert.False(t, pending, "a stale (older-plan) replay must not even queue a write, regardless of cursor direction")
+
+	// An equal sequence (a re-replay of the very plan that wrote the
+	// cursor) is also a no-op -- that's what makes repeated applies of
+	// the same aired occurrence idempotent.
+	snap.PlanSeq = 100
+	require.NoError(t, engine.syncPostStates(snap, occurrenceStart))
+	_, pending = engine.pendingStates["Show A"]
+	assert.False(t, pending, "re-replaying the plan that already wrote the cursor must be a no-op")
+}
+
+// TestSyncPostStates_ProvenanceAllowsBackwardWrap pins the other half of
+// the provenance guard, the exact case the round-5 value-scoped guard
+// got wrong (round-6 finding 1, HIGH): an on_complete:restart wrap
+// legitimately moves the cursor BACKWARD (S01E05 -> S01E01), and its
+// replay carries a NEWER plan than whatever wrote the live cursor -- so
+// it must land. Under the old value guard it was dropped as "backward,"
+// freezing the persisted cursor at the pre-wrap high-water mark; the
+// next snapshot invalidation then re-derived from the frozen cursor,
+// regressing onto already-aired episodes permanently.
+func TestSyncPostStates_ProvenanceAllowsBackwardWrap(t *testing.T) {
+	store := NewMockStateStore()
+	engine := NewEngine(&tunarr.Client{}, nil, store, slog.Default(), time.UTC)
+	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
+
+	store.States["Show A"] = &SeriesState{ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 5, CursorPlanSeq: 100}
+
+	snap := OccurrenceSnapshot{
+		PostStates: map[string]SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1, RunCount: 1, Seeded: true}},
+		RecordedAt: occurrenceStart.Add(-1 * time.Hour),
+		PlanSeq:    200,
+	}
+	require.NoError(t, engine.syncPostStates(snap, occurrenceStart))
+
+	state := engine.pendingStates["Show A"]
+	require.NotNil(t, state, "a newer plan's wrap must land")
+	assert.Equal(t, 1, state.CurrentSeason)
+	assert.Equal(t, 1, state.CurrentEpisode, "the restart wrap (E5 -> E1) must be written, not dropped as backward")
+	assert.Equal(t, 1, state.RunCount)
+	assert.Equal(t, int64(200), state.CursorPlanSeq)
 }
 
 // TestSyncPostStates_OperatorWriteWins pins the operator-wins guard: a
 // show whose series_state carries an operator write NEWER than the
-// occurrence's own commit is skipped even when the post-state is AHEAD
-// of the live cursor -- exactly the case a monotonic guard alone cannot
-// cover, and what makes an operator's BACKWARD jump (E10 -> E2) stick
-// when the stale snapshot survived (a failed invalidation, or a write
-// racing an in-flight apply). An occurrence committed AFTER the operator
-// write applies normally -- it was planned from the operator's value.
+// occurrence's own commit is skipped even when the post-state's plan is
+// newer than the cursor's provenance -- exactly the case the provenance
+// guard alone cannot cover, and what makes an operator's BACKWARD jump
+// (E10 -> E2) stick when the stale snapshot survived (a failed
+// invalidation, or a write racing an in-flight apply). An occurrence
+// committed AFTER the operator write applies normally -- it was planned
+// from the operator's value.
 func TestSyncPostStates_OperatorWriteWins(t *testing.T) {
 	store := NewMockStateStore()
 	engine := NewEngine(&tunarr.Client{}, nil, store, slog.Default(), time.UTC)
@@ -994,15 +1060,20 @@ func TestSyncPostStates_OperatorWriteWins(t *testing.T) {
 		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 2, OperatorUpdatedAt: &operatorAt,
 	}
 
-	post := map[string]SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 10}}
-	require.NoError(t, engine.syncPostStates(post, committedAt, occurrenceStart))
+	snap := OccurrenceSnapshot{
+		PostStates: map[string]SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 10}},
+		RecordedAt: committedAt,
+		PlanSeq:    50, // newer than the live cursor's zero provenance
+	}
+	require.NoError(t, engine.syncPostStates(snap, occurrenceStart))
 	_, pending := engine.pendingStates["Show A"]
-	assert.False(t, pending, "an occurrence committed BEFORE the operator write must never override it, even from ahead")
+	assert.False(t, pending, "an occurrence committed BEFORE the operator write must never override it, even from a newer-than-cursor plan")
 
 	// The same post-state from an occurrence committed AFTER the
 	// operator write is legitimate -- it was planned from the patched
 	// cursor -- and must apply.
-	require.NoError(t, engine.syncPostStates(post, operatorAt.Add(30*time.Minute), occurrenceStart))
+	snap.RecordedAt = operatorAt.Add(30 * time.Minute)
+	require.NoError(t, engine.syncPostStates(snap, occurrenceStart))
 	state := engine.pendingStates["Show A"]
 	require.NotNil(t, state, "an occurrence committed after the operator write must apply normally")
 	assert.Equal(t, 10, state.CurrentEpisode)
@@ -1301,17 +1372,22 @@ func TestPlanSeriesOccurrences_OnAirWithCommittedHistoryButNoSnapshot_NeverRealP
 	assert.Len(t, committed, 1, "must not have doubled/duplicated the committed row")
 }
 
-// TestPlanSeriesOccurrences_RestartMidOccurrence_ReplaysPlanTimePostState
-// is round-4 finding 1's regression (the structural directive's flagship
-// case): a show with 3 episodes and episodes_per_block 4 runs out
-// MID-plan and hits on_complete:restart INSIDE the occurrence -- content
-// [e1,e2,e3], correct post-state S01E01 (run 2 queued). Deriving the
-// advance from max(content)+1 persisted S01E04 instead, leaving the next
-// occurrence permanently empty once committed. The stored plan-time
-// post-state is the only representation that can carry "the cursor
-// wrapped" -- so it must replay stably across repeated applies while the
-// occurrence is on air, and the next occurrence must stay non-empty.
-func TestPlanSeriesOccurrences_RestartMidOccurrence_ReplaysPlanTimePostState(t *testing.T) {
+// TestPlanSeriesOccurrences_RestartWrap_LandsViaReplayAndSurvivesInvalidation
+// is round-6 finding 1's regression, rewritten to discriminate (the
+// round-5 version's wrap target coincided with the fresh-default cursor
+// and its first apply real-planned the wrap directly into live state, so
+// it passed even with the guard removed or the sync stubbed). Here the
+// live cursor is first established at the pre-wrap high-water mark
+// (S01E04, written by occurrence 1's plan), and the wrap to S01E01
+// arrives ONLY via the aired-branch REPLAY of chain-planned occurrence 2
+// -- a legitimately BACKWARD cursor move from a NEWER plan. The
+// provenance guard must land it (a value-scoped "forward-only" guard
+// froze the cursor at the high-water mark), it must stay landed across
+// repeated applies, and -- the permanent-damage half of the finding --
+// a subsequent snapshot invalidation must re-derive the next occurrence
+// from the wrapped cursor, not regress onto the episodes that just
+// aired.
+func TestPlanSeriesOccurrences_RestartWrap_LandsViaReplayAndSurvivesInvalidation(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
 	ctx := context.Background()
@@ -1322,44 +1398,80 @@ func TestPlanSeriesOccurrences_RestartMidOccurrence_ReplaysPlanTimePostState(t *
 		{ID: "l-s1e3", Type: "episode", ShowTitle: "Loop Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1_800_000},
 	}
 	block := Block{
-		ID: "loop-block", Name: "Loop Block", Type: BlockTypeSeries, Duration: 120, ChannelID: "channel-1",
-		Series: []SeriesConfig{{ShowTitle: "Loop Show", EpisodesPerBlock: 4, OnComplete: CompletionActionRestart}},
+		ID: "loop-block", Name: "Loop Block", Type: BlockTypeSeries, Duration: 60, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Loop Show", EpisodesPerBlock: 2, OnComplete: CompletionActionRestart}},
 	}
 	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
 
-	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into the 120min block
-	nextStart := onAirStart.Add(3 * time.Hour)
-	shells := []ScheduledSlot{{StartTime: onAirStart, Block: block}, {StartTime: nextStart, Block: block}}
+	base := time.Now()
+	occ1 := base.Add(1 * time.Hour)
+	occ2 := base.Add(2 * time.Hour)
+	occ3 := base.Add(3 * time.Hour)
+	shells := []ScheduledSlot{{StartTime: occ1, Block: block}, {StartTime: occ2, Block: block}}
 
+	// Apply 1 (nothing aired): occ1 real-plans [e1,e2] -- live cursor at
+	// the S01E03 high-water mark, wait for it to become the pre-wrap
+	// baseline -- and occ2 chain-plans [e3] hitting the mid-occurrence
+	// restart: content [e3], post-state S01E01 (run 2 queued).
+	first, err := engine.planSeriesOccurrences(block, availablePrograms, shells, base)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"l-s1e1", "l-s1e2"}, programIDs(first[0].Programs))
+	require.Equal(t, []string{"l-s1e3"}, programIDs(first[1].Programs))
+
+	preWrap, err := store.GetSeriesState(ctx, "Loop Show")
+	require.NoError(t, err)
+	require.Equal(t, 3, preWrap.CurrentEpisode,
+		"test setup: the live cursor must sit at the pre-wrap high-water mark before the wrap replays")
+
+	// Applies 2-4: occ1 and occ2 have aired. occ2's replay must land the
+	// wrap in persisted state -- S01E01, run_count 1 -- and hold it
+	// stable, with both occurrences' content still replaying verbatim.
 	for i := range 3 {
-		now := onAirStart.Add(time.Duration(15+i) * time.Minute) // on air throughout
+		now := occ2.Add(time.Duration(10+i) * time.Minute)
 		result, err := engine.planSeriesOccurrences(block, availablePrograms, shells, now)
 		require.NoError(t, err)
 		require.NoError(t, engine.Commit())
 
-		require.Equal(t, []string{"l-s1e1", "l-s1e2", "l-s1e3"}, programIDs(result[0].Programs),
-			"the on-air occurrence's content must stay the verbatim replay, apply %d", i)
+		require.Equal(t, []string{"l-s1e1", "l-s1e2"}, programIDs(result[0].Programs), "aired content must stay the verbatim replay, apply %d", i)
+		require.Equal(t, []string{"l-s1e3"}, programIDs(result[1].Programs), "aired content must stay the verbatim replay, apply %d", i)
 
 		state, err := store.GetSeriesState(ctx, "Loop Show")
 		require.NoError(t, err)
 		assert.Equal(t, 1, state.CurrentSeason, "apply %d", i)
 		assert.Equal(t, 1, state.CurrentEpisode,
-			"the persisted cursor must be the plan-time post-state (S01E01 after the restart), not max(content)+1 (S01E04), apply %d", i)
-
-		assert.Equal(t, []string{"l-s1e1", "l-s1e2", "l-s1e3"}, programIDs(result[1].Programs),
-			"the NEXT occurrence must re-derive from the restarted cursor -- non-empty and stable, apply %d", i)
+			"the restart wrap must LAND in persisted state via the replay -- not freeze at the pre-wrap high-water mark (E3/E4), apply %d", i)
+		assert.Equal(t, 1, state.RunCount, "the wrap's run_count must persist too, apply %d", i)
 	}
+
+	// The permanent-damage half: wipe every snapshot (an operator write,
+	// block edit, or retention GC) and plan the NEXT occurrence. With the
+	// wrap correctly persisted it re-derives from S01E01 -> [e1,e2]; a
+	// cursor frozen at the high-water mark would have re-derived [e3] --
+	// regressing onto the episode that JUST aired in occ2.
+	require.NoError(t, store.DeleteFutureOccurrenceSnapshots(ctx, block.ID, base.Add(-time.Hour)))
+	withNext := append(shells, ScheduledSlot{StartTime: occ3, Block: block})
+	result, err := engine.planSeriesOccurrences(block, availablePrograms, withNext, occ2.Add(20*time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	assert.Equal(t, []string{"l-s1e1", "l-s1e2"}, programIDs(result[2].Programs),
+		"after invalidation, the next occurrence must re-derive from the WRAPPED cursor (run 2 from E1), never regress onto the just-aired e3")
+
+	state, err := store.GetSeriesState(ctx, "Loop Show")
+	require.NoError(t, err)
+	assert.Equal(t, 1, state.CurrentEpisode, "the wrapped cursor must survive the invalidation itself")
 }
 
 // TestPlanSeriesOccurrences_StaleOnAirReplay_NeverDragsLiveCursorBack is
 // round-4 finding 2's regression: block B's on-air occurrence committed
 // while the shared show sat at E1 (content [e1,e2], post-state E3);
 // since then another block legitimately advanced the LIVE cursor to E7
-// (simulated with a plain, non-operator series_state write -- exactly
-// what block A's own aired-occurrence sync produces). Re-applying block
-// B must not drag the live cursor back to E3: syncPostStates' monotonic
-// guard compares against the LIVE value, not block B's own stale chain
-// baseline.
+// (simulated with a plain, non-operator series_state write carrying a
+// NEWER plan provenance than block B's snapshot -- exactly what block
+// A's own aired-occurrence sync produces, since block A planned later).
+// Re-applying block B must not drag the live cursor back to E3:
+// syncPostStates' provenance guard rejects the older plan's replay.
 func TestPlanSeriesOccurrences_StaleOnAirReplay_NeverDragsLiveCursorBack(t *testing.T) {
 	client := &tunarr.Client{}
 	store := NewMockStateStore()
@@ -1388,9 +1500,14 @@ func TestPlanSeriesOccurrences_StaleOnAirReplay_NeverDragsLiveCursorBack(t *test
 
 	// Block A (another block scheduling the same show) has since
 	// advanced the live cursor to E7 -- an engine-style write, NO
-	// operator stamp, so only the monotonic guard protects it.
+	// operator stamp, carrying the newer plan provenance block A's own
+	// sync would have written (it planned AFTER block B did), so only
+	// the provenance guard protects it.
+	staleKey := occurrenceKey{blockName: blockB.ID, startUnixNano: onAirStart.UnixNano()}
+	staleSeq := store.Snapshots[staleKey].PlanSeq
+	require.NotZero(t, staleSeq, "test setup: block B's snapshot must carry a plan sequence")
 	require.NoError(t, store.UpdateSeriesState(ctx, &SeriesState{
-		ShowTitle: "Dual Show", CurrentSeason: 1, CurrentEpisode: 7,
+		ShowTitle: "Dual Show", CurrentSeason: 1, CurrentEpisode: 7, CursorPlanSeq: staleSeq + 1,
 	}))
 
 	second, err := engine.PlanBlock(blockB, availablePrograms, onAirStart, now.Add(1*time.Minute))
@@ -1402,6 +1519,103 @@ func TestPlanSeriesOccurrences_StaleOnAirReplay_NeverDragsLiveCursorBack(t *test
 	require.NoError(t, err)
 	assert.Equal(t, 7, state.CurrentEpisode,
 		"re-applying block B's stale on-air occurrence (post-state E3) must never drag the live cursor back behind E7")
+}
+
+// TestPlanSeriesOccurrences_OnCompleteDisable_PersistsAfterAiring is
+// round-6 finding 2's first regression: syncPostStates used to discard
+// the post-state's Completed/Disabled entirely, so an
+// on_complete:disable decided at plan time in a CHAIN-planned occurrence
+// never reached persisted series_state once it aired -- the chain
+// re-decided (and re-logged) the disable on every apply while GET
+// /state/series showed the show as active forever.
+func TestPlanSeriesOccurrences_OnCompleteDisable_PersistsAfterAiring(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "o-s1e1", Type: "episode", ShowTitle: "Once Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "o-s1e2", Type: "episode", ShowTitle: "Once Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+	}
+	block := Block{
+		ID: "once-block", Name: "Once Block", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Once Show", EpisodesPerBlock: 1, OnComplete: CompletionActionDisable}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	base := time.Now()
+	occ1 := base.Add(1 * time.Hour)
+	occ2 := base.Add(2 * time.Hour)
+	occ3 := base.Add(3 * time.Hour) // exhausts the show: completion + disable decided here, at plan time
+	shells := []ScheduledSlot{
+		{StartTime: occ1, Block: block}, {StartTime: occ2, Block: block}, {StartTime: occ3, Block: block},
+	}
+
+	_, err := engine.planSeriesOccurrences(block, availablePrograms, shells, base)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	for i := range 2 {
+		now := occ3.Add(time.Duration(10+i) * time.Minute) // all three occurrences aired
+		_, err := engine.planSeriesOccurrences(block, availablePrograms, shells, now)
+		require.NoError(t, err)
+		require.NoError(t, engine.Commit())
+
+		state, err := store.GetSeriesState(ctx, "Once Show")
+		require.NoError(t, err)
+		assert.True(t, state.Completed, "plan-time completion must persist once the deciding occurrence airs, apply %d", i)
+		assert.True(t, state.Disabled, "on_complete:disable must persist, not evaporate at the sync, apply %d", i)
+		assert.Equal(t, 1, state.RunCount, "the completion's run_count must persist, apply %d", i)
+	}
+}
+
+// TestPlanSeriesOccurrences_MaxRuns_TripsExactlyOnceAndPersists is
+// round-6 finding 2's second regression: with the completion fields
+// discarded by the sync, max_runs never tripped in persisted state
+// (run_count froze at 0 while the chain kept "disabling" the show on
+// every apply). After the run limit trips at plan time and the deciding
+// occurrence airs, persisted state must show run_count exactly at
+// max_runs and disabled=true, stable across further applies -- RunCount
+// syncs via max(), never backward and never double-counted.
+func TestPlanSeriesOccurrences_MaxRuns_TripsExactlyOnceAndPersists(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "m-s1e1", Type: "episode", ShowTitle: "Twice Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "m-s1e2", Type: "episode", ShowTitle: "Twice Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+	}
+	block := Block{
+		ID: "twice-block", Name: "Twice Block", Type: BlockTypeSeries, Duration: 90, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Twice Show", EpisodesPerBlock: 3, OnComplete: CompletionActionRestart, MaxRuns: 2}},
+	}
+	engine := NewEngine(client, []Block{block}, store, slog.Default(), time.UTC)
+
+	base := time.Now()
+	occ1 := base.Add(1 * time.Hour) // run 1: [e1,e2] + restart (run_count 1)
+	occ2 := base.Add(3 * time.Hour) // run 2: [e1,e2] + completion trips max_runs (run_count 2, disabled)
+	occ3 := base.Add(5 * time.Hour) // disabled: plans nothing
+	shells := []ScheduledSlot{
+		{StartTime: occ1, Block: block}, {StartTime: occ2, Block: block}, {StartTime: occ3, Block: block},
+	}
+
+	_, err := engine.planSeriesOccurrences(block, availablePrograms, shells, base)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	for i := range 3 {
+		now := occ3.Add(time.Duration(10+i) * time.Minute) // everything aired
+		_, err := engine.planSeriesOccurrences(block, availablePrograms, shells, now)
+		require.NoError(t, err)
+		require.NoError(t, engine.Commit())
+
+		state, err := store.GetSeriesState(ctx, "Twice Show")
+		require.NoError(t, err)
+		assert.Equal(t, 2, state.RunCount,
+			"run_count must trip to max_runs exactly once and stay there -- never 0 (discarded) and never inflated by re-replays, apply %d", i)
+		assert.True(t, state.Disabled, "the max_runs auto-disable must persist, apply %d", i)
+	}
 }
 
 // TestPlanSeriesOccurrences_OperatorBackwardJump_SticksAndShapesNextOccurrence

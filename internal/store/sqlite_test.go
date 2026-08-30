@@ -164,6 +164,7 @@ func TestStore_OccurrenceSnapshots(t *testing.T) {
 	first := scheduler.OccurrenceSnapshot{
 		PreStates:  map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1, Seeded: false}},
 		PostStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 2, Seeded: true}},
+		PlanSeq:    42,
 	}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", occurrenceStart, first))
 
@@ -172,6 +173,7 @@ func TestStore_OccurrenceSnapshots(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, first.PreStates, got.PreStates)
 	assert.Equal(t, first.PostStates, got.PostStates)
+	assert.Equal(t, int64(42), got.PlanSeq, "the plan provenance must round-trip")
 	assert.False(t, got.RecordedAt.IsZero(), "the store must stamp recorded_at on save")
 
 	// 3. Saving again for the SAME (block_id, occurrence_start) must
@@ -230,6 +232,37 @@ func TestStore_OccurrenceSnapshots_LegacyRowWithoutPostState(t *testing.T) {
 		"Show A": {CurrentSeason: 2, CurrentEpisode: 3, Seeded: true},
 	}, got.PreStates)
 	assert.Nil(t, got.PostStates, "a legacy row's absent post-state must come back as nil, the engine's no-advance marker")
+	assert.Zero(t, got.PlanSeq, "a legacy row's absent plan_seq must come back as 0, which never outranks an established provenance")
+}
+
+// TestStore_ImportSeriesStates_StampsOperatorWrite is round-6 finding
+// 3's store-level regression: `state import` restores a backup, which is
+// an operator write of every listed cursor -- but ImportSeriesStates
+// used to write the FILE's operator_updated_at (a stale stamp from some
+// past write, or NULL for old backups), so the next apply's
+// aired-occurrence replays silently re-advanced the just-restored
+// cursor. Every imported row must carry a FRESH stamp from THIS write.
+func TestStore_ImportSeriesStates_StampsOperatorWrite(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	before := time.Now().Add(-time.Second)
+	staleStamp := time.Now().Add(-48 * time.Hour) // what a backup file would carry
+
+	require.NoError(t, s.ImportSeriesStates(ctx, []scheduler.SeriesState{
+		{ShowTitle: "Fresh Show", CurrentSeason: 1, CurrentEpisode: 2}, // no stamp in the file (old backup)
+		{ShowTitle: "Stale Show", CurrentSeason: 2, CurrentEpisode: 5, OperatorUpdatedAt: &staleStamp},
+	}))
+
+	for _, title := range []string{"Fresh Show", "Stale Show"} {
+		state, err := s.GetPersistedSeriesState(ctx, title)
+		require.NoError(t, err)
+		require.NotNil(t, state.OperatorUpdatedAt, "%s: an import IS an operator write and must be stamped", title)
+		assert.True(t, state.OperatorUpdatedAt.After(before),
+			"%s: the stamp must be THIS write's time, not the file's stale/absent one", title)
+	}
 }
 
 // TestStore_DeleteFutureOccurrenceSnapshots pins finding 3's fix: an

@@ -38,7 +38,29 @@ type Engine struct {
 	// and reset there too.
 	pendingSnapshots    []occurrenceSnapshotRecord
 	pendingReplacements []occurrenceReplacement
-	logger              *slog.Logger
+	// lastPlanSeq backs nextPlanSeq -- see its doc comment.
+	lastPlanSeq int64
+	logger      *slog.Logger
+}
+
+// nextPlanSeq allocates the next plan-provenance sequence
+// (OccurrenceSnapshot.PlanSeq / SeriesState.CursorPlanSeq): the current
+// wall clock in nanoseconds, bumped past the previous allocation if two
+// calls ever land on the same nanosecond, so sequences are strictly
+// increasing in plan order within a process. Across processes (the serve
+// loop vs. a one-shot CLI apply) plain wall-clock ordering is what
+// relates them, which is ample at real apply cadences. Wall-clock nanos
+// rather than a persisted counter so the sequence can never move
+// backward when rows that carried the highest values are deleted
+// (invalidation, retention GC). Engines are single-run, not concurrent,
+// so no locking.
+func (e *Engine) nextPlanSeq() int64 {
+	seq := time.Now().UnixNano()
+	if seq <= e.lastPlanSeq {
+		seq = e.lastPlanSeq + 1
+	}
+	e.lastPlanSeq = seq
+	return seq
 }
 
 // occurrenceSnapshotRecord is one pending SaveOccurrenceSnapshot call,
@@ -754,6 +776,7 @@ func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Pr
 		return seriesChainResult{}, err
 	}
 
+	seq := e.nextPlanSeq()
 	rng := occurrenceRand(block.ID, occurrenceStart)
 	content := e.planSeriesBlockWithContext(engineSeriesContext{e}, block, availablePrograms, rng)
 	e.recordHistory(content, block.ChannelID, block.Name, time.Now(), occurrenceStart)
@@ -766,9 +789,21 @@ func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Pr
 	if err != nil {
 		return seriesChainResult{}, err
 	}
+	// This real plan wrote live state directly (engineSeriesContext), so
+	// stamp those writes with the same provenance the snapshot row gets:
+	// the eventual aired replay of this occurrence then ties against the
+	// live cursor (seq == CursorPlanSeq) and is correctly a no-op, while
+	// a STALE replay from an older plan can't outrank what this plan
+	// just wrote. Shows the plan never touched (e.g. disabled) have no
+	// pendingStates entry and no live write to stamp.
+	for _, sc := range block.Series {
+		if st, ok := e.pendingStates[sc.ShowTitle]; ok {
+			st.CursorPlanSeq = seq
+		}
+	}
 	e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
 		blockID: block.ID, occurrenceStart: occurrenceStart,
-		snapshot: OccurrenceSnapshot{PreStates: before, PostStates: after},
+		snapshot: OccurrenceSnapshot{PreStates: before, PostStates: after, PlanSeq: seq},
 	})
 
 	// Seed the chain for subsequent occurrences from CLONES of the
@@ -819,12 +854,13 @@ func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.P
 			continue
 		}
 
+		seq := e.nextPlanSeq()
 		rng := occurrenceRand(block.ID, occurrenceStart)
 		before := snapshotFromStates(chain) // value-only copies: planning's in-place chain mutation can't touch them
 		content := e.planSeriesBlockWithContext(&snapshotSeriesContext{states: chain}, block, availablePrograms, rng)
 		e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
 			blockID: block.ID, occurrenceStart: occurrenceStart,
-			snapshot: OccurrenceSnapshot{PreStates: before, PostStates: snapshotFromStates(chain)},
+			snapshot: OccurrenceSnapshot{PreStates: before, PostStates: snapshotFromStates(chain), PlanSeq: seq},
 		})
 		entries := makeHistoryEntries(content, block.ChannelID, block.Name, time.Now(), occurrenceStart)
 		e.pendingReplacements = append(e.pendingReplacements, occurrenceReplacement{
@@ -875,7 +911,7 @@ func (e *Engine) replayAiredOccurrence(block Block, availablePrograms []tunarr.P
 	}
 
 	applyPostStates(chain, snap.PostStates)
-	if err := e.syncPostStates(snap.PostStates, snap.RecordedAt, occurrenceStart); err != nil {
+	if err := e.syncPostStates(snap, occurrenceStart); err != nil {
 		return nil, nil, err
 	}
 	return content, chain, nil
@@ -949,64 +985,69 @@ func applyPostStates(chain map[string]*SeriesState, post map[string]SeriesStateS
 	}
 }
 
-// seasonEpisodeAhead reports whether (season, episode) represents later
-// content than (otherSeason, otherEpisode) -- a higher season, or the
-// same season with a higher episode number.
-func seasonEpisodeAhead(season, episode, otherSeason, otherEpisode int) bool {
-	if season != otherSeason {
-		return season > otherSeason
-	}
-	return episode > otherEpisode
-}
-
 // syncPostStates persists an aired occurrence's stored plan-time
 // post-state into e.pendingStates, so Commit() writes it for real via
-// UpdateSeriesState. Cursor fields only -- CurrentSeason/CurrentEpisode,
-// plus LastAired stamped from occurrenceStart (the occurrence's own
-// fixed airtime, so replaying the same occurrence on every apply is
+// UpdateSeriesState: CurrentSeason/CurrentEpisode, Completed, Disabled,
+// RunCount (via max, never backward -- run counts only accumulate), and
+// LastAired stamped from occurrenceStart (the occurrence's own fixed
+// airtime, so replaying the same occurrence on every apply is
 // idempotent, and so a Seeded pre-state's sentinel marker can never leak
-// into persistence). Completed/Disabled/RunCount are never written here:
-// those are exactly the fields an operator's PATCH /state/series sets
-// that an aired occurrence's replay must never clobber, and the clone
-// below carries their (and OperatorUpdatedAt's) live values through
-// untouched.
+// into persistence). Completion bookkeeping is deliberately included: an
+// on_complete:disable or a max_runs trip decided at plan time is real
+// state the persisted row must reflect once the occurrence airs --
+// operator writes to those same fields are protected by the stamp guard
+// below, not by excluding them. OperatorUpdatedAt always rides through
+// from the live row untouched.
 //
 // Two guards, checked per show and in this order:
 //
 //   - operator wins: a show whose live series_state carries an operator
 //     write (SeriesState.OperatorUpdatedAt -- PATCH /state/series, CLI
-//     `state set`/`state reset`) NEWER than this occurrence's own commit
-//     stamp (committedAt, the snapshot row's recorded_at) is skipped
-//     entirely. The operator paths normally delete the occurrence's
-//     snapshot outright (store.InvalidateSeriesOccurrenceSnapshots), so
-//     this is the backstop for when they couldn't: a logged-and-continued
+//     `state set`/`state reset`/`state import`) NEWER than this
+//     occurrence's own commit stamp (the snapshot row's RecordedAt) is
+//     skipped entirely. The operator paths normally delete the
+//     occurrence's snapshot outright
+//     (store.InvalidateSeriesOccurrenceSnapshots), so this is the
+//     backstop for when they couldn't: a logged-and-continued
 //     invalidation failure, or an operator write racing an in-flight
 //     apply. It's what makes an operator's BACKWARD jump stick -- every
 //     occurrence planned before the jump is, by definition, older than
 //     it.
-//   - monotonic: the post-state cursor is written only if strictly AHEAD
-//     of the live cursor's current value. Two blocks scheduling the same
-//     show plan their occurrences independently; replaying a
-//     slower-moving block's on-air occurrence must never drag the shared
-//     cursor back behind what another block already advanced it to.
-func (e *Engine) syncPostStates(post map[string]SeriesStateSnapshot, committedAt, occurrenceStart time.Time) error {
-	for title, s := range post {
+//   - provenance: the post-state is written only if its plan sequence
+//     (snap.PlanSeq) is strictly newer than the plan that last wrote the
+//     live cursor (SeriesState.CursorPlanSeq). Newer-plan replays win in
+//     EITHER direction -- an on_complete:restart wrap (S01E05 ->
+//     S01E01) lands instead of freezing the persisted cursor at the
+//     pre-wrap high-water mark, where the next snapshot invalidation
+//     would have re-derived onto already-aired episodes -- while a stale
+//     replay from an OLDER plan (a slower block sharing the show, or a
+//     re-replay of an occurrence already applied) is rejected. A
+//     value-scoped "forward-only" comparison cannot express both; plan
+//     order can.
+func (e *Engine) syncPostStates(snap OccurrenceSnapshot, occurrenceStart time.Time) error {
+	for title, s := range snap.PostStates {
 		existing, err := e.getSeriesState(title)
 		if err != nil {
 			return fmt.Errorf("failed to read existing series state for %q: %w", title, err)
 		}
-		if existing.OperatorUpdatedAt != nil && existing.OperatorUpdatedAt.After(committedAt) {
+		if existing.OperatorUpdatedAt != nil && existing.OperatorUpdatedAt.After(snap.RecordedAt) {
 			continue
 		}
-		if !seasonEpisodeAhead(s.CurrentSeason, s.CurrentEpisode, existing.CurrentSeason, existing.CurrentEpisode) {
+		if snap.PlanSeq <= existing.CursorPlanSeq {
 			continue
 		}
 
 		cloned := *existing
 		cloned.CurrentSeason = s.CurrentSeason
 		cloned.CurrentEpisode = s.CurrentEpisode
+		cloned.Completed = s.Completed
+		cloned.Disabled = s.Disabled
+		if s.RunCount > cloned.RunCount {
+			cloned.RunCount = s.RunCount
+		}
 		aired := occurrenceStart
 		cloned.LastAired = &aired
+		cloned.CursorPlanSeq = snap.PlanSeq
 		e.pendingStates[title] = &cloned
 	}
 	return nil

@@ -132,6 +132,20 @@ Example:
 			return fmt.Errorf("failed to import states: %w", err)
 		}
 
+		// Mirrors stateResetCmd/stateSetCmd: an import is an operator
+		// write of every listed show's cursor (ImportSeriesStates stamps
+		// operator_updated_at accordingly), so every not-yet-FINISHED
+		// occurrence snapshot referencing those shows must be
+		// invalidated too -- otherwise the restored cursors would be
+		// shadowed by (and planned around) stale pre-import snapshots
+		// until they aged out on their own. Warn-and-continue on
+		// failure, like reset/set: the import itself already committed.
+		for _, state := range states {
+			if err := s.InvalidateSeriesOccurrenceSnapshots(ctx, state.ShowTitle); err != nil {
+				fmt.Fprintf(os.Stderr, "%s import succeeded, but failed to invalidate occurrence snapshots for %q: %v\n", warningStyle.Render("! Warning:"), state.ShowTitle, err)
+			}
+		}
+
 		fmt.Printf("Imported %d series states from %s\n", len(states), inputFile)
 		return nil
 	},

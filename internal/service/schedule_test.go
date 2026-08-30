@@ -1612,6 +1612,70 @@ func TestRunner_Run_Apply_IsIdempotentPerOccurrence(t *testing.T) {
 		"series state must not advance again for an occurrence that was already committed")
 }
 
+// TestRunner_Run_Apply_ImportedCursorSticks is round-6 finding 3's
+// end-to-end regression: `schedularr state import` restores a backup --
+// an operator write -- and the restored (typically OLDER) cursor must
+// survive subsequent applies instead of being silently re-advanced by
+// aired-occurrence replays or shadowed by stale snapshots. This test
+// performs exactly what stateImportCmd (cmd/state.go) does against the
+// store: Store.ImportSeriesStates (which stamps operator_updated_at
+// itself) followed by InvalidateSeriesOccurrenceSnapshots per imported
+// show.
+func TestRunner_Run_Apply_ImportedCursorSticks(t *testing.T) {
+	episodes := []tunarr.Program{
+		{ID: "ep-1", Title: "Pilot", Type: "episode", ShowTitle: "The Office", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_320_000},
+		{ID: "ep-2", Title: "Diversity Day", Type: "episode", ShowTitle: "The Office", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_320_000},
+	}
+	server, _ := newFakeTunarr(t, episodes)
+
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, st.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-1", Name: "Evening Sitcoms", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Evening Sitcoms", Cron: "0 * * * *", Duration: 30, ChannelID: "channel-1", Priority: 10,
+			Type:   scheduler.BlockTypeSeries,
+			Series: []scheduler.SeriesConfig{{ShowTitle: "The Office", EpisodesPerBlock: 1}},
+		},
+	}))
+
+	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
+	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	fixedNow := time.Now().UTC().Truncate(time.Hour).Add(10 * time.Minute)
+	r.now = func() time.Time { return fixedNow }
+
+	result1, err := r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.True(t, result1.Applied)
+
+	planned, err := st.GetPersistedSeriesState(ctx, "The Office")
+	require.NoError(t, err)
+	require.NotEqual(t, 1, planned.CurrentEpisode,
+		"test setup: the first apply must have advanced the cursor past S01E01, so the import below is genuinely a backward restore")
+
+	// Restore an older backup, exactly as stateImportCmd does.
+	require.NoError(t, st.ImportSeriesStates(ctx, []scheduler.SeriesState{
+		{ShowTitle: "The Office", CurrentSeason: 1, CurrentEpisode: 1},
+	}))
+	require.NoError(t, st.InvalidateSeriesOccurrenceSnapshots(ctx, "The Office"))
+
+	for i := range 2 {
+		result, err := r.Run(ctx, Options{Days: 1, Apply: true})
+		require.NoError(t, err)
+		require.True(t, result.Applied)
+
+		state, err := st.GetPersistedSeriesState(ctx, "The Office")
+		require.NoError(t, err)
+		assert.Equal(t, 1, state.CurrentSeason, "apply %d after import", i)
+		assert.Equal(t, 1, state.CurrentEpisode,
+			"the imported (restored) cursor must stick across applies, never be re-advanced by replays of pre-import occurrences, apply %d", i)
+		require.NotNil(t, state.OperatorUpdatedAt, "the import must have been stamped as an operator write")
+	}
+}
+
 // TestRunner_Run_Apply_ConflictDroppedOccurrence_DoesNotAdvanceCursor is
 // the second half of the idempotent-apply fix's required coverage: an
 // occurrence that conflict resolution drops must never reach

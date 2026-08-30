@@ -99,7 +99,7 @@ func (s *Store) Ping(ctx context.Context) error {
 func (s *Store) seriesStateRow(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
 	var state scheduler.SeriesState
 	err := s.db.GetContext(ctx, &state, `
-		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at
+		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at, cursor_plan_seq
 		FROM series_state WHERE show_title = ?`, showTitle)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -159,8 +159,8 @@ func (s *Store) GetPersistedSeriesState(ctx context.Context, showTitle string) (
 // read, so the stamp rides through engine writes unchanged.
 func (s *Store) UpdateSeriesState(ctx context.Context, state *scheduler.SeriesState) error {
 	_, err := s.db.NamedExecContext(ctx, `
-		INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at)
-		VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled, :operator_updated_at)
+		INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at, cursor_plan_seq)
+		VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled, :operator_updated_at, :cursor_plan_seq)
 		ON CONFLICT(show_title) DO UPDATE SET
 			current_season = excluded.current_season,
 			current_episode = excluded.current_episode,
@@ -168,7 +168,8 @@ func (s *Store) UpdateSeriesState(ctx context.Context, state *scheduler.SeriesSt
 			last_aired = excluded.last_aired,
 			run_count = excluded.run_count,
 			disabled = excluded.disabled,
-			operator_updated_at = excluded.operator_updated_at`, state)
+			operator_updated_at = excluded.operator_updated_at,
+			cursor_plan_seq = excluded.cursor_plan_seq`, state)
 	if err != nil {
 		return fmt.Errorf("failed to update series state: %w", err)
 	}
@@ -277,9 +278,10 @@ func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockID string, occur
 		SnapshotJSON  string         `db:"snapshot_json"`
 		PostStateJSON sql.NullString `db:"post_state_json"`
 		RecordedAt    time.Time      `db:"recorded_at"`
+		PlanSeq       int64          `db:"plan_seq"`
 	}
 	err := s.db.GetContext(ctx, &row, `
-		SELECT snapshot_json, post_state_json, recorded_at FROM series_occurrence_snapshots
+		SELECT snapshot_json, post_state_json, recorded_at, plan_seq FROM series_occurrence_snapshots
 		WHERE block_id = ? AND occurrence_start = ?`, blockID, occurrenceStart)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -288,7 +290,7 @@ func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockID string, occur
 		return scheduler.OccurrenceSnapshot{}, false, fmt.Errorf("failed to query occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
 
-	snapshot := scheduler.OccurrenceSnapshot{RecordedAt: row.RecordedAt}
+	snapshot := scheduler.OccurrenceSnapshot{RecordedAt: row.RecordedAt, PlanSeq: row.PlanSeq}
 	if err := json.Unmarshal([]byte(row.SnapshotJSON), &snapshot.PreStates); err != nil {
 		return scheduler.OccurrenceSnapshot{}, false, fmt.Errorf("failed to decode occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
@@ -327,10 +329,10 @@ func (s *Store) SaveOccurrenceSnapshot(ctx context.Context, blockID string, occu
 		post = string(raw)
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO series_occurrence_snapshots (block_id, occurrence_start, snapshot_json, post_state_json, recorded_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (block_id, occurrence_start) DO UPDATE SET snapshot_json = excluded.snapshot_json, post_state_json = excluded.post_state_json, recorded_at = excluded.recorded_at`,
-		blockID, occurrenceStart, string(pre), post, time.Now()); err != nil {
+		INSERT INTO series_occurrence_snapshots (block_id, occurrence_start, snapshot_json, post_state_json, recorded_at, plan_seq)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (block_id, occurrence_start) DO UPDATE SET snapshot_json = excluded.snapshot_json, post_state_json = excluded.post_state_json, recorded_at = excluded.recorded_at, plan_seq = excluded.plan_seq`,
+		blockID, occurrenceStart, string(pre), post, time.Now(), snapshot.PlanSeq); err != nil {
 		return fmt.Errorf("failed to save occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
 	return nil
@@ -525,7 +527,7 @@ func (s *Store) CleanupScheduleHistory(ctx context.Context, window time.Duration
 func (s *Store) ExportAllSeriesStates(ctx context.Context) ([]scheduler.SeriesState, error) {
 	var states []scheduler.SeriesState
 	err := s.db.SelectContext(ctx, &states, `
-		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at
+		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at, cursor_plan_seq
 		FROM series_state ORDER BY show_title`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query series states: %w", err)
@@ -533,7 +535,17 @@ func (s *Store) ExportAllSeriesStates(ctx context.Context) ([]scheduler.SeriesSt
 	return states, nil
 }
 
-// ImportSeriesStates imports series states from a slice, replacing existing states.
+// ImportSeriesStates imports series states from a slice, replacing
+// existing states. It is an operator write (the CLI's `state import`
+// restoring a backup), so every imported row is stamped with a FRESH
+// operator_updated_at -- the file's own stamp, if any, records when some
+// PAST write happened, not this one, and a NULL/stale stamp would let
+// the next apply's aired-occurrence replays silently re-advance the
+// just-restored cursor (see scheduler.SeriesState.OperatorUpdatedAt).
+// cursor_plan_seq is taken from the file (typically 0/absent for
+// backups): provenance protection for imports comes from the operator
+// stamp, and plans made after the import allocate fresh, higher
+// sequences regardless.
 func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.SeriesState) error {
 	if len(states) == 0 {
 		return nil
@@ -545,10 +557,12 @@ func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.Serie
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	importedAt := time.Now()
 	for _, state := range states {
+		state.OperatorUpdatedAt = &importedAt
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at)
-			VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled, :operator_updated_at)
+			INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at, cursor_plan_seq)
+			VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled, :operator_updated_at, :cursor_plan_seq)
 			ON CONFLICT(show_title) DO UPDATE SET
 				current_season = excluded.current_season,
 				current_episode = excluded.current_episode,
@@ -556,7 +570,8 @@ func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.Serie
 				last_aired = excluded.last_aired,
 				run_count = excluded.run_count,
 				disabled = excluded.disabled,
-				operator_updated_at = excluded.operator_updated_at`, state); err != nil {
+				operator_updated_at = excluded.operator_updated_at,
+				cursor_plan_seq = excluded.cursor_plan_seq`, state); err != nil {
 			return fmt.Errorf("failed to import state for %s: %w", state.ShowTitle, err)
 		}
 	}

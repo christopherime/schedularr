@@ -411,6 +411,66 @@ testing against a real Tunarr 1.3.13 instance.
     occurrence's own airtime, Seeded-sentinel non-leak, both guards);
     `docs/scheduling-concepts.md`'s idempotent-apply section rewritten
     to describe the real post-state-replay/operator-wins semantics.
+- **The final-gate review corrected the replay guard semantics above:
+  the anti-drag-back guard is now PROVENANCE-scoped (plan order), not
+  value-scoped, and post-state replay carries the completion fields
+  too.** This supersedes the previous entry's *monotonic* guard
+  description and lifts its `Completed`/`Disabled`/`RunCount` exclusion:
+  - **A value-scoped "only move the cursor forward" guard dropped a
+    legitimate `on_complete: restart` wrap (post-state S01E01 after
+    S01E05) as "backward"** -- the persisted cursor froze at the
+    pre-wrap high-water mark, and the next snapshot invalidation
+    (operator write, block edit/delete, or retention GC) re-derived
+    from the frozen cursor, regressing onto ALREADY-AIRED episodes
+    permanently. Migration `000007` adds `plan_seq` to
+    `series_occurrence_snapshots` (the engine-allocated, strictly
+    monotonic sequence -- `Engine.nextPlanSeq` -- of the plan
+    generation that wrote the row) and `cursor_plan_seq` to
+    `series_state` (the provenance of the current cursor value: the
+    plan whose post-state last wrote it, also stamped by a case-3
+    real-plan's direct live write). A replay now wins exactly when its
+    `plan_seq` is newer than the live provenance -- in EITHER
+    direction, so wraps land -- while a stale, older-plan replay (a
+    slower block sharing the show) is still rejected. The operator-wins
+    stamp guard is unchanged and still checked first. Pre-000007 rows
+    default to `plan_seq` 0 and simply contribute no advance, the same
+    graceful degradation as pre-000006 rows.
+  - **`Completed`/`Disabled`/`RunCount` were read off the post-state
+    and discarded, so `on_complete: disable` never disabled and
+    `max_runs` never tripped in persisted state** (the chain re-decided
+    -- and re-logged -- the disable on every apply while `GET
+    /state/series` showed `runs: 0` and an active show forever). The
+    blanket exclusion existed to protect operator PATCHes, which the
+    `operator_updated_at` stamp now does properly -- so
+    `Engine.syncPostStates` writes all three from the post-state under
+    the same two guards, `RunCount` via max() (run counts only
+    accumulate, never regress or double-count).
+  - **`state import` (restoring a backup) stamped no
+    `operator_updated_at` -- it wrote the FILE's stale/NULL stamp --
+    and invalidated no snapshots**, so a just-restored cursor was
+    silently re-advanced by the next apply. `Store.ImportSeriesStates`
+    now stamps every imported row with a fresh operator write time (a
+    backup's own stamp records some PAST write, not this one), and
+    `stateImportCmd` (`cmd/state.go`) invalidates every imported show's
+    not-yet-finished occurrence snapshots, warn-and-continue, exactly
+    like `state reset`/`state set`.
+  - The prior round's restart regression test was found vacuous (its
+    wrap target coincided with the fresh-default cursor and its first
+    apply real-planned the wrap directly into live state) and was
+    rewritten to discriminate: live cursor first established at the
+    pre-wrap high-water mark, the wrap arriving ONLY via the
+    aired-branch replay of a chain-planned occurrence, held stable
+    across three applies, and surviving a full snapshot invalidation
+    without regressing onto just-aired episodes -- verified to fail
+    with the guard reverted AND with the sync stubbed. New regression
+    tests: provenance-rejects-stale-plan and
+    provenance-allows-backward-wrap unit tests; on_complete:disable
+    persists after airing; max_runs trips exactly once (run_count
+    stable at 2); import stamps a fresh operator write (store-level)
+    and an imported older cursor sticks across applies (service-level,
+    real store + fake Tunarr). `docs/scheduling-concepts.md` updated so
+    "decided exactly once at plan time, replayed into the persisted
+    cursor" is true again, including for wraps and completion state.
 
 ## [0.2.1] - 2026-08-29
 

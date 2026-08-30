@@ -14,14 +14,27 @@ type SeriesState struct {
 	RunCount       int        `json:"run_count" db:"run_count"`             // Number of times series has been completed (for restart tracking)
 	Disabled       bool       `json:"disabled" db:"disabled"`               // True if series has been disabled due to completion
 	// OperatorUpdatedAt is when an operator last wrote this row directly
-	// (PATCH /state/series, or the CLI's `state set`/`state reset`) --
-	// nil if never. Engine.syncPostStates skips any aired-occurrence
-	// post-state replay whose own commit predates this stamp, so an
-	// operator write -- a BACKWARD cursor jump included -- is never
-	// re-advanced by an occurrence planned before it. Engine-side writes
-	// (Commit's UpdateSeriesState calls) carry the stamp through
-	// unchanged; only the operator entry points ever set it.
+	// (PATCH /state/series, or the CLI's `state set`/`state reset`/
+	// `state import`) -- nil if never. Engine.syncPostStates skips any
+	// aired-occurrence post-state replay whose own commit predates this
+	// stamp, so an operator write -- a BACKWARD cursor jump included --
+	// is never re-advanced by an occurrence planned before it.
+	// Engine-side writes (Commit's UpdateSeriesState calls) carry the
+	// stamp through unchanged; only the operator entry points ever set
+	// it.
 	OperatorUpdatedAt *time.Time `json:"operator_updated_at,omitempty" db:"operator_updated_at"`
+	// CursorPlanSeq is the provenance of the current cursor value: the
+	// plan sequence (Engine.nextPlanSeq) of the plan whose post-state
+	// last wrote this row through Engine.syncPostStates. An
+	// aired-occurrence replay wins exactly when its own
+	// OccurrenceSnapshot.PlanSeq is newer than this -- in either
+	// direction, so an on_complete:restart wrap (S01E05 -> S01E01) lands
+	// instead of being dropped as "backward" -- while a stale replay from
+	// an OLDER plan (e.g. a slower block sharing the show) is rejected.
+	// Zero means no post-state replay (or plan-time real-plan write) has
+	// stamped this row yet. Operator writes leave it untouched: they are
+	// protected by OperatorUpdatedAt, not by provenance.
+	CursorPlanSeq int64 `json:"cursor_plan_seq,omitempty" db:"cursor_plan_seq"`
 }
 
 // SeriesStateSnapshot is the per-show cursor captured immutably the FIRST
@@ -84,4 +97,14 @@ type OccurrenceSnapshot struct {
 	PreStates  map[string]SeriesStateSnapshot
 	PostStates map[string]SeriesStateSnapshot
 	RecordedAt time.Time
+	// PlanSeq is the engine-allocated, strictly monotonic sequence
+	// (Engine.nextPlanSeq) of the plan generation that produced
+	// PostStates -- the replay-ordering provenance
+	// Engine.syncPostStates compares against SeriesState.CursorPlanSeq.
+	// Re-deriving a not-yet-aired occurrence allocates a fresh, higher
+	// sequence; an aired occurrence's row is never rewritten, freezing
+	// the sequence of the plan it actually aired with. Zero marks a
+	// legacy row written before migration 000007 (no cursor advance of
+	// its own -- see the migration's doc comment).
+	PlanSeq int64
 }
