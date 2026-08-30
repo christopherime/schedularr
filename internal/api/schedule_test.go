@@ -131,6 +131,19 @@ func TestGetSchedule_DaysQueryParam(t *testing.T) {
 	assert.Equal(t, service.Options{Days: 3, ChannelID: "", Apply: false}, fake.lastOpts)
 }
 
+// TestGetSchedule_ChannelIDQueryParam covers the v0.5.1 contract addition:
+// GET /schedule?channel_id=... scopes planning exactly like
+// GenerateRequest.channel_id does on POST /generate and /apply.
+func TestGetSchedule_ChannelIDQueryParam(t *testing.T) {
+	fake := &fakeScheduleRunner{}
+	h := newTestServerWithSched(t, fake)
+
+	w := doRequest(t, h, http.MethodGet, "/schedule?days=2&channel_id=chan-7", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.Equal(t, service.Options{Days: 2, ChannelID: "chan-7", Apply: false}, fake.lastOpts)
+}
+
 func TestGetSchedule_DefaultDays(t *testing.T) {
 	fake := &fakeScheduleRunner{}
 	h := newTestServerWithSched(t, fake)
@@ -248,7 +261,75 @@ func TestGenerateSchedule_MapsResultToPlanResult(t *testing.T) {
 
 	require.NotNil(t, slots[0].Programs)
 	require.Len(t, *slots[0].Programs, 1)
-	assert.Equal(t, "Movie One", (*slots[0].Programs)[0]["title"])
+	assert.Equal(t, "Movie One", (*slots[0].Programs)[0].Title)
+}
+
+// TestGenerateSchedule_TypedProgramsWithCumulativeStartTimes pins the
+// typed ScheduledProgram projection (the v0.5.1 hard swap): every wire
+// field populated from the internal tunarr.Program, per-program start_time
+// computed cumulatively from the slot start, and the optional fields
+// (type/season/episode) omitted -- not zero-filled -- when the source
+// program has nothing to say.
+func TestGenerateSchedule_TypedProgramsWithCumulativeStartTimes(t *testing.T) {
+	start := time.Date(2026, 8, 28, 21, 0, 0, 0, time.UTC)
+	end := start.Add(2 * time.Hour)
+
+	fake := &fakeScheduleRunner{result: &service.Result{
+		Applied: false,
+		Channels: map[string][]scheduler.ScheduledSlot{
+			"channel-1": {
+				{
+					StartTime: start,
+					EndTime:   end,
+					Block:     scheduler.Block{Name: "Horror Night", Cron: "0 21 * * *", Duration: 120, ChannelID: "channel-1"},
+					Programs: []tunarr.Program{
+						{Title: "Pilot", Duration: 1_800_000, Type: "episode", SeasonNumber: 1, EpisodeNumber: 1},
+						{Title: "Wendigo", Duration: 2_700_000, Type: "episode", SeasonNumber: 1, EpisodeNumber: 2},
+						{Title: "Flex", Duration: 600_000},
+					},
+				},
+			},
+		},
+	}}
+	h := newTestServerWithSched(t, fake)
+
+	w := doRequest(t, h, http.MethodGet, "/schedule", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got gen.PlanResult
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+	require.Contains(t, got.Channels, "channel-1")
+	require.Len(t, got.Channels["channel-1"], 1)
+	programs := *got.Channels["channel-1"][0].Programs
+	require.Len(t, programs, 3)
+
+	// Program 1: full episode metadata, starts at the slot start.
+	assert.Equal(t, "Pilot", programs[0].Title)
+	assert.EqualValues(t, 1_800_000, programs[0].DurationMs)
+	require.NotNil(t, programs[0].Type)
+	assert.Equal(t, "episode", *programs[0].Type)
+	require.NotNil(t, programs[0].Season)
+	assert.Equal(t, 1, *programs[0].Season)
+	require.NotNil(t, programs[0].Episode)
+	assert.Equal(t, 1, *programs[0].Episode)
+	assert.True(t, programs[0].StartTime.Equal(start), "first program starts at the slot start")
+
+	// Program 2: starts after program 1's 30 minutes.
+	assert.True(t, programs[1].StartTime.Equal(start.Add(30*time.Minute)),
+		"second program's start_time must be slot start + first program's duration")
+	require.NotNil(t, programs[1].Episode)
+	assert.Equal(t, 2, *programs[1].Episode)
+
+	// Program 3: a flex placeholder -- cumulative math continues (30 + 45
+	// minutes), and type/season/episode are omitted entirely.
+	assert.True(t, programs[2].StartTime.Equal(start.Add(75*time.Minute)),
+		"third program's start_time must accumulate both prior durations")
+	assert.Nil(t, programs[2].Type)
+	assert.Nil(t, programs[2].Season)
+	assert.Nil(t, programs[2].Episode)
+	body := w.Body.String()
+	assert.NotContains(t, body, `"season":0`, "zero season must be omitted, not sent")
+	assert.NotContains(t, body, `"type":""`, "empty type must be omitted, not sent")
 }
 
 // TestGenerateSchedule_MapsWarningsToPlanResult is the API-contract half

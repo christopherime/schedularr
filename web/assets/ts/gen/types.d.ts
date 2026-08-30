@@ -322,9 +322,24 @@ export interface components {
             /** Format: date-time */
             end_time?: string;
             block?: components["schemas"]["BlockSpec"];
-            programs?: {
-                [key: string]: unknown;
-            }[];
+            programs?: components["schemas"]["ScheduledProgram"][];
+        };
+        /** @description One planned program inside a slot's lineup, in airing order. A typed projection of the internal Tunarr program (the old additionalProperties passthrough is gone -- hard swap, pre-v1.0): exactly what a guide needs to render a rundown, nothing else. */
+        ScheduledProgram: {
+            title: string;
+            /** @description Program kind as Tunarr reports it (movie, episode, flex, ...). Omitted when the source program carries no type. */
+            type?: string;
+            /** @description Season number; omitted for non-episodes. */
+            season?: number;
+            /** @description Episode number; omitted for non-episodes. */
+            episode?: number;
+            /** Format: int64 */
+            duration_ms: number;
+            /**
+             * Format: date-time
+             * @description This program's own computed air time -- the slot's start plus the durations of every program before it in the lineup.
+             */
+            start_time: string;
         };
         /** @description One occurrence that was planned a time slot but then dropped by conflict resolution -- an overlapping occurrence on the same channel, resolved by priority (higher wins; equal priority is first-come). Previously this was only visible in a server-side INFO log line. */
         Warning: {
@@ -621,6 +636,8 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number;
+                /** @description Restrict planning to this channel (parity with GenerateRequest.channel_id) -- when set, only blocks targeting this channel are planned at all. Omitted means every channel. */
+                channel_id?: string;
             };
             header?: never;
             path?: never;

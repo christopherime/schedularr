@@ -22,13 +22,11 @@
 //      when the control resolves to "" ("All channels"), never sending an
 //      empty string, matching blocks.ts's "omit rather than send a blank
 //      placeholder" convention.
-//   4. ScheduledSlot.programs is `additionalProperties: true` in the OpenAPI
-//      schema (api/openapi.yaml) -- untyped on the wire. The server's
-//      internal/api/schedule.go:programToGen round-trips a real
-//      tunarr.Program through JSON, whose Title field is a required,
-//      non-omitempty string, so in practice a `title` key is always present
-//      -- but this file still guards with a runtime typeof check rather than
-//      asserting the shape, since the contract itself makes no promise.
+//   4. ScheduledSlot.programs is the typed ScheduledProgram shape
+//      (api/openapi.yaml, v0.5.1 hard swap): title/duration_ms/start_time
+//      required, type/season/episode optional. `title` is contractually a
+//      string; the render helper below still normalizes a blank one to an
+//      em dash so the expandable list never shows an empty row.
 import { apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
 import { channelHint as channelHintText, channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
@@ -125,12 +123,13 @@ export function channelOrder(aId: string, bId: string, channels: Channel[]): num
 
 // ---- program rendering ---------------------------------------------------
 
-/** Reads a program's title defensively (see contract note 4 above): a
- * missing/non-string title renders as an em dash rather than being
- * invented or silently dropped, so the expandable list's item count always
- * matches programCount(). */
-function programTitle(p: Record<string, unknown>): string {
-  return typeof p.title === "string" && p.title.trim() !== "" ? p.title : "—";
+type ScheduledProgram = components["schemas"]["ScheduledProgram"];
+
+/** Renders a program's title (see contract note 4 above): a blank title
+ * renders as an em dash rather than an empty row, so the expandable
+ * list's item count always matches programCount(). */
+function programTitle(p: ScheduledProgram): string {
+  return p.title.trim() !== "" ? p.title : "—";
 }
 
 interface ChannelEntry {

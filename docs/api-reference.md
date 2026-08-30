@@ -46,9 +46,10 @@ Delegates to the same runner the CLI's `generate`/`generate --apply` uses, so th
 | --- | --- | --- | --- |
 | POST | `/generate` | 200 | 400, 502 |
 | POST | `/apply` | 200 | 400, 502 |
-| GET | `/schedule?days=N` | 200 | 400, 502 |
+| GET | `/schedule?days=N&channel_id=…` | 200 | 400, 502 |
 
-- `POST /generate` and `POST /apply` share the same optional `GenerateRequest` body (`days`, `channel_id`); `GET /schedule` takes the same `days` as a query parameter. `days` defaults to `7` and is range-checked by the handler itself against `[1, 30]`, returning `400` outside that range (oapi-codegen's generated bindings don't enforce the OpenAPI schema's own default/minimum/maximum).
+- `POST /generate` and `POST /apply` share the same optional `GenerateRequest` body (`days`, `channel_id`); `GET /schedule` takes the same `days` and `channel_id` as query parameters (parity with the POST body — this is what the [web Guide's](web-ui-guide.md#the-guide) DAYS/SCOPE controls call). `days` defaults to `7` and is range-checked by the handler itself against `[1, 30]`, returning `400` outside that range (oapi-codegen's generated bindings don't enforce the OpenAPI schema's own default/minimum/maximum).
+- Every slot's `programs` array carries the typed `ScheduledProgram` shape — `title`, `duration_ms`, and a per-program `start_time` (the slot's start plus the cumulative durations of everything before it in the lineup) always present; `type`, `season`, and `episode` present only when the source program carries them. This replaced the untyped `additionalProperties: true` passthrough outright in v0.5.1 (no dual-shape transition, per the no-legacy policy); the same shape flows through `POST /generate`, `POST /apply`, and `GET /schedule` identically.
 - `POST /generate` always runs a dry run (`applied: false` in the response) regardless of the request body — it never mutates the store or Tunarr. Only `POST /apply` (`applied: true` on success) pushes anything.
 - `channel_id`, when set, restricts *which blocks get planned at all* — not just which channels appear in the response or get pushed. A channel-scoped `POST /apply` never touches Tunarr, schedule history, or series-cursor state for any other channel.
 - A failure (loading blocks, fetching Tunarr content, generating the schedule, or — on apply — pushing/committing) returns `502` (`title: "schedule generation failed"`) with a short, fixed detail; the underlying error is logged server-side only, never echoed in the response body.

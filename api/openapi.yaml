@@ -139,6 +139,14 @@ paths:
             default: 7
             minimum: 1
             maximum: 30
+        - name: channel_id
+          in: query
+          description: >-
+            Restrict planning to this channel (parity with
+            GenerateRequest.channel_id) -- when set, only blocks targeting
+            this channel are planned at all. Omitted means every channel.
+          schema:
+            type: string
       responses:
         "200":
           description: plan
@@ -464,8 +472,38 @@ components:
         programs:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: "#/components/schemas/ScheduledProgram"
+    ScheduledProgram:
+      type: object
+      description: >-
+        One planned program inside a slot's lineup, in airing order. A
+        typed projection of the internal Tunarr program (the old
+        additionalProperties passthrough is gone -- hard swap, pre-v1.0):
+        exactly what a guide needs to render a rundown, nothing else.
+      required: [title, duration_ms, start_time]
+      properties:
+        title:
+          type: string
+        type:
+          type: string
+          description: >-
+            Program kind as Tunarr reports it (movie, episode, flex, ...).
+            Omitted when the source program carries no type.
+        season:
+          type: integer
+          description: Season number; omitted for non-episodes.
+        episode:
+          type: integer
+          description: Episode number; omitted for non-episodes.
+        duration_ms:
+          type: integer
+          format: int64
+        start_time:
+          type: string
+          format: date-time
+          description: >-
+            This program's own computed air time -- the slot's start plus
+            the durations of every program before it in the lineup.
     Warning:
       type: object
       description: >-

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
@@ -50,9 +51,11 @@ func (h *Handlers) ApplySchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSchedule implements gen.ServerInterface. It always dry-runs (there is
-// no request body on a GET, and no apply concept for this route).
+// no request body on a GET, and no apply concept for this route). channel_id
+// scopes planning exactly like GenerateRequest.channel_id does on the POST
+// routes -- the web guide's SCOPE control rides on this parameter.
 func (h *Handlers) GetSchedule(w http.ResponseWriter, r *http.Request, params gen.GetScheduleParams) {
-	h.runSchedule(w, r, scheduleRequest{days: params.Days, op: "get_schedule"})
+	h.runSchedule(w, r, scheduleRequest{days: params.Days, channelID: params.ChannelId, op: "get_schedule"})
 }
 
 // decodeGenerateRequest decodes a GenerateRequest body for GenerateSchedule
@@ -176,18 +179,22 @@ func warningToGen(w scheduler.Warning) gen.Warning {
 
 // slotToGen converts a scheduler.ScheduledSlot into a gen.ScheduledSlot.
 // Block reuses specToGen (blocks.go), the same scheduler.Block ->
-// gen.BlockSpec conversion ListBlocks/GetBlock/... use. Programs is a
-// `additionalProperties: true` object array in the OpenAPI schema (see
-// api/openapi.yaml), so each tunarr.Program round-trips through JSON into
-// a map[string]interface{} rather than a typed struct.
+// gen.BlockSpec conversion ListBlocks/GetBlock/... use. Programs is the
+// typed ScheduledProgram projection (a hard swap from the old
+// additionalProperties passthrough, per the no-legacy policy): each
+// program's own start_time is computed here as the slot's start plus the
+// cumulative durations of everything before it in the lineup -- the same
+// wall-clock math Tunarr applies when it plays the lineup back to back.
 func slotToGen(slot scheduler.ScheduledSlot) gen.ScheduledSlot {
 	start := slot.StartTime
 	end := slot.EndTime
 	block := specToGen(slot.Block)
 
-	programs := make([]map[string]interface{}, 0, len(slot.Programs))
+	programs := make([]gen.ScheduledProgram, 0, len(slot.Programs))
+	cursor := slot.StartTime
 	for _, p := range slot.Programs {
-		programs = append(programs, programToGen(p))
+		programs = append(programs, programToGen(p, cursor))
+		cursor = cursor.Add(time.Duration(p.GetDurationMs()) * time.Millisecond)
 	}
 
 	return gen.ScheduledSlot{
@@ -198,22 +205,28 @@ func slotToGen(slot scheduler.ScheduledSlot) gen.ScheduledSlot {
 	}
 }
 
-// programToGen converts a tunarr.Program to the loosely-typed map the
-// PlanResult.channels[].programs wire schema expects. The round trip
-// through encoding/json cannot fail for a tunarr.Program (every field is a
-// JSON-marshalable primitive, slice, or pointer to one) -- a marshal error
-// here would mean the tunarr.Program type itself became non-serializable,
-// which every other Tunarr response path in this codebase already assumes
-// can't happen, so an error here degrades to an empty map rather than
-// failing the whole response.
-func programToGen(p tunarr.Program) map[string]interface{} {
-	b, err := json.Marshal(p)
-	if err != nil {
-		return map[string]interface{}{}
+// programToGen projects one tunarr.Program onto the wire's typed
+// ScheduledProgram at its computed air time. Optional fields are omitted
+// (nil) rather than sent as zero values: a flex placeholder has no type
+// worth naming beyond what Tunarr set, and season/episode 0 means "not an
+// episode", not S00E00.
+func programToGen(p tunarr.Program, startTime time.Time) gen.ScheduledProgram {
+	out := gen.ScheduledProgram{
+		Title:      p.Title,
+		DurationMs: p.GetDurationMs(),
+		StartTime:  startTime,
 	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return map[string]interface{}{}
+	if p.Type != "" {
+		t := p.Type
+		out.Type = &t
 	}
-	return m
+	if p.SeasonNumber > 0 {
+		s := p.SeasonNumber
+		out.Season = &s
+	}
+	if p.EpisodeNumber > 0 {
+		e := p.EpisodeNumber
+		out.Episode = &e
+	}
+	return out
 }

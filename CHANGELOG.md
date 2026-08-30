@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Typed `ScheduledProgram` replaces the untyped slot programs — hard
+  swap** (`api/openapi.yaml`, `internal/api/schedule.go`):
+  `ScheduledSlot.programs` items are now
+  `{title, type?, season?, episode?, duration_ms, start_time}` instead of
+  `additionalProperties: true` maps, flowing through `POST /generate`,
+  `POST /apply`, and `GET /schedule` identically (`PlanResult`). Each
+  program's `start_time` is computed server-side as the slot start plus
+  the cumulative durations of everything before it in the lineup — the
+  per-program air time the Guide's inspector rundown renders. Optional
+  fields are omitted, never zero-filled. No dual-shape transition
+  (no-legacy policy); the CLI is unaffected — `cmd/generate.go` renders
+  from the internal `scheduler.ScheduledSlot`/`tunarr.Program` types, not
+  the wire shape (verified by grep: no `gen.` consumer in `cmd/` beyond a
+  doc comment).
+
+### Added
+
+- **`GET /schedule` gains `channel_id`** (`api/openapi.yaml`,
+  `internal/api/schedule.go`): query-parameter parity with
+  `GenerateRequest.channel_id` — when set, only blocks targeting that
+  channel are planned at all. This is what the web Guide's SCOPE control
+  calls; covered by `TestGetSchedule_ChannelIDQueryParam` and the typed
+  serialization by
+  `TestGenerateSchedule_TypedProgramsWithCumulativeStartTimes`.
+
 ## [0.5.0] - 2026-08-30
 
 ### Added
