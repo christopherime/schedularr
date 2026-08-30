@@ -50,13 +50,17 @@ type StateStore interface {
 	// serves no further purpose. Returns the number of rows deleted.
 	CleanupOccurrenceSnapshots(ctx context.Context, window time.Duration) (int64, error)
 	// DeleteFutureOccurrenceSnapshots deletes every occurrence snapshot for
-	// blockID with occurrence_start > now. Used whenever something that
-	// invalidates a not-yet-aired occurrence's cached baseline happens
-	// outside the normal apply flow -- an operator PATCHing series_state
-	// (api.PatchSeriesState), or a block being edited or deleted
-	// (api.UpdateBlock / api.DeleteBlock) -- so the next apply treats
-	// those occurrences as unseen again and re-derives them from current
-	// state/spec rather than silently keeping a now-stale snapshot.
+	// blockID with occurrence_start > now. Used whenever a pending
+	// occurrence's cached SEED itself must be overridden -- an operator
+	// cursor write (api.PatchSeriesState, the CLI's `state set`/`state
+	// reset`/`state import`) -- plus api.DeleteBlock's orphan cleanup,
+	// so the next apply treats those occurrences as unseen again and
+	// re-derives them from current state/spec. Spec EDITS deliberately
+	// do NOT call this: a pending occurrence already re-derives from its
+	// preserved seed + the CURRENT spec on every apply, and deleting the
+	// seed turned "same episodes, new arrangement" into "skip to the
+	// live cursor" (the v0.2.3 live bug -- see api.UpdateBlock's doc
+	// comment).
 	DeleteFutureOccurrenceSnapshots(ctx context.Context, blockID string, now time.Time) error
 	// MaxPlanSeq returns the highest plan-provenance sequence recorded
 	// anywhere in the store -- across both series_occurrence_snapshots.

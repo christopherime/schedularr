@@ -1434,10 +1434,12 @@ func TestPlanSeriesOccurrences_SpecEditAfterAired_AdvancesOnlyByCommittedContent
 	require.NoError(t, engine.Commit())
 	require.Equal(t, []string{"a-s1e1"}, programIDs(first))
 
-	// Operator edits the block AFTER this occurrence aired: bumps
-	// episodes_per_block from 1 to 4, and (mirroring UpdateBlock)
-	// invalidates the occurrence's snapshot -- its widened cutoff
-	// catching the still-on-air occurrence too.
+	// Operator edits the block AFTER this occurrence aired (bumping
+	// episodes_per_block from 1 to 4) AND separately invalidates its
+	// snapshot with the widened cutoff that catches the still-on-air
+	// occurrence -- e.g. a cursor PATCH issued alongside the edit (spec
+	// edits alone no longer invalidate as of v0.2.3, but the aired
+	// invariant this test pins must hold however the snapshot is lost).
 	editedBlock := block
 	editedBlock.Series = []SeriesConfig{{ShowTitle: "Edited Show", EpisodesPerBlock: 4}}
 	require.NoError(t, store.DeleteFutureOccurrenceSnapshots(ctx, block.ID, occStart.Add(-time.Second)))
@@ -1459,7 +1461,7 @@ func TestPlanSeriesOccurrences_SpecEditAfterAired_AdvancesOnlyByCommittedContent
 // branch used to assume that meant "never planned before" unconditionally,
 // so it called the append-only recordHistory path -- but
 // DeleteFutureOccurrenceSnapshots (an operator's PATCH /state/series, or a
-// block edit) deletes ONLY the snapshot, never the schedule_history rows
+// cursor write) deletes ONLY the snapshot, never the schedule_history rows
 // a not-yet-aired occurrence's earlier commit also wrote. Re-deriving
 // after such a wipe used to append a second, overlapping set of history
 // rows on top of the first instead of replacing them (reviewer probe:
@@ -1648,8 +1650,8 @@ func TestPlanSeriesOccurrences_RestartWrap_LandsViaReplayAndSurvivesInvalidation
 		assert.Equal(t, 1, state.RunCount, "the wrap's run_count must persist too, apply %d", i)
 	}
 
-	// The permanent-damage half: wipe every snapshot (an operator write,
-	// block edit, or retention GC) and plan the NEXT occurrence. With the
+	// The permanent-damage half: wipe every snapshot (an operator write
+	// or retention GC) and plan the NEXT occurrence. With the
 	// wrap correctly persisted it re-derives from S01E01 -> [e1,e2]; a
 	// cursor frozen at the high-water mark would have re-derived [e3] --
 	// regressing onto the episode that JUST aired in occ2.

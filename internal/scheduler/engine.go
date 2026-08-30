@@ -731,7 +731,7 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program, occu
 // snapshot is gone (operator invalidation) or predates post-state
 // capture (a pre-migration-000006 legacy row) contributes no advance at
 // all; the chain re-seeds from live series_state, which the
-// invalidation's own trigger (an operator write or block edit) has just
+// invalidation's own trigger (an operator cursor write) has just
 // made the freshest truth.
 
 // seriesChainResult is establishSeriesChain's result, bundled into one
@@ -754,7 +754,8 @@ type seriesChainResult struct {
 //  2. No snapshot, but StateStore.GetCommittedOccurrence already has rows
 //     for it: this occurrence WAS planned by some earlier apply -- only
 //     its snapshot is gone, via DeleteFutureOccurrenceSnapshots (an
-//     operator's PATCH /state/series, or a block edit/delete) or
+//     operator's cursor write -- PATCH /state/series, CLI
+//     set/reset/import -- or a block delete's orphan cleanup) or
 //     CleanupOccurrenceSnapshots' retention GC -- so it must NOT be
 //     real-planned again (planned=false, same as case 1): for an
 //     aired/on-air occurrence that would silently replace already-aired,
@@ -919,7 +920,7 @@ func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.P
 // (guarded, see syncPostStates) the persisted cursor advance.
 //
 // When there is no post-state to replay -- the snapshot was invalidated
-// (operator PATCH/CLI write or block edit -- live series_state IS the
+// (an operator cursor write -- live series_state IS the
 // fresher truth now) or predates post-state capture (a
 // pre-migration-000006 legacy row, whose old-code plan already advanced
 // live state itself) -- the chain is re-seeded from live state instead,

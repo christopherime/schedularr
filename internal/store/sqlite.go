@@ -393,11 +393,11 @@ func (s *Store) DeleteFutureOccurrenceSnapshots(ctx context.Context, blockID str
 // cursor) until it finishes airing on its own and a later occurrence
 // finally picks up the change. Every caller that invalidates snapshots
 // outside the normal apply flow needs this: an operator's PATCH
-// /state/series or a block edit/delete (internal/api/state.go,
-// internal/api/blocks.go -- a block EDIT must pass its PRE-edit spec,
-// since the snapshots being invalidated were captured under the old
-// airing envelope), and the CLI's `schedularr state reset`/`state set`
-// (cmd/state.go, via InvalidateSeriesOccurrenceSnapshots below).
+// /state/series (internal/api/state.go), a block DELETE's orphan
+// cleanup (internal/api/blocks.go -- spec EDITS deliberately don't
+// invalidate at all, see api.UpdateBlock's doc comment), and the CLI's
+// `schedularr state reset`/`state set`/`state import` (cmd/state.go,
+// via InvalidateSeriesOccurrenceSnapshots below).
 func InvalidationCutoff(now time.Time, spec scheduler.Block) time.Time {
 	envelope := time.Duration(spec.Duration+spec.MaxDurationOverflowMinutes) * time.Minute
 	return now.Add(-envelope)
@@ -410,11 +410,12 @@ func InvalidationCutoff(now time.Time, spec scheduler.Block) time.Time {
 // apply flow and needs its not-yet-aired (and on-air) occurrences to
 // re-derive against the new value instead of a stale cached snapshot:
 // api.PatchSeriesState (internal/api/state.go) and the CLI's
-// `schedularr state reset`/`state set` (cmd/state.go) both call this
-// directly; api.UpdateBlock/DeleteBlock (internal/api/blocks.go)
-// invalidate by block ID directly instead, since they already know
-// exactly which block changed and don't need this show-title-based
-// lookup.
+// `schedularr state reset`/`state set`/`state import` (cmd/state.go)
+// all call this directly; api.DeleteBlock (internal/api/blocks.go)
+// invalidates by block ID directly instead, since it already knows
+// exactly which block is gone and doesn't need this show-title-based
+// lookup. Spec edits (api.UpdateBlock) invalidate nothing -- see its
+// doc comment for why the seed must survive an edit.
 //
 // Matches by scanning every block's Spec.Series (there is no reverse
 // index from show_title to block IDs; the blocks table is small enough

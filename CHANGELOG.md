@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-30
+
+One live production bug, found through real use of v0.2.2's deployed
+reorder flow -- not a review pass.
+
+### Fixed
+
+- **Reordering a block through `PUT /blocks/{id}` made the pending
+  (not-yet-aired) occurrence SKIP episodes.** Observed on the cluster:
+  tonight's occurrence was committed with each show's E2 (cursors
+  legitimately advanced to E3 at plan time); the PUT then invalidated
+  the block's occurrence snapshots -- a round-2-era step aimed at
+  operator cursor edits -- deleting the occurrence's SEED, so the
+  seedless re-derive fell back to the LIVE cursor (E3) and re-planned
+  tonight with the E3s: the committed E2s would never have aired.
+  Engine-level reorder tests kept passing because they mutate the spec
+  directly with snapshots intact; the handler wiring defeated the
+  seed-preserving semantics the snapshot design exists to provide. Under
+  the final architecture the invalidation was redundant AND harmful:
+  spec edits already take effect through re-derive-from-seed + CURRENT
+  spec ("same episodes, new arrangement"), and invalidation is only
+  correct where the seed ITSELF must be overridden -- operator cursor
+  writes (`PATCH /state/series`, CLI `state set`/`reset`/`import`) --
+  plus `DeleteBlock`'s orphan cleanup, both unchanged. `UpdateBlock`
+  (`internal/api/blocks.go`) no longer touches snapshots at all. Edge
+  cases ruled through rather than papered over: a spec edit REMOVING a
+  series leaves a harmless unused seed entry (the re-derive simply
+  doesn't plan it, and the baseline-agreement guard keeps its eventual
+  post-state replay from touching live state); a `channel_id` change
+  leaves the seed valid (occurrence identity is block + start); a spec
+  edit ADDING a series re-derives that show from the engine's
+  deterministic S01E01 default -- the same start any new series gets --
+  which needs no seed refresh, so no narrow re-seed path was added. New
+  regression tests at the previously-untested handler+engine layer:
+  `TestUpdateBlock_Reorder_PendingOccurrenceKeepsSameEpisodes` (real PUT
+  handler, real store, real engine: commit [alpha-e2, beta-e2], PUT the
+  reorder, re-apply -> the SAME occurrence re-plans [beta-e2, alpha-e2]
+  with cursors unchanged; probed red against the reverted handler,
+  which reproduces the exact live failure [beta-e3, alpha-e3]) and
+  `TestPatchSeriesState_OverridesSeed_PendingOccurrenceRederivesFromNewCursor`
+  (the companion pin: cursor edits still override seeds);
+  `TestUpdateBlock_PreservesOccurrenceSnapshots` replaces the three
+  retired invalidation-era Update tests. `docs/scheduling-concepts.md`
+  now states the distinction outright: spec edits are seed-preserving
+  (same episodes), cursor edits are seed-overriding.
+
 ## [0.2.2] - 2026-08-30
 
 A critical bug plus two smaller ones found during live multi-block

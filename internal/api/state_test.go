@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
 )
@@ -317,6 +318,66 @@ func TestPatchSeriesState_DoesNotInvalidateAlreadyFinishedOccurrenceSnapshot(t *
 	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-1", finishedStart)
 	require.NoError(t, err)
 	assert.True(t, ok, "an already-finished occurrence's snapshot must survive -- only not-yet-finished ones are invalidated")
+}
+
+// TestPatchSeriesState_OverridesSeed_PendingOccurrenceRederivesFromNewCursor
+// is the v0.2.3 companion to
+// TestUpdateBlock_Reorder_PendingOccurrenceKeepsSameEpisodes
+// (blocks_test.go): spec edits are seed-PRESERVING, but a cursor edit
+// through PATCH /state/series must stay seed-OVERRIDING -- the whole
+// point of a manual cursor write is that the pending occurrence's
+// captured baseline is no longer what the operator wants. Through the
+// real handler: commit a pending occurrence (planned from E2), PATCH the
+// cursor back to E1, re-apply -- the SAME occurrence must re-derive from
+// the NEW cursor.
+func TestPatchSeriesState_OverridesSeed_PendingOccurrenceRederivesFromNewCursor(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	seeded := time.Now().Add(-24 * time.Hour)
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Alpha", CurrentSeason: 1, CurrentEpisode: 2, LastAired: &seeded,
+	}))
+	catalog := []tunarr.Program{
+		{ID: "alpha-e1", Type: "episode", ShowTitle: "Alpha", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "alpha-e2", Type: "episode", ShowTitle: "Alpha", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+	}
+
+	require.NoError(t, s.CreateBlock(ctx, &store.BlockRecord{
+		ID: "block-alpha", Name: "Alpha Block", Enabled: true,
+		Spec: scheduler.Block{
+			Name: "Alpha Block", Type: scheduler.BlockTypeSeries, Cron: "0 20 * * *", Duration: 30, ChannelID: "channel-1",
+			Series: []scheduler.SeriesConfig{{ShowTitle: "Alpha", EpisodesPerBlock: 1}},
+		},
+	}))
+	rec, err := s.GetBlock(ctx, "block-alpha")
+	require.NoError(t, err)
+	blk := rec.Spec
+	blk.ID = rec.ID
+
+	now := time.Now()
+	occurrenceStart := now.Add(4 * time.Hour)
+	engine := scheduler.NewEngine(&tunarr.Client{}, nil, s, slog.Default(), time.UTC)
+	first, err := engine.PlanBlock(blk, catalog, occurrenceStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"alpha-e2"}, planProgramIDs(first))
+
+	// Operator cursor edit through the real handler: back to E1.
+	episode := 1
+	w := doRequest(t, h, http.MethodPatch, patchPath("Alpha"), gen.SeriesStatePatch{CurrentEpisode: &episode})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	second, err := engine.PlanBlock(blk, catalog, occurrenceStart, now.Add(time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	assert.Equal(t, []string{"alpha-e1"}, planProgramIDs(second),
+		"a cursor edit must override the pending occurrence's seed -- the re-derive starts from the operator's new cursor")
+
+	committed, ok, err := s.GetCommittedOccurrence(ctx, "Alpha Block", occurrenceStart)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"alpha-e1"}, planProgramIDs(committed))
 }
 
 // TestPatchSeriesState_SucceedsEvenWhenSnapshotInvalidationFails is

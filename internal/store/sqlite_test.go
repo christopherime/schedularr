@@ -297,7 +297,7 @@ func TestStore_ImportSeriesStates_StampsOperatorWrite(t *testing.T) {
 }
 
 // TestStore_DeleteFutureOccurrenceSnapshots pins finding 3's fix: an
-// operator's series_state PATCH (or a block edit/delete) must invalidate
+// operator's series_state PATCH (or a block delete's cleanup) must invalidate
 // only the NOT-YET-AIRED occurrences of the affected block, leaving
 // already-aired ones (occurrence_start <= now) and other blocks alone.
 func TestStore_DeleteFutureOccurrenceSnapshots(t *testing.T) {

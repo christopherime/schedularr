@@ -91,30 +91,27 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // does, so a rename that collides with another block's name surfaces as
 // ErrConflict -> 409, same as a colliding create.
 //
-// After a successful update, every not-yet-FINISHED occurrence snapshot
-// for this block ID is deleted (DeleteFutureOccurrenceSnapshots, with
-// store.InvalidationCutoff's widened cutoff -- see its doc comment for
-// why "not yet finished" and not just "not yet started"). The cutoff is
-// computed from the PRE-edit spec, captured before existing.Spec is
-// overwritten: the snapshots being invalidated were captured under the
-// OLD spec's airing envelope (duration + overflow), so whether one is
-// "still airing" is a question about that old envelope -- computing it
-// from the just-shortened new duration would leave the on-air
-// occurrence's stale snapshot alive past the new, shorter cutoff. This
-// makes the next apply re-derive those occurrences from the just-edited
-// spec instead of silently keeping a snapshot/committed assignment
-// captured under the OLD spec until it ages out of the
-// schedule-generation window on its own -- see
-// StateStore.DeleteFutureOccurrenceSnapshots' doc comment. This is a
-// series-only mechanism (only series blocks have occurrence snapshots at
-// all), but it's harmless -- a no-op deleting zero rows -- to call
-// unconditionally for a filter block too, so this doesn't special-case on
-// existing.Spec.Type. A failure at this step is logged and NOT surfaced
-// as a response error: store.UpdateBlock has already committed by then,
-// so the write genuinely succeeded, and returning 500 for it would be
-// both wrong (the caller's PUT did what it asked) and unhelpful (there's
-// no compensating action for the caller to take -- see logInternalError's
-// doc comment).
+// A spec edit deliberately does NOT invalidate the block's occurrence
+// snapshots. Spec edits are SEED-PRESERVING by design: a pending
+// (not-yet-aired) occurrence re-derives on every apply from its stored
+// pre-plan seed combined with the CURRENT spec, so a reorder, an
+// added/removed series, or a changed episodes_per_block/duration takes
+// effect on the very next apply with the SAME episodes, re-arranged per
+// the new spec -- that is the entire point of storing the seed
+// separately from the assignment (see
+// scheduler.Engine.planSeriesOccurrences). An earlier version of this
+// handler invalidated the snapshots here, aimed at operator cursor
+// edits -- and it caused a LIVE bug: deleting the seed made the pending
+// occurrence's seedless re-derive fall back to the live cursor (already
+// advanced past the occurrence's own committed episodes at plan time),
+// silently SKIPPING those episodes forever. Invalidation belongs only
+// where the seed ITSELF must be overridden -- an operator cursor write
+// (api.PatchSeriesState, the CLI's `state set`/`state reset`/`state
+// import`) -- and to DeleteBlock's orphan cleanup below. The one spec
+// edit that changes what a seed means -- ADDING a series the seed has no
+// entry for -- is handled by the engine's own deterministic default (the
+// added show re-derives from S01E01, the same start any new series
+// gets), not by deleting the other shows' seeds along with it.
 func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
@@ -145,10 +142,6 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	// PRE-edit cutoff -- see the doc comment above for why this must be
-	// captured before existing.Spec is replaced.
-	preEditCutoff := store.InvalidationCutoff(time.Now(), existing.Spec)
-
 	existing.Name = spec.Name
 	existing.Enabled = blockEnabled(body.Enabled)
 	existing.Spec = spec
@@ -158,10 +151,6 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, preEditCutoff); err != nil {
-		h.logInternalError(r, "update_block_invalidate_snapshots", err)
-	}
-
 	writeJSON(w, http.StatusOK, toGen(*existing))
 }
 
@@ -169,19 +158,20 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 //
 // After a successful delete, every not-yet-FINISHED occurrence snapshot
 // for this block ID is also deleted (DeleteFutureOccurrenceSnapshots,
-// same widened cutoff as UpdateBlock) -- see UpdateBlock's doc comment
-// for why a block mutation needs this (including why a failure here is
-// logged and not surfaced as a response error). A deleted block can
-// never generate a future occurrence again, so this is mostly tidiness
-// rather than a live correctness bug the way UpdateBlock's case is, but
-// it's the same one-line cleanup and keeps the invariant "a block ID with
-// no corresponding block record has no leftover snapshots either" from
-// silently drifting false over time (e.g. a block deleted and later
-// re-created would otherwise never collide on ID -- IDs are fresh UUIDs
-// -- but leaving orphaned rows around for a since-deleted ID serves no
-// purpose). The block is looked up BEFORE deleting it -- its Duration is
-// needed to compute the cutoff, and it's gone from the store once
-// DeleteBlock succeeds.
+// with store.InvalidationCutoff's widened, overflow-aware cutoff). This
+// is pure orphan cleanup -- a deleted block can never generate an
+// occurrence again, and unlike a spec EDIT (see UpdateBlock's doc
+// comment for why edits must preserve seeds) there is no pending
+// re-derive left to protect. It keeps the invariant "a block ID with no
+// corresponding block record has no leftover snapshots either" from
+// silently drifting false over time (a block deleted and later
+// re-created never collides on ID -- IDs are fresh UUIDs -- but leaving
+// orphaned rows around for a since-deleted ID serves no purpose). A
+// failure at this step is logged and NOT surfaced as a response error:
+// store.DeleteBlock has already committed by then, so the delete
+// genuinely succeeded (see logInternalError's doc comment). The block is
+// looked up BEFORE deleting it -- its spec is needed to compute the
+// cutoff, and it's gone from the store once DeleteBlock succeeds.
 func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {

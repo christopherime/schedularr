@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
+	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
 )
@@ -397,14 +399,19 @@ func TestDeleteBlock_ThenNotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, wd2.Code, "deleting an already-deleted block should 404")
 }
 
-// TestUpdateBlock_InvalidatesFutureOccurrenceSnapshots and
-// TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots are the
-// handler-level regressions for round-2 finding 5: only the SQL
-// primitive (StateStore.DeleteFutureOccurrenceSnapshots) had a dedicated
-// test before this -- nothing exercised PUT/DELETE /blocks/{id} end to
-// end to confirm they really invalidate a not-yet-aired occurrence
-// snapshot for the mutated block.
-func TestUpdateBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
+// TestUpdateBlock_PreservesOccurrenceSnapshots is the v0.2.3 live-bug
+// regression at the wiring level: PUT /blocks/{id} must NOT invalidate
+// the block's occurrence snapshots -- not the future ones, not the
+// on-air one. Spec edits are seed-preserving (a pending occurrence
+// re-derives from its stored seed + the CURRENT spec); the invalidation
+// an earlier version performed here deleted the seed, and the seedless
+// re-derive fell back to the live cursor -- observed in production as a
+// reorder making tonight's occurrence SKIP its already-committed
+// episodes. Only DeleteBlock (orphan cleanup) and the cursor-edit paths
+// (PATCH /state/series, CLI state set/reset/import) invalidate. See
+// TestUpdateBlock_Reorder_PendingOccurrenceKeepsSameEpisodes for the
+// end-to-end episode-level consequence.
+func TestUpdateBlock_PreservesOccurrenceSnapshots(t *testing.T) {
 	h, s := newTestServerWithStore(t)
 	ctx := t.Context()
 
@@ -413,21 +420,132 @@ func TestUpdateBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
 	created := decodeBlockRecord(t, w)
 
 	future := time.Now().Add(24 * time.Hour)
+	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into the 90min block: on air
 	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, future, snapshot))
-
-	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
-	require.NoError(t, err)
-	require.True(t, ok, "test setup: snapshot must exist before the update")
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
 
 	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
 	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
 
-	_, ok, err = s.GetOccurrenceSnapshot(ctx, created.Id, future)
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
 	require.NoError(t, err)
-	assert.False(t, ok, "PUT must invalidate every not-yet-aired occurrence snapshot for the updated block")
+	assert.True(t, ok, "PUT must preserve a pending occurrence's seed -- spec edits re-derive from seed + current spec, they never reset the seed")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, created.Id, onAirStart)
+	require.NoError(t, err)
+	assert.True(t, ok, "PUT must preserve the on-air occurrence's snapshot too -- its post-state is what advances the cursor when it airs")
 }
 
+// TestUpdateBlock_Reorder_PendingOccurrenceKeepsSameEpisodes is the
+// v0.2.3 live bug end to end, at the layer that was untested: the REAL
+// PUT handler against the REAL store, with the REAL engine planning and
+// re-planning the pending occurrence around it. Observed on the cluster:
+// tonight's occurrence was committed with each show's E2 (cursors
+// legitimately advanced to E3 at plan time); a PUT reorder then deleted
+// the occurrence's seed, so the re-derive fell back to the LIVE cursor
+// (E3) and re-planned tonight with the E3s -- the committed E2s would
+// never have aired. Engine-level reorder tests kept passing because they
+// mutate the spec directly with the snapshots intact; it was the handler
+// wiring that defeated the seed-preserving semantics. After a reorder,
+// the SAME occurrence must re-plan with the SAME episodes in the NEW
+// order, and the persisted cursors must not move.
+func TestUpdateBlock_Reorder_PendingOccurrenceKeepsSameEpisodes(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	// Cursors already mid-series: E1s aired some previous night.
+	seeded := time.Now().Add(-24 * time.Hour)
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Alpha", CurrentSeason: 1, CurrentEpisode: 2, LastAired: &seeded,
+	}))
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Beta", CurrentSeason: 1, CurrentEpisode: 2, LastAired: &seeded,
+	}))
+
+	catalog := make([]tunarr.Program, 0, 6)
+	for _, show := range []string{"Alpha", "Beta"} {
+		for ep := 1; ep <= 3; ep++ {
+			catalog = append(catalog, tunarr.Program{
+				ID: fmt.Sprintf("%s-e%d", strings.ToLower(show), ep), Type: "episode",
+				ShowTitle: show, SeasonNumber: 1, EpisodeNumber: ep, Duration: 1_800_000,
+			})
+		}
+	}
+
+	blockWrite := func(series []gen.SeriesConfig) gen.BlockWrite {
+		seriesType := gen.BlockSpecTypeSeries
+		return gen.BlockWrite{Spec: gen.BlockSpec{
+			Name: "tonight", Cron: "0 20 * * *", Duration: 60, ChannelId: "channel-1",
+			Type: &seriesType, Series: &series,
+		}}
+	}
+	w := doRequest(t, h, http.MethodPost, "/blocks", blockWrite([]gen.SeriesConfig{
+		{ShowTitle: "Alpha", EpisodesPerBlock: 1}, {ShowTitle: "Beta", EpisodesPerBlock: 1},
+	}))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	// activeBlock mirrors service.ActiveBlocks: the stored spec plus the
+	// record's stable ID (what keys the occurrence snapshots).
+	activeBlock := func() scheduler.Block {
+		rec, err := s.GetBlock(ctx, created.Id)
+		require.NoError(t, err)
+		blk := rec.Spec
+		blk.ID = rec.ID
+		return blk
+	}
+
+	// Apply 1: tonight's occurrence (still hours away) commits [alpha-e2,
+	// beta-e2] and the plan advances both cursors to E3 -- exactly the
+	// production state before the reorder.
+	now := time.Now()
+	occurrenceStart := now.Add(4 * time.Hour)
+	engine := scheduler.NewEngine(&tunarr.Client{}, nil, s, slog.Default(), time.UTC)
+	first, err := engine.PlanBlock(activeBlock(), catalog, occurrenceStart, now)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	require.Equal(t, []string{"alpha-e2", "beta-e2"}, planProgramIDs(first))
+
+	// The reorder, through the real handler.
+	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, blockWrite([]gen.SeriesConfig{
+		{ShowTitle: "Beta", EpisodesPerBlock: 1}, {ShowTitle: "Alpha", EpisodesPerBlock: 1},
+	}))
+	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
+
+	// Re-apply: the SAME occurrence re-derives from its preserved seed
+	// (E2s) + the NEW spec order -- same episodes, new arrangement.
+	second, err := engine.PlanBlock(activeBlock(), catalog, occurrenceStart, now.Add(time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+	assert.Equal(t, []string{"beta-e2", "alpha-e2"}, planProgramIDs(second),
+		"a reorder must re-plan the pending occurrence with the SAME episodes in the NEW order -- never skip to the live cursor's E3s")
+
+	committed, ok, err := s.GetCommittedOccurrence(ctx, "tonight", occurrenceStart)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"beta-e2", "alpha-e2"}, planProgramIDs(committed), "the committed assignment must reflect the re-derive")
+
+	for _, show := range []string{"Alpha", "Beta"} {
+		state, err := s.GetPersistedSeriesState(ctx, show)
+		require.NoError(t, err)
+		assert.Equal(t, 3, state.CurrentEpisode, "%s: the persisted cursor must be unchanged by the reorder + re-apply", show)
+	}
+}
+
+// planProgramIDs extracts program IDs (GetID) from a planned assignment.
+func planProgramIDs(programs []tunarr.Program) []string {
+	ids := make([]string, 0, len(programs))
+	for _, p := range programs {
+		ids = append(ids, p.GetID())
+	}
+	return ids
+}
+
+// TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots pins DeleteBlock's
+// orphan cleanup (a deleted block ID must not leave snapshot rows
+// behind); TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot below pins
+// its widened, on-air-inclusive cutoff (store.InvalidationCutoff).
 func TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
 	h, s := newTestServerWithStore(t)
 	ctx := t.Context()
@@ -446,37 +564,6 @@ func TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
 	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
 	require.NoError(t, err)
 	assert.False(t, ok, "DELETE must invalidate every not-yet-aired occurrence snapshot for the deleted block")
-}
-
-// TestUpdateBlock_InvalidatesOnAirOccurrenceSnapshot and
-// TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot are round-3 finding
-// 2's API-layer regressions: DeleteFutureOccurrenceSnapshots' plain
-// "occurrence_start > now" cutoff never catches an occurrence that's
-// CURRENTLY on air (its own occurrence_start is already in the past) --
-// UpdateBlock/DeleteBlock must widen the cutoff by the block's own
-// airing envelope (store.InvalidationCutoff) so an edit/delete also
-// reaches it, not just strictly future occurrences.
-func TestUpdateBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
-	h, s := newTestServerWithStore(t)
-	ctx := t.Context()
-
-	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
-	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
-	created := decodeBlockRecord(t, w)
-
-	// seriesBlockWrite's cron ("0 20 * * 6") / duration (90min) don't
-	// matter here: the snapshot's occurrence_start is set directly,
-	// independent of what the block's own schedule would generate.
-	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into a 90min block: on air
-	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
-	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
-
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
-	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
-
-	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, onAirStart)
-	require.NoError(t, err)
-	assert.False(t, ok, "PUT must invalidate the on-air occurrence's own snapshot too, not just strictly future ones")
 }
 
 func TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
@@ -499,47 +586,6 @@ func TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
 	assert.False(t, ok, "DELETE must invalidate the on-air occurrence's own snapshot too, not just strictly future ones")
 }
 
-// TestUpdateBlock_ShortenedDuration_InvalidatesUnderPreEditEnvelope is
-// round-4 finding 4's regression: UpdateBlock used to compute the
-// invalidation cutoff from existing.Spec AFTER overwriting it with the
-// new body -- so shortening a block's duration shrank the cutoff too,
-// leaving alive the snapshot of an occurrence still airing under the
-// OLD, longer envelope. The cutoff also ignored
-// max_duration_overflow_minutes entirely. The snapshots being
-// invalidated were captured under the PRE-edit spec, so the cutoff must
-// use the pre-edit duration + overflow.
-func TestUpdateBlock_ShortenedDuration_InvalidatesUnderPreEditEnvelope(t *testing.T) {
-	h, s := newTestServerWithStore(t)
-	ctx := t.Context()
-
-	// Original spec: 90min duration + 30min overflow -- a 120min airing
-	// envelope.
-	original := seriesBlockWrite("shrinking-marathon")
-	overflow := 30
-	original.Spec.MaxDurationOverflowMinutes = &overflow
-	w := doRequest(t, h, http.MethodPost, "/blocks", original)
-	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
-	created := decodeBlockRecord(t, w)
-
-	// An occurrence 100min in: past the nominal 90min, still airing in
-	// the old envelope's overflow tail.
-	onAirStart := time.Now().Add(-100 * time.Minute)
-	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
-	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
-
-	// Shorten the block to 30min with no overflow. A cutoff computed
-	// from the POST-edit spec (30min) would never reach the occurrence
-	// that started 100min ago; the pre-edit envelope (120min) must.
-	shortened := seriesBlockWrite("shrinking-marathon")
-	shortened.Spec.Duration = 30
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, shortened)
-	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
-
-	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, onAirStart)
-	require.NoError(t, err)
-	assert.False(t, ok, "the occurrence still airing under the PRE-edit envelope (90+30min) must have its snapshot invalidated despite the shortened new duration")
-}
-
 // corruptOccurrenceSnapshotsTable drops the series_occurrence_snapshots
 // table via a raw connection to the SAME sqlite file dsn points at, so a
 // later DeleteFutureOccurrenceSnapshots call against a *store.Store
@@ -559,33 +605,13 @@ func corruptOccurrenceSnapshotsTable(t *testing.T, dsn string) {
 	require.NoError(t, err, "test setup: failed to drop series_occurrence_snapshots")
 }
 
-// TestUpdateBlock_SucceedsEvenWhenSnapshotInvalidationFails and
-// TestDeleteBlock_SucceedsEvenWhenSnapshotInvalidationFails are round-3
-// finding 7's regressions: round-2 fixed UpdateBlock/DeleteBlock to log
-// (not 500) a failed post-mutation snapshot invalidation, since the
-// primary mutation had already committed by then -- but no test actually
-// forced that failure path before this. corruptOccurrenceSnapshotsTable
-// makes DeleteFutureOccurrenceSnapshots specifically fail while every
-// other store call keeps working.
-func TestUpdateBlock_SucceedsEvenWhenSnapshotInvalidationFails(t *testing.T) {
-	dsn := filepath.Join(t.TempDir(), "test.db")
-	s, err := store.New(dsn)
-	require.NoError(t, err, "failed to create test store")
-	t.Cleanup(func() { _ = s.Close() })
-	h := gen.HandlerFromMux(NewHandlers(Deps{Store: s, Logger: slog.Default(), Version: "test"}), chi.NewRouter())
-
-	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("weekend-marathon"))
-	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
-	created := decodeBlockRecord(t, w)
-
-	corruptOccurrenceSnapshotsTable(t, dsn)
-
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
-	assert.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
-	updated := decodeBlockRecord(t, wu)
-	assert.Equal(t, created.Id, updated.Id, "the update itself must still have succeeded and be reflected in the response")
-}
-
+// TestDeleteBlock_SucceedsEvenWhenSnapshotInvalidationFails is round-3
+// finding 7's regression (UpdateBlock's variant was retired in v0.2.3
+// along with its invalidation -- spec edits no longer touch snapshots at
+// all): DeleteBlock logs (not 500s) a failed post-mutation snapshot
+// cleanup, since the primary mutation has already committed by then.
+// corruptOccurrenceSnapshotsTable makes DeleteFutureOccurrenceSnapshots
+// specifically fail while every other store call keeps working.
 func TestDeleteBlock_SucceedsEvenWhenSnapshotInvalidationFails(t *testing.T) {
 	dsn := filepath.Join(t.TempDir(), "test.db")
 	s, err := store.New(dsn)
