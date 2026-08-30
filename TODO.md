@@ -313,10 +313,11 @@ the slice; both are known, scoped-out gaps.
   documented at the `daySpan` doc comment; fix would be
   ruler-follows-offset rendering.
 
-## v0.5.7 polish intake
+## v0.5.9 polish intake
 
 Punted from the v0.5.0 bench-rebuild review fix round (2026-08-30) — real
-findings, deliberately deferred to the v0.5.7 polish slice rather than
+findings, deliberately deferred to the v0.5.9 polish slice (the ladder
+shifted twice on 2026-08-30) rather than
 patched piecemeal mid-rebuild.
 
 - [ ] **`aria-busy` on loading sections + skeleton announcement.** Every

@@ -1,35 +1,35 @@
-// The Guide ("/"): the EPG grid as home (spec §3.1 + §3.2, v0.5.1
-// read-only slice). Auto-loads GET /schedule on open -- the manual
+// The Guide ("/"): the EPG grid as home (spec §3.1 + §3.2, full-week
+// grid since v0.5.3). Auto-loads GET /schedule on open -- the manual
 // Generate click is dead for reading; the old Schedule page still owns
-// preview/apply until v0.5.2 absorbs it as the guide's draft mode.
+// preview/apply until v0.5.4 absorbs it as the guide's draft mode.
 //
 // Division of labor (spec non-negotiable): the grid + rundown DOM is
 // built in TS by runtime/grid.ts from the typed plan; Alpine drives ONLY
-// the toolbar (DAYS / SCOPE / day tabs / mobile channel picker) and the
-// slot inspector. In THIS read-only slice a DAYS/SCOPE change re-fetches
-// the plan (draft mode arrives in v0.5.2); day tabs navigate the loaded
-// window and never re-plan.
+// the toolbar (SCOPE / week pager / mobile channel picker) and the slot
+// inspector. The client fetches the FULL plannable window once
+// (days=28, the API's practical max) per load/scope-change and pages
+// four weeks client-side -- the ‹/› week pager never re-plans; only a
+// SCOPE change re-fetches (draft mode arrives in v0.5.4).
 //
 // The now-line advances on a local 60s timer (browser clock); heartbeat
-// skew correction arrives with SSE in v0.5.4.
-import { apiGet, apiPath, onReauth } from "../runtime/api.ts";
+// skew correction arrives with SSE in v0.5.6.
+import { LONG_GET_TIMEOUT_MS, apiGet, apiPath, onReauth } from "../runtime/api.ts";
 import type { ApiResponse } from "../runtime/api.ts";
 import { channelHint as channelHintText, channelLabel, channelOrder, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel } from "../runtime/channels.ts";
 import { cronReadback } from "../runtime/cron.ts";
 import { toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
-import { clampDays, durationLabel, formatClock, ordinal, plural, sxxeyy } from "../runtime/format.ts";
+import { durationLabel, formatClock, ordinal, plural, sxxeyy } from "../runtime/format.ts";
 import {
   addDays,
-  dayLabel,
   localDayStart,
-  renderGuideDay,
+  renderGuideWeek,
   renderRundown,
   resolveGhost,
+  weekChunk,
   weekPageCount,
-  weekPageDays,
-  weekPageOf,
+  weekRangeLabel,
   windowDayCount,
 } from "../runtime/grid.ts";
 import type { GhostBlockInfo, GridHandle, GuideRow, GuideSlot, RundownHandle } from "../runtime/grid.ts";
@@ -40,6 +40,18 @@ initShell();
 
 type PlanResult = ApiResponse<"getSchedule", 200>;
 type BlockRecord = components["schemas"]["BlockRecord"];
+
+// The one plan window the guide ever asks for (spec §3.1, full-week
+// amendment): the API's practical max, fetched once per load/
+// scope-change and paged client-side as four 7-day week chunks (plus
+// the trailing partial calendar day a mid-day fetch spills into).
+const FETCH_DAYS = 28;
+
+// The honest first-load line: GET /schedule re-plans the full window
+// against Tunarr, and the first call after a restart (cold pod, Tunarr
+// itself waking) can genuinely take this long -- the request runs on
+// the 90s LONG_GET_TIMEOUT_MS tier, so say so instead of looking hung.
+const LOADING_LINE = "Loading programme guide — first load after a restart can take a minute";
 
 declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
@@ -82,27 +94,21 @@ let rowsMemo: {
   value: RowsProjection;
 } | null = null;
 
-interface DayTab {
-  index: number;
-  label: string;
-  isToday: boolean;
-}
-
 interface InspectorState {
   open: boolean;
   slot: GuideSlot | null;
 }
 
 interface GuideState {
-  controls: { days: string; channelId: string };
+  controls: { channelId: string };
 
   channelsLoading: boolean;
   channelsError: string | null;
   channels: Channel[];
 
   loading: boolean;
-  /** Latches a DAYS/SCOPE change that lands while a reload is already
-   * in flight -- the flight finishes, then re-fires with the latest
+  /** Latches a SCOPE change that lands while a reload is already in
+   * flight -- the flight finishes, then re-fires with the latest
    * control values (the controls stay enabled and keep focus). */
   reloadPending: boolean;
   /** The visually-hidden role="status" line: announces the guide's
@@ -121,10 +127,9 @@ interface GuideState {
    * windowDayCount). */
   windowStartMs: number;
   loadedDays: number;
-  dayIndex: number;
-  /** The week page the tab strip shows (spec §3.1 pager): page k = days
-   * k*7..k*7+6 of the loaded window. Paging only moves the strip -- the
-   * rendered day changes when a tab is pressed. */
+  /** The week page on the glass: page k = window days k*7..k*7+6
+   * (weekChunk). The grid, the pager label, and the mobile rundown all
+   * follow it; chevrons disable at the window edges. */
   weekPage: number;
 
   rundownChannelId: string;
@@ -137,10 +142,9 @@ interface GuideState {
   channelLabel(c: Channel): string;
   channelHint(): string;
 
-  dayTabs(): DayTab[];
   weekPages(): number;
-  pageWeek(delta: number): void;
-  selectDay(index: number, tabEl?: HTMLElement): void;
+  weekLabel(): string;
+  pageWeek(delta: number, navEl?: HTMLButtonElement): void;
 
   projection(): RowsProjection;
   rows(): GuideRow[];
@@ -175,7 +179,7 @@ document.addEventListener("alpine:init", () => {
   Alpine.data(
     "guide",
     (): GuideState & ThisType<GuideState & WithMagics> => ({
-      controls: { days: "7", channelId: "" },
+      controls: { channelId: "" },
 
       channelsLoading: true,
       channelsError: null,
@@ -183,14 +187,13 @@ document.addEventListener("alpine:init", () => {
 
       loading: true,
       reloadPending: false,
-      statusLine: "Loading programme guide",
+      statusLine: LOADING_LINE,
       problem: null,
       plan: null,
       blocksByName: {},
 
       windowStartMs: localDayStart(Date.now()),
-      loadedDays: 7,
-      dayIndex: 0,
+      loadedDays: FETCH_DAYS,
       weekPage: 0,
 
       rundownChannelId: "",
@@ -237,12 +240,14 @@ document.addEventListener("alpine:init", () => {
         this.closeInspector(false);
         this.loading = true;
         this.problem = null;
-        this.statusLine = "Loading programme guide";
-        const days = clampDays(this.controls.days);
-        this.controls.days = String(days);
+        this.statusLine = LOADING_LINE;
         const channelId = this.controls.channelId.trim();
+        // The whole plannable window in one request, on the long read
+        // tier (a cold-pod first plan can exceed a minute); the week
+        // pager then works entirely client-side.
         const planPromise = apiGet<PlanResult>(
-          apiPath("/schedule", undefined, { days, channel_id: channelId === "" ? undefined : channelId }),
+          apiPath("/schedule", undefined, { days: FETCH_DAYS, channel_id: channelId === "" ? undefined : channelId }),
+          LONG_GET_TIMEOUT_MS,
         );
         // The catch is attached up front: a blocks failure that lands
         // while the plan is still in flight must degrade silently, not
@@ -252,11 +257,10 @@ document.addEventListener("alpine:init", () => {
           this.plan = await planPromise;
           const landedAt = Date.now();
           this.windowStartMs = localDayStart(landedAt);
-          // The server plans [now, now + days*24h): any fetch after
+          // The server plans [now, now + 28*24h): any fetch after
           // midnight spills into a trailing partial calendar day that
-          // needs its own tab and rundown section.
-          this.loadedDays = windowDayCount(landedAt, days);
-          this.dayIndex = 0;
+          // becomes its own one-day week page.
+          this.loadedDays = windowDayCount(landedAt, FETCH_DAYS);
           this.weekPage = 0;
         } catch (err) {
           this.problem = toProblemView(err);
@@ -280,16 +284,16 @@ document.addEventListener("alpine:init", () => {
         } else {
           this.statusLine = "Guide unavailable — Tunarr unreachable";
         }
-        // A DAYS/SCOPE change that landed mid-flight re-fires now with
-        // the latest control values (x-model already holds them).
+        // A SCOPE change that landed mid-flight re-fires now with the
+        // latest control values (x-model already holds them).
         if (this.reloadPending) {
           this.reloadPending = false;
           void this.reload();
         }
       },
 
-      // DAYS/SCOPE change entry point. The controls stay ENABLED during
-      // a reload (disabling the focused control would blur it and dump
+      // SCOPE change entry point. The control stays ENABLED during a
+      // reload (disabling the focused control would blur it and dump
       // keyboard focus on document.body); a change landing mid-flight
       // is latched and re-fired once the flight lands.
       requestReload() {
@@ -311,38 +315,39 @@ document.addEventListener("alpine:init", () => {
         );
       },
 
-      // The current week page's tabs -- at most seven, every one fully
-      // labeled weekday + date (the flat strip's clipped-tab bug cannot
-      // recur by construction).
-      dayTabs() {
-        const todayStart = localDayStart(Date.now());
-        return weekPageDays(this.weekPage, this.loadedDays).map((k): DayTab => {
-          const startMs = addDays(this.windowStartMs, k);
-          return { index: k, label: dayLabel(startMs), isToday: startMs === todayStart };
-        });
-      },
-
       weekPages() {
         return weekPageCount(this.loadedDays);
       },
 
-      // ‹/› pager: moves the strip one week, clamped to the window --
-      // the rendered day only changes when a tab is pressed.
-      pageWeek(delta) {
-        this.weekPage = Math.min(this.weekPages() - 1, Math.max(0, this.weekPage + delta));
+      // The pager's readout: the visible week page's calendar range
+      // ("SUN 30 AUG – SAT 05 SEP"; a trailing one-day page is just its
+      // day). aria-live on the label announces paging.
+      weekLabel() {
+        const { startDay, days } = weekChunk(this.weekPage, this.loadedDays);
+        return weekRangeLabel(addDays(this.windowStartMs, startDay), Math.max(1, days));
       },
 
-      // Day tabs are navigation only -- they never re-plan (spec §3.1).
-      selectDay(index, tabEl) {
-        if (index === this.dayIndex) return;
-        this.dayIndex = index;
-        this.weekPage = weekPageOf(index);
+      // ‹/›: page whole weeks, clamped to the window -- entirely
+      // client-side, never a re-plan. The grid and the mobile rundown
+      // re-render to the new page together.
+      pageWeek(delta, navEl) {
+        const next = Math.min(this.weekPages() - 1, Math.max(0, this.weekPage + delta));
+        if (next === this.weekPage) return;
+        this.weekPage = next;
         // The re-render is about to discard the inspector's return
-        // slot: keep focus on the tab the user pressed instead of
-        // handing it to a dying node (which strands it on body).
+        // slot: never hand focus to a dying node.
         this.closeInspector(false);
-        tabEl?.focus();
         this.renderAll();
+        // A chevron that just disabled itself (window edge reached)
+        // would strand keyboard focus on body -- hand it to the
+        // opposite chevron instead.
+        this.$nextTick(() => {
+          if (navEl?.disabled) {
+            navEl.closest(".guide-pager")
+              ?.querySelector<HTMLButtonElement>(".guide-pager__nav:not(:disabled)")
+              ?.focus();
+          }
+        });
       },
 
       // The full renderable model: one row per planned channel, plate
@@ -461,30 +466,30 @@ document.addEventListener("alpine:init", () => {
           const viewport = document.getElementById("guide-viewport");
           if (!viewport) return;
           const rows = this.rows();
-          const dayStartMs = addDays(this.windowStartMs, this.dayIndex);
-          gridHandle = renderGuideDay(viewport, rows, dayStartMs, {
+          const { startDay, days } = weekChunk(this.weekPage, this.loadedDays);
+          const weekStartMs = addDays(this.windowStartMs, startDay);
+          gridHandle = renderGuideWeek(viewport, rows, weekStartMs, Math.max(1, days), {
             onOpen: (slot, el) => this.openInspector(slot, el),
             inspectorId: "guide-inspector",
           });
           gridHandle.updateNow(Date.now());
-          // Auto-scroll target on open: the sweep cursor, parked a third
-          // of the viewport in so the next hours are visible (initial
-          // positioning, not motion -- no smooth scrolling here). The
+          // Auto-scroll target: the sweep cursor when this week page
+          // contains now (parked a third of the viewport in so the next
+          // hours are visible); any other page opens at its start.
+          // Initial positioning, not motion -- no smooth scrolling. The
           // nextTick above is not a guarantee the x-show display change
           // has painted, and a display:none viewport measures 0 -- wait
           // it out over a few frames instead of silently landing on 0.
-          const scrollToNow = (attempts: number): void => {
+          const scrollIntoWeek = (attempts: number): void => {
             if (attempts <= 0) return;
             if (viewport.clientWidth === 0) {
-              requestAnimationFrame(() => scrollToNow(attempts - 1));
+              requestAnimationFrame(() => scrollIntoWeek(attempts - 1));
               return;
             }
             const nowX = gridHandle?.nowOffsetPx(Date.now());
-            if (nowX != null) {
-              viewport.scrollLeft = Math.max(0, nowX - viewport.clientWidth / 3);
-            }
+            viewport.scrollLeft = nowX != null ? Math.max(0, nowX - viewport.clientWidth / 3) : 0;
           };
-          scrollToNow(20);
+          scrollIntoWeek(20);
           this.renderRundownOnly();
         });
       },
@@ -494,10 +499,21 @@ document.addEventListener("alpine:init", () => {
         if (!rundownEl) return;
         const row = this.rundownRow();
         if (row) this.rundownChannelId = row.channelId;
-        rundownHandle = renderRundown(rundownEl, row, this.windowStartMs, this.loadedDays, {
-          onOpen: (slot, el) => this.openInspector(slot, el),
-          inspectorId: "guide-inspector",
-        });
+        // The rundown pages with the SAME week pager as the grid: its
+        // day sections span the visible week only, headings staying
+        // window-absolute (TONIGHT is only ever the fetch day).
+        const { startDay, days } = weekChunk(this.weekPage, this.loadedDays);
+        rundownHandle = renderRundown(
+          rundownEl,
+          row,
+          addDays(this.windowStartMs, startDay),
+          startDay,
+          Math.max(1, days),
+          {
+            onOpen: (slot, el) => this.openInspector(slot, el),
+            inspectorId: "guide-inspector",
+          },
+        );
         rundownHandle.updateNow(Date.now());
       },
 
@@ -526,7 +542,7 @@ document.addEventListener("alpine:init", () => {
       },
 
       // Esc/X close with focus returned to the slot that opened it.
-      // A re-render closer (selectDay/reload) passes returnFocus=false:
+      // A re-render closer (pageWeek/reload) passes returnFocus=false:
       // the return slot is about to be discarded, and focusing a dying
       // node strands keyboard focus on document.body.
       closeInspector(returnFocus = true) {

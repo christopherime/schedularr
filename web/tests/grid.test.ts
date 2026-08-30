@@ -17,13 +17,16 @@ const {
   gridColumn,
   localDayStart,
   nearestSlotIndex,
+  primaryPieceIndex,
   resolveGhost,
   rundownDayHeading,
   rundownDaySlots,
+  segmentEdges,
   slotFace,
+  weekChunk,
+  weekCornerLabel,
   weekPageCount,
-  weekPageDays,
-  weekPageOf,
+  weekRangeLabel,
   windowDayCount,
 } = await import("../assets/ts/runtime/grid.ts");
 
@@ -113,45 +116,55 @@ test("windowDayCount includes the trailing partial calendar day", () => {
   assert.equal(windowDayCount(day + 1, 1), 2);
 });
 
-// ---- week paging -----------------------------------------------------------
+// ---- week paging (7-day chunks of the loaded window) -----------------------
 
 test("weekPageCount pages the loaded window in sevens", () => {
   assert.equal(weekPageCount(7), 1);
   assert.equal(weekPageCount(8), 2, "the trailing partial day opens a second page");
   assert.equal(weekPageCount(14), 2);
-  assert.equal(weekPageCount(30), 5);
-  assert.equal(weekPageCount(31), 5);
+  assert.equal(weekPageCount(28), 4);
+  assert.equal(weekPageCount(29), 5);
   assert.equal(weekPageCount(1), 1);
   assert.equal(weekPageCount(0), 1, "an empty window still has page 0");
 });
 
-test("weekPageCount composes with windowDayCount", () => {
-  // DAYS=30 fetched at 19:00 touches 31 calendar days -> 5 pages,
-  // the last holding 3 tabs (days 28..30).
-  const loaded = windowDayCount(at(19), 30);
-  assert.equal(loaded, 31);
+test("weekChunk slices page k as 7 consecutive window days, the tail kept real", () => {
+  assert.deepEqual(weekChunk(0, 28), { startDay: 0, days: 7 });
+  assert.deepEqual(weekChunk(1, 28), { startDay: 7, days: 7 });
+  assert.deepEqual(weekChunk(3, 28), { startDay: 21, days: 7 });
+  assert.deepEqual(weekChunk(4, 29), { startDay: 28, days: 1 }, "the spill day is a one-day page");
+  assert.deepEqual(weekChunk(0, 3), { startDay: 0, days: 3 });
+  assert.deepEqual(weekChunk(1, 7), { startDay: 7, days: 0 }, "no days past the window");
+});
+
+test("week chunking composes with windowDayCount for the guide's days=28 fetch", () => {
+  // Fetched at 19:00 the 28-day window touches 29 calendar days: four
+  // full week pages plus a one-day fifth -- the chevrons' edge math.
+  const loaded = windowDayCount(at(19), 28);
+  assert.equal(loaded, 29);
   assert.equal(weekPageCount(loaded), 5);
-  assert.deepEqual(weekPageDays(4, loaded), [28, 29, 30]);
+  assert.deepEqual(weekChunk(4, loaded), { startDay: 28, days: 1 });
+  // Fetched at exactly midnight it stays four clean weeks.
+  const clean = windowDayCount(day, 28);
+  assert.equal(clean, 28);
+  assert.equal(weekPageCount(clean), 4);
+  assert.deepEqual(weekChunk(3, clean), { startDay: 21, days: 7 });
 });
 
-test("weekPageDays returns page k's day indices, partial last week clamped", () => {
-  assert.deepEqual(weekPageDays(0, 8), [0, 1, 2, 3, 4, 5, 6]);
-  assert.deepEqual(weekPageDays(1, 8), [7], "a partial week holds its real tabs, not padded ones");
-  assert.deepEqual(weekPageDays(0, 3), [0, 1, 2]);
-  assert.deepEqual(weekPageDays(1, 7), [], "no page past the window");
+test("weekRangeLabel names the visible page's calendar range", () => {
+  // day = SAT 2026-08-29; a full week ends FRI 2026-09-04 (month edge).
+  assert.equal(weekRangeLabel(day, 7), "SAT 29 AUG – FRI 04 SEP");
+  const sameMonth = new Date(2026, 7, 2, 0, 0, 0, 0).getTime();
+  assert.equal(weekRangeLabel(sameMonth, 7), "SUN 02 AUG – SAT 08 AUG");
+  assert.equal(weekRangeLabel(day, 1), "SAT 29 AUG", "a one-day trailing page is just its day");
 });
 
-test("chevron disable edges: page 0 has no previous, the last page no next", () => {
-  const loaded = 15; // 2 full weeks + 1 day -> 3 pages
-  const pages = weekPageCount(loaded);
-  assert.equal(pages, 3);
-  // The guide disables ‹ at page 0 and › at pages-1; the math those
-  // bindings rest on:
-  assert.equal(weekPageOf(0), 0);
-  assert.equal(weekPageOf(6), 0);
-  assert.equal(weekPageOf(7), 1);
-  assert.equal(weekPageOf(14), 2);
-  assert.ok(weekPageOf(loaded - 1) === pages - 1, "the window's last day lives on the last page");
+test("weekCornerLabel reads the page's month(s)", () => {
+  const aug = new Date(2026, 7, 2, 0, 0, 0, 0).getTime();
+  assert.equal(weekCornerLabel(aug, 7), "AUG 2026");
+  assert.equal(weekCornerLabel(day, 7), "AUG–SEP 2026", "a month edge names both");
+  const dec = new Date(2026, 11, 28, 0, 0, 0, 0).getTime();
+  assert.equal(weekCornerLabel(dec, 7), "DEC–JAN", "a year edge drops the ambiguous year");
 });
 
 test("dayLabel and rundownDayHeading name the windows", () => {
@@ -160,6 +173,47 @@ test("dayLabel and rundownDayHeading name the windows", () => {
   assert.equal(rundownDayHeading(0, day), "TONIGHT");
   assert.equal(rundownDayHeading(1, dayEnd), "TOMORROW");
   assert.equal(rundownDayHeading(2, addDays(day, 2)), "MON 31");
+});
+
+// ---- segment edges: intra-week joins vs week-edge cuts ---------------------
+
+test("segmentEdges joins a midnight crossing inside the week", () => {
+  // 23:30 -> 01:30 across the day1/day2 boundary of a 7-day week:
+  // the head piece joins right, the tail piece joins left -- no dashed
+  // cut on either.
+  const head = daySpan(at(23, 30), nextDayAt(1, 30), day, dayEnd);
+  const tail = daySpan(at(23, 30), nextDayAt(1, 30), dayEnd, addDays(day, 2));
+  assert.ok(head && tail);
+  assert.deepEqual(segmentEdges(head, 0, 7), { joinLeft: false, joinRight: true, cutLeft: false, cutRight: false });
+  assert.deepEqual(segmentEdges(tail, 1, 7), { joinLeft: true, joinRight: false, cutLeft: false, cutRight: false });
+});
+
+test("segmentEdges keeps dashed cuts only at the week's outer edges", () => {
+  // The same crossing at the week's LAST midnight: the head piece sits
+  // on day 6 and its spill leaves the page -> a dashed right cut.
+  const head = daySpan(at(23, 30), nextDayAt(1, 30), day, dayEnd);
+  assert.ok(head);
+  assert.deepEqual(segmentEdges(head, 6, 7), { joinLeft: false, joinRight: false, cutLeft: false, cutRight: true });
+  // And a slot spilling IN from the previous week cuts dashed at day 0.
+  const tail = daySpan(at(23, 30) - 86_400_000, at(1, 30), day, dayEnd);
+  assert.ok(tail);
+  assert.deepEqual(segmentEdges(tail, 0, 7), { joinLeft: false, joinRight: false, cutLeft: true, cutRight: false });
+});
+
+test("primaryPieceIndex labels the widest piece, ties to the earlier one", () => {
+  // 23:30 -> 06:00: the 30-minute sliver loses the label to the
+  // six-hour morning piece.
+  const head = daySpan(at(23, 30), nextDayAt(6), day, dayEnd);
+  const tail = daySpan(at(23, 30), nextDayAt(6), dayEnd, addDays(day, 2));
+  assert.ok(head && tail);
+  assert.equal(primaryPieceIndex([head, tail]), 1);
+  // 22:00 -> 02:00: equal two-hour halves -- a tie goes to the earlier
+  // piece.
+  const evenHead = daySpan(at(22), nextDayAt(2), day, dayEnd);
+  const evenTail = daySpan(at(22), nextDayAt(2), dayEnd, addDays(day, 2));
+  assert.ok(evenHead && evenTail);
+  assert.equal(primaryPieceIndex([evenHead, evenTail]), 0);
+  assert.equal(primaryPieceIndex([evenHead]), 0, "a single piece is its own primary");
 });
 
 // ---- ghost placement -------------------------------------------------------

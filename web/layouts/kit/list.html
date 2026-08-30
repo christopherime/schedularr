@@ -115,17 +115,22 @@
 
   <section class="kit-section" aria-labelledby="kit-guide-title">
     <div class="section-head">
-      <h2 id="kit-guide-title">Guide grid</h2>
+      <h2 id="kit-guide-title">Guide week band</h2>
       <p>
-        The real renderer (runtime/grid.ts) on fixture data: sticky
-        ruler/plates, graticule-coupled 30-minute divisions, the sweep
-        cursor, a past slot dimmed behind it, an on-air slot, a series
-        tint with program lines on the face (`SHOW · SxxEyy`, `+N MORE`
-        past three), a NO SIGNAL ghost in its sub-lane, an overnight
-        spill cut at the day edge, and the quiet ground continuing the
-        graticule under the last track. Arrow keys move across slots;
-        Enter prints a tape line where the guide would open its
-        inspector.
+        The real renderer (runtime/grid.ts) on fixture data, truncated
+        to a three-day band: the two-tier week ruler (sticky day headers
+        with in-day sticky labels over the hour cells, the month corner),
+        the stronger midnight rule through ruler and tracks,
+        graticule-coupled 30-minute divisions, the sweep cursor, a past
+        slot dimmed behind it, an on-air slot, a series tint with
+        program lines on the face (`SHOW · SxxEyy`, `+N MORE` past
+        three), a NO SIGNAL ghost in its sub-lane, slots joined FLUSH
+        across midnight (Graveyard Shift; Insomnia Cinema labels its
+        wider morning piece), a spill cut DASHED at the band's outer
+        edge (Night Owls), and the quiet ground continuing the graticule
+        under the last track. Arrow keys move across slots — a joined
+        slot is one stop; Enter prints a tape line where the guide would
+        open its inspector.
       </p>
     </div>
     <div class="guide kit-guide">
@@ -137,39 +142,36 @@
     <div class="section-head">
       <h2 id="kit-pager-title">Guide week pager</h2>
       <p>
-        ‹/› chevrons flank at most seven day tabs; page k shows window
-        days k·7…k·7+6. Chevrons disable at the window edges; the today
-        tab carries the accent dot; selected composes on top. A partial
-        last week keeps its real tabs — never seven padded ones.
+        Navigation is ONLY ‹/› paging whole weeks — no day tabs. The
+        label reads the visible page's calendar range; chevrons disable
+        at the window edges; a trailing partial page names just its real
+        days (a mid-day 28-day fetch spills into a one-day fifth page).
       </p>
     </div>
     <div class="kit-stack">
-      <div class="guide-pager" role="group" aria-label="Day (fixture, first page)">
+      <div class="guide-pager" role="group" aria-label="Week (fixture, first page)">
         <button type="button" class="btn btn--icon guide-pager__nav" disabled aria-label="Previous week">
           {{ partial "ui/icon.html" (dict "name" "chevron-left") }}
         </button>
-        <div class="guide-tabs">
-          <button type="button" class="guide-tab" aria-pressed="true" data-today>SAT 30</button>
-          <button type="button" class="guide-tab" aria-pressed="false">SUN 31</button>
-          <button type="button" class="guide-tab" aria-pressed="false">MON 01</button>
-          <button type="button" class="guide-tab" aria-pressed="false">TUE 02</button>
-          <button type="button" class="guide-tab" aria-pressed="false">WED 03</button>
-          <button type="button" class="guide-tab" aria-pressed="false">THU 04</button>
-          <button type="button" class="guide-tab" aria-pressed="false">FRI 05</button>
-        </div>
+        <p class="guide-pager__label">SUN 30 AUG – SAT 05 SEP</p>
         <button type="button" class="btn btn--icon guide-pager__nav" aria-label="Next week">
           {{ partial "ui/icon.html" (dict "name" "chevron-right") }}
         </button>
       </div>
-      <div class="guide-pager" role="group" aria-label="Day (fixture, partial last page)">
+      <div class="guide-pager" role="group" aria-label="Week (fixture, middle page)">
         <button type="button" class="btn btn--icon guide-pager__nav" aria-label="Previous week">
           {{ partial "ui/icon.html" (dict "name" "chevron-left") }}
         </button>
-        <div class="guide-tabs">
-          <button type="button" class="guide-tab" aria-pressed="false">SAT 27</button>
-          <button type="button" class="guide-tab" aria-pressed="false">SUN 28</button>
-          <button type="button" class="guide-tab" aria-pressed="false">MON 29</button>
-        </div>
+        <p class="guide-pager__label">SUN 06 SEP – SAT 12 SEP</p>
+        <button type="button" class="btn btn--icon guide-pager__nav" aria-label="Next week">
+          {{ partial "ui/icon.html" (dict "name" "chevron-right") }}
+        </button>
+      </div>
+      <div class="guide-pager" role="group" aria-label="Week (fixture, one-day last page)">
+        <button type="button" class="btn btn--icon guide-pager__nav" aria-label="Previous week">
+          {{ partial "ui/icon.html" (dict "name" "chevron-left") }}
+        </button>
+        <p class="guide-pager__label">SUN 27 SEP</p>
         <button type="button" class="btn btn--icon guide-pager__nav" disabled aria-label="Next week">
           {{ partial "ui/icon.html" (dict "name" "chevron-right") }}
         </button>
@@ -210,7 +212,7 @@
         "actionHref" "/blocks/") }}
       {{ partial "ui/empty.html" (dict
         "legend" "No match"
-        "text" "No block airs inside this window and scope — widen DAYS, clear the SCOPE, or check that the blocks for this channel are enabled."
+        "text" "No block airs inside the next four weeks for this scope — clear the SCOPE, or check that the blocks for this channel are enabled."
         "actionLabel" "Review blocks"
         "actionHref" "/blocks/") }}
     </div>

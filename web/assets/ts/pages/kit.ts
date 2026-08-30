@@ -11,7 +11,7 @@ import { channelHint as channelHintText, channelLabel, channelPlate } from "../r
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { relativeTime, untilTime } from "../runtime/format.ts";
-import { localDayStart, renderGuideDay } from "../runtime/grid.ts";
+import { localDayStart, renderGuideWeek } from "../runtime/grid.ts";
 import type { GuideRow, GuideSlot } from "../runtime/grid.ts";
 import { initShell } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
@@ -42,12 +42,17 @@ const fixtureProblemBare: ProblemView = {
 
 // ---- guide grid fixtures ---------------------------------------------------
 //
-// The REAL renderer (runtime/grid.ts) on fixture data: an on-air slot, a
-// past slot dimmed behind the sweep, a series-tinted slot, a NO SIGNAL
-// ghost in its sub-lane, and an overnight spill cut at the day's right
-// edge -- every slot state the guide can render, reviewable without a
-// server. Times are derived from "now" so the sweep cursor always crosses
-// the fixture.
+// The REAL renderer (runtime/grid.ts) on fixture data, as a truncated
+// week band (KIT_GUIDE_DAYS segments -- enough to review the two-tier
+// ruler, the midnight JOIN between day segments, and the dashed CUT at
+// the band's outer edge without a gallery-page scroll marathon): an
+// on-air slot, a past slot dimmed behind the sweep, a series-tinted
+// slot, a NO SIGNAL ghost in its sub-lane, a slot joined flush across
+// midnight, and a spill cut dashed at the band's last edge -- every
+// slot state the guide can render, reviewable without a server. Times
+// are derived from "now" so the sweep cursor always crosses the fixture.
+
+const KIT_GUIDE_DAYS = 3;
 
 function fixtureSlot(
   channelId: string,
@@ -96,6 +101,7 @@ function fixtureGuideRows(): GuideRow[] {
     programs: [],
     lostTo: "Spooky Saturday Night",
   };
+  const dayStart = localDayStart(now);
   return [
     {
       channelId: "fixture-0001",
@@ -105,7 +111,11 @@ function fixtureGuideRows(): GuideRow[] {
         fixtureSlot("fixture-0001", "Matinee Massacre", "filter", now - 0.5 * hour, 90, 2),
         fixtureSlot("fixture-0001", "Spooky Saturday Night", "series", now + 2 * hour, 120, 4),
         ghost,
-        fixtureSlot("fixture-0001", "Graveyard Shift", "filter", localDayStart(now) + 23.5 * hour, 120, 3),
+        // Crosses the day-1/day-2 midnight INSIDE the band: renders as
+        // flush joined pieces (one continuous block, no dashed cut).
+        // Day 1, not day 0: the now-anchored slots above live on day 0
+        // for any clock time, so this join can never collide with them.
+        fixtureSlot("fixture-0001", "Graveyard Shift", "filter", dayStart + 47.5 * hour, 120, 3),
       ],
     },
     {
@@ -114,12 +124,21 @@ function fixtureGuideRows(): GuideRow[] {
       slots: [
         fixtureSlot("fixture-0002", "Cereal Cartoons", "series", now - 2 * hour, 180, 6),
         fixtureSlot("fixture-0002", "After School", "filter", now + 4 * hour, 60, 2),
+        // Crosses the band's LAST midnight: cut dashed at the outer
+        // edge -- it continues on the next (unrendered) week page.
+        fixtureSlot("fixture-0002", "Night Owls", "filter", dayStart + (KIT_GUIDE_DAYS * 24 - 1) * hour, 120, 2),
       ],
     },
     {
       channelId: "fixture-0003",
       plate: channelPlate("fixture-0003", fixtureChannels),
-      slots: [fixtureSlot("fixture-0003", "Laugh Track", "filter", now + hour, 240, 8)],
+      slots: [
+        fixtureSlot("fixture-0003", "Laugh Track", "filter", now + hour, 240, 8),
+        // A long overnight join whose SECOND piece is the wider one: the
+        // face labels the widest piece (primaryPieceIndex), the sliver
+        // before midnight stays silent.
+        fixtureSlot("fixture-0003", "Insomnia Cinema", "series", dayStart + 47.5 * hour, 390, 3),
+      ],
     },
   ];
 }
@@ -181,7 +200,7 @@ document.addEventListener("alpine:init", () => {
         // exercise what ships.
         const viewport = document.getElementById("kit-guide-viewport");
         if (viewport) {
-          const handle = renderGuideDay(viewport, fixtureGuideRows(), localDayStart(Date.now()), {
+          const handle = renderGuideWeek(viewport, fixtureGuideRows(), localDayStart(Date.now()), KIT_GUIDE_DAYS, {
             onOpen: (slot) => printTape(`Inspector would open — ${slot.blockName}`),
           });
           handle.updateNow(Date.now());

@@ -156,8 +156,14 @@ async function parseBody<T>(res: Response): Promise<T> {
 
 // Reads never take this long against a same-LAN instance; writes get more
 // headroom because /generate and /apply do real planning work against
-// Tunarr before they answer.
+// Tunarr before they answer. The one sanctioned long read is the guide's
+// GET /schedule: it re-plans the full four-week window against Tunarr,
+// and the first call after a cold pod start (Tunarr itself waking, empty
+// caches) has been observed to take over a minute -- that call passes
+// LONG_GET_TIMEOUT_MS explicitly; every other read stays on the 15s
+// default.
 const GET_TIMEOUT_MS = 15_000;
+export const LONG_GET_TIMEOUT_MS = 90_000;
 const SEND_TIMEOUT_MS = 60_000;
 
 async function request<T>(method: string, path: string, body: unknown, timeoutMs: number): Promise<T> {
@@ -206,9 +212,11 @@ async function request<T>(method: string, path: string, body: unknown, timeoutMs
   return parseBody<T>(res);
 }
 
-/** GET path and decode the JSON (or text) body as T. */
-export function apiGet<T>(path: string): Promise<T> {
-  return request<T>("GET", path, undefined, GET_TIMEOUT_MS);
+/** GET path and decode the JSON (or text) body as T. timeoutMs is the
+ * read tier -- omit it everywhere except the guide's /schedule call
+ * (LONG_GET_TIMEOUT_MS, see above). */
+export function apiGet<T>(path: string, timeoutMs: number = GET_TIMEOUT_MS): Promise<T> {
+  return request<T>("GET", path, undefined, timeoutMs);
 }
 
 // Entry guard on every mutating call: an identical mutation (same method,

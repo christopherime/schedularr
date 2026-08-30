@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Guide renders a full week at a time** (`web/assets/ts/runtime/
+  grid.ts`, `web/assets/ts/pages/guide.ts`, `web/layouts/index.html`,
+  `web/assets/css/main.css`): spec §3.1 as amended a second time
+  (operator directive 2026-08-30, the v0.5.3 slice) — each channel track
+  now runs seven consecutive days as one continuous horizontal timeline,
+  constructed as seven 288-quantum per-day CSS grid segments laid in a
+  row (`renderGuideWeek` replaces `renderGuideDay`; the spike-measured
+  per-day grid stays the building block — never one 2016-column grid). A
+  two-tier sticky ruler tops the band: day headers (`SUN 30 · MON 31 ·
+  …`, each spanning its day's 48 cells, labels sticking left within
+  their day, today's dot + `aria-current` carried over from the dead day
+  tabs) over the hour cells, with the month readout in the sticky
+  corner; day boundaries carry a stronger `--color-dayline` rule through
+  ruler, tracks, and ground (inset shadows, never borders, so segment
+  widths stay exact and joined slots cover the rule).
+- **Slots crossing midnight join flush inside the week** (`web/assets/
+  ts/runtime/grid.ts`, `web/assets/css/main.css`): the v0.5.1 cut-edge
+  dashes become internal joins — a cross-midnight slot renders one piece
+  per touched day segment, flush at the boundary (`data-join` zeroes the
+  joined side's margin/border/radius) so it reads as ONE continuous
+  block; dashed `data-cut` edges survive only at the week's outer
+  boundaries, where the slot really continues onto a neighboring page.
+  The widest piece carries the visible face (`primaryPieceIndex`; a
+  23:30→06:00 slot labels its six-hour morning piece); the other pieces
+  mirror the content visibility-hidden (step-free join) and announce
+  "continues across midnight" via aria-label. `segmentEdges` +
+  `primaryPieceIndex` are pure and unit-tested. Keyboard navigation
+  walks logical slots — a joined slot is a single Left/Right stop whose
+  focus rides its primary piece.
+- **Navigation is the week pager alone; the plan is fetched once**
+  (`web/assets/ts/pages/guide.ts`, `web/layouts/index.html`,
+  `web/assets/ts/runtime/grid.ts`): the guide fetches the whole
+  plannable window (`GET /schedule?days=28`, the API's practical max)
+  once per load/scope-change and pages four weeks client-side as
+  consecutive 7-day chunks of the window from its first calendar day
+  (`weekChunk`, consistent with `windowDayCount` — a mid-day fetch's
+  29th calendar day becomes an honest one-day fifth page). The `‹`/`›`
+  chevrons page whole weeks, disable at the window edges (handing
+  keyboard focus to the opposite chevron when they disable under it),
+  and flank an `aria-live` label naming the visible week's range
+  (`weekRangeLabel`: "SUN 30 AUG – SAT 05 SEP"). The sweep cursor is
+  week-relative and drawn only on the page containing now, which
+  auto-scrolls to it on open; other pages open at their start. The
+  mobile rundown is paged by the same pager (day sections span the
+  visible week; headings stay window-absolute), keeping its CHANNEL
+  picker.
+- **`GET /schedule` moved to a 90-second client timeout tier**
+  (`web/assets/ts/runtime/api.ts`, `web/assets/ts/pages/guide.ts`,
+  `web/layouts/index.html`): the first plan after a restart re-plans
+  the full 28-day window against a cold Tunarr and has been observed to
+  exceed the old 15s read timeout — `apiGet` now takes an explicit
+  timeout tier and the guide passes `LONG_GET_TIMEOUT_MS` (90s) for
+  this one call; every other read keeps 15s. The loading state says so
+  honestly ("first load after a restart can take a minute") in both the
+  visible note and the `role="status"` line.
+- **Guide pre-grid states go full-week width** (`web/layouts/
+  index.html`, `web/layouts/partials/ui/skeleton.html`,
+  `web/assets/css/main.css`): the skeleton becomes a week-shaped strip
+  (a day-header tier of short bars over a full-width ruler bar) and,
+  with the NO SIGNAL and teaching empty states, moves onto the same
+  one-left-rail bleed as the grid region (`.guide-stage`) instead of
+  the page column.
+- **`/kit/` gallery follows** (`web/layouts/kit/list.html`,
+  `web/assets/ts/pages/kit.ts`): the guide fixture renders a truncated
+  three-day week band through the real `renderGuideWeek` — two-tier
+  ruler, a midnight join (plus one whose wider morning piece carries
+  the face), and a dashed outer-edge cut; the pager fixtures become the
+  three label states (first page, middle page, one-day last page).
+
+### Removed
+
+- **The Guide's day tabs and DAYS control** (`web/layouts/index.html`,
+  `web/assets/ts/pages/guide.ts`, `web/assets/ts/runtime/grid.ts`,
+  `web/assets/css/main.css`, `web/tests/grid.test.ts`): with the grid
+  showing the whole week, a day selector had nothing left to select and
+  the DAYS input had nothing left to size — markup, styles
+  (`.guide-tab*`, `.guide-toolbar__days`), paging-to-day state
+  (`dayIndex`/`dayTabs`/`selectDay`/`weekPageDays`/`weekPageOf`), the
+  guide's `clampDays` use (the schedule page keeps it), and the
+  day-tab tests deleted outright per the no-legacy-code policy;
+  `weekChunk` and the new geometry tests replace the paging math.
+
+### Documentation
+
+- **Slice ladder shifted one more number** (`docs/superpowers/specs/
+  2026-08-30-v0.5-web-overhaul-design.md`, `docs/roadmap.md`): the
+  full-week grid is the v0.5.3 slice by operator directive; draft &
+  apply moves to v0.5.4, memory to v0.5.5, the SSE live link to
+  v0.5.6, and so on — the spec's §9 renumber note and §3.1/§3.3
+  wording, the roadmap, and every forward slice reference in code
+  comments and docs updated to match. `docs/web-ui-guide.md`'s Guide
+  section rewritten for the week view (SCOPE-only toolbar, week-only
+  navigation, joins, the slow-first-load note); `web/DESIGN.md` gains
+  the week-ruler and join idioms.
+
 ## [0.5.2] - 2026-08-30
 
 ### Added

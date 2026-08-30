@@ -84,7 +84,8 @@ extreme, major improvement of the web interface. The committed visual
 world (CRT signal-bench, web/DESIGN.md) stays — the experience around it
 is rebuilt. Detailed scope lives in the v0.5.0 UI spec
 (docs/superpowers/specs/2026-08-30-v0.5-web-overhaul-design.md), cut
-into eight independently releasable slices (v0.5.0–v0.5.7).
+into independently releasable slices (v0.5.0–v0.5.9 after two
+operator-directed insertions).
 
 **Progress:**
 
@@ -107,7 +108,8 @@ into eight independently releasable slices (v0.5.0–v0.5.7).
   grid navigation, grid skeleton / NO SIGNAL / teaching empty states,
   mobile vertical rundown); nav became GUIDE · BLOCKS · SCHEDULE ·
   SERIES, with the old dashboard surviving unlinked at `/dashboard/`
-  until v0.5.3. The old Schedule page still owns preview/apply.
+  until the Log absorbs it. The old Schedule page still owns
+  preview/apply.
 - **v0.5.2 — Live-UI polish + Guide week-pager reframe: SHIPPED
   (2026-08-30).** Inserted by operator directive after the live v0.5.1
   audit: the Dockerfile ships `web/static` (broken brand image/favicon
@@ -116,7 +118,22 @@ into eight independently releasable slices (v0.5.0–v0.5.7).
   their programs, the quiet ground under short grids, and the
   mobile/series/schedule/blocks polish items. Draft & apply and every
   later slice shift one number down the ladder.
-- **v0.5.3+ — pending**, in spec order: draft & apply on the Guide,
+- **v0.5.3 — The Guide becomes a full-week grid: SHIPPED
+  (2026-08-30).** Second operator-directed insertion (spec §3.1 amended
+  again): each channel renders seven consecutive days as one continuous
+  timeline (seven per-day 288-quantum segments per track — the spike's
+  grid stays the building block); a two-tier sticky ruler (day headers
+  over hour cells, month corner, stronger midnight rules); slots
+  crossing midnight join flush inside the week (dashed cuts only at the
+  week's outer edges, the face on the wider piece); navigation reduced
+  to the `‹`/`›` week pager with a calendar-range label (day tabs and
+  the DAYS control deleted — the client fetches `days=28` once and
+  pages four weeks client-side); the `/schedule` call moved to a 90s
+  timeout tier with an honest first-load note; week-relative sweep +
+  auto-scroll; the mobile rundown paged by the same pager; keyboard nav
+  across the segmented week. Draft & apply and every later slice shift
+  one more number down the ladder.
+- **v0.5.4+ — pending**, in spec order: draft & apply on the Guide,
   memory (apply runs + Log), the SSE live link, block power tools, the
   series desk, and the polish pass.
 

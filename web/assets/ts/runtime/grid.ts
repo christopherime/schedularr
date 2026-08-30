@@ -6,25 +6,38 @@
 // inline style="..." attributes, and grid-column line numbers set via the
 // CSSOM are not inline attributes (see DESIGN.md, Content-Security-Policy).
 //
+// Since the v0.5.3 full-week reframe (spec §3.1, second amendment) the
+// sheet renders SEVEN consecutive days as one continuous horizontal
+// timeline per channel -- constructed as seven 288-quantum day segments
+// per track laid in a row, NOT one 2016-column grid, so the spike's
+// measured per-day CSS grid stays the building block. A slot crossing
+// midnight inside the rendered week renders as flush pieces joined
+// across the segment boundary (one continuous block); dashed cut edges
+// survive only at the week's outer edges, where the slot really does
+// continue off the page.
+//
 // Spike findings this file honors (measured, binding -- spec §9):
-//   - one CSS grid PER CHANNEL TRACK, 288 five-minute fixed columns,
+//   - one CSS grid PER DAY SEGMENT, 288 five-minute fixed columns,
 //     slots placed by grid-column line numbers via CSSOM;
 //   - the sticky rail/ruler topology comes from FLEX FLOW, never grid
 //     membership: sheet = block width:max-content; ruler = sticky-top
 //     flex row with a sticky-left corner; each channel row = flex of
-//     sticky-left plate + grid track (Chromium forgives sticky grid
-//     items; Safari historically does not);
+//     sticky-left plate + day-segment tracks (Chromium forgives sticky
+//     grid items; Safari historically does not);
 //   - the now-line is an absolute overlay child of the sheet at
 //     calc(var(--rail-w) + var(--now-min) * var(--px-per-min)), with
-//     --now-min set per minute via CSSOM -- no scroll handler;
+//     --now-min set per minute via CSSOM (week-relative: dayIndex*1440 +
+//     minutes into that day) -- no scroll handler;
 //   - the graticule is a repeating-linear-gradient at --div, coinciding
 //     exactly with ruler cells and slot boundaries (one division = 30
-//     minutes of air time);
+//     minutes of air time); day boundaries carry a slightly stronger
+//     rule (--color-dayline) through ruler, tracks, and ground;
 //   - z-order: nowline < plates < ruler < corner.
 //
-// The pure geometry below (quantum clamping, day windowing, ghost
-// resolution, keyboard-nav picking) is exported for unit tests
-// (web/tests/grid.test.ts) and never touches the DOM.
+// The pure geometry below (quantum clamping, week windowing/chunking,
+// segment-edge classification, ghost resolution, keyboard-nav picking)
+// is exported for unit tests (web/tests/grid.test.ts) and never touches
+// the DOM.
 
 import type { PlateParts } from "./channels.ts";
 import { formatClock, pad2, plural, sxxeyy } from "./format.ts";
@@ -33,7 +46,7 @@ import { formatClock, pad2, plural, sxxeyy } from "./format.ts";
 
 /** The placement quantum: slots land on 5-minute grid lines. */
 export const QUANTUM_MIN = 5;
-/** Columns per day track: 24h / 5min. */
+/** Columns per day segment: 24h / 5min. */
 export const QUANTA_PER_DAY = 288;
 
 /** Start of the local calendar day containing ms. */
@@ -56,10 +69,13 @@ export function addDays(dayStartMs: number, n: number): number {
  * How many calendar days the loaded plan window touches. The server
  * plans [fetch, fetch + days*24h) -- real hours, not calendar days --
  * so any fetch after local midnight spills into a trailing partial
- * calendar day: a 7-day plan fetched at 19:00 ends 19:00 seven days
- * out, on an 8th calendar day that needs its own tab and rundown
- * section. A fetch at exactly midnight stays at `days` (unless an intervening spring-forward day shortens the span, in which case the window still spills into one more calendar day and the count reflects it). Date math via
- * addDays, so DST-shifted windows still count real local midnights.
+ * calendar day: a 28-day plan fetched at 19:00 ends 19:00 four weeks
+ * out, on a 29th calendar day that needs its own (one-day) week page
+ * and rundown section. A fetch at exactly midnight stays at `days`
+ * (unless an intervening spring-forward day shortens the span, in which
+ * case the window still spills into one more calendar day and the count
+ * reflects it). Date math via addDays, so DST-shifted windows still
+ * count real local midnights.
  */
 export function windowDayCount(fetchMs: number, days: number): number {
   const windowEndMs = fetchMs + days * 86_400_000;
@@ -70,9 +86,10 @@ export function windowDayCount(fetchMs: number, days: number): number {
   return days + 1;
 }
 
-/** One slot's placement on a single day's 288-quantum track. cutLeft/
- * cutRight mark an overnight spill clamped at the day edge (the slot
- * continues on the neighboring day). */
+/** One slot piece's placement on a single day segment's 288-quantum
+ * track. cutLeft/cutRight mark a spill clamped at the day edge (the
+ * slot continues on the neighboring day); segmentEdges below decides
+ * whether that edge is an intra-week JOIN or a week-edge dashed CUT. */
 export interface SlotSpan {
   startQ: number;
   endQ: number;
@@ -108,45 +125,109 @@ export function gridColumn(span: SlotSpan): string {
   return `${span.startQ + 1} / ${span.endQ + 1}`;
 }
 
-/** Tab label for a day window's k-th day: "SAT 30". */
+const DAY_NAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/** Day-header label for a segment: "SAT 30". */
 export function dayLabel(dayStartMs: number): string {
   const d = new Date(dayStartMs);
-  const names = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-  return `${names[d.getDay()]} ${pad2(d.getDate())}`;
+  return `${DAY_NAMES[d.getDay()]} ${pad2(d.getDate())}`;
 }
 
-// ---- week paging (spec §3.1, amended 2026-08-30) ---------------------------
-// The flat N-tab strip died with the reframe: an overflow-x strip clipped
-// tabs beyond ~day 7 mid-label at the scrollport edge (the "no date" bug)
-// with no scroll affordance on overlay-scrollbar systems. Navigation is
-// now a ‹/› week pager flanking at most seven day tabs -- every tab is
-// always fully visible and always labels weekday + date.
+// ---- week paging (spec §3.1, second amendment 2026-08-30) ------------------
+// The day-tab strip died with the full-week reframe: the grid renders a
+// whole week per page, so navigation is ONLY the ‹/› week pager. Week
+// pages are consecutive 7-day chunks of the loaded window, starting at
+// the window's first calendar day (the fetch day) -- consistent with
+// windowDayCount, so a 28-day plan fetched mid-day (29 calendar days)
+// honestly pages as 7+7+7+7+1.
 
 /** Days per guide week page. */
 export const WEEK_DAYS = 7;
 
-/** How many week pages a loaded window spans (a 31-calendar-day window
- * is 5 pages: 7+7+7+7+3). Never 0 -- an empty window still has page 0. */
+/** How many week pages a loaded window spans (a 29-calendar-day window
+ * is 5 pages: 7+7+7+7+1). Never 0 -- an empty window still has page 0. */
 export function weekPageCount(loadedDays: number): number {
   return Math.max(1, Math.ceil(loadedDays / WEEK_DAYS));
 }
 
-/** The day indices page k shows: k*7 .. k*7+6, clamped to the window --
- * a partial last week holds its real tabs, never seven padded ones. */
-export function weekPageDays(page: number, loadedDays: number): number[] {
-  const start = page * WEEK_DAYS;
-  const end = Math.min(loadedDays, start + WEEK_DAYS);
-  const days: number[] = [];
-  for (let k = start; k < end; k++) days.push(k);
-  return days;
+/** Page k's slice of the window: its first day index and how many days
+ * it really holds (a trailing partial week keeps its real day count,
+ * never seven padded ones). */
+export interface WeekChunk {
+  startDay: number;
+  days: number;
 }
 
-/** The week page a day index lives on. */
-export function weekPageOf(dayIndex: number): number {
-  return Math.floor(dayIndex / WEEK_DAYS);
+export function weekChunk(page: number, loadedDays: number): WeekChunk {
+  const startDay = page * WEEK_DAYS;
+  return { startDay, days: Math.max(0, Math.min(WEEK_DAYS, loadedDays - startDay)) };
 }
 
-/** Rundown group heading (spec §7): TONIGHT, TOMORROW, then "MON 02". */
+/** Pager label: "SUN 30 AUG – SAT 05 SEP" (a one-day trailing page is
+ * just its day, "SAT 26 SEP"). */
+export function weekRangeLabel(weekStartMs: number, dayCount: number): string {
+  const first = `${dayLabel(weekStartMs)} ${MONTH_NAMES[new Date(weekStartMs).getMonth()]}`;
+  if (dayCount <= 1) return first;
+  const lastMs = addDays(weekStartMs, dayCount - 1);
+  return `${first} – ${dayLabel(lastMs)} ${MONTH_NAMES[new Date(lastMs).getMonth()]}`;
+}
+
+/** The sticky corner's quiet month readout for a week page: "AUG 2026",
+ * "AUG–SEP 2026" across a month edge, "DEC–JAN" across a year edge. */
+export function weekCornerLabel(weekStartMs: number, dayCount: number): string {
+  const start = new Date(weekStartMs);
+  const end = new Date(addDays(weekStartMs, Math.max(0, dayCount - 1)));
+  if (start.getFullYear() !== end.getFullYear()) {
+    return `${MONTH_NAMES[start.getMonth()]}–${MONTH_NAMES[end.getMonth()]}`;
+  }
+  if (start.getMonth() !== end.getMonth()) {
+    return `${MONTH_NAMES[start.getMonth()]}–${MONTH_NAMES[end.getMonth()]} ${start.getFullYear()}`;
+  }
+  return `${MONTH_NAMES[start.getMonth()]} ${start.getFullYear()}`;
+}
+
+/** How a piece's clamped edges render on day segment dayIndex of a
+ * dayCount-day week: an edge at an interior midnight is a JOIN (the two
+ * pieces render flush -- one continuous block); an edge at the week's
+ * outer boundary stays a dashed CUT (the slot continues off the page). */
+export interface SegmentEdges {
+  cutLeft: boolean;
+  cutRight: boolean;
+  joinLeft: boolean;
+  joinRight: boolean;
+}
+
+export function segmentEdges(span: SlotSpan, dayIndex: number, dayCount: number): SegmentEdges {
+  return {
+    joinLeft: span.cutLeft && dayIndex > 0,
+    joinRight: span.cutRight && dayIndex < dayCount - 1,
+    cutLeft: span.cutLeft && dayIndex === 0,
+    cutRight: span.cutRight && dayIndex === dayCount - 1,
+  };
+}
+
+/** Which piece of a multi-segment slot carries the visible face: the
+ * widest one (ties to the earlier piece) -- a 23:30→06:00 slot labels
+ * its six-hour morning piece, not the 30-minute sliver before midnight.
+ * The other pieces keep the same content visibility-hidden so the join
+ * stays step-free, and describe themselves via aria-label alone. */
+export function primaryPieceIndex(spans: SlotSpan[]): number {
+  let best = 0;
+  let bestWidth = -1;
+  for (let i = 0; i < spans.length; i++) {
+    const width = spans[i].endQ - spans[i].startQ;
+    if (width > bestWidth) {
+      best = i;
+      bestWidth = width;
+    }
+  }
+  return best;
+}
+
+/** Rundown group heading (spec §7): TONIGHT, TOMORROW, then "MON 02" --
+ * dayIndex is the day's absolute index in the loaded window (0 = the
+ * fetch day), not its position on the current week page. */
 export function rundownDayHeading(dayIndex: number, dayStartMs: number): string {
   if (dayIndex === 0) return "TONIGHT";
   if (dayIndex === 1) return "TOMORROW";
@@ -187,7 +268,7 @@ export interface GuideRow {
 }
 
 /** What ghost resolution needs from a BlockRecord -- the Warning itself
- * carries only block names + occurrence_start until v0.5.3 adds
+ * carries only block names + occurrence_start until v0.5.5 (memory) adds
  * channel_id/duration_minutes to the wire shape. */
 export interface GhostBlockInfo {
   channelId: string;
@@ -204,7 +285,7 @@ export interface WarningShape {
  * Places a current-plan warning as a NO SIGNAL ghost at its
  * would-have-aired time. INTERIM (v0.5.1): the Warning wire shape carries
  * only block names and occurrence_start -- duration and channel arrive on
- * the contract in v0.5.3 -- so both are resolved client-side from the
+ * the contract in v0.5.5 -- so both are resolved client-side from the
  * losing block's spec (GET /blocks). When the losing block can't be
  * resolved (blocks fetch failed, block deleted between plan and render),
  * the winner's channel places the ghost (a conflict is always
@@ -246,9 +327,9 @@ export interface RundownEntry {
 
 /**
  * The slots a rundown day section lists: everything OVERLAPPING
- * [dayStartMs, dayEndMs), mirroring the desktop grid's cut-edge
- * behavior (daySpan) -- an overnight slot appears under BOTH its start
- * day and the day it spills into, the second appearance marked as a
+ * [dayStartMs, dayEndMs), mirroring the desktop grid's join/cut behavior
+ * (daySpan) -- an overnight slot appears under BOTH its start day and
+ * the day it spills into, the second appearance marked as a
  * continuation. A slot ending exactly at midnight belongs only to its
  * start day, matching daySpan's half-open window.
  */
@@ -280,7 +361,10 @@ export interface SlotFace {
  * one line each, folding anything past FACE_MAX_LINES into a "+N more"
  * line; filter blocks and ghosts keep the name + count face; a narrow
  * slot (< FACE_MIN_DIVS divisions) degrades to name + count regardless
- * of type. Pure -- unit-tested in web/tests/grid.test.ts.
+ * of type. For a cross-midnight slot the span passed here is its
+ * PRIMARY (widest) piece's span -- the face is decided once per slot,
+ * then mirrored hidden into the other pieces. Pure -- unit-tested in
+ * web/tests/grid.test.ts.
  */
 export function slotFace(slot: GuideSlot, span: SlotSpan): SlotFace {
   if (slot.kind !== "slot" || slot.blockType !== "series") return { lines: [], more: 0 };
@@ -327,18 +411,23 @@ export interface GridCallbacks {
 }
 
 export interface GridHandle {
-  /** Repositions the now-line (CSSOM --now-min) and refreshes the
-   * is-past / is-on-air classes. Driven by the guide page's local 60s
-   * timer (heartbeat skew correction arrives with SSE in v0.5.4). */
+  /** Repositions the now-line (CSSOM --now-min, week-relative) and
+   * refreshes the is-past / is-on-air classes on every piece. Driven by
+   * the guide page's local 60s timer (heartbeat skew correction arrives
+   * with SSE in v0.5.6). */
   updateNow(nowMs: number): void;
   /** The x pixel offset of "now" inside the scroll viewport, or null
-   * when now is outside the rendered day -- the auto-scroll target. */
+   * when now is outside the rendered week -- the auto-scroll target on
+   * the week page containing now (other pages open at their start). */
   nowOffsetPx(nowMs: number): number | null;
 }
 
+/** One logical slot on a track: every rendered piece (one per touched
+ * day segment) plus the primary piece keyboard focus lands on. */
 interface PlacedSlot {
   slot: GuideSlot;
-  el: HTMLButtonElement;
+  pieces: HTMLButtonElement[];
+  primary: HTMLButtonElement;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -380,15 +469,31 @@ function slotAriaLabel(slot: GuideSlot): string {
   return `${slot.blockName}, ${slotTimeRange(slot)}, ${plural(slot.programs.length, "program")}`;
 }
 
-function buildSlotButton(slot: GuideSlot, span: SlotSpan, cb: GridCallbacks): HTMLButtonElement {
-  const btn = el("button", slot.kind === "ghost" ? "guide-slot guide-slot--ghost" : "guide-slot");
+interface PieceOptions {
+  edges: SegmentEdges;
+  /** The widest piece carries the visible face; the others mirror the
+   * same content visibility-hidden (equal natural height -> a step-free
+   * join) and say "continues across midnight" via aria-label. */
+  labeled: boolean;
+  /** The face decided once per slot from its primary piece's span. */
+  face: SlotFace;
+}
+
+function buildSlotPiece(slot: GuideSlot, span: SlotSpan, opts: PieceOptions, cb: GridCallbacks): HTMLButtonElement {
+  let cls = slot.kind === "ghost" ? "guide-slot guide-slot--ghost" : "guide-slot";
+  if (!opts.labeled) cls += " guide-slot--silent";
+  const btn = el("button", cls);
   btn.type = "button";
   btn.tabIndex = -1;
   btn.dataset.type = slot.blockType;
-  if (span.cutLeft) btn.dataset.cut = span.cutRight ? "both" : "left";
-  else if (span.cutRight) btn.dataset.cut = "right";
+  const { cutLeft, cutRight, joinLeft, joinRight } = opts.edges;
+  if (cutLeft) btn.dataset.cut = cutRight ? "both" : "left";
+  else if (cutRight) btn.dataset.cut = "right";
+  if (joinLeft) btn.dataset.join = joinRight ? "both" : "left";
+  else if (joinRight) btn.dataset.join = "right";
   btn.style.setProperty("grid-column", gridColumn(span));
-  btn.setAttribute("aria-label", slotAriaLabel(slot));
+  const base = slotAriaLabel(slot);
+  btn.setAttribute("aria-label", opts.labeled ? base : `${base}, continues across midnight`);
   if (cb.inspectorId) {
     btn.setAttribute("aria-controls", cb.inspectorId);
     btn.setAttribute("aria-expanded", "false");
@@ -401,49 +506,78 @@ function buildSlotButton(slot: GuideSlot, span: SlotSpan, cb: GridCallbacks): HT
     btn.appendChild(el("span", "guide-slot__meta", slotMeta(slot)));
     // Series faces list their content (spec §3.1): the block name stays
     // primary, program lines are secondary at label scale.
-    const face = slotFace(slot, span);
-    for (const line of face.lines) btn.appendChild(el("span", "guide-slot__prog", line));
-    if (face.more > 0) btn.appendChild(el("span", "guide-slot__more", `+${face.more} MORE`));
+    for (const line of opts.face.lines) btn.appendChild(el("span", "guide-slot__prog", line));
+    if (opts.face.more > 0) btn.appendChild(el("span", "guide-slot__more", `+${opts.face.more} MORE`));
   }
   btn.addEventListener("click", () => cb.onOpen(slot, btn));
   return btn;
 }
 
-/** 48 ruler cells, one per --div (30 min): hour cells carry the label,
- * half-hour cells are a bare tick -- the ruler IS the graticule. */
-function buildRuler(dayText: string): HTMLElement {
+/** The two-tier ruler: a sticky day-header tier (SUN 30 · MON 31 · …,
+ * each spanning its day's 48 cells, labels sticking left within their
+ * day while it pans) over the hour cells -- both tiers ride one sticky
+ * flex row with the sticky-left month corner, so the topology stays
+ * flex-flow (the spike's binding constraint). */
+function buildRuler(weekStartMs: number, dayCount: number): HTMLElement {
   const ruler = el("div", "guide-ruler");
-  const corner = el("div", "guide-ruler__corner", dayText);
-  ruler.appendChild(corner);
-  const cells = el("div", "guide-ruler__cells");
-  for (let half = 0; half < 48; half++) {
-    const cell = el("div", "guide-ruler__cell");
-    if (half % 2 === 0) cell.textContent = `${pad2(half / 2)}:00`;
-    cells.appendChild(cell);
+  ruler.appendChild(el("div", "guide-ruler__corner", weekCornerLabel(weekStartMs, dayCount)));
+  const strip = el("div", "guide-ruler__strip");
+  const days = el("div", "guide-ruler__days");
+  const todayStart = localDayStart(Date.now());
+  for (let k = 0; k < dayCount; k++) {
+    const dayStartMs = addDays(weekStartMs, k);
+    const cell = el("div", "guide-ruler__day");
+    if (dayStartMs === todayStart) {
+      cell.dataset.today = "";
+      cell.setAttribute("aria-current", "date");
+    }
+    cell.appendChild(el("span", "guide-ruler__day-label", dayLabel(dayStartMs)));
+    days.appendChild(cell);
   }
-  ruler.appendChild(cells);
+  strip.appendChild(days);
+  const cells = el("div", "guide-ruler__cells");
+  for (let k = 0; k < dayCount; k++) {
+    for (let half = 0; half < 48; half++) {
+      const cell = el(
+        "div",
+        half === 0 && k > 0 ? "guide-ruler__cell guide-ruler__cell--newday" : "guide-ruler__cell",
+      );
+      if (half % 2 === 0) cell.textContent = `${pad2(half / 2)}:00`;
+      cells.appendChild(cell);
+    }
+  }
+  strip.appendChild(cells);
+  ruler.appendChild(strip);
   return ruler;
 }
 
 /**
- * Renders one day window of the guide sheet into `container` (replacing
- * whatever it held) and wires roving-tabindex keyboard navigation:
- * Left/Right along a track, Up/Down across channels (nearest start),
- * Enter/Space opens, Esc is left to the page (inspector close + focus
- * return). Returns the handle the 60s timer drives.
+ * Renders one week page of the guide sheet into `container` (replacing
+ * whatever it held): dayCount consecutive day segments per channel laid
+ * in a row as one continuous timeline, and roving-tabindex keyboard
+ * navigation -- Left/Right along a track across the whole week (a
+ * cross-midnight slot is ONE stop: focus rides its primary piece),
+ * Up/Down across channels (nearest start), Enter/Space opens, Esc is
+ * left to the page (inspector close + focus return). Returns the handle
+ * the 60s timer drives.
  */
-export function renderGuideDay(
+export function renderGuideWeek(
   container: HTMLElement,
   rows: GuideRow[],
-  dayStartMs: number,
+  weekStartMs: number,
+  dayCount: number,
   cb: GridCallbacks,
 ): GridHandle {
-  const dayEndMs = addDays(dayStartMs, 1);
-  const sheet = el("div", "guide-sheet");
-  sheet.appendChild(buildRuler(dayLabel(dayStartMs)));
+  const dayStarts: number[] = [];
+  for (let k = 0; k <= dayCount; k++) dayStarts.push(addDays(weekStartMs, k));
+  const weekEndMs = dayStarts[dayCount];
 
-  // tracks[t] mirrors rows[t]; each entry holds the day's placed slots in
-  // start order -- the keyboard-nav model and the minute-tick refresh list.
+  const sheet = el("div", "guide-sheet");
+  sheet.appendChild(buildRuler(weekStartMs, dayCount));
+
+  // tracks[t] mirrors rows[t]; each entry holds the week's logical slots
+  // in start order -- the keyboard-nav model and the minute-tick refresh
+  // list (a cross-midnight slot is one entry with several pieces).
   const tracks: PlacedSlot[][] = [];
 
   for (const row of rows) {
@@ -452,19 +586,46 @@ export function renderGuideDay(
     plateCell.appendChild(plateEl(row.plate));
     rowEl.appendChild(plateCell);
 
-    const track = el("div", "guide-track");
+    // A channel with any ghost gets the two-lane template on EVERY
+    // segment, so the lane pitch stays uniform across the week band.
+    const hasGhost = row.slots.some((s) => s.kind === "ghost");
+    const segEls: HTMLElement[] = [];
+    for (let k = 0; k < dayCount; k++) {
+      let cls = "guide-track";
+      if (k > 0) cls += " guide-track--newday";
+      if (hasGhost) cls += " guide-track--lanes";
+      const seg = el("div", cls);
+      segEls.push(seg);
+      rowEl.appendChild(seg);
+    }
+
     const placed: PlacedSlot[] = [];
     for (const slot of row.slots) {
-      const span = daySpan(slot.startMs, slot.endMs, dayStartMs, dayEndMs);
-      if (!span) continue;
-      const btn = buildSlotButton(slot, span, cb);
-      btn.dataset.track = String(tracks.length);
-      btn.dataset.idx = String(placed.length);
-      track.appendChild(btn);
-      placed.push({ slot, el: btn });
+      const touched: { k: number; span: SlotSpan }[] = [];
+      for (let k = 0; k < dayCount; k++) {
+        const span = daySpan(slot.startMs, slot.endMs, dayStarts[k], dayStarts[k + 1]);
+        if (span) touched.push({ k, span });
+      }
+      if (touched.length === 0) continue;
+      const primaryIdx = primaryPieceIndex(touched.map((p) => p.span));
+      const face = slotFace(slot, touched[primaryIdx].span);
+      const pieces: HTMLButtonElement[] = [];
+      for (let i = 0; i < touched.length; i++) {
+        const { k, span } = touched[i];
+        const piece = buildSlotPiece(
+          slot,
+          span,
+          { edges: segmentEdges(span, k, dayCount), labeled: i === primaryIdx, face },
+          cb,
+        );
+        piece.dataset.track = String(tracks.length);
+        piece.dataset.idx = String(placed.length);
+        segEls[k].appendChild(piece);
+        pieces.push(piece);
+      }
+      placed.push({ slot, pieces, primary: pieces[primaryIdx] });
     }
     tracks.push(placed);
-    rowEl.appendChild(track);
     sheet.appendChild(rowEl);
   }
 
@@ -481,9 +642,9 @@ export function renderGuideDay(
   nowline.hidden = true;
   sheet.appendChild(nowline);
 
-  // Roving tabindex: exactly one slot is tabbable. Start on the slot
-  // nearest now on the first non-empty track (the sweep is the focal
-  // moment; keyboard entry lands beside it).
+  // Roving tabindex: exactly one slot is tabbable, always via its
+  // primary piece. Start on the slot nearest now on the first non-empty
+  // track (the sweep is the focal moment; keyboard entry lands beside it).
   let active: HTMLButtonElement | null = null;
   function setActive(btn: HTMLButtonElement, focus: boolean): void {
     if (active) active.tabIndex = -1;
@@ -497,7 +658,7 @@ export function renderGuideDay(
       firstTrack.map((p) => p.slot.startMs),
       Date.now(),
     );
-    setActive(firstTrack[Math.max(0, idx)].el, false);
+    setActive(firstTrack[Math.max(0, idx)].primary, false);
   }
 
   sheet.addEventListener("keydown", (event) => {
@@ -506,8 +667,10 @@ export function renderGuideDay(
     const t = Number(target.dataset.track);
     const i = Number(target.dataset.idx);
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      // One logical slot = one stop, even when its DOM is segmented
+      // across midnight -- ±1 walks the whole week's slots on the track.
       const next = tracks[t][i + (event.key === "ArrowRight" ? 1 : -1)];
-      if (next) setActive(next.el, true);
+      if (next) setActive(next.primary, true);
       event.preventDefault();
     } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       const dir = event.key === "ArrowDown" ? 1 : -1;
@@ -518,7 +681,7 @@ export function renderGuideDay(
           tracks[nt].map((p) => p.slot.startMs),
           tracks[t][i].slot.startMs,
         );
-        setActive(tracks[nt][idx].el, true);
+        setActive(tracks[nt][idx].primary, true);
         break;
       }
       event.preventDefault();
@@ -528,33 +691,50 @@ export function renderGuideDay(
 
   container.replaceChildren(sheet);
 
+  /** The day segment containing nowMs -- indexed against real local
+   * midnights (dayStarts), so DST-shifted days keep their clamped
+   * 288-column geometry. */
+  function dayIndexOf(nowMs: number): number {
+    let k = 0;
+    while (k + 1 < dayCount && nowMs >= dayStarts[k + 1]) k++;
+    return k;
+  }
+
   function updateNow(nowMs: number): void {
-    const inDay = nowMs >= dayStartMs && nowMs < dayEndMs;
-    nowline.hidden = !inDay;
-    if (inDay) {
-      // Clamped to the 288-column track: the DST fall-back day is 25h,
-      // so raw elapsed minutes reach 1499 and would draw the line (and
-      // phantom scroll range) past the last grid column.
-      const min = Math.max(0, Math.min(24 * 60, Math.floor((nowMs - dayStartMs) / 60_000)));
-      sheet.style.setProperty("--now-min", String(min));
+    const inWeek = nowMs >= weekStartMs && nowMs < weekEndMs;
+    nowline.hidden = !inWeek;
+    if (inWeek) {
+      // Week-relative: whole day segments before now (24h of --div each)
+      // plus the minutes into now's own day, clamped to its 288 columns
+      // (the DST fall-back day is 25h; raw elapsed minutes would draw
+      // the line past its segment).
+      const k = dayIndexOf(nowMs);
+      const min = Math.max(0, Math.min(24 * 60, Math.floor((nowMs - dayStarts[k]) / 60_000)));
+      sheet.style.setProperty("--now-min", String(k * 24 * 60 + min));
     }
     for (const track of tracks) {
       for (const p of track) {
-        p.el.classList.toggle("is-past", p.slot.endMs <= nowMs);
-        p.el.classList.toggle("is-on-air", p.slot.startMs <= nowMs && nowMs < p.slot.endMs);
+        const past = p.slot.endMs <= nowMs;
+        const onAir = p.slot.startMs <= nowMs && nowMs < p.slot.endMs;
+        for (const piece of p.pieces) {
+          piece.classList.toggle("is-past", past);
+          piece.classList.toggle("is-on-air", onAir);
+        }
       }
     }
   }
 
   function nowOffsetPx(nowMs: number): number | null {
-    if (nowMs < dayStartMs || nowMs >= dayEndMs) return null;
+    if (nowMs < weekStartMs || nowMs >= weekEndMs) return null;
     // --px-per-min derives from --div; read the computed division width
     // off the ruler cell so the offset matches whatever --div resolves to.
     const cell = sheet.querySelector(".guide-ruler__cell");
     if (!cell) return null;
     const pxPerMin = cell.getBoundingClientRect().width / 30;
     const railW = sheet.querySelector(".guide-ruler__corner")?.getBoundingClientRect().width ?? 0;
-    return railW + ((nowMs - dayStartMs) / 60_000) * pxPerMin;
+    const k = dayIndexOf(nowMs);
+    const min = Math.max(0, Math.min(24 * 60, (nowMs - dayStarts[k]) / 60_000));
+    return railW + (k * 24 * 60 + min) * pxPerMin;
   }
 
   return { updateNow, nowOffsetPx };
@@ -568,15 +748,18 @@ export interface RundownHandle {
 
 /**
  * The §7 mobile treatment: a vertical day-grouped rundown for ONE channel
- * (the mobile channel picker chooses which) -- TONIGHT / TOMORROW / "MON
- * 02" headings, chronological slot rows, the now-line as a horizontal
- * rule re-slotted between past and future rows each minute.
+ * (the mobile channel picker chooses which), paged by the SAME week
+ * pager as the grid -- its day sections span the visible week page only.
+ * TONIGHT / TOMORROW / "MON 02" headings (firstDayIndex keeps them
+ * window-absolute), chronological slot rows, the now-line as a
+ * horizontal rule re-slotted between past and future rows each minute.
  */
 export function renderRundown(
   container: HTMLElement,
   row: GuideRow | null,
-  windowStartMs: number,
-  days: number,
+  weekStartMs: number,
+  firstDayIndex: number,
+  dayCount: number,
   cb: GridCallbacks,
 ): RundownHandle {
   const root = el("div", "rundown");
@@ -588,17 +771,17 @@ export function renderRundown(
 
   const lists: { dayStartMs: number; dayEndMs: number; listEl: HTMLOListElement; items: PlacedSlot[] }[] = [];
 
-  for (let k = 0; k < days; k++) {
-    const dayStartMs = addDays(windowStartMs, k);
-    const dayEndMs = addDays(windowStartMs, k + 1);
+  for (let k = 0; k < dayCount; k++) {
+    const dayStartMs = addDays(weekStartMs, k);
+    const dayEndMs = addDays(weekStartMs, k + 1);
     // Overlap grouping (not start-time): an overnight slot lists under
     // BOTH days, its second appearance marked as a continuation --
-    // rundown parity with the grid's dashed cut edges.
+    // rundown parity with the grid's flush joins.
     const daySlots = rundownDaySlots(row?.slots ?? [], dayStartMs, dayEndMs);
     if (daySlots.length === 0) continue;
 
     const section = el("section", "rundown-day");
-    section.appendChild(el("h3", "rundown-day__head", rundownDayHeading(k, dayStartMs)));
+    section.appendChild(el("h3", "rundown-day__head", rundownDayHeading(firstDayIndex + k, dayStartMs)));
     const list = el("ol", "rundown-list");
     const items: PlacedSlot[] = [];
     for (const { slot, continuation } of daySlots) {
@@ -633,7 +816,7 @@ export function renderRundown(
       btn.addEventListener("click", () => cb.onOpen(slot, btn));
       item.appendChild(btn);
       list.appendChild(item);
-      const placed = { slot, el: btn };
+      const placed = { slot, pieces: [btn], primary: btn };
       items.push(placed);
       entries.push(placed);
     }
@@ -646,8 +829,8 @@ export function renderRundown(
 
   function updateNow(nowMs: number): void {
     for (const p of entries) {
-      p.el.classList.toggle("is-past", p.slot.endMs <= nowMs);
-      p.el.classList.toggle("is-on-air", p.slot.startMs <= nowMs && nowMs < p.slot.endMs);
+      p.primary.classList.toggle("is-past", p.slot.endMs <= nowMs);
+      p.primary.classList.toggle("is-on-air", p.slot.startMs <= nowMs && nowMs < p.slot.endMs);
     }
     nowRule.remove();
     const today = lists.find((l) => nowMs >= l.dayStartMs && nowMs < l.dayEndMs);
@@ -655,7 +838,7 @@ export function renderRundown(
     nowRuleLabel.textContent = `NOW · ${formatClock(nowMs)}`;
     const firstFuture = today.items.find((p) => p.slot.startMs > nowMs);
     if (firstFuture) {
-      today.listEl.insertBefore(nowRule, firstFuture.el.parentElement);
+      today.listEl.insertBefore(nowRule, firstFuture.primary.parentElement);
     } else {
       today.listEl.appendChild(nowRule);
     }

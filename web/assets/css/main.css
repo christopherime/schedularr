@@ -1954,18 +1954,24 @@ dialog.panel .panel__body {
 }
 
 /* -- the guide (home, spec §3.1) ---------------------------------------------
-   The EPG grid as home surface. Geometry contract (the resolved spike,
-   spec §9): sticky rail/ruler topology from FLEX FLOW, never grid
-   membership -- sheet = block width:max-content; ruler = sticky-top flex
-   row with sticky-left corner; each channel row = flex of sticky-left
-   plate + a per-channel CSS grid of 288 five-minute columns. Slots land
-   on grid lines set via CSSOM (style.setProperty -- inline style
-   attributes are dropped by the CSP). The 30-minute column width IS
-   --div, so the graticule gradient, the ruler cells, and slot boundaries
-   coincide exactly; the guide scopes --div up to 44px so hour labels fit
-   a division, and every derived length (--q-w, --px-per-min) follows.
-   z-order inside the sheet: nowline (1) < plates (2) < ruler (3) <
-   corner (4). */
+   The EPG grid as home surface, rendering a FULL WEEK at a time since
+   v0.5.3. Geometry contract (the resolved spike, spec §9): sticky
+   rail/ruler topology from FLEX FLOW, never grid membership -- sheet =
+   block width:max-content; two-tier ruler = sticky-top flex row with
+   sticky-left corner; each channel row = flex of sticky-left plate +
+   SEVEN per-day CSS grids of 288 five-minute columns laid in a row (the
+   spike-tested per-day grid stays the building block -- never one
+   2016-column grid). Slots land on grid lines set via CSSOM
+   (style.setProperty -- inline style attributes are dropped by the
+   CSP); a slot crossing midnight inside the week renders as flush
+   joined pieces (data-join), keeping dashed cuts (data-cut) only at the
+   week's outer edges. The 30-minute column width IS --div, so the
+   graticule gradient, the ruler cells, and slot boundaries coincide
+   exactly; the guide scopes --div up to 44px so hour labels fit a
+   division, and every derived length (--q-w, --px-per-min) follows.
+   Day boundaries carry --color-dayline, a slightly stronger graticule
+   rule, through ruler, tracks, and ground. z-order inside the sheet:
+   nowline (1) < plates (2) < ruler (3) < corner (4). */
 
 .content--bleed {
   max-width: none;
@@ -1977,6 +1983,10 @@ dialog.panel .panel__body {
   --rail-w: 11rem;
   --q-w: calc(var(--div) / 6);
   --px-per-min: calc(var(--div) / 30);
+  /* The midnight rule: stronger than the graticule, quieter than the
+     ruler's interactive border -- it must read as structure, not as a
+     slot edge. */
+  --color-dayline: color-mix(in srgb, var(--color-border-interactive) 60%, transparent);
   padding: var(--space-6) 0 var(--space-8);
 }
 
@@ -1996,10 +2006,6 @@ dialog.panel .panel__body {
   margin-bottom: var(--space-5);
 }
 
-.guide-toolbar__days input {
-  width: 6.5rem;
-}
-
 .guide-toolbar__scope {
   min-width: 16rem;
 }
@@ -2011,14 +2017,14 @@ dialog.panel .panel__body {
   min-width: 12rem;
 }
 
-/* Week pager (spec §3.1, amended): ‹/› chevrons flank at most seven day
-   tabs. Navigation within the loaded window, never a re-plan; every tab
-   is always fully visible with its weekday + date (the old flat strip
-   clipped trailing tabs mid-label at the scrollport edge). */
+/* Week pager (spec §3.1, full-week amendment): navigation is ONLY the
+   ‹/› chevrons paging whole weeks over the one 28-day fetch -- no day
+   tabs. The label between them reads the visible page's calendar range
+   ("SUN 30 AUG – SAT 05 SEP"); chevrons disable at the window edges. */
 .guide-pager {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
 
@@ -2026,60 +2032,17 @@ dialog.panel .panel__body {
   flex-shrink: 0;
 }
 
-/* Seven tabs fit every viewport the grid serves; the scroll fallback
-   only exists for the sliver just above the 640px reflow. */
-.guide-tabs {
-  display: flex;
-  gap: var(--space-1);
-  min-width: 0;
-  overflow-x: auto;
-}
-
-.guide-tab {
-  padding: var(--space-2) var(--space-3);
-  font: inherit;
+.guide-pager__label {
+  margin: 0;
+  min-width: 15rem;
+  text-align: center;
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
-  color: var(--color-ink-muted);
-  background: transparent;
-  border: var(--border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
+  color: var(--color-ink);
   font-variant-numeric: tabular-nums;
-  transition:
-    color var(--duration-fast) var(--ease-out),
-    background-color var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
-}
-
-.guide-tab:not(:disabled):hover {
-  color: var(--color-ink);
-  background: var(--color-bg-inset);
-}
-
-.guide-tab[aria-pressed="true"] {
-  color: var(--color-ink);
-  background: var(--color-bg-inset);
-  border-color: var(--color-border-interactive);
-  box-shadow: inset 0 -2px 0 var(--color-accent);
-}
-
-/* Today's tab: a small accent dot before the label (paired with
-   aria-current="date" for AT). CSS-generated, so it survives the
-   x-text label write and composes with the selected state's bottom
-   accent bar -- today + selected shows both. */
-.guide-tab[data-today]::before {
-  content: "";
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: var(--space-1);
-  border-radius: 50%;
-  background: var(--color-accent);
-  vertical-align: 2px;
+  white-space: nowrap;
 }
 
 /* The ghost-honesty legend: warnings that could not be placed as NO
@@ -2123,6 +2086,23 @@ dialog.panel .panel__body {
   max-width: none;
 }
 
+/* The guide's pre-grid states (skeleton / NO SIGNAL / empty) sit on the
+   same one-left-rail bleed as the grid region: a week-shaped strip, not
+   a page-column card. */
+.guide-stage {
+  padding-inline: max(var(--space-5), calc((100% - var(--content-max)) / 2 + var(--space-5)))
+    var(--space-5);
+}
+
+/* The honest slow-load line under the skeleton (mirrors the
+   role="status" text): the first /schedule after a restart runs on the
+   90s timeout tier, so the wait is named instead of looking hung. */
+.guide-loading-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
 .guide-main {
   flex: 1;
   min-width: 0;
@@ -2157,7 +2137,13 @@ dialog.panel .panel__body {
   min-width: 100%;
 }
 
-/* -- ruler ---------------------------------------------------------------- */
+/* -- ruler ------------------------------------------------------------------
+   Two tiers since the full-week reframe: a day-header tier (SUN 30 ·
+   MON 31 · …, each cell spanning its day's 48 divisions, the label
+   sticking left WITHIN its day while it pans) over the hour cells.
+   Both tiers ride the ONE sticky flex row; the sticky-left corner
+   (month readout) spans both -- topology stays flex flow, per the
+   spike. */
 
 .guide-ruler {
   position: sticky;
@@ -2185,6 +2171,61 @@ dialog.panel .panel__body {
   text-transform: uppercase;
   color: var(--color-ink);
   font-variant-numeric: tabular-nums;
+}
+
+.guide-ruler__strip {
+  display: flex;
+  flex-direction: column;
+}
+
+.guide-ruler__days {
+  display: flex;
+  border-bottom: var(--border-width) solid var(--color-graticule);
+}
+
+/* One day header = exactly 48 divisions, so the tier stays coincident
+   with the hour cells and the tracks below. The dayline inset (not a
+   border) keeps the 48*--div width exact. NO overflow:hidden here: it
+   would make the cell its label's sticky containment (the label then
+   pins 200px INTO its own cell and scrolls away with it) -- sticky must
+   resolve against the guide-viewport scrollport. */
+.guide-ruler__day {
+  flex-shrink: 0;
+  width: calc(var(--div) * 48);
+  padding: var(--space-2) 0 var(--space-1);
+  white-space: nowrap;
+}
+
+.guide-ruler__day + .guide-ruler__day {
+  box-shadow: inset var(--border-width) 0 0 var(--color-dayline);
+}
+
+/* The day name stays readable while its day pans: sticky within the
+   cell, offset past the corner's masked edge. */
+.guide-ruler__day-label {
+  display: inline-block;
+  position: sticky;
+  left: calc(var(--rail-w) + var(--space-5));
+  padding-left: 3px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Today's header: a small accent dot before the label (paired with
+   aria-current="date" for AT) -- the day-tab idiom carried over. */
+.guide-ruler__day[data-today] .guide-ruler__day-label::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: var(--space-1);
+  border-radius: 50%;
+  background: var(--color-accent);
+  vertical-align: 2px;
 }
 
 /* A short fade off the corner's right edge: an hour label scrolling
@@ -2216,12 +2257,18 @@ dialog.panel .panel__body {
 .guide-ruler__cell {
   flex-shrink: 0;
   width: var(--div);
-  padding: var(--space-2) 0 var(--space-2) 3px;
+  padding: var(--space-1) 0 var(--space-2) 3px;
   font-size: var(--text-xs);
   color: var(--color-ink-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* The 00:00 cell of every day after the first: the midnight rule runs
+   through the hour tier too. */
+.guide-ruler__cell--newday {
+  box-shadow: inset var(--border-width) 0 0 var(--color-dayline);
 }
 
 /* -- channel rows ---------------------------------------------------------- */
@@ -2253,11 +2300,15 @@ dialog.panel .panel__body {
   text-overflow: ellipsis;
 }
 
-/* The track: one CSS grid per channel, 288 five-minute columns, the
+/* The track: one CSS grid PER DAY SEGMENT (seven per channel row, laid
+   in a row by the row's flex), 288 five-minute columns each, the
    graticule as its literal background. Row 1 is the airing lane; a NO
-   SIGNAL ghost drops into an implicit second lane at its would-have-aired
-   columns, under the slot that displaced it. */
+   SIGNAL ghost drops into a second lane at its would-have-aired
+   columns, under the slot that displaced it -- a channel with any ghost
+   gets the two-lane template on EVERY segment (guide-track--lanes) so
+   the lane pitch stays uniform across the week band. */
 .guide-track {
+  flex: none;
   display: grid;
   grid-template-columns: repeat(288, var(--q-w));
   grid-template-rows: minmax(3.9rem, auto);
@@ -2267,6 +2318,25 @@ dialog.panel .panel__body {
     var(--color-graticule) 0 1px,
     transparent 1px var(--div)
   );
+}
+
+/* The midnight rule through the tracks: an inset shadow, not a border,
+   so segment width stays exactly 288 * --q-w -- and it paints UNDER
+   grid items, so a slot joined across midnight covers it (the join
+   reads as one continuous block). */
+.guide-track--newday {
+  box-shadow: inset var(--border-width) 0 0 var(--color-dayline);
+}
+
+/* The ghost lane is a FIXED 3.9rem row, not auto: the row's flex
+   stretch hands each segment's surplus height to its auto rows, and an
+   empty auto ghost lane would absorb a share the ghost-bearing
+   segment's lane doesn't -- stepping the airing lane's floor at the
+   day boundary (a joined slot would visibly jump height at midnight).
+   With row 2 fixed, every segment's airing lane gets ALL the surplus
+   and lands at the same height. */
+.guide-track--lanes {
+  grid-template-rows: minmax(3.9rem, auto) 3.9rem;
 }
 
 /* -- quiet ground -----------------------------------------------------------
@@ -2293,6 +2363,11 @@ dialog.panel .panel__body {
 .guide-ground__track {
   flex: 1;
   background-image: repeating-linear-gradient(
+      to right,
+      var(--color-dayline) 0 1px,
+      transparent 1px calc(var(--div) * 48)
+    ),
+    repeating-linear-gradient(
       to right,
       var(--color-graticule) 0 1px,
       transparent 1px var(--div)
@@ -2339,8 +2414,8 @@ dialog.panel .panel__body {
   background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-inset));
 }
 
-/* An overnight spill clamped at a day edge: the cut side loses its
-   border and radius -- the block visibly continues past the window. */
+/* A spill clamped at the WEEK's outer edge: the cut side goes dashed --
+   the block visibly continues past the rendered page. */
 .guide-slot[data-cut="right"],
 .guide-slot[data-cut="both"] {
   border-right-style: dashed;
@@ -2353,6 +2428,37 @@ dialog.panel .panel__body {
   border-left-style: dashed;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+}
+
+/* A midnight boundary INSIDE the rendered week: the two day-segment
+   pieces of one slot render flush -- no dashed cut, no margin, no
+   radius, no border between them -- so the slot reads as ONE continuous
+   block; the stronger midnight rule passes beneath it (inset shadows
+   paint under grid items). */
+.guide-slot[data-join="right"],
+.guide-slot[data-join="both"] {
+  margin-right: 0;
+  /* width 0, not style none: the ghost hover flips border-style back to
+     solid, and a zeroed width stays zero through it. */
+  border-right-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.guide-slot[data-join="left"],
+.guide-slot[data-join="both"] {
+  margin-left: 0;
+  border-left-width: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* The unlabeled piece(s) of a cross-midnight slot: same child content
+   as the labeled (widest) piece, visibility-hidden so both pieces keep
+   the same natural height and the join stays step-free. The aria-label
+   ("…, continues across midnight") carries the description. */
+.guide-slot--silent > * {
+  visibility: hidden;
 }
 
 .guide-slot__name {
@@ -2757,9 +2863,12 @@ dialog.panel .panel__body {
 }
 
 /* -- grid-track skeleton (ui/skeleton "grid-track") -------------------------
-   Division-aligned pulsing bars: every width/offset is a multiple of
-   --div, so the loading silhouette pulses on the same 30-minute
-   graticule the real grid lands on. */
+   Division-aligned pulsing bars in a week-shaped strip: a day-header
+   tier of day-length bars over the full-width hour-ruler bar, then the
+   track rows. Every width/offset is a multiple of --div, so the loading
+   silhouette pulses on the same 30-minute graticule the real grid lands
+   on (the over-wide bars clip at the strip edge, like the real week
+   runs off the glass). */
 
 .skeleton-grid {
   border: var(--border-width) solid var(--color-border);
@@ -2780,6 +2889,15 @@ dialog.panel .panel__body {
   border-bottom: none;
 }
 
+.skeleton-grid__row--days {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.skeleton-grid__row--days .skeleton-bar {
+  height: 0.75em;
+}
+
 .skeleton-grid__row--ruler {
   border-bottom: var(--border-width-thick) solid var(--color-border-interactive);
 }
@@ -2794,14 +2912,33 @@ dialog.panel .panel__body {
   margin-right: var(--space-5);
 }
 
+/* The days row aligns with the plate column without stacking a second
+   plate stub on it. */
+.skeleton-grid__plate-spacer {
+  flex-shrink: 0;
+  width: calc(var(--rail-w, 11rem) - var(--space-6));
+  margin-right: var(--space-5);
+}
+
 .skeleton-grid__span {
   height: 2rem;
   border-radius: var(--radius-sm);
 }
 
+.skeleton-grid__span--day {
+  height: 0.75em;
+  width: calc(var(--div, 32px) * 3);
+  flex-shrink: 0;
+}
+
+.skeleton-grid__span--day + .skeleton-grid__span--day {
+  margin-left: calc(var(--div, 32px) * 13);
+}
+
 .skeleton-grid__span--ruler {
   height: 0.75em;
-  width: calc(var(--div, 32px) * 16);
+  width: calc(var(--div, 32px) * 48);
+  flex-shrink: 0;
 }
 
 .skeleton-grid__span--a {
@@ -2838,9 +2975,14 @@ dialog.panel .panel__body {
     padding-inline: var(--space-4);
   }
 
-  /* Structural reflow: the grid yields to the vertical rundown; the
-     day tabs yield to the day-grouped headings; the channel picker
-     appears. */
+  .guide-stage {
+    padding-inline: var(--space-4);
+  }
+
+  /* Structural reflow: the grid yields to the vertical rundown, grouped
+     under day headings; the channel picker appears. The week pager
+     STAYS -- it pages the rundown's day sections exactly as it pages
+     the desktop grid. */
   .guide-viewport {
     display: none;
   }
@@ -2849,8 +2991,9 @@ dialog.panel .panel__body {
     display: block;
   }
 
-  .guide-pager {
-    display: none;
+  .guide-pager__label {
+    flex: 1;
+    min-width: 0;
   }
 
   .guide-toolbar__rundown-scope {
@@ -2956,10 +3099,11 @@ dialog.panel .panel__body {
     border-right-color: CanvasText;
   }
 
-  /* Guide states that ride on box-shadow/background (v0.5.1): the sweep
-     and the on-air glow become Highlight strokes; the day tab's accent
-     underline becomes a border; the ghost's hatching drops but its
-     dashed border + NO SIGNAL text label still carry the state. */
+  /* Guide states that ride on box-shadow/background: the sweep and the
+     on-air glow become Highlight strokes; the ghost's hatching drops
+     but its dashed border + NO SIGNAL text label still carry the state.
+     The midnight rules (inset shadows) drop with all shadows -- the day
+     headers still delimit the days, and today keeps aria-current. */
   .guide-nowline {
     background: Highlight;
   }
@@ -2974,11 +3118,6 @@ dialog.panel .panel__body {
 
   .rundown-slot.is-on-air {
     border-left: var(--border-width-thick) solid Highlight;
-  }
-
-  .guide-tab[aria-pressed="true"] {
-    border-color: ButtonText;
-    border-bottom: var(--border-width-thick) solid Highlight;
   }
 
   .rundown-nowrule {

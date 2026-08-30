@@ -205,10 +205,11 @@ automatically. Any dynamic geometry keyed to it must go through CSSOM
 (`el.style.setProperty`, Alpine `:style`) -- see Content-Security-Policy
 below for why an inline `style` attribute silently fails.
 
-## The guide grid (v0.5.1)
+## The guide grid (v0.5.1, full-week since v0.5.3)
 
 The Guide (`/`, `web/layouts/index.html` + `web/assets/ts/pages/guide.ts`
-+ `web/assets/ts/runtime/grid.ts`) renders the EPG as home. Its geometry
++ `web/assets/ts/runtime/grid.ts`) renders the EPG as home -- a FULL
+WEEK per page since v0.5.3 (spec §3.1, second amendment). Its geometry
 contract comes from the measured pre-slice spike (spec §9) and is
 binding:
 
@@ -216,33 +217,80 @@ binding:
   (`.guide-sheet`) is a block with `width: max-content`; the ruler
   (`.guide-ruler`) is a sticky-top flex row with a sticky-left corner;
   each channel row (`.guide-row`) is a flex of sticky-left plate cell +
-  track. Chromium forgives sticky grid items; Safari historically does
-  not. Both axes scroll inside ONE scrollport (`.guide-viewport`, a
-  bounded-height `overflow: auto` box) -- that is what makes top and
-  left stickiness hold simultaneously.
-- **One CSS grid per channel track**, `repeat(288, var(--q-w))` -- 288
-  five-minute quanta per day. Slots are placed by grid-column line
-  numbers set via CSSOM (`el.style.setProperty("grid-column", ...)`);
-  the pure quantization (floor start, ceil end, clamp to the day,
-  cut-left/right flags for overnight spills) lives in
-  `runtime/grid.ts`'s geometry section and is unit-tested
-  (`web/tests/grid.test.ts`).
+  day-segment tracks. Chromium forgives sticky grid items; Safari
+  historically does not. Both axes scroll inside ONE scrollport
+  (`.guide-viewport`, a bounded-height `overflow: auto` box) -- that is
+  what makes top and left stickiness hold simultaneously.
+- **One CSS grid per DAY SEGMENT**, `repeat(288, var(--q-w))` -- 288
+  five-minute quanta per day, seven segments laid in a row per channel
+  by the row's flex (`flex: none` each). The week is NEVER one
+  2016-column grid: the spike measured the 288-column grid and that
+  stays the building block. Slots are placed by grid-column line numbers
+  set via CSSOM (`el.style.setProperty("grid-column", ...)`); the pure
+  quantization (floor start, ceil end, clamp to the day, cut-left/right
+  flags for spills) lives in `runtime/grid.ts`'s geometry section and is
+  unit-tested (`web/tests/grid.test.ts`).
+- **Two-tier week ruler (v0.5.3)**: a day-header tier
+  (`.guide-ruler__days`, one `.guide-ruler__day` cell of exactly
+  48 × `--div` per day: `SUN 30 · MON 31 · …`) over the hour cells, both
+  tiers inside the ONE sticky flex row; the sticky-left corner spans
+  both and reads the page's month(s) (`weekCornerLabel`: "AUG 2026",
+  "AUG–SEP 2026"). Each day label (`.guide-ruler__day-label`) is
+  `position: sticky; left: calc(var(--rail-w) + var(--space-5))` INSIDE
+  its cell, so the day name stays readable while its day pans and slides
+  away at the day's right edge. Today's header keeps the accent dot +
+  `aria-current="date"` (the old day-tab idiom carried over).
+- **The midnight rule (`--color-dayline`)**: day boundaries carry a
+  slightly stronger graticule rule -- `color-mix` of
+  `--color-border-interactive` at 60% -- through the ruler tiers, the
+  tracks, and the quiet ground (a 48 × `--div` repeating gradient
+  there). Always an inset `box-shadow`, never a border: segment widths
+  stay exactly 288 × `--q-w`, and inset shadows paint UNDER grid items,
+  so a slot joined across midnight covers the rule.
+- **Joins vs cuts (v0.5.3)**: a slot crossing midnight INSIDE the
+  rendered week renders one piece per touched segment, flush at the
+  boundary -- `data-join="left|right|both"` zeroes the joined side's
+  margin, border-width, and radius, so the pieces read as ONE continuous
+  block (`segmentEdges` classifies; unit-tested). Only the widest piece
+  carries the visible face (`primaryPieceIndex`, ties to the earlier
+  piece -- a 23:30→06:00 slot labels its six-hour morning piece); the
+  other pieces mirror the same content `visibility: hidden`
+  (`.guide-slot--silent`) so the join stays step-free, and describe
+  themselves via aria-label ("…, continues across midnight"). Dashed
+  `data-cut` edges survive only at the WEEK's outer boundaries, where
+  the slot really continues onto a neighboring page. Border removal on
+  joins uses `border-*-width: 0`, not `border: none` -- the ghost hover
+  flips `border-style` back to solid and a zeroed width must stay zero.
+- **Ghost lanes stay uniform**: a channel with any ghost applies the
+  two-lane `grid-template-rows` (`.guide-track--lanes`) to EVERY segment
+  of its row, and the ghost lane is a FIXED 3.9rem row -- the row's flex
+  stretch hands each segment's surplus height to its auto rows, so an
+  empty auto lane would absorb a share the ghost-bearing segment's lane
+  doesn't and step the airing lane's floor at midnight; with the lane
+  fixed, every segment's airing lane lands at the same height and joins
+  stay flush.
 - **The now-line** (`.guide-nowline`) is an absolute overlay child of
   the sheet at `calc(var(--rail-w) + var(--now-min) * var(--px-per-min))`;
-  `--now-min` is set once per minute via CSSOM by a local 60s timer (a
-  discrete step, not an animation loop; heartbeat skew correction
-  arrives with SSE in v0.5.4). No scroll handler anywhere. The
-  phosphor-persistence trail is a `::before` gradient riding the rule;
-  reduced motion drops the trail and keeps the rule. z-order inside the
-  sheet: nowline (1) < plates (2) < ruler (3) < corner (4).
+  `--now-min` is WEEK-relative since v0.5.3 (whole day segments before
+  now × 1440, plus the minutes into now's own day clamped to its 288
+  columns -- DST days keep their clamped geometry) and is set once per
+  minute via CSSOM by a local 60s timer (a discrete step, not an
+  animation loop; heartbeat skew correction arrives with SSE in v0.5.6).
+  It renders only on the week page containing now; other pages hide it.
+  No scroll handler anywhere. The phosphor-persistence trail is a
+  `::before` gradient riding the rule; reduced motion drops the trail
+  and keeps the rule. Opening auto-scrolls to the sweep on that page (a
+  third of the viewport in); every other page opens at its start.
+  z-order inside the sheet: nowline (1) < plates (2) < ruler (3) <
+  corner (4).
 - **Ghost slots** (`.guide-slot--ghost`): a current-plan conflict
   warning renders as an amber-hatched `NO SIGNAL — LOST TO <block>`
   block at its would-have-aired time, in an implicit second track lane
   under the slot that displaced it. Hatching never carries the fact
   alone -- the text label does (SC 1.4.1). INTERIM: the Warning wire
-  shape carries only names + `occurrence_start` until v0.5.3, so the
-  ghost's channel and duration resolve client-side from the losing
-  block's spec (`resolveGhost`, `runtime/grid.ts`).
+  shape carries only names + `occurrence_start` until v0.5.5 (memory),
+  so the ghost's channel and duration resolve client-side from the
+  losing block's spec (`resolveGhost`, `runtime/grid.ts`).
 - **Slot states**: `.is-past` dims behind the sweep, `.is-on-air`
   carries the armed glow; both are refreshed by the same minute tick.
   The series tint (`data-type="series"`, a 7% accent mix) is a
@@ -255,13 +303,16 @@ binding:
   vertical day-grouped rundown (TONIGHT / TOMORROW / `MON 02` headings)
   for one channel behind a picker, with the now-line as a horizontal
   rule re-slotted between past and future rows each minute. Since
-  v0.5.2 the rundown's CHANNEL picker is the ONE channel control on
-  mobile -- the desktop SCOPE select hides (it would ask the same
-  question twice; the plan stays all-channels), and the shell narrows
-  with it: the nav becomes a single scrollable tab row with mask-image
-  edge fades (spec §3.4 -- no wrap that orphans the last item), and the
-  telemetry cluster drops its multimeter dividers for a quiet
-  two-column readout grid (a wrapped row's leading divider dangles).
+  v0.5.3 it pages with the SAME ‹/› week pager as the grid -- its day
+  sections span the visible week page only, and headings stay
+  window-absolute (TONIGHT is only ever the fetch day). Since v0.5.2
+  the rundown's CHANNEL picker is the ONE channel control on mobile --
+  the desktop SCOPE select hides (it would ask the same question twice;
+  the plan stays all-channels), and the shell narrows with it: the nav
+  becomes a single scrollable tab row with mask-image edge fades (spec
+  §3.4 -- no wrap that orphans the last item), and the telemetry
+  cluster drops its multimeter dividers for a quiet two-column readout
+  grid (a wrapped row's leading divider dangles).
 - **Full-bleed with ONE left rail (v0.5.2 alignment thesis)**: the
   guide is the ONE sanctioned `--content-max` exception --
   `content/_index.md` sets `full_bleed`, baseof adds `.content--bleed`,
@@ -274,18 +325,29 @@ binding:
   toward the viewport edge only -- the trace runs off the glass, the
   reading spine stays put. Two unrelated left edges was the defect this
   replaces.
-- **Week pager (v0.5.2, spec §3.1 amended)**: day navigation is a ‹/›
-  pager (`ui/icon` chevrons on `.btn--icon`) flanking at most seven
-  `.guide-tab`s -- page k = window days k·7..k·7+6 (`weekPageCount` /
-  `weekPageDays` / `weekPageOf` in `runtime/grid.ts`, unit-tested).
-  Chevrons disable at the window edges; a partial last week keeps its
-  real tabs, never seven padded ones; paging moves the strip only, a
-  tab press selects the day. Pager buttons carry aria-labels
-  ("Previous week"/"Next week"); tab semantics (aria-pressed,
-  aria-current="date" + accent dot for today) are unchanged. This
-  replaced the flat N-tab `overflow-x` strip, which clipped tabs beyond
-  ~day 7 mid-label at the scrollport edge with no scroll affordance on
-  overlay-scrollbar systems.
+- **Week pager (v0.5.3, spec §3.1 second amendment)**: navigation is
+  ONLY the ‹/› pager (`ui/icon` chevrons on `.btn--icon`) paging whole
+  weeks -- the day tabs are gone (the grid shows the whole week, so a
+  day selector had nothing left to select). The `.guide-pager__label`
+  between the chevrons reads the visible page's calendar range
+  (`weekRangeLabel`: "SUN 30 AUG – SAT 05 SEP"; a trailing one-day page
+  is just its day) and is `aria-live="polite"` so paging announces.
+  The client fetches the whole plannable window once (`days=28`) and
+  pages it client-side: page k = window days k·7..k·7+6
+  (`weekPageCount` / `weekChunk` in `runtime/grid.ts`, unit-tested,
+  consistent with `windowDayCount` -- a mid-day fetch's 29th calendar
+  day becomes an honest one-day fifth page). Chevrons carry aria-labels
+  ("Previous week"/"Next week") and disable at the window edges; a
+  chevron that disables itself under the pointer hands keyboard focus
+  to its opposite. The pager stays on mobile, where it pages the
+  rundown. That one `/schedule?days=28` call runs on the 90-second
+  `LONG_GET_TIMEOUT_MS` read tier (`runtime/api.ts`) -- a cold-pod
+  first plan can exceed a minute -- and the loading state says so
+  (`.guide-loading-note`); every other read keeps the 15s default.
+- **Keyboard over the segmented DOM (v0.5.3)**: the roving tabindex
+  walks LOGICAL slots -- Left/Right cross the whole week on a track,
+  and a cross-midnight slot is ONE stop whose focus rides its primary
+  piece; Up/Down land on the nearest start across channels, unchanged.
 - **Slot faces show content (v0.5.2, spec §3.1 amended)**: a series
   slot lists its programs on the face, one `.guide-slot__prog` line per
   program (`SHOW · SxxEyy`; a movie is just its title), folding
@@ -308,10 +370,9 @@ binding:
   short bg-raised fade over the cell strip, so an hour label scrolling
   under the sticky corner dissolves instead of slicing mid-glyph.
 - The grid and rundown DOM are built in TS from the typed plan
-  (`renderGuideDay` / `renderRundown`); Alpine drives ONLY the toolbar
-  and the inspector. Keyboard: roving tabindex across slots --
-  Left/Right along a track, Up/Down across channels (nearest start
-  time), Enter opens, Esc closes.
+  (`renderGuideWeek` / `renderRundown`); Alpine drives ONLY the toolbar
+  (SCOPE + week pager + mobile channel picker -- the DAYS control died
+  with the full-week reframe) and the inspector.
 
 ## Typography
 

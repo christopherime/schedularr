@@ -1,10 +1,12 @@
 {{ define "main" }}
 {{- /*
-  The Guide (spec §3.1) -- the EPG grid as home. The grid + mobile
-  rundown DOM is built in TS (runtime/grid.ts); Alpine here drives ONLY
-  the toolbar (DAYS / SCOPE / day tabs / rundown channel picker) and the
-  slot inspector (§3.2). Full-bleed: content/_index.md sets full_bleed,
-  the one sanctioned --content-max exception. CSP discipline: zero inline
+  The Guide (spec §3.1, full-week grid) -- the EPG grid as home. The
+  grid + mobile rundown DOM is built in TS (runtime/grid.ts); Alpine
+  here drives ONLY the toolbar (SCOPE / week pager / rundown channel
+  picker) and the slot inspector (§3.2). The client fetches the whole
+  plannable window once (days=28) and the ‹/› pager walks it in week
+  pages client-side. Full-bleed: content/_index.md sets full_bleed, the
+  one sanctioned --content-max exception. CSP discipline: zero inline
   style attributes anywhere below -- all geometry is CSSOM-set classes.
 */ -}}
 <div x-data="guide" class="guide" @keydown.escape.window="closeInspector()">
@@ -25,22 +27,13 @@
            (present from first paint so live-region updates register). */}}
     <p class="visually-hidden" role="status" x-text="statusLine"></p>
 
-    {{- /* DAYS/SCOPE stay ENABLED during a reload -- disabling the
-           focused control would blur it and strand keyboard focus on
-           body. requestReload() latches a change that lands mid-flight
-           and re-fires it when the flight lands. */}}
+    {{- /* SCOPE stays ENABLED during a reload -- disabling the focused
+           control would blur it and strand keyboard focus on body.
+           requestReload() latches a change that lands mid-flight and
+           re-fires it when the flight lands. (The DAYS control died
+           with the full-week reframe: the guide always fetches the
+           whole 28-day window and pages it by week.) */}}
     <div class="guide-toolbar" role="group" aria-label="Plan controls">
-      <div class="form-field guide-toolbar__days">
-        <label for="guide-days">Days</label>
-        <input
-          type="number"
-          min="1"
-          max="30"
-          id="guide-days"
-          x-model="controls.days"
-          @change="requestReload()"
-        >
-      </div>
       <div class="form-field guide-toolbar__scope">
         <label for="guide-scope">Scope</label>
         {{ partial "ui/channel-select.html" (dict
@@ -64,8 +57,24 @@
       </div>
     </div>
 
+  </div>
+
+  {{- /* The guide's pre-grid states (skeleton / NO SIGNAL / empty) sit
+         on the same one-left-rail bleed as the grid region -- a
+         week-shaped strip, not a page-column card. */}}
+  <div class="guide-stage">
     <template x-if="loading">
-      {{ partial "ui/skeleton.html" (dict "variant" "grid-track" "count" 4) }}
+      <div>
+        {{ partial "ui/skeleton.html" (dict "variant" "grid-track" "count" 4) }}
+        {{- /* The honest slow-load line (mirrors the role="status"
+               text): the first /schedule after a restart re-plans the
+               whole 28-day window against a cold Tunarr and runs on the
+               90s timeout tier -- say so instead of looking hung. */}}
+        <p class="guide-loading-note">
+          Loading programme guide — first load after a restart can take
+          a minute.
+        </p>
+      </div>
     </template>
 
     <template x-if="!loading && problem">
@@ -97,7 +106,7 @@
     <template x-if="!loading && !problem && plan && !hasAnySlots() && hasBlocks()">
       {{ partial "ui/empty.html" (dict
         "legend" "No match"
-        "text" "No block airs inside this window and scope — widen DAYS, clear the SCOPE, or check that the blocks for this channel are enabled."
+        "text" "No block airs inside the next four weeks for this scope — clear the SCOPE, or check that the blocks for this channel are enabled."
         "actionLabel" "Review blocks"
         "actionHref" "/blocks/") }}
     </template>
@@ -106,40 +115,29 @@
   <div class="guide-body" x-show="!loading && !problem && plan && hasAnySlots()" x-cloak>
     <div class="guide-main">
       <div class="guide-chrome">
-        {{- /* Week pager (spec §3.1, amended): ‹/› flank at most seven
-               day tabs -- page k = days k*7..k*7+6 of the loaded window,
-               chevrons disabled at the edges. Paging moves the strip
-               only; a tab press selects the day. Every tab always
-               carries weekday + date (the flat overflow strip clipped
-               trailing tabs mid-label). */}}
-        <div class="guide-pager" role="group" aria-label="Day">
+        {{- /* Week pager (spec §3.1, full-week amendment): navigation
+               is ONLY ‹/› paging whole weeks -- no day tabs. The label
+               between the chevrons reads the visible page's calendar
+               range ("SUN 30 AUG – SAT 05 SEP"; a trailing partial page
+               names just its real days); chevrons disable at the
+               window's edges. Paging is client-side over the one 28-day
+               fetch -- it never re-plans. */}}
+        <div class="guide-pager" role="group" aria-label="Week">
           <button
             type="button"
             class="btn btn--icon guide-pager__nav"
             :disabled="weekPage === 0"
-            @click="pageWeek(-1)"
+            @click="pageWeek(-1, $event.currentTarget)"
             aria-label="Previous week"
           >
             {{ partial "ui/icon.html" (dict "name" "chevron-left") }}
           </button>
-          <div class="guide-tabs">
-            <template x-for="tab in dayTabs()" :key="tab.index">
-              <button
-                type="button"
-                class="guide-tab"
-                :aria-pressed="tab.index === dayIndex"
-                :aria-current="tab.isToday ? 'date' : false"
-                :data-today="tab.isToday"
-                @click="selectDay(tab.index, $event.currentTarget)"
-                x-text="tab.label"
-              ></button>
-            </template>
-          </div>
+          <p class="guide-pager__label" aria-live="polite" x-text="weekLabel()"></p>
           <button
             type="button"
             class="btn btn--icon guide-pager__nav"
             :disabled="weekPage >= weekPages() - 1"
-            @click="pageWeek(1)"
+            @click="pageWeek(1, $event.currentTarget)"
             aria-label="Next week"
           >
             {{ partial "ui/icon.html" (dict "name" "chevron-right") }}
