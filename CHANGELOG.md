@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Roadmap reshaped at the operator's direction: v0.5.0 is now the web
+  interface overhaul** (EPG week-grid, persisted warnings/apply history
+  in the UI, live updates, complete component states, block duplication,
+  bulk series ops, mobile, purposeful motion — keeping the committed
+  CRT signal-bench visual world); the operations/observability items
+  moved to v0.6.0. (docs/roadmap.md)
+
 ## [0.3.0] - 2026-08-30
 
 ### Changed

@@ -66,13 +66,33 @@ can see.
 - **EPG enrichment.** Feed artwork/descriptions through to the XMLTV
   guide where Tunarr allows it, so Jellyfin's guide looks like real TV.
 
-## v0.5.0 — Operations and observability
+## v0.5.0 — The web interface, rebuilt
+
+The operator's directive (2026-08-30): this release is an overall,
+extreme, major improvement of the web interface. The committed visual
+world (CRT signal-bench, web/DESIGN.md) stays — the experience around it
+is rebuilt. Detailed scope lives in the v0.5.0 UI spec
+(docs/superpowers/specs/); headline surfaces:
+
+- **EPG week-grid timeline** — the TV mental model: planned occurrences
+  across channels on a real programme guide, not a table.
+- **Warnings and apply history in the UI.** Conflict warnings persisted
+  with schedule history so "why didn't X air last Tuesday" is answerable
+  after the fact, surfaced where the operator looks.
+- **Live data** — the no-WebSocket/SSE v1 non-goal is retired; pages
+  reflect applies, cron ticks, and Tunarr signal without manual reload.
+- **Complete component states** — skeleton loading, teaching empty
+  states, full hover/focus/active/disabled/error vocabulary everywhere.
+- **Block duplication and disable-until**; **bulk series operations**
+  (reset/advance several cursors, import/export from the UI).
+- **Mobile pass** — structural responsiveness for the guide-shaped pages.
+- **Motion with purpose** — 150–250ms state-conveying transitions, and
+  the few earned moments of signal-bench delight.
+
+## v0.6.0 — Operations and observability
 
 Run it for months without shelling into the pod.
 
-- **Warnings and apply history in the UI.** Conflict warnings are
-  per-apply today; persist them with schedule history so "why didn't X
-  air last Tuesday" is answerable after the fact.
 - **Notifications.** Webhook (ntfy/Gotify-compatible) on apply failure,
   Tunarr unreachable, and conflict-dropped occurrences.
 - **Grafana dashboard + alert rules** shipped in-repo for the existing
@@ -82,18 +102,6 @@ Run it for months without shelling into the pod.
   `GET /backup` (SQLite snapshot download) and document the restore path.
 - **Config reload** on SIGHUP or a `/reload` admin call — serve currently
   requires a restart for any config change.
-
-## v0.6.0 — UI maturity
-
-- **Calendar/timeline view** of planned occurrences across channels — the
-  Schedule page is a table; a week grid is the natural mental model for
-  TV.
-- **Block duplication and disable-until.** Clone a block as a starting
-  point; snooze a block until a date instead of a bare enabled flag.
-- **Bulk series operations.** Reset/advance several cursors at once;
-  import/export series state from the UI (API exists).
-- **Mobile pass.** The UI is desktop-first; make the guide-shaped pages
-  usable on a phone.
 
 ## v0.9.0 — Freeze candidate
 
