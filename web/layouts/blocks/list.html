@@ -10,10 +10,6 @@
 
   {{ partial "ui/tape.html" . }}
 
-  <div class="blocks-toolbar">
-    <button type="button" id="new-block-btn" class="btn btn--primary" @click="openCreate()">+ New Block</button>
-  </div>
-
   <section id="block-editor" class="editor-panel graticule" x-show="editor.open" x-cloak aria-labelledby="editor-title">
     <form @submit.prevent="submit()" novalidate>
       <div class="panel__head">
@@ -366,9 +362,15 @@
   </section>
 
   <section class="blocks-section" aria-labelledby="blocks-title">
-    <div class="section-head">
-      <h2 id="blocks-title">All Blocks</h2>
-      <p>Every scheduling rule currently stored, enabled or not.</p>
+    {{- /* The page's one primary action shares the list's header line --
+           a lone right-aligned button over an empty toolbar band was a
+           dead row (v0.5.2 polish). */}}
+    <div class="section-head section-head--row">
+      <div>
+        <h2 id="blocks-title">All Blocks</h2>
+        <p>Every scheduling rule currently stored, enabled or not.</p>
+      </div>
+      <button type="button" id="new-block-btn" class="btn btn--primary" @click="openCreate()">+ New Block</button>
     </div>
 
     <template x-if="blocksLoading">

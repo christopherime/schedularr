@@ -104,6 +104,11 @@
   /* -- named effects -------------------------------------------------- */
   /* The armed-dot ring, named once (status dots, future live legends). */
   --glow-accent: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  /* The sweep cursor's phosphor-persistence peak. Light prints denser
+     (38%): the 20% wash that reads on dark glass disappears on paper --
+     a calibration printout inks its trace. Decorative (the 2px rule
+     carries the reading), so no contrast floor applies. */
+  --sweep-trail: color-mix(in srgb, var(--color-accent) 38%, transparent);
   /* The one deliberate shadow: the native <dialog>, which genuinely
      detaches from the page. Everything else stays border + bg-step flat. */
   --shadow-dialog:
@@ -135,6 +140,7 @@
     --color-warn: #e8a33d;
     --color-danger: #ff6b5e;
     --color-backdrop: rgb(2 6 4 / 65%);
+    --sweep-trail: color-mix(in srgb, var(--color-accent) 20%, transparent);
     --surface-warn: color-mix(in srgb, var(--color-warn) 10%, var(--color-bg-raised));
     --surface-danger: color-mix(in srgb, var(--color-danger) 10%, var(--color-bg-raised));
   }
@@ -419,6 +425,24 @@ p {
   white-space: nowrap;
 }
 
+/* The desktop cluster's divider rhythm cannot survive wrapping (a
+   row-leading divider dangles); narrow bezels swap to a quiet
+   two-column readout grid with no rules between items. */
+@media (max-width: 640px) {
+  .telemetry {
+    flex-basis: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, max-content));
+    column-gap: var(--space-5);
+    row-gap: var(--space-2);
+  }
+
+  .telemetry__item:not(:first-child) {
+    border-left: none;
+    padding-left: 0;
+  }
+}
+
 /* The instrument-legend treatment (uppercase + tracking-label) every other
    piece of chrome -- wordmark, nav, buttons, badges, labels -- already
    carries; the footer was the one remaining plain-HTML corner. */
@@ -474,6 +498,29 @@ p {
   background: var(--color-bg-inset);
   border-color: var(--color-border-interactive);
   box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+/* Narrow bezel (spec §3.4): the nav becomes one compact scrollable tab
+   row with edge fades -- never a wrap that orphans the last item. The
+   fades are the scroll affordance, so the scrollbar stays hidden. */
+@media (max-width: 640px) {
+  .nav {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--space-3),
+      #000 calc(100% - var(--space-3)),
+      transparent
+    );
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* -- buttons -------------------------------------------------------------- */
@@ -1079,6 +1126,9 @@ dialog.panel .panel__body {
    Legend line, one sentence, one action -- an empty section teaches what
    fills it instead of presenting a bare shell. */
 
+/* Full rail width, matching the tables/panels it stands in for -- an
+   arbitrarily narrower card beside a full-width hero read as two
+   competing rails (v0.5.2 polish). The text keeps its own measure cap. */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -1089,7 +1139,6 @@ dialog.panel .panel__body {
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg-raised);
-  max-width: var(--measure);
 }
 
 .empty-state__legend {
@@ -1172,16 +1221,22 @@ dialog.panel .panel__body {
   }
 }
 
-/* -- blocks: toolbar --------------------------------------------------------
-   The single primary action for the page (arm a new block), placed near
-   the h1 rather than buried in the list's own section-head -- keeps the
-   list's section-head identical in shape to the dashboard's (Task 4),
-   just a heading + description, no ad hoc variant. */
+/* -- section head with a trailing action ------------------------------------
+   Heading + description left, the section's one primary action right,
+   sharing the header line (the blocks list's + NEW BLOCK). Replaces the
+   old .blocks-toolbar: a lone right-aligned button over an otherwise
+   empty band read as a dead row. */
 
-.blocks-toolbar {
+.section-head--row {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--space-6);
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+}
+
+.section-head--row > div {
+  min-width: 0;
 }
 
 /* -- blocks: type badge ------------------------------------------------------
@@ -1560,11 +1615,7 @@ dialog.panel .panel__body {
 }
 
 @media (max-width: 640px) {
-  .blocks-toolbar {
-    justify-content: stretch;
-  }
-
-  .blocks-toolbar .btn {
+  .section-head--row .btn {
     width: 100%;
     justify-content: center;
   }
@@ -1668,6 +1719,10 @@ dialog.panel .panel__body {
    instrument-log look as blocks-table/schedule-table; series-table__show
    only adds room for the row's own inline error under the show title. */
 
+/* On an inner div, never the td: display:flex on a td strips its
+   table-cell display, so its bottom border floats at content height
+   instead of the row edge -- the SHOW-column divider drift fixed in
+   v0.5.2 (blocks-table__cron always did it this way). */
 .series-table__show {
   display: flex;
   flex-direction: column;
@@ -1683,10 +1738,14 @@ dialog.panel .panel__body {
    full-width block-editor fields, and this is a narrow, row-scoped pair
    that has to sit inside a table cell. */
 
+/* Baseline-aligned with breathing room: the S/E prefixes sit on the
+   same text baseline as the input values and the Save label, and the
+   space-2 gap keeps the cluster from reading cramped (v0.5.2 polish;
+   was center-aligned at space-1, which jammed E between the boxes). */
 .series-cursor {
   display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
+  align-items: baseline;
+  gap: var(--space-2);
 }
 
 .series-cursor__prefix {
@@ -1949,14 +2008,28 @@ dialog.panel .panel__body {
   min-width: 12rem;
 }
 
-/* Day tabs: navigation within the loaded window, never a re-plan. Same
-   instrument-legend vocabulary as the nav channel-select. */
+/* Week pager (spec §3.1, amended): ‹/› chevrons flank at most seven day
+   tabs. Navigation within the loaded window, never a re-plan; every tab
+   is always fully visible with its weekday + date (the old flat strip
+   clipped trailing tabs mid-label at the scrollport edge). */
+.guide-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.guide-pager__nav {
+  flex-shrink: 0;
+}
+
+/* Seven tabs fit every viewport the grid serves; the scroll fallback
+   only exists for the sliver just above the 640px reflow. */
 .guide-tabs {
   display: flex;
   gap: var(--space-1);
+  min-width: 0;
   overflow-x: auto;
-  padding-bottom: var(--space-2);
-  margin-bottom: var(--space-3);
 }
 
 .guide-tab {
@@ -2024,12 +2097,21 @@ dialog.panel .panel__body {
 }
 
 /* Grid region + inspector: the inspector COMPRESSES the grid (flex),
-   never overlays it. */
+   never overlays it.
+
+   Alignment thesis (v0.5.2): ONE left rail. The pager and the grid's
+   left edge sit exactly on the content column's left edge -- the same
+   line the heading, intro, and toolbar start on -- while the grid still
+   bleeds RIGHT toward the viewport edge (the trace runs off the glass;
+   the reading spine stays put). The left padding reproduces the
+   centered column's own offset: (100% − --content-max)/2 + --space-5,
+   floored at --space-5 on narrow viewports. */
 .guide-body {
   display: flex;
   align-items: flex-start;
   gap: var(--space-5);
-  padding-inline: var(--space-5);
+  padding-inline: max(var(--space-5), calc((100% - var(--content-max)) / 2 + var(--space-5)))
+    var(--space-5);
 }
 
 .guide-body .guide-chrome {
@@ -2044,10 +2126,18 @@ dialog.panel .panel__body {
 }
 
 /* The one scroller for both axes: sticky top/left work against a single
-   scrollport, so the ruler and plates hold on both scroll directions. */
+   scrollport, so the ruler and plates hold on both scroll directions.
+   min-height keeps a short grid (one channel) instrument-sized: the
+   sheet flex-grows to fill it and the .guide-ground row below the
+   tracks carries the graticule as quiet ground (empty traces), instead
+   of a sliver of grid over a void. */
 .guide-viewport {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   overflow: auto;
+  min-height: min(24rem, calc(100dvh - 16rem));
   max-height: calc(100dvh - 16rem);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -2057,6 +2147,9 @@ dialog.panel .panel__body {
 .guide-sheet {
   --now-min: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
   width: max-content;
   min-width: 100%;
 }
@@ -2089,6 +2182,20 @@ dialog.panel .panel__body {
   text-transform: uppercase;
   color: var(--color-ink);
   font-variant-numeric: tabular-nums;
+}
+
+/* A short fade off the corner's right edge: an hour label scrolling
+   under the sticky corner dissolves instead of slicing mid-glyph --
+   the ruler keeps a clean masked edge (v0.5.2 polish). */
+.guide-ruler__corner::after {
+  content: "";
+  position: absolute;
+  left: 100%;
+  top: 0;
+  bottom: 0;
+  width: var(--space-5);
+  background: linear-gradient(to right, var(--color-bg-raised), transparent);
+  pointer-events: none;
 }
 
 /* One gradient for the whole cell strip, not per-cell borders -- the
@@ -2157,6 +2264,41 @@ dialog.panel .panel__body {
     var(--color-graticule) 0 1px,
     transparent 1px var(--div)
   );
+}
+
+/* -- quiet ground -----------------------------------------------------------
+   The flex-grown row under the last track: the graticule continues as
+   empty traces (vertical divisions + horizontal lines at the track
+   pitch) down to the viewport's min-height, and the sweep line runs
+   through it -- a one-channel install still reads as an instrument. */
+
+.guide-ground {
+  flex: 1;
+  display: flex;
+}
+
+.guide-ground__rail {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex-shrink: 0;
+  width: var(--rail-w);
+  background: var(--color-bg-raised);
+  border-right: var(--border-width) solid var(--color-border);
+}
+
+.guide-ground__track {
+  flex: 1;
+  background-image: repeating-linear-gradient(
+      to right,
+      var(--color-graticule) 0 1px,
+      transparent 1px var(--div)
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      var(--color-graticule) 0 1px,
+      transparent 1px calc(3.9rem + var(--border-width))
+    );
 }
 
 /* -- slots ------------------------------------------------------------------ */
@@ -2229,6 +2371,26 @@ dialog.panel .panel__body {
   text-overflow: ellipsis;
 }
 
+/* Series face content (spec §3.1): one program per line under the meta
+   line, secondary at label scale -- data, not legend, so no uppercase.
+   The block name stays the primary line. */
+.guide-slot__prog {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.guide-slot__more {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-muted);
+  white-space: nowrap;
+}
+
 /* Past slots dim behind the sweep; the on-air slot carries the armed
    glow -- the one reading that answers "what airs now". */
 .guide-slot.is-past {
@@ -2290,11 +2452,7 @@ dialog.panel .panel__body {
   bottom: 0;
   right: 2px;
   width: calc(var(--div) * 1.25);
-  background: linear-gradient(
-    to left,
-    color-mix(in srgb, var(--color-accent) 20%, transparent),
-    transparent
-  );
+  background: linear-gradient(to left, var(--sweep-trail), transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2688,7 +2846,7 @@ dialog.panel .panel__body {
     display: block;
   }
 
-  .guide-tabs {
+  .guide-pager {
     display: none;
   }
 
@@ -2697,8 +2855,11 @@ dialog.panel .panel__body {
     flex: 1;
   }
 
+  /* One channel control on mobile: the rundown's CHANNEL picker chooses
+     the trace, so the desktop SCOPE select would ask the same question
+     twice. The plan stays all-channels. */
   .guide-toolbar__scope {
-    min-width: 100%;
+    display: none;
   }
 
   /* Inspector becomes a bottom sheet with an explicit close affordance;

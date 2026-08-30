@@ -108,7 +108,15 @@ into eight independently releasable slices (v0.5.0–v0.5.7).
   mobile vertical rundown); nav became GUIDE · BLOCKS · SCHEDULE ·
   SERIES, with the old dashboard surviving unlinked at `/dashboard/`
   until v0.5.3. The old Schedule page still owns preview/apply.
-- **v0.5.2+ — pending**, in spec order: draft & apply on the Guide,
+- **v0.5.2 — Live-UI polish + Guide week-pager reframe: SHIPPED
+  (2026-08-30).** Inserted by operator directive after the live v0.5.1
+  audit: the Dockerfile ships `web/static` (broken brand image/favicon
+  fixed), one left rail for the guide, the `‹`/`›` week pager replacing
+  the flat day-tab strip (spec §3.1 amended), series slot faces listing
+  their programs, the quiet ground under short grids, and the
+  mobile/series/schedule/blocks polish items. Draft & apply and every
+  later slice shift one number down the ladder.
+- **v0.5.3+ — pending**, in spec order: draft & apply on the Guide,
   memory (apply runs + Log), the SSE live link, block power tools, the
   series desk, and the polish pass.
 

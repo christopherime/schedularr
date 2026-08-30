@@ -27,6 +27,9 @@ import {
   renderGuideDay,
   renderRundown,
   resolveGhost,
+  weekPageCount,
+  weekPageDays,
+  weekPageOf,
   windowDayCount,
 } from "../runtime/grid.ts";
 import type { GhostBlockInfo, GridHandle, GuideRow, GuideSlot, RundownHandle } from "../runtime/grid.ts";
@@ -119,6 +122,10 @@ interface GuideState {
   windowStartMs: number;
   loadedDays: number;
   dayIndex: number;
+  /** The week page the tab strip shows (spec §3.1 pager): page k = days
+   * k*7..k*7+6 of the loaded window. Paging only moves the strip -- the
+   * rendered day changes when a tab is pressed. */
+  weekPage: number;
 
   rundownChannelId: string;
   inspector: InspectorState;
@@ -131,6 +138,8 @@ interface GuideState {
   channelHint(): string;
 
   dayTabs(): DayTab[];
+  weekPages(): number;
+  pageWeek(delta: number): void;
   selectDay(index: number, tabEl?: HTMLElement): void;
 
   projection(): RowsProjection;
@@ -182,6 +191,7 @@ document.addEventListener("alpine:init", () => {
       windowStartMs: localDayStart(Date.now()),
       loadedDays: 7,
       dayIndex: 0,
+      weekPage: 0,
 
       rundownChannelId: "",
       inspector: { open: false, slot: null },
@@ -247,6 +257,7 @@ document.addEventListener("alpine:init", () => {
           // needs its own tab and rundown section.
           this.loadedDays = windowDayCount(landedAt, days);
           this.dayIndex = 0;
+          this.weekPage = 0;
         } catch (err) {
           this.problem = toProblemView(err);
           this.plan = null;
@@ -300,20 +311,32 @@ document.addEventListener("alpine:init", () => {
         );
       },
 
+      // The current week page's tabs -- at most seven, every one fully
+      // labeled weekday + date (the flat strip's clipped-tab bug cannot
+      // recur by construction).
       dayTabs() {
-        const tabs: DayTab[] = [];
         const todayStart = localDayStart(Date.now());
-        for (let k = 0; k < this.loadedDays; k++) {
+        return weekPageDays(this.weekPage, this.loadedDays).map((k): DayTab => {
           const startMs = addDays(this.windowStartMs, k);
-          tabs.push({ index: k, label: dayLabel(startMs), isToday: startMs === todayStart });
-        }
-        return tabs;
+          return { index: k, label: dayLabel(startMs), isToday: startMs === todayStart };
+        });
+      },
+
+      weekPages() {
+        return weekPageCount(this.loadedDays);
+      },
+
+      // ‹/› pager: moves the strip one week, clamped to the window --
+      // the rendered day only changes when a tab is pressed.
+      pageWeek(delta) {
+        this.weekPage = Math.min(this.weekPages() - 1, Math.max(0, this.weekPage + delta));
       },
 
       // Day tabs are navigation only -- they never re-plan (spec §3.1).
       selectDay(index, tabEl) {
         if (index === this.dayIndex) return;
         this.dayIndex = index;
+        this.weekPage = weekPageOf(index);
         // The re-render is about to discard the inspector's return
         // slot: keep focus on the tab the user pressed instead of
         // handing it to a dying node (which strands it on body).

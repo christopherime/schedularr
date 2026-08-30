@@ -120,13 +120,60 @@
         The real renderer (runtime/grid.ts) on fixture data: sticky
         ruler/plates, graticule-coupled 30-minute divisions, the sweep
         cursor, a past slot dimmed behind it, an on-air slot, a series
-        tint, a NO SIGNAL ghost in its sub-lane, and an overnight spill
-        cut at the day edge. Arrow keys move across slots; Enter prints
-        a tape line where the guide would open its inspector.
+        tint with program lines on the face (`SHOW · SxxEyy`, `+N MORE`
+        past three), a NO SIGNAL ghost in its sub-lane, an overnight
+        spill cut at the day edge, and the quiet ground continuing the
+        graticule under the last track. Arrow keys move across slots;
+        Enter prints a tape line where the guide would open its
+        inspector.
       </p>
     </div>
     <div class="guide kit-guide">
       <div class="guide-viewport" id="kit-guide-viewport" aria-label="Fixture programme grid"></div>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-pager-title">
+    <div class="section-head">
+      <h2 id="kit-pager-title">Guide week pager</h2>
+      <p>
+        ‹/› chevrons flank at most seven day tabs; page k shows window
+        days k·7…k·7+6. Chevrons disable at the window edges; the today
+        tab carries the accent dot; selected composes on top. A partial
+        last week keeps its real tabs — never seven padded ones.
+      </p>
+    </div>
+    <div class="kit-stack">
+      <div class="guide-pager" role="group" aria-label="Day (fixture, first page)">
+        <button type="button" class="btn btn--icon guide-pager__nav" disabled aria-label="Previous week">
+          {{ partial "ui/icon.html" (dict "name" "chevron-left") }}
+        </button>
+        <div class="guide-tabs">
+          <button type="button" class="guide-tab" aria-pressed="true" data-today>SAT 30</button>
+          <button type="button" class="guide-tab" aria-pressed="false">SUN 31</button>
+          <button type="button" class="guide-tab" aria-pressed="false">MON 01</button>
+          <button type="button" class="guide-tab" aria-pressed="false">TUE 02</button>
+          <button type="button" class="guide-tab" aria-pressed="false">WED 03</button>
+          <button type="button" class="guide-tab" aria-pressed="false">THU 04</button>
+          <button type="button" class="guide-tab" aria-pressed="false">FRI 05</button>
+        </div>
+        <button type="button" class="btn btn--icon guide-pager__nav" aria-label="Next week">
+          {{ partial "ui/icon.html" (dict "name" "chevron-right") }}
+        </button>
+      </div>
+      <div class="guide-pager" role="group" aria-label="Day (fixture, partial last page)">
+        <button type="button" class="btn btn--icon guide-pager__nav" aria-label="Previous week">
+          {{ partial "ui/icon.html" (dict "name" "chevron-left") }}
+        </button>
+        <div class="guide-tabs">
+          <button type="button" class="guide-tab" aria-pressed="false">SAT 27</button>
+          <button type="button" class="guide-tab" aria-pressed="false">SUN 28</button>
+          <button type="button" class="guide-tab" aria-pressed="false">MON 29</button>
+        </div>
+        <button type="button" class="btn btn--icon guide-pager__nav" disabled aria-label="Next week">
+          {{ partial "ui/icon.html" (dict "name" "chevron-right") }}
+        </button>
+      </div>
     </div>
   </section>
 

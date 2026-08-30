@@ -193,6 +193,7 @@ Added in the v0.5.0 foundation slice (spec §4), all on `:root`:
 | `--content-max` | `76rem` | The page column cap. The v0.5.1 guide is the one sanctioned full-bleed exception. |
 | `--duration-slow` | `250ms` | Reserved for the largest disclosures. |
 | `--surface-warn` / `--surface-danger` | color-mix tints | See Colors above. |
+| `--sweep-trail` (v0.5.2) | accent color-mix: 38% light / 20% dark | The sweep cursor's phosphor-persistence peak. Light prints denser: the 20% wash that reads on dark glass disappears on paper. Decorative (the 2px rule carries the reading), so no contrast floor applies. |
 
 `--div` is load-bearing since v0.5.1: it IS the guide's 30-minute column
 width, so graticule lines, ruler cells, and slot boundaries coincide.
@@ -253,11 +254,59 @@ binding:
 - **Mobile rundown** (`.rundown-*`): under 640px the grid yields to a
   vertical day-grouped rundown (TONIGHT / TOMORROW / `MON 02` headings)
   for one channel behind a picker, with the now-line as a horizontal
-  rule re-slotted between past and future rows each minute.
-- **Full-bleed**: the guide is the ONE sanctioned `--content-max`
-  exception -- `content/_index.md` sets `full_bleed`, baseof adds
-  `.content--bleed`, and the guide's chrome (head/toolbar) stays on the
-  page column while the grid region escapes it.
+  rule re-slotted between past and future rows each minute. Since
+  v0.5.2 the rundown's CHANNEL picker is the ONE channel control on
+  mobile -- the desktop SCOPE select hides (it would ask the same
+  question twice; the plan stays all-channels), and the shell narrows
+  with it: the nav becomes a single scrollable tab row with mask-image
+  edge fades (spec §3.4 -- no wrap that orphans the last item), and the
+  telemetry cluster drops its multimeter dividers for a quiet
+  two-column readout grid (a wrapped row's leading divider dangles).
+- **Full-bleed with ONE left rail (v0.5.2 alignment thesis)**: the
+  guide is the ONE sanctioned `--content-max` exception --
+  `content/_index.md` sets `full_bleed`, baseof adds `.content--bleed`,
+  and the guide's chrome (head/toolbar) stays on the page column while
+  the grid region escapes it. Since v0.5.2 the escape is one-sided:
+  `.guide-body`'s left padding reproduces the centered column's own
+  offset (`max(--space-5, (100% − --content-max)/2 + --space-5)`), so
+  the pager and the grid's left edge sit exactly on the line the
+  heading, intro, and toolbar start on, and the grid bleeds RIGHT
+  toward the viewport edge only -- the trace runs off the glass, the
+  reading spine stays put. Two unrelated left edges was the defect this
+  replaces.
+- **Week pager (v0.5.2, spec §3.1 amended)**: day navigation is a ‹/›
+  pager (`ui/icon` chevrons on `.btn--icon`) flanking at most seven
+  `.guide-tab`s -- page k = window days k·7..k·7+6 (`weekPageCount` /
+  `weekPageDays` / `weekPageOf` in `runtime/grid.ts`, unit-tested).
+  Chevrons disable at the window edges; a partial last week keeps its
+  real tabs, never seven padded ones; paging moves the strip only, a
+  tab press selects the day. Pager buttons carry aria-labels
+  ("Previous week"/"Next week"); tab semantics (aria-pressed,
+  aria-current="date" + accent dot for today) are unchanged. This
+  replaced the flat N-tab `overflow-x` strip, which clipped tabs beyond
+  ~day 7 mid-label at the scrollport edge with no scroll affordance on
+  overlay-scrollbar systems.
+- **Slot faces show content (v0.5.2, spec §3.1 amended)**: a series
+  slot lists its programs on the face, one `.guide-slot__prog` line per
+  program (`SHOW · SxxEyy`; a movie is just its title), folding
+  anything past `FACE_MAX_LINES` (3) into one `+N MORE` line
+  (`slotFace`, `runtime/grid.ts`, unit-tested). Filter blocks and
+  ghosts keep the name + count face; a slot narrower than
+  `FACE_MIN_DIVS` (3 divisions = 90 min) degrades to name + count
+  regardless of type. Hierarchy holds: the block name stays the primary
+  line, program lines are secondary at label scale, sentence-case --
+  data, not legend. Program lines reuse the already-verified
+  ink-muted-on-inset and ink-muted-on-series-tint pairings.
+- **Quiet ground (v0.5.2)**: `.guide-viewport` carries
+  `min-height: min(24rem, 100dvh − 16rem)`; the sheet flex-grows into
+  it and the renderer appends a `.guide-ground` row (sticky empty rail +
+  a flex track) whose background continues the graticule -- vertical
+  divisions plus horizontal lines at the track pitch -- so a
+  one-channel install reads as an instrument with unused traces, not a
+  sliver over a void. The sweep line spans the ground too.
+- **Ruler mask edge (v0.5.2)**: `.guide-ruler__corner::after` casts a
+  short bg-raised fade over the cell strip, so an hour label scrolling
+  under the sticky corner dissolves instead of slicing mid-glyph.
 - The grid and rundown DOM are built in TS from the typed plan
   (`renderGuideDay` / `renderRundown`); Alpine drives ONLY the toolbar
   and the inspector. Keyboard: roving tabindex across slots --
@@ -457,6 +506,18 @@ shape.
 - **`.tape`** (v0.5.0) -- the event tape; success is printed, not
   toasted. The newest line takes a 150ms print draw-in (suppressed under
   reduced motion); older lines recede to muted.
+- **`.section-head--row`** (v0.5.2) -- the section-head variant that
+  seats a section's one primary action on the header line (heading +
+  description left, button right; stacks under 640px). Replaced the
+  blocks page's `.blocks-toolbar`, whose lone right-aligned button over
+  an empty band read as a dead row.
+- **`.empty-state` width** (v0.5.2) -- the container spans the full
+  content rail, matching the tables and panels it stands in for (the
+  old `--measure` cap left it arbitrarily narrower than the hero above
+  it on the schedule page); only `.empty-state__text` keeps the measure.
+- **`.series-cursor`** (v0.5.2) -- baseline-aligned at a `--space-2`
+  gap: the S/E prefixes share the text baseline of the input values and
+  the Save label instead of floating centered against taller boxes.
 
 ### Component-state floor (v0.5.0)
 
@@ -502,6 +563,10 @@ shape.
 - **Don't** soften the radius scale past `--radius-lg` (`6px`) for a new
   bordered surface -- the small-radii choice is a deliberate, disclosed
   break from a softer default, not an oversight to "fix."
+- **Don't** set `display: flex` (or `grid`) on a `<td>`. It strips the
+  cell's table display, so its bottom border floats at content height
+  instead of the row edge -- put the flex stack on an inner div
+  (`.blocks-table__cron`, `.series-table__show` post-v0.5.2).
 
 ## Accessibility: WCAG contrast evidence
 

@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Guide week pager** (`web/layouts/index.html`,
+  `web/assets/ts/pages/guide.ts`, `web/assets/ts/runtime/grid.ts`,
+  `web/assets/css/main.css`, `web/layouts/partials/ui/icon-defs.html`):
+  spec §3.1 as amended 2026-08-30 (operator directive) — day navigation
+  is now a `‹`/`›` week pager flanking at most seven day tabs, page k =
+  window days k·7..k·7+6, chevrons disabled at the window edges, a
+  partial last week keeping its real tabs. Paging moves the strip only;
+  a tab press selects the day. Pager buttons carry
+  "Previous week"/"Next week" labels; tab semantics (aria-pressed,
+  today's aria-current + accent dot) are unchanged. This replaces the
+  flat N-tab strip and fixes the operator-reported "tabs beyond 7 days
+  show no date": that strip was an `overflow-x: auto` scroller with no
+  visible scroll affordance, so with DAYS > 7 the trailing tabs were
+  clipped mid-label at the scrollport edge (a tab at the cut showed
+  only its weekday). Paging math (`weekPageCount`/`weekPageDays`/
+  `weekPageOf`) is unit-tested, including the windowDayCount interplay
+  (30 days fetched mid-day → 31 calendar days → 5 pages) and the
+  chevron edges. New `chevron-left`/`chevron-right` sprite icons; the
+  `/kit/` gallery gains both pager states.
+- **Series slot faces list their programs** (`web/assets/ts/runtime/
+  grid.ts`, `web/assets/css/main.css`): spec §3.1 as amended — a series
+  slot's face renders one line per program (`SHOW · SxxEyy` from the
+  typed wire shape; a movie is just its title), folding anything past
+  three lines into `+N MORE`; filter blocks and ghosts keep the
+  name + count face, and slots narrower than 3 divisions (90 min)
+  degrade to name + count. Block name stays the primary line; program
+  lines are secondary at label scale on already-verified color
+  pairings. The selection logic (`slotFace`) is unit-tested.
+
+### Fixed
+
+- **Broken brand image and favicon in the deployed image**
+  (`Dockerfile`): the `webui` Hugo stage copied config/content/layouts/
+  assets but never `web/static/`, so the built site — and therefore the
+  binary's embedded UI — shipped without `favicon.png` (which is also
+  the header wordmark image) and `apple-touch-icon.png`; both 404'd in
+  production. The stage now copies `web/static`; verified by the webui
+  stage's export listing both files under `web/public/` and by curling
+  both paths (200) from the built image.
+- **Guide rail misalignment** (`web/assets/css/main.css`): the page
+  heading/intro/toolbar sat on the centered content column while the
+  day tabs and grid ran full-bleed from the viewport edge — two
+  unrelated left edges. The guide now commits to one left rail: pager
+  and grid left-align with the content column, and the grid bleeds
+  right only (alignment thesis recorded in `web/DESIGN.md`).
+- **Ruler labels sliced under the sticky corner**
+  (`web/assets/css/main.css`): the corner now casts a short fade over
+  the cell strip, so a partially covered hour label dissolves instead
+  of clipping mid-glyph.
+- **Light-mode sweep trail nearly invisible**
+  (`web/assets/css/main.css`): the phosphor trail's peak is now the
+  `--sweep-trail` token — 38% accent in light (the calibration printout
+  inks its trace), 20% in dark as before.
+- **Dead void under short grids** (`web/assets/ts/runtime/grid.ts`,
+  `web/assets/css/main.css`): the grid viewport gained a min-height and
+  a renderer-appended quiet-ground row that continues the graticule
+  (vertical divisions + horizontal lines at track pitch) beneath the
+  last channel, with the sweep line spanning it — a one-channel install
+  reads as an instrument with unused traces instead of a sliver above
+  empty page.
+- **Mobile 390 shell and guide toolbar** (`web/assets/css/main.css`):
+  the nav is a single scrollable tab row with mask-image edge fades
+  (no more wrap orphaning SERIES); the bezel telemetry collapses to a
+  quiet two-column grid with no dangling dividers; and the guide's
+  SCOPE select hides on mobile — the rundown's CHANNEL picker is the
+  one channel control (the two selects asked the same question twice).
+- **Series page cursor cluster and divider drift**
+  (`web/layouts/series/list.html`, `web/assets/css/main.css`): the
+  `S`/`E` cursor cluster is baseline-aligned at a wider gap instead of
+  cramped center-alignment; and the SHOW column's row divider no longer
+  floats above the row edge — `display: flex` sat on the `<td>` itself,
+  stripping its table-cell display, so its border drew at content
+  height (the flex stack now lives on an inner div, and DESIGN.md bans
+  flex-on-td).
+- **Schedule empty state narrower than the controls hero**
+  (`web/assets/css/main.css`): `.empty-state` now spans the full
+  content rail on every page; only its text keeps the measure cap.
+- **Blocks toolbar dead band** (`web/layouts/blocks/list.html`,
+  `web/assets/css/main.css`): the lone right-aligned `+ NEW BLOCK`
+  button's empty toolbar row is gone — the button sits on the ALL
+  BLOCKS header line via the new `.section-head--row` variant.
+
 ## [0.5.1] - 2026-08-30
 
 ### Added

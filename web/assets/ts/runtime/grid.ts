@@ -27,7 +27,7 @@
 // (web/tests/grid.test.ts) and never touches the DOM.
 
 import type { PlateParts } from "./channels.ts";
-import { formatClock, pad2, plural } from "./format.ts";
+import { formatClock, pad2, plural, sxxeyy } from "./format.ts";
 
 // ---- pure geometry ---------------------------------------------------------
 
@@ -113,6 +113,37 @@ export function dayLabel(dayStartMs: number): string {
   const d = new Date(dayStartMs);
   const names = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
   return `${names[d.getDay()]} ${pad2(d.getDate())}`;
+}
+
+// ---- week paging (spec §3.1, amended 2026-08-30) ---------------------------
+// The flat N-tab strip died with the reframe: an overflow-x strip clipped
+// tabs beyond ~day 7 mid-label at the scrollport edge (the "no date" bug)
+// with no scroll affordance on overlay-scrollbar systems. Navigation is
+// now a ‹/› week pager flanking at most seven day tabs -- every tab is
+// always fully visible and always labels weekday + date.
+
+/** Days per guide week page. */
+export const WEEK_DAYS = 7;
+
+/** How many week pages a loaded window spans (a 31-calendar-day window
+ * is 5 pages: 7+7+7+7+3). Never 0 -- an empty window still has page 0. */
+export function weekPageCount(loadedDays: number): number {
+  return Math.max(1, Math.ceil(loadedDays / WEEK_DAYS));
+}
+
+/** The day indices page k shows: k*7 .. k*7+6, clamped to the window --
+ * a partial last week holds its real tabs, never seven padded ones. */
+export function weekPageDays(page: number, loadedDays: number): number[] {
+  const start = page * WEEK_DAYS;
+  const end = Math.min(loadedDays, start + WEEK_DAYS);
+  const days: number[] = [];
+  for (let k = start; k < end; k++) days.push(k);
+  return days;
+}
+
+/** The week page a day index lives on. */
+export function weekPageOf(dayIndex: number): number {
+  return Math.floor(dayIndex / WEEK_DAYS);
 }
 
 /** Rundown group heading (spec §7): TONIGHT, TOMORROW, then "MON 02". */
@@ -227,6 +258,44 @@ export function rundownDaySlots(slots: GuideSlot[], dayStartMs: number, dayEndMs
     .map((s) => ({ slot: s, continuation: s.startMs < dayStartMs }));
 }
 
+// ---- slot faces (spec §3.1, amended 2026-08-30) ----------------------------
+
+/** A slot narrower than this many divisions (3 × 30 min) keeps the
+ * summary face -- no room to list programs legibly. */
+export const FACE_MIN_DIVS = 3;
+/** Most program lines a face lists; a longer lineup folds its tail into
+ * one "+N more" line, so a face never exceeds FACE_MAX_LINES lines. */
+export const FACE_MAX_LINES = 3;
+
+/** What a slot's face renders under the name + meta lines. */
+export interface SlotFace {
+  /** One line per program ("SHOW · SxxEyy"; a movie is just its title). */
+  lines: string[];
+  /** Programs folded behind the trailing "+N more" line (0 = none). */
+  more: number;
+}
+
+/**
+ * Face-content selection: series slots list their programs on the face,
+ * one line each, folding anything past FACE_MAX_LINES into a "+N more"
+ * line; filter blocks and ghosts keep the name + count face; a narrow
+ * slot (< FACE_MIN_DIVS divisions) degrades to name + count regardless
+ * of type. Pure -- unit-tested in web/tests/grid.test.ts.
+ */
+export function slotFace(slot: GuideSlot, span: SlotSpan): SlotFace {
+  if (slot.kind !== "slot" || slot.blockType !== "series") return { lines: [], more: 0 };
+  if (span.endQ - span.startQ < FACE_MIN_DIVS * 6) return { lines: [], more: 0 };
+  if (slot.programs.length === 0) return { lines: [], more: 0 };
+  const all = slot.programs.map((p) => {
+    const title = p.title.trim() === "" ? "—" : p.title;
+    const marker = sxxeyy(p.season, p.episode);
+    return marker ? `${title} · ${marker}` : title;
+  });
+  if (all.length <= FACE_MAX_LINES) return { lines: all, more: 0 };
+  const kept = FACE_MAX_LINES - 1;
+  return { lines: all.slice(0, kept), more: all.length - kept };
+}
+
 /**
  * Keyboard nav (Up/Down across channels): the index of the slot whose
  * start is nearest the target instant -- minimal |start − target|, ties
@@ -330,6 +399,11 @@ function buildSlotButton(slot: GuideSlot, span: SlotSpan, cb: GridCallbacks): HT
   } else {
     btn.appendChild(el("span", "guide-slot__name", slot.blockName));
     btn.appendChild(el("span", "guide-slot__meta", slotMeta(slot)));
+    // Series faces list their content (spec §3.1): the block name stays
+    // primary, program lines are secondary at label scale.
+    const face = slotFace(slot, span);
+    for (const line of face.lines) btn.appendChild(el("span", "guide-slot__prog", line));
+    if (face.more > 0) btn.appendChild(el("span", "guide-slot__more", `+${face.more} MORE`));
   }
   btn.addEventListener("click", () => cb.onOpen(slot, btn));
   return btn;
@@ -393,6 +467,15 @@ export function renderGuideDay(
     rowEl.appendChild(track);
     sheet.appendChild(rowEl);
   }
+
+  // Quiet ground under short grids: the graticule continues beneath the
+  // last track (flex-grown to the viewport's min-height), so a
+  // one-channel install still reads as an instrument -- empty traces,
+  // not a sliver over a void -- and the sweep line runs the full glass.
+  const ground = el("div", "guide-ground");
+  ground.appendChild(el("div", "guide-ground__rail"));
+  ground.appendChild(el("div", "guide-ground__track"));
+  sheet.appendChild(ground);
 
   const nowline = el("div", "guide-nowline");
   nowline.hidden = true;

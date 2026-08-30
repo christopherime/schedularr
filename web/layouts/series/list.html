@@ -48,14 +48,20 @@
           <tbody>
             <template x-for="state in states" :key="state.show_title">
               <tr>
-                <td class="series-table__show">
-                  <span x-text="state.show_title"></span>
-                  <p class="form-field__error" x-show="rowErrors[state.show_title]" role="alert">
-                    <span x-text="rowErrors[state.show_title]"></span>
-                    <template x-if="rowNotFound[state.show_title]">
-                      <button type="button" class="btn btn--ghost btn--sm" @click="loadStates()">Refresh List</button>
-                    </template>
-                  </p>
+                {{- /* The flex stack lives on an inner div, never the td:
+                       display:flex on a td strips its table-cell display,
+                       so its border-bottom floats at content height
+                       instead of the row edge (the divider-drift bug). */}}
+                <td>
+                  <div class="series-table__show">
+                    <span x-text="state.show_title"></span>
+                    <p class="form-field__error" x-show="rowErrors[state.show_title]" role="alert">
+                      <span x-text="rowErrors[state.show_title]"></span>
+                      <template x-if="rowNotFound[state.show_title]">
+                        <button type="button" class="btn btn--ghost btn--sm" @click="loadStates()">Refresh List</button>
+                      </template>
+                    </p>
+                  </div>
                 </td>
                 <td>
                   <div

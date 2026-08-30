@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const {
+  FACE_MAX_LINES,
   QUANTA_PER_DAY,
   addDays,
   dayLabel,
@@ -19,6 +20,10 @@ const {
   resolveGhost,
   rundownDayHeading,
   rundownDaySlots,
+  slotFace,
+  weekPageCount,
+  weekPageDays,
+  weekPageOf,
   windowDayCount,
 } = await import("../assets/ts/runtime/grid.ts");
 
@@ -106,6 +111,47 @@ test("windowDayCount includes the trailing partial calendar day", () => {
   assert.equal(windowDayCount(day, 1), 1);
   // One millisecond past midnight already touches the next day.
   assert.equal(windowDayCount(day + 1, 1), 2);
+});
+
+// ---- week paging -----------------------------------------------------------
+
+test("weekPageCount pages the loaded window in sevens", () => {
+  assert.equal(weekPageCount(7), 1);
+  assert.equal(weekPageCount(8), 2, "the trailing partial day opens a second page");
+  assert.equal(weekPageCount(14), 2);
+  assert.equal(weekPageCount(30), 5);
+  assert.equal(weekPageCount(31), 5);
+  assert.equal(weekPageCount(1), 1);
+  assert.equal(weekPageCount(0), 1, "an empty window still has page 0");
+});
+
+test("weekPageCount composes with windowDayCount", () => {
+  // DAYS=30 fetched at 19:00 touches 31 calendar days -> 5 pages,
+  // the last holding 3 tabs (days 28..30).
+  const loaded = windowDayCount(at(19), 30);
+  assert.equal(loaded, 31);
+  assert.equal(weekPageCount(loaded), 5);
+  assert.deepEqual(weekPageDays(4, loaded), [28, 29, 30]);
+});
+
+test("weekPageDays returns page k's day indices, partial last week clamped", () => {
+  assert.deepEqual(weekPageDays(0, 8), [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(weekPageDays(1, 8), [7], "a partial week holds its real tabs, not padded ones");
+  assert.deepEqual(weekPageDays(0, 3), [0, 1, 2]);
+  assert.deepEqual(weekPageDays(1, 7), [], "no page past the window");
+});
+
+test("chevron disable edges: page 0 has no previous, the last page no next", () => {
+  const loaded = 15; // 2 full weeks + 1 day -> 3 pages
+  const pages = weekPageCount(loaded);
+  assert.equal(pages, 3);
+  // The guide disables ‹ at page 0 and › at pages-1; the math those
+  // bindings rest on:
+  assert.equal(weekPageOf(0), 0);
+  assert.equal(weekPageOf(6), 0);
+  assert.equal(weekPageOf(7), 1);
+  assert.equal(weekPageOf(14), 2);
+  assert.ok(weekPageOf(loaded - 1) === pages - 1, "the window's last day lives on the last page");
 });
 
 test("dayLabel and rundownDayHeading name the windows", () => {
@@ -203,6 +249,68 @@ test("rundownDaySlots keeps the half-open day window", () => {
   const entries = rundownDaySlots([fromMidnight], dayEnd, nextEnd);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].continuation, false);
+});
+
+// ---- slot faces ------------------------------------------------------------
+
+function mkProgram(title: string, season?: number, episode?: number) {
+  return { title, season, episode, durationMs: 30 * 60_000, startMs: at(21) };
+}
+
+function seriesSlot(programs: ReturnType<typeof mkProgram>[]) {
+  return { ...mkSlot(at(21), at(23), "Spooky Saturday Night"), blockType: "series", programs };
+}
+
+const wideSpan = { startQ: 0, endQ: 24, cutLeft: false, cutRight: false }; // 2 h = 4 divisions
+const narrowSpan = { startQ: 0, endQ: 12, cutLeft: false, cutRight: false }; // 1 h = 2 divisions
+
+test("slotFace lists a series slot's programs, SHOW · SxxEyy per line", () => {
+  const face = slotFace(
+    seriesSlot([mkProgram("Bloody Mary", 1, 5), mkProgram("Skin", 1, 6)]),
+    wideSpan,
+  );
+  assert.deepEqual(face, { lines: ["Bloody Mary · S01E05", "Skin · S01E06"], more: 0 });
+});
+
+test("slotFace folds a long lineup into +N more past FACE_MAX_LINES", () => {
+  const face = slotFace(
+    seriesSlot([
+      mkProgram("Bloody Mary", 1, 5),
+      mkProgram("Skin", 1, 6),
+      mkProgram("Hook Man", 1, 7),
+      mkProgram("Bugs", 1, 8),
+    ]),
+    wideSpan,
+  );
+  // 4 programs > 3 lines: keep FACE_MAX_LINES - 1, fold the rest.
+  assert.equal(face.lines.length, FACE_MAX_LINES - 1);
+  assert.deepEqual(face.lines, ["Bloody Mary · S01E05", "Skin · S01E06"]);
+  assert.equal(face.more, 2);
+});
+
+test("slotFace keeps exactly FACE_MAX_LINES programs without a fold", () => {
+  const face = slotFace(
+    seriesSlot([mkProgram("A", 1, 1), mkProgram("B", 1, 2), mkProgram("C", 1, 3)]),
+    wideSpan,
+  );
+  assert.equal(face.lines.length, 3);
+  assert.equal(face.more, 0);
+});
+
+test("slotFace degrades narrow slots, filters, and ghosts to the summary face", () => {
+  const programs = [mkProgram("Bloody Mary", 1, 5)];
+  assert.deepEqual(slotFace(seriesSlot(programs), narrowSpan), { lines: [], more: 0 });
+  assert.deepEqual(slotFace({ ...mkSlot(at(21), at(23)), programs }, wideSpan), { lines: [], more: 0 });
+  assert.deepEqual(
+    slotFace({ ...seriesSlot(programs), kind: "ghost" as const }, wideSpan),
+    { lines: [], more: 0 },
+  );
+  assert.deepEqual(slotFace(seriesSlot([]), wideSpan), { lines: [], more: 0 });
+});
+
+test("slotFace never fabricates a marker and never prints a blank title", () => {
+  const face = slotFace(seriesSlot([mkProgram("The Fog Rolls In"), mkProgram("  ")]), wideSpan);
+  assert.deepEqual(face.lines, ["The Fog Rolls In", "—"]);
 });
 
 // ---- keyboard nav: nearest-slot picking ------------------------------------

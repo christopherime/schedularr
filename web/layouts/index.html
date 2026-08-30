@@ -106,18 +106,44 @@
   <div class="guide-body" x-show="!loading && !problem && plan && hasAnySlots()" x-cloak>
     <div class="guide-main">
       <div class="guide-chrome">
-        <div class="guide-tabs" role="group" aria-label="Day">
-          <template x-for="tab in dayTabs()" :key="tab.index">
-            <button
-              type="button"
-              class="guide-tab"
-              :aria-pressed="tab.index === dayIndex"
-              :aria-current="tab.isToday ? 'date' : false"
-              :data-today="tab.isToday"
-              @click="selectDay(tab.index, $event.currentTarget)"
-              x-text="tab.label"
-            ></button>
-          </template>
+        {{- /* Week pager (spec §3.1, amended): ‹/› flank at most seven
+               day tabs -- page k = days k*7..k*7+6 of the loaded window,
+               chevrons disabled at the edges. Paging moves the strip
+               only; a tab press selects the day. Every tab always
+               carries weekday + date (the flat overflow strip clipped
+               trailing tabs mid-label). */}}
+        <div class="guide-pager" role="group" aria-label="Day">
+          <button
+            type="button"
+            class="btn btn--icon guide-pager__nav"
+            :disabled="weekPage === 0"
+            @click="pageWeek(-1)"
+            aria-label="Previous week"
+          >
+            {{ partial "ui/icon.html" (dict "name" "chevron-left") }}
+          </button>
+          <div class="guide-tabs">
+            <template x-for="tab in dayTabs()" :key="tab.index">
+              <button
+                type="button"
+                class="guide-tab"
+                :aria-pressed="tab.index === dayIndex"
+                :aria-current="tab.isToday ? 'date' : false"
+                :data-today="tab.isToday"
+                @click="selectDay(tab.index, $event.currentTarget)"
+                x-text="tab.label"
+              ></button>
+            </template>
+          </div>
+          <button
+            type="button"
+            class="btn btn--icon guide-pager__nav"
+            :disabled="weekPage >= weekPages() - 1"
+            @click="pageWeek(1)"
+            aria-label="Next week"
+          >
+            {{ partial "ui/icon.html" (dict "name" "chevron-right") }}
+          </button>
         </div>
         {{- /* Honesty line: warnings that could not be placed as NO
                SIGNAL ghosts (blocks enrichment failed) must not vanish
