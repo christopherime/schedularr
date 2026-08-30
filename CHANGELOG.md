@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `max()` direction of the real-plan provenance stamp (a plan may
   raise, never lower, a cursor's `cursor_plan_seq`) is now pinned by a
   test modeling an imported fast-clock stamp.
+- **`docs/roadmap.md` is now in the mkdocs `nav`.** It shipped in v0.2.6
+  linked from the docs index, but the site's sidebar/footer navigation
+  never listed it — reachable only by direct link or search. (`mkdocs.yml`.)
 
 ## [0.2.6] - 2026-08-30
 
