@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Icon-button glyphs (reorder chevrons, close buttons) were invisible.**
+  The inline SVGs carry a viewBox but no width/height, and the global
+  `svg` reset gives them no intrinsic size, so every `.btn--icon` icon
+  rendered 0x0 -- a clickable but empty pad. Added an explicit
+  `.btn--icon svg` size (`web/assets/css/main.css`), matching the
+  `.field__toggle svg` pattern. Found while re-capturing the docs
+  screenshots.
+
 ## [0.2.5] - 2026-08-30
 
 ### Added

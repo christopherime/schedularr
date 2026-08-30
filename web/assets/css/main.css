@@ -441,6 +441,17 @@ p {
   background: transparent;
 }
 
+/* The inline SVGs these buttons carry (close ✕, reorder chevrons) have a
+   viewBox but no width/height of their own, and the global `svg` reset
+   (display: block; max-width: 100%) gives them no intrinsic size either —
+   without this rule they render 0x0 and the button shows as an empty
+   (though still clickable) pad. Same sizing approach as .field__toggle
+   svg above. */
+.btn--icon svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
 .btn--icon:hover {
   background: var(--color-bg-inset);
 }
