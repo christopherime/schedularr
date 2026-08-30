@@ -504,6 +504,9 @@ p {
    row with edge fades -- never a wrap that orphans the last item. The
    fades are the scroll affordance, so the scrollbar stays hidden. */
 @media (max-width: 640px) {
+  /* ORDER-DEPENDENT: this override shares .nav's specificity and wins by
+     source order alone -- it must stay AFTER the base .nav rule (~line 467).
+     It has already broken once this cycle by being moved above it. */
   .nav {
     flex: 1 1 100%;
     flex-wrap: nowrap;

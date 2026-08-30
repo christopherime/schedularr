@@ -327,3 +327,13 @@ test("nearestSlotIndex ties go to the earlier slot and empty tracks return -1", 
   assert.equal(nearestSlotIndex(starts, at(9)), 0, "equidistant -> earlier slot");
   assert.equal(nearestSlotIndex([], at(9)), -1);
 });
+
+test("slotFace keeps the full face at exactly the 90-minute narrow threshold", () => {
+  // FACE_MIN_DIVS*6 = 18 quanta = 90 minutes; the comparison is strict `<`,
+  // so a span of exactly 18 quanta keeps its program lines and 17 degrades
+  // to the name + count face.
+  const slot = seriesSlot([mkProgram("Bloody Mary", 1, 5)]);
+  const spanOf = (endQ: number) => ({ startQ: 0, endQ, cutLeft: false, cutRight: false });
+  assert.ok(slotFace(slot, spanOf(18)).lines.length > 0, "exactly 18 quanta keeps program lines");
+  assert.equal(slotFace(slot, spanOf(17)).lines.length, 0, "17 quanta degrades");
+});
