@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Roadmap to v1.0.0** (`docs/roadmap.md`, linked from the docs index):
+  the remaining feature milestones (v0.3 scheduling correctness, v0.4
+  metadata engine, v0.5 operations, v0.6 UI maturity, v0.9 freeze
+  candidate) and the versioning rules on the way, ending in the 1.0
+  stability promise for `/api/v1`, the config schema, and migrations.
+
 ### Fixed
 
 - **Icon-button glyphs (reorder chevrons, close buttons) were invisible.**

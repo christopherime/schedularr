@@ -52,6 +52,7 @@ Open `http://<host>:8484/` and paste the token from `SCHEDULARR_API_TOKEN` into 
 - [Architecture](architecture.md) — components, data flow, design patterns
 - [Design System](design-system.md) — the web UI's visual system
 - [Deployment](deployment.md) — `docker run`, config reference, Helm chart
+- [Roadmap](roadmap.md) — the feature plan and versioning toward v1.0.0
 
 ## Links
 
