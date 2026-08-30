@@ -35,22 +35,10 @@ func NewValidator() *SchemaValidator {
 	}
 }
 
-// LoadConfig loads configuration from YAML/JSON data, validates it against the schema,
-// and returns a Config with defaults filled in from the CUE schema.
-func (v *SchemaValidator) LoadConfig(data []byte, format string) (*Config, error) {
-	// Compile the schema
-	schemaValue := v.ctx.CompileString(schema.ConfigSchema)
-	if schemaValue.Err() != nil {
-		return nil, fmt.Errorf("failed to compile config schema: %w", schemaValue.Err())
-	}
-
-	// Get the #Config definition
-	configDef := schemaValue.LookupPath(cue.ParsePath("#Config"))
-	if configDef.Err() != nil {
-		return nil, fmt.Errorf("failed to get #Config definition: %w", configDef.Err())
-	}
-
-	// Parse the input data based on format
+// parseInput parses YAML/JSON bytes into the generic map every validation
+// and load path in this package feeds to CUE. Shared by LoadConfig,
+// ValidateConfig, ValidateScheduler, and LoadConfigWithEnvInterpolation.
+func parseInput(data []byte, format string) (map[string]any, error) {
 	var inputData map[string]any
 	switch format {
 	case "yaml", "yml":
@@ -63,6 +51,36 @@ func (v *SchemaValidator) LoadConfig(data []byte, format string) (*Config, error
 		}
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
+	}
+	return inputData, nil
+}
+
+// LoadConfig loads configuration from YAML/JSON data, validates it against the schema,
+// and returns a Config with defaults filled in from the CUE schema.
+func (v *SchemaValidator) LoadConfig(data []byte, format string) (*Config, error) {
+	inputData, err := parseInput(data, format)
+	if err != nil {
+		return nil, err
+	}
+	return v.loadParsed(inputData)
+}
+
+// loadParsed validates an already-parsed config map against #Config and
+// returns a Config with the schema's defaults filled in -- LoadConfig's
+// back half, split out so LoadConfigWithEnvInterpolation can interpolate
+// environment variables on the parsed map (between parse and validation)
+// rather than on the raw text.
+func (v *SchemaValidator) loadParsed(inputData map[string]any) (*Config, error) {
+	// Compile the schema
+	schemaValue := v.ctx.CompileString(schema.ConfigSchema)
+	if schemaValue.Err() != nil {
+		return nil, fmt.Errorf("failed to compile config schema: %w", schemaValue.Err())
+	}
+
+	// Get the #Config definition
+	configDef := schemaValue.LookupPath(cue.ParsePath("#Config"))
+	if configDef.Err() != nil {
+		return nil, fmt.Errorf("failed to get #Config definition: %w", configDef.Err())
 	}
 
 	// Encode input as CUE value
@@ -86,7 +104,18 @@ func (v *SchemaValidator) LoadConfig(data []byte, format string) (*Config, error
 	return &Config{data: configData}, nil
 }
 
-// LoadConfigWithEnvInterpolation loads config from file, expanding environment variables
+// LoadConfigWithEnvInterpolation loads config from file, expanding
+// ${VAR}/$VAR environment-variable placeholders inside its string values.
+//
+// Interpolation happens AFTER parsing, on the parsed map's string values
+// only -- not textually on the raw bytes, which is what an earlier
+// os.ExpandEnv-based version did. Post-parse expansion closes two textual
+// footguns at once: an unset variable now yields an empty STRING (the raw
+// expansion left an empty unquoted YAML token, which parses as null and
+// then fails schema validation with a confusing type error -- quoted or
+// unquoted, the placeholder's spot stays a string now), and a variable's
+// VALUE can never be re-parsed as YAML/JSON syntax, since the document's
+// structure is fixed before any value is substituted.
 func (v *SchemaValidator) LoadConfigWithEnvInterpolation(path string) (*Config, error) {
 	// Read file
 	// #nosec G304 - path is the operator's own --config/SCHEDULARR_CONFIG value
@@ -95,16 +124,45 @@ func (v *SchemaValidator) LoadConfigWithEnvInterpolation(path string) (*Config, 
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Expand environment variables
-	expanded := os.ExpandEnv(string(data))
-
 	// Determine format from extension
 	format := "yaml"
 	if strings.HasSuffix(path, ".json") {
 		format = "json"
 	}
 
-	return v.LoadConfig([]byte(expanded), format)
+	inputData, err := parseInput(data, format)
+	if err != nil {
+		return nil, err
+	}
+
+	expanded, _ := expandEnvInStrings(inputData).(map[string]any)
+	return v.loadParsed(expanded)
+}
+
+// expandEnvInStrings returns value with every string it contains --
+// directly, in nested maps, or in slices -- passed through
+// os.Expand(s, os.Getenv), replacing ${VAR}/$VAR references with the
+// variable's value (empty string when unset). Non-string leaves are
+// returned unchanged; the result of expanding a string is always a string.
+func expandEnvInStrings(value any) any {
+	switch t := value.(type) {
+	case string:
+		return os.Expand(t, os.Getenv)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, v := range t {
+			out[k] = expandEnvInStrings(v)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, v := range t {
+			out[i] = expandEnvInStrings(v)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 // ValidateConfig validates configuration data against the schema without loading
@@ -114,18 +172,9 @@ func (v *SchemaValidator) ValidateConfig(data []byte, format string) error {
 		return fmt.Errorf("failed to compile config schema: %w", schemaValue.Err())
 	}
 
-	var inputData map[string]any
-	switch format {
-	case "yaml", "yml":
-		if err := yaml.Unmarshal(data, &inputData); err != nil {
-			return fmt.Errorf("failed to parse YAML: %w", err)
-		}
-	case "json":
-		if err := json.Unmarshal(data, &inputData); err != nil {
-			return fmt.Errorf("failed to parse JSON: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported format: %s", format)
+	inputData, err := parseInput(data, format)
+	if err != nil {
+		return err
 	}
 
 	inputValue := v.ctx.Encode(inputData)
@@ -149,18 +198,9 @@ func (v *SchemaValidator) ValidateScheduler(data []byte, format string) error {
 		return fmt.Errorf("failed to compile scheduler schema: %w", schemaValue.Err())
 	}
 
-	var inputData map[string]any
-	switch format {
-	case "yaml", "yml":
-		if err := yaml.Unmarshal(data, &inputData); err != nil {
-			return fmt.Errorf("failed to parse YAML: %w", err)
-		}
-	case "json":
-		if err := json.Unmarshal(data, &inputData); err != nil {
-			return fmt.Errorf("failed to parse JSON: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported format: %s", format)
+	inputData, err := parseInput(data, format)
+	if err != nil {
+		return err
 	}
 
 	inputValue := v.ctx.Encode(inputData)

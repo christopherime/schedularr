@@ -211,3 +211,39 @@ func TestParseYAML_RejectsDuplicateBlockNames(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Same Name", "error should name the duplicate block")
 }
+
+// TestParseYAML_OmittedTypeDefaultsToFilter pins the raw-bytes validation
+// fix: a block with no `type:` key at all is valid (CUE's *"filter"
+// default applies to the genuinely-absent field, which the pre-fix
+// decode-then-re-render order turned into an explicit "" that failed the
+// disjunction) and decodes with Type filled to "filter".
+func TestParseYAML_OmittedTypeDefaultsToFilter(t *testing.T) {
+	yaml := `blocks:
+  - name: "No Type Key"
+    cron: "0 6 * * *"
+    duration: 120
+    channel_id: "channel-1"
+    filter:
+      genres: ["Animation"]
+`
+	blocks, err := blockio.ParseYAML([]byte(yaml))
+	require.NoError(t, err, "a block with an omitted type must be valid (CUE default)")
+	require.Len(t, blocks, 1)
+	assert.Equal(t, scheduler.BlockTypeFilter, blocks[0].Type)
+}
+
+// TestParseYAML_ExplicitEmptyTypeStillRejected: an EXPLICIT `type: ""` is
+// not an absent field -- it must still fail #Block's disjunction, exactly
+// as before.
+func TestParseYAML_ExplicitEmptyTypeStillRejected(t *testing.T) {
+	yaml := `blocks:
+  - type: ""
+    name: "Empty Type"
+    cron: "0 6 * * *"
+    duration: 120
+    channel_id: "channel-1"
+`
+	_, err := blockio.ParseYAML([]byte(yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to validate blocks")
+}

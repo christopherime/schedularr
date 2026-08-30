@@ -2,6 +2,8 @@ package cueconfig
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -408,5 +410,79 @@ func TestValidateScheduler_UnsupportedFormat(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "unsupported format") {
 		t.Errorf("Expected 'unsupported format' error, got: %v", err)
+	}
+}
+
+// TestLoadConfigWithEnvInterpolation_UnsetVarBecomesEmptyString pins the
+// post-parse interpolation contract: an unset ${VAR} placeholder -- quoted
+// or unquoted -- yields an empty STRING in the loaded config, never a YAML
+// null. The pre-fix textual os.ExpandEnv left an empty unquoted token that
+// parsed as null and failed #Config validation with a type error.
+func TestLoadConfigWithEnvInterpolation_UnsetVarBecomesEmptyString(t *testing.T) {
+	t.Setenv("SCHEDULARR_TEST_SET_VAR", "http://tunarr:8000")
+	// Deliberately never set SCHEDULARR_TEST_UNSET_VAR.
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := "tunarr:\n" +
+		"  url: ${SCHEDULARR_TEST_SET_VAR}\n" +
+		"  api_key: ${SCHEDULARR_TEST_UNSET_VAR}\n" + // unquoted, unset
+		"database: \"${SCHEDULARR_TEST_UNSET_VAR}\"\n" // quoted, unset
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := NewValidator().LoadConfigWithEnvInterpolation(path)
+	if err != nil {
+		t.Fatalf("LoadConfigWithEnvInterpolation() error: %v", err)
+	}
+
+	tunarr, ok := cfg.data["tunarr"].(map[string]any)
+	if !ok {
+		t.Fatalf("tunarr section missing or wrong type: %#v", cfg.data["tunarr"])
+	}
+	if got := tunarr["url"]; got != "http://tunarr:8000" {
+		t.Errorf("set variable not expanded: url = %#v", got)
+	}
+	if got := tunarr["api_key"]; got != "" {
+		t.Errorf("unset unquoted variable: api_key = %#v, want \"\"", got)
+	}
+	if got := cfg.data["database"]; got != "" {
+		t.Errorf("unset quoted variable: database = %#v, want \"\"", got)
+	}
+}
+
+// TestLoadConfigWithEnvInterpolation_ValueNeverParsedAsYAML pins the other
+// benefit of post-parse interpolation: a variable's VALUE is substituted
+// into an already-parsed string and can never inject structure into the
+// document, no matter what YAML-looking text it contains.
+func TestLoadConfigWithEnvInterpolation_ValueNeverParsedAsYAML(t *testing.T) {
+	injected := "x\"\nlog:\n  level: debug"
+	t.Setenv("SCHEDULARR_TEST_INJECT_VAR", injected)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := "tunarr:\n  url: ${SCHEDULARR_TEST_INJECT_VAR}\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := NewValidator().LoadConfigWithEnvInterpolation(path)
+	if err != nil {
+		t.Fatalf("LoadConfigWithEnvInterpolation() error: %v", err)
+	}
+
+	tunarr := cfg.data["tunarr"].(map[string]any)
+	if got := tunarr["url"]; got != injected {
+		t.Errorf("value was not kept as a literal string: url = %#v", got)
+	}
+	// The injected "log:" text must not have become a real log section
+	// override: the schema default ("info") applies, not "debug".
+	log, ok := cfg.data["log"].(map[string]any)
+	if !ok {
+		t.Fatalf("log section missing: %#v", cfg.data["log"])
+	}
+	if got := log["level"]; got != "info" {
+		t.Errorf("injected text changed document structure: log.level = %#v, want schema default \"info\"", got)
 	}
 }

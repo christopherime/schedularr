@@ -30,7 +30,7 @@ schedularr config generate config.json     # JSON format
 schedularr config generate my-config.yaml --tunarr-url "http://my-tunarr:8000" --log-level debug
 ```
 
-Creates a YAML or JSON file (auto-detected from extension) with every key in `cmd/schema/config.cue` and its default value. `tunarr.url` and `tunarr.api_key` default to literal `${SCHEDULARR_TUNARR_URL}`/`${SCHEDULARR_TUNARR_API_KEY}` placeholders — either export those variables, or edit the file and replace the placeholders with literal values, always quoting the value even when empty (`api_key: ""`). An unset `${VAR}` placeholder left unquoted expands to nothing, which YAML parses as `null` rather than `""`, and `null` fails CUE validation on load.
+Creates a YAML or JSON file (auto-detected from extension) with every key in `cmd/schema/config.cue` and its default value. `tunarr.url` and `tunarr.api_key` default to literal `${SCHEDULARR_TUNARR_URL}`/`${SCHEDULARR_TUNARR_API_KEY}` placeholders — either export those variables, or edit the file and replace the placeholders with literal values. Interpolation happens on the parsed file's string values, so an unset `${VAR}` simply becomes an empty string (quoted or not), and a variable's value is never re-parsed as YAML syntax.
 
 ### `config dump`
 
@@ -70,7 +70,7 @@ schedularr validate config.yaml
 schedularr validate scheduler.yaml
 ```
 
-Each block's `type` field (`filter` or `series`) has a CUE schema default, but the scheduler-file validation path decodes each block into a Go struct first, turning an omitted `type` into an explicit empty string rather than an absent field. CUE only applies a default to a genuinely absent field, so an empty string fails the `"filter" | "series"` enum check — always set `type` explicitly in `scheduler.yaml`. `POST /api/v1/blocks`'s JSON body doesn't have this problem.
+Each block's `type` field (`filter` or `series`) defaults to `filter` and can be omitted — in `scheduler.yaml` and in `POST /api/v1/blocks`'s JSON body alike. An explicit empty string (`type: ""`) is rejected.
 
 **Exit codes:** `0` validation passed, `1` validation failed (shows detailed errors).
 

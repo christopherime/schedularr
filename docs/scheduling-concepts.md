@@ -7,7 +7,7 @@ A **block** is a scheduling rule: a cron trigger, a duration, a target Tunarr ch
 ```yaml
 blocks:
   - name: string # Required: human-readable block identifier
-    type: string # "filter" or "series" -- required in scheduler.yaml (see note below)
+    type: string # Optional: "filter" (default) or "series"
     cron: string # Required: 5-field cron expression
     duration: int # Required: block duration in minutes
     channel_id: string # Required: target Tunarr channel ID
@@ -21,7 +21,7 @@ blocks:
     filler: { ... } # Optional, either type: fills small residual gaps
 ```
 
-Each block's `type` field (`filter` or `series`) has a CUE schema default, but the `scheduler.yaml` import path decodes each block into a Go struct before CUE-validating it, which turns an omitted `type` into an explicit empty string rather than an absent field — CUE only applies a default to a genuinely absent field, so an empty string fails the `"filter" | "series"` check. Always set `type` explicitly in `scheduler.yaml`. `POST /api/v1/blocks`'s JSON body doesn't have this problem; `type` there can be omitted.
+Each block's `type` field (`filter` or `series`) defaults to `filter` and can be omitted — in `scheduler.yaml` and in `POST /api/v1/blocks`'s JSON body alike (the import path validates the raw YAML against CUE before decoding, so the schema default applies to an absent field). An explicit `type: ""` is rejected.
 
 ## Filter-based blocks
 

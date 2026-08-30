@@ -48,12 +48,12 @@ docker build -t schedularr:local .
 
 2. Configure the Tunarr connection.
 
-   `config generate` writes `tunarr.url`/`tunarr.api_key` as literal `${SCHEDULARR_TUNARR_URL}`/`${SCHEDULARR_TUNARR_API_KEY}` placeholders (CUE-loaded config files support `${VAR}` env interpolation — see [Deployment's config reference](deployment.md#configuration-reference)). Either export those two environment variables, or edit `config.yaml` directly and replace both with literal values. An unset `${VAR}` placeholder left in the file expands to an empty, *unquoted* YAML value, which parses as `null` rather than `""` and fails config loading:
+   `config generate` writes `tunarr.url`/`tunarr.api_key` as literal `${SCHEDULARR_TUNARR_URL}`/`${SCHEDULARR_TUNARR_API_KEY}` placeholders (CUE-loaded config files support `${VAR}` env interpolation — see [Deployment's config reference](deployment.md#configuration-reference)). Either export those two environment variables, or edit `config.yaml` directly and replace both with literal values (an unset `${VAR}` simply becomes an empty string):
 
    ```yaml
    tunarr:
      url: "http://localhost:8000"
-     api_key: "" # quote it explicitly, even when empty
+     api_key: ""
    log:
      level: "info"
      format: "text"

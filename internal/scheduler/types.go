@@ -83,7 +83,7 @@ type Block struct {
 	// empty for a Block never sourced from the store (e.g. some tests) --
 	// callers that key off it must tolerate that.
 	ID                         string         `mapstructure:"-" yaml:"-" json:"-"`
-	Type                       BlockType      `mapstructure:"type" yaml:"type" json:"type"` // "filter" or "series", default "filter"
+	Type                       BlockType      `mapstructure:"type" yaml:"type,omitempty" json:"type"` // "filter" or "series", default "filter"; omitempty so a zero value re-renders as absent and CUE's *"filter" default applies instead of "" failing the disjunction
 	Name                       string         `mapstructure:"name" yaml:"name" json:"name"`
 	Cron                       string         `mapstructure:"cron" yaml:"cron" json:"cron"`             // Cron expression for start time
 	Duration                   int            `mapstructure:"duration" yaml:"duration" json:"duration"` // Duration in minutes

@@ -30,22 +30,38 @@ func ValidateBlocks(blocks []scheduler.Block) error {
 	return nil
 }
 
-// ParseYAML strictly decodes YAML data into scheduling blocks and validates
-// the result against the CUE schema via ValidateBlocks. Decoding is strict:
-// unknown fields anywhere in the document are rejected rather than silently
+// ParseYAML validates YAML data against the CUE scheduler schema and
+// strictly decodes it into scheduling blocks. Decoding is strict: unknown
+// fields anywhere in the document are rejected rather than silently
 // ignored.
 //
-// ParseYAML also rejects blocks that share a name. This lives here, ahead of
-// ValidateBlocks, rather than inside ValidateBlocks or left for the store to
-// catch: CUE validates each block against #Block independently and has no
-// notion of "list of blocks with unique names," so two same-named blocks in
-// one file would otherwise sail through CUE validation cleanly. Catching it
-// here -- before any block from this file is written anywhere -- protects
-// every YAML-driven import path (Bootstrap today, a future import API
-// endpoint tomorrow) uniformly, without requiring store-level transactions:
-// a duplicate never gets far enough to hit store.ErrConflict partway through
-// a batch of writes.
+// CUE validation runs on the RAW input bytes, before the Go-struct decode
+// -- not on a re-render of the decoded structs (what ValidateBlocks does,
+// and what an earlier version of this function called). The ordering
+// matters for CUE's `*default` semantics: a default applies only to an
+// ABSENT field, and decoding into a Go struct first turns an omitted
+// `type:` into an explicit `""`, which then fails #Block's
+// `"filter" | "series" | *"filter"` disjunction on the re-render even
+// though the original file was valid. Validating the original bytes lets a
+// genuinely-omitted field stay absent, so the default applies exactly as
+// the schema declares; the decode below then mirrors that default into the
+// struct (Type "" -> "filter"). An EXPLICIT `type: ""` in the file still
+// fails the disjunction, as it should.
+//
+// ParseYAML also rejects blocks that share a name. This lives here rather
+// than in the CUE schema or the store: CUE validates each block against
+// #Block independently and has no notion of "list of blocks with unique
+// names," so two same-named blocks in one file would otherwise sail
+// through validation cleanly. Catching it here -- before any block from
+// this file is written anywhere -- protects every YAML-driven import path
+// (Bootstrap, POST /blocks/import) uniformly: a duplicate never gets far
+// enough to hit store.ErrConflict partway through a batch of writes.
 func ParseYAML(data []byte) ([]scheduler.Block, error) {
+	validator := cueconfig.NewValidator()
+	if err := validator.ValidateScheduler(data, "yaml"); err != nil {
+		return nil, fmt.Errorf("failed to validate blocks: %w", err)
+	}
+
 	var cfg scheduler.Config
 
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -58,8 +74,14 @@ func ParseYAML(data []byte) ([]scheduler.Block, error) {
 		return nil, fmt.Errorf("failed to validate blocks: duplicate block name(s): %s", strings.Join(dupes, ", "))
 	}
 
-	if err := ValidateBlocks(cfg.Blocks); err != nil {
-		return nil, err
+	// Mirror #Block's `*"filter"` default into the decoded structs: raw
+	// validation above accepted an omitted `type`, so fill in what the
+	// schema says an absent field means (matching the JSON API path's
+	// normalization in internal/api's fromGen).
+	for i := range cfg.Blocks {
+		if cfg.Blocks[i].Type == "" {
+			cfg.Blocks[i].Type = scheduler.BlockTypeFilter
+		}
 	}
 
 	return cfg.Blocks, nil

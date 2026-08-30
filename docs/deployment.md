@@ -46,7 +46,7 @@ ghcr.io/christopherime/schedularr:latest
 3. Legacy locations, in order: `./config.yaml`, `./.schedularr.yaml`, `~/.config/.schedularr.yaml`, `~/.schedularr.yaml`
 4. `~/.schedularr/config.yaml` (default)
 
-The file is validated against the CUE schema in `cmd/schema/config.cue`. String values support `${VAR}` environment variable interpolation.
+The file is validated against the CUE schema in `cmd/schema/config.cue`. String values support `${VAR}` environment variable interpolation, applied after parsing: an unset variable becomes an empty string (never `null`), and a variable's value is never re-parsed as YAML syntax.
 
 ```yaml
 tunarr:

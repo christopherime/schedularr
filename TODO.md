@@ -259,31 +259,6 @@ None block the current close-out; each is a known, scoped-out gap.
   `govulncheck ./...` output on every `kin-openapi` bump in case a future
   advisory does land in a reachable path.
 
-- **`${VAR}`-unset-\>null config bug.** An unset `${VAR}` placeholder left
-  in a config file expands to an empty, unquoted YAML scalar, which YAML
-  parses as `null` rather than `""` -- documented as a footgun in
-  README.md's Quick Start ("Environment Variable Interpolation") section,
-  worked around today by always quoting interpolated values explicitly.
-  The root fix belongs in `internal/cueconfig`'s `${VAR}` interpolation
-  step (`internal/cueconfig/schema.go`): substitute an unset variable with
-  an explicitly-quoted empty string instead of a bare empty token, so the
-  YAML never round-trips through `null`.
-
-- **YAML `type:`-omission CUE bug.** Documented in README.md's Scheduling
-  Blocks section: `scheduler.yaml`'s block `type` field has a CUE default
-  (`"filter" | "series" | *"filter"`, `cmd/schema/scheduler.cue`), but the
-  import path decodes each block into a Go struct *before* CUE-validating
-  it, which turns an omitted `type` into an explicit `""` rather than a
-  genuinely absent field -- CUE only applies `*default` to an absent
-  field, so the empty string fails the disjunction check. Workaround
-  today: always set `type` explicitly in `scheduler.yaml` (the JSON
-  `POST /api/v1/blocks` path doesn't have this problem -- see
-  `internal/api/blocks.go`'s `fromGen`). Fix: give `internal/blockio` a
-  raw-bytes validation path (validate the YAML bytes against CUE directly,
-  before decoding into the Go struct) plus `omitempty` tags on the
-  decode-target struct's optional fields, so an omitted field stays
-  genuinely absent through to CUE.
-
 - **Bounded `cronDone` wait.** `cmd/serve.go`'s `serveUntil` waits on
   `<-cronDone` with no timeout after `cancelCron()` -- see the comment
   added at that line in this fix wave. In practice this returns almost

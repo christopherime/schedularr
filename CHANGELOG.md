@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Unset `${VAR}` placeholders in a config file now become empty strings,
+  never `null`.** Environment-variable interpolation moved from textual
+  `os.ExpandEnv` on the raw bytes to a post-parse walk over the parsed
+  document's string values (`internal/cueconfig`): an unset variable's spot
+  stays a string (quoted or not), and a variable's value can never be
+  re-parsed as YAML/JSON syntax. The "always quote interpolated values"
+  workaround is gone from the docs.
+- **`scheduler.yaml` blocks may omit `type` again.** The import path now
+  CUE-validates the raw YAML bytes *before* decoding into Go structs
+  (`blockio.ParseYAML`), so CUE's `*"filter"` default applies to a
+  genuinely absent field instead of the decode turning it into an explicit
+  `""` that failed the `"filter" | "series"` disjunction; the decoded
+  struct mirrors the default (`Type` filled to `filter`, matching the JSON
+  API path). An explicit `type: ""` is still rejected. `Block.Type` also
+  gained `yaml:",omitempty"` so a zero-value struct re-render stays
+  schema-valid.
+
 ## [0.2.4] - 2026-08-30
 
 ### Changed
