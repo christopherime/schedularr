@@ -1,0 +1,42 @@
+{{- /*
+  The channel picker with an explicit channels-loading state (spec §4) --
+  a disabled "Loading channels…" select instead of the old raw-text-input
+  ambiguity while the list is in flight. Resolves names via the runtime's
+  /channels cache (the component's channels/channelsLoading/channelsError
+  state + channelLabel/channelHint helpers). args:
+    id:          element id (shared across the mutually-exclusive states)
+    model:       Alpine x-model expression
+    disabled:    optional Alpine :disabled expression
+    emptyOption: label of the value="" first option
+                 ("All channels" / "— select a channel —")
+    options:     optional Alpine expression for the option list
+                 (default "channels"; blocks passes channelSelectOptions())
+    placeholder: free-text fallback placeholder
+*/ -}}
+{{- $options := .options | default "channels" -}}
+<template x-if="channelsLoading">
+  <select id="{{ .id }}" disabled aria-busy="true">
+    <option>Loading channels…</option>
+  </select>
+</template>
+<template x-if="!channelsLoading && !channelsError && channels.length > 0">
+  <select id="{{ .id }}" x-model="{{ .model }}"{{ with .disabled }} :disabled="{{ . }}"{{ end }}>
+    <option value="">{{ .emptyOption }}</option>
+    <template x-for="c in {{ $options }}" :key="c.id">
+      <option :value="c.id" x-text="channelLabel(c)"></option>
+    </template>
+  </select>
+</template>
+<template x-if="!channelsLoading && (channelsError || channels.length === 0)">
+  <input
+    type="text"
+    id="{{ .id }}"
+    x-model="{{ .model }}"
+    placeholder="{{ .placeholder }}"
+    autocomplete="off"
+    {{- with .disabled }}
+    :disabled="{{ . }}"
+    {{- end }}
+  >
+</template>
+<p class="form-field__hint" x-show="channelHint()" x-text="channelHint()"></p>

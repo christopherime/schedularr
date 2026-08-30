@@ -1,7 +1,7 @@
 // Token storage for the Schedularr API bearer token. localStorage only --
 // there is no server session, no cookie, no CSRF surface (see PRODUCT.md,
-// "Token-once, same-origin"). The key is part of the binding contract for
-// Tasks 4-7: do not rename it.
+// "Token-once, same-origin"). The key predates the v0.5.0 runtime refactor
+// and is part of the operator-facing contract: do not rename it.
 const TOKEN_KEY = "schedularr_api_token";
 
 /**

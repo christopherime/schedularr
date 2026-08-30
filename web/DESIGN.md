@@ -171,6 +171,35 @@ scrollbars theme correctly too.
 themed from these same tokens -- no browser-default gray leaks through
 either palette.
 
+**Tinted state surfaces (v0.5.0).** Warn/danger panels sit on
+`--surface-warn` / `--surface-danger` -- `color-mix(in srgb,
+var(--color-warn|danger) 8%, var(--color-bg-raised))`, overridden to a
+10% mix in the dark palette -- instead of plain `--color-bg-inset`. The
+`.problem` panel uses the danger surface, `.schedule-warnings` the warn
+surface. Contrast evidence for every text pairing on these surfaces is in
+the WCAG section below.
+
+## Token deltas (v0.5.0 bench rebuild)
+
+Added in the v0.5.0 foundation slice (spec §4), all on `:root`:
+
+| Token | Value | Role |
+| ----- | ----- | ---- |
+| `--z-bezel` / `--z-sticky` / `--z-popover` / `--z-dialog` | 10/20/30/40 | The z-scale; no ad hoc z-index values. Native `<dialog>` top layer sits above all of them for free. |
+| `--glow-accent` | 3px accent ring (color-mix 25%) | Names the armed-dot ring (status dots `armed`/`ok`). |
+| `--shadow-dialog` | the two-layer dialog shadow | The one deliberate shadow, now named. |
+| `--icon-size` | `1.125rem` | One size for every drawn icon; collapses the three drifted values (1rem/1.1rem/1.125rem). |
+| `--measure` | `68ch` | Prose line cap (page-head/section-head/empty-state text). |
+| `--content-max` | `76rem` | The page column cap. The v0.5.1 guide is the one sanctioned full-bleed exception. |
+| `--duration-slow` | `250ms` | Reserved for the largest disclosures. |
+| `--surface-warn` / `--surface-danger` | color-mix tints | See Colors above. |
+
+`--div` is re-documented as load-bearing: from v0.5.1 it IS the guide's
+30-minute column width, so graticule lines and slot boundaries coincide.
+Any dynamic geometry keyed to it must go through CSSOM
+(`el.style.setProperty`, Alpine `:style`) -- see Content-Security-Policy
+below for why an inline `style` attribute silently fails.
+
 ## Typography
 
 One family everywhere: `var(--font-mono)`, a `ui-monospace` stack with
@@ -240,6 +269,46 @@ is `--border-width` (`1px`) almost everywhere; `--border-width-thick`
 (`2px`) marks a few load-bearing rules -- the active nav link's bottom
 accent, the history/blocks/schedule/series table header's separator
 line, the focus ring.
+
+## Hugo partials (`web/layouts/partials/ui/`) and the `/kit/` gallery
+
+Since v0.5.0 the shared component markup lives in Hugo partials instead
+of being copy-pasted per page -- a page template instantiates a partial
+with its Alpine expressions as dict args. The set:
+
+- **`skeleton`** -- variants `bar` / `row` / `stack` / `table-row` (the
+  table-shaped loading silhouette); widths via modifier classes, never
+  inline styles (CSP rule).
+- **`problem`** -- the single inline error idiom: static context label,
+  the API's own `title: detail` line, an optional retry action, and a
+  muted `REF <request_id>` line for server-log correlation. Binds a
+  runtime `ProblemView` (see `runtime/errors.ts`). The blocks page's two
+  competing error surfaces (`listError`/`blocksError`) collapsed into it.
+- **`empty`** -- teaching empty state: legend line, one sentence, one
+  action (link or Alpine click).
+- **`toggle`** -- the `role="switch"` rocker, shared instead of pasted.
+- **`channel-select`** -- the channel picker with an explicit disabled
+  "Loading channels…" select while the list is in flight (ends the
+  raw-text-input ambiguity); falls back to free text on error/empty.
+- **`plate`** -- the channel legend plate (`CH 04 · HORROR`), the
+  UUID-replacement idiom; resolves via the runtime's `/channels` cache
+  and falls back to the shortened raw id when unresolvable.
+- **`icon`** + **`icon-defs`** -- one inline SVG sprite (one stroke
+  voice: 1.75/round), sized by `--icon-size`; ends path duplication.
+- **`confirm`** -- the one native `<dialog>` confirm idiom (apply,
+  delete, future bulk), with max-height/overflow for small viewports;
+  replaced the blocks page's inline row-swap confirm.
+- **`tape`** -- the event tape region: timestamped uppercase lines,
+  newest first, max 3 retained, at most one action per line, no
+  auto-dismiss; driven by `runtime/tape.ts`'s `printTape`.
+- **`page-js`** -- the bundling boilerplate, including the
+  cronstrue-before-page-bundle ordering constraint.
+
+**`/kit/` (dev builds only)** renders every partial in every state on
+fixture data and is the review gate: a slice is not done until its new
+states appear there. It is excluded from production builds via
+`web/config/production/hugo.toml`'s cascade (`build.render/list =
+"never"` for `/kit/**`); build it with `hugo -s web -e development`.
 
 ## Components
 
@@ -311,6 +380,34 @@ shape.
   (not an iOS-style pill, matching the small-radii shape language), used
   for both blocks' Enabled/Disabled and series' Completed/Disabled
   toggles.
+- **`.telemetry`** (v0.5.0) -- the bezel telemetry strip: TUNARR
+  (coded-legend dot+text) plus LAST APPLY / NEXT TICK relative readouts
+  on every page, fed by `runtime/shell.ts`'s 60s `GET /status` poll. The
+  LIVE/POLL/LINK legend is deliberately absent until the SSE slice
+  (v0.5.4) can make it honest.
+- **`.plate`** (v0.5.0) -- the channel legend plate; see the partials
+  section above.
+- **`.tape`** (v0.5.0) -- the event tape; success is printed, not
+  toasted. The newest line takes a 150ms print draw-in (suppressed under
+  reduced motion); older lines recede to muted.
+
+### Component-state floor (v0.5.0)
+
+- Inputs: `[aria-invalid="true"]` gets the danger border;
+  `.form-field:focus-within > label` sharpens to full ink; the focus
+  ring stays the global `:focus-visible` outline.
+- Buttons: `[aria-busy="true"]` runs a subdued sweep shimmer
+  (`currentcolor` at 18% -- adapts to any variant; frozen to a faint
+  static wash under reduced motion). Callers pair it with `:disabled`.
+- Every hover rule carries `:not(:disabled)`.
+- `@media (forced-colors: active)` fallbacks cover every box-shadow- or
+  background-borne state: dots get a `CanvasText` border (+ `Highlight`
+  fill for armed/ok), the active nav link a `Highlight` bottom border,
+  the toggle thumb a border and its checked track `Highlight`, and the
+  busy shimmer is dropped (text still changes).
+- The token panel's parallel `.field`/`.field__control` vocabulary is
+  gone: one field system (`.form-field`, plus `.form-field__control` /
+  `.form-field__reveal` for the trailing-button case).
 
 ## Do's and Don'ts
 
@@ -383,7 +480,41 @@ pairing already verified above; the schedule status readout reuses the
 Task 4 already verified, and its one new CSS rule
 (`.btn { text-decoration: none }`) touches no color.
 
-## Alpine.js conventions
+**v0.5.0 bench rebuild** introduced the tinted surfaces, the danger-fill
+button, and the tape/plate/telemetry text placements. Checked
+computationally (same throwaway-script convention; 8% mix light, 10%
+dark):
+
+| Pairing | Light | Dark |
+| ------- | ----- | ---- |
+| `--color-warn` on `--surface-warn` (warnings title) | 6.14:1 | 7.15:1 |
+| `--color-ink-muted` on `--surface-warn` (warnings list) | 7.51:1 | 6.30:1 |
+| `--color-danger` on `--surface-danger` (`.problem__title`) | 6.43:1 | 5.77:1 |
+| `--color-ink-muted` on `--surface-danger` (detail + REF lines) | 7.43:1 | 6.58:1 |
+| `--color-accent-contrast` on `--color-danger` (`.btn--danger`) | 7.32:1 | 6.71:1 |
+| `--color-ink` on `--color-bg-inset` (plate name) | 13.45:1 | 16.60:1 |
+| `--color-ink` / `--color-ink-muted` on `--color-bg` (tape lines) | 14.66 / 7.49:1 | 16.11 / 7.88:1 |
+
+Every pairing clears WCAG AA's 4.5:1 text floor (worst case 5.77:1). The
+telemetry strip's label/value inks on `--color-bg-raised` are the
+already-verified Task 3/4 pairings.
+
+## TypeScript runtime and Alpine.js conventions
+
+**One bundle per page (v0.5.0).** The shared runtime
+(`web/assets/ts/runtime/`: `api.ts`, `token.ts`, `errors.ts`,
+`format.ts`, `channels.ts`, `tape.ts`, `shell.ts`) is imported by thin
+page entries (`web/assets/ts/pages/*.ts`) and compiled INTO each page's
+single esbuild bundle by the `ui/page-js` partial -- there is no
+separate shell bundle and no `window.schedularr` global anymore. Within
+a page every module (the `ApiError` class identity included) is the same
+compiled copy, which is what makes `instanceof` checks safe. The
+runtime's `api.ts` is the only module allowed to call `fetch`, adds
+AbortController timeouts (15s reads / 60s writes), and entry-guards
+mutations (an identical in-flight mutation shares the first request's
+promise instead of double-firing). `shell.ts` wires the token panel
+(Save probes `GET /status`, arms only on success, then broadcasts the
+re-auth event that re-fires failed loads) and the bezel telemetry poll.
 
 Alpine is vendored (`web/assets/vendor/alpine.min.js`, pinned, loaded
 `defer`, no CDN) and used narrowly: one `Alpine.data()` component per
@@ -473,7 +604,7 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; st
 
 Every directive is `'self'` (or `'none'` for `frame-ancestors`) because the
 shipped site never loads a third-party origin: Alpine is vendored (no
-CDN), `web/assets/ts/api.ts`/`token.ts` are the only modules that touch
+CDN), `web/assets/ts/runtime/api.ts`/`runtime/token.ts` are the only modules that touch
 `fetch` and only ever call this same origin's `/api/v1`, and the only
 `<img>` reference (the header's `/favicon.png` brand mark, see Static
 assets above) and the only stylesheet are both same-origin, served from
@@ -511,7 +642,8 @@ for the automated 200-and-404 assertion.
 ## Security: CodeQL accepted risk
 
 CodeQL alert #1 (`js/clear-text-storage-of-sensitive-data`,
-`web/assets/ts/token.ts:27` -- `setToken`'s `localStorage.setItem`) is
+`setToken`'s `localStorage.setItem`, now in
+`web/assets/ts/runtime/token.ts` after the v0.5.0 refactor) is
 **dismissed as won't-fix**, not unaddressed. `PRODUCT.md`'s "Token-once,
 same-origin" principle is the deliberate design this alert is flagging:
 there is no server session, no cookie, no CSRF surface, and a single

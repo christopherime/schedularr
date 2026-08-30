@@ -1,0 +1,12 @@
+{{- /*
+  Channel legend plate -- `CH 04 · HORROR` -- the UUID-replacement idiom
+  (spec identity move 6). args:
+    expr: Alpine expression returning runtime PlateParts, typically the
+          component's plate(<id expr>) helper backed by the runtime's
+          /channels cache. Unresolvable ids fall back to the shortened raw
+          id (PlateParts.ch null), so the plate never fabricates a name.
+*/ -}}
+<span class="plate">
+  <span class="plate__ch" x-show="({{ .expr }}).ch" x-text="({{ .expr }}).ch"></span>
+  <span class="plate__name" x-text="({{ .expr }}).name"></span>
+</span>

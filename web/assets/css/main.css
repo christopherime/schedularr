@@ -52,12 +52,38 @@
 
   /* -- motion --------------------------------------------------------
      One signature moment (the token panel opening/closing); everything
-     else is a plain state transition. */
+     else is a plain state transition. --duration-slow is reserved for
+     the largest disclosures (dialog-scale moments). */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-fast: 150ms;
   --duration-base: 200ms;
+  --duration-slow: 250ms;
 
-  /* graticule division size -- an oscilloscope's 10x8 division grid */
+  /* -- z-scale ------------------------------------------------------
+     Every stacked layer names its tier; no ad hoc z-index values. The
+     native <dialog> top layer sits above all of these for free. */
+  --z-bezel: 10;
+  --z-sticky: 20;
+  --z-popover: 30;
+  --z-dialog: 40;
+
+  /* -- measure ------------------------------------------------------
+     --measure caps prose lines; --content-max caps the page column.
+     The v0.5.1 guide is the one sanctioned full-bleed exception -- its
+     grid escapes --content-max, nothing else does. */
+  --measure: 68ch;
+  --content-max: 76rem;
+
+  /* One icon size for every drawn icon (the ui/icon sprite) --
+     collapses the three values that had drifted (1rem/1.1rem/1.125rem). */
+  --icon-size: 1.125rem;
+
+  /* graticule division size -- an oscilloscope's 10x8 division grid.
+     LOAD-BEARING from v0.5.1: the guide's 30-minute column width IS
+     --div, so graticule lines and slot boundaries coincide. Dynamic slot
+     geometry must go through CSSOM (el.style.setProperty / Alpine :style)
+     -- the CSP's style-src 'self' silently drops inline style="..."
+     attributes (see DESIGN.md, Content-Security-Policy). */
   --div: 32px;
 
   /* -- palette: light ("calibration printout on graph paper") ------- */
@@ -74,6 +100,23 @@
   --color-warn: #7a5200;
   --color-danger: #a3271f;
   --color-backdrop: rgb(22 33 28 / 45%);
+
+  /* -- named effects -------------------------------------------------- */
+  /* The armed-dot ring, named once (status dots, future live legends). */
+  --glow-accent: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  /* The one deliberate shadow: the native <dialog>, which genuinely
+     detaches from the page. Everything else stays border + bg-step flat. */
+  --shadow-dialog:
+    0 20px 60px -20px rgb(0 0 0 / 45%),
+    0 4px 16px rgb(0 0 0 / 20%);
+
+  /* -- tinted state surfaces (color-mix) ------------------------------
+     Warn/danger panels sit on a tinted surface, not plain bg-inset.
+     WCAG (computed, both palettes -- see DESIGN.md): every text pairing
+     on these clears AA, worst case 5.77:1. Dark overrides the mix ratio
+     (10%) because the same 8% reads nearly black on the dark ground. */
+  --surface-warn: color-mix(in srgb, var(--color-warn) 8%, var(--color-bg-raised));
+  --surface-danger: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-raised));
 }
 
 /* -- palette: dark ("live phosphor trace on the glass") -------------- */
@@ -92,6 +135,8 @@
     --color-warn: #e8a33d;
     --color-danger: #ff6b5e;
     --color-backdrop: rgb(2 6 4 / 65%);
+    --surface-warn: color-mix(in srgb, var(--color-warn) 10%, var(--color-bg-raised));
+    --surface-danger: color-mix(in srgb, var(--color-danger) 10%, var(--color-bg-raised));
   }
 }
 
@@ -123,6 +168,14 @@ img,
 svg {
   display: block;
   max-width: 100%;
+}
+
+/* The svg reset above (display: block) would otherwise defeat the
+   `hidden` attribute's UA display: none -- author rules beat UA rules
+   regardless of specificity. The icon sprite (ui/icon-defs) and the tape
+   region both rely on `hidden` actually hiding. */
+[hidden] {
+  display: none !important;
 }
 
 button,
@@ -241,7 +294,7 @@ p {
 .bezel {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-bezel);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -279,6 +332,14 @@ p {
   color: var(--color-ink-muted);
 }
 
+/* The tag is decoration; the telemetry cluster is instrumentation. Below
+   this width the two can't share the row -- the tag yields first. */
+@media (max-width: 1360px) {
+  .wordmark__tag {
+    display: none;
+  }
+}
+
 .bezel__spacer {
   flex: 1;
 }
@@ -286,7 +347,7 @@ p {
 .content {
   flex: 1;
   width: 100%;
-  max-width: 76rem;
+  max-width: var(--content-max);
   margin-inline: auto;
   padding: var(--space-6) var(--space-5) var(--space-8);
 }
@@ -306,8 +367,52 @@ p {
 
 .page-head p {
   margin: 0;
-  max-width: 68ch;
+  max-width: var(--measure);
   color: var(--color-ink-muted);
+}
+
+/* -- bezel telemetry strip (spec §3.4, polled) ----------------------------
+   TUNARR (coded-legend dot+text) plus LAST APPLY / NEXT TICK relative
+   readouts, on every page -- the dashboard status card generalized into
+   persistent chrome. Fed by runtime/shell.ts's 60s /status poll; the
+   LIVE/POLL/LINK legend is deliberately absent until SSE (v0.5.4). */
+
+.telemetry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.telemetry__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Multimeter-style segmented dividers, same vocabulary as
+   .hero-panel__meta's readout rules. */
+.telemetry__item:not(:first-child) {
+  border-left: var(--border-width) solid var(--color-graticule);
+  padding-left: var(--space-3);
+}
+
+.telemetry__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-muted);
+  white-space: nowrap;
+}
+
+.telemetry__value {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* The instrument-legend treatment (uppercase + tracking-label) every other
@@ -391,11 +496,13 @@ p {
     opacity var(--duration-fast) var(--ease-out);
 }
 
-.btn:hover {
+/* Every hover rule carries :not(:disabled): a disabled control must not
+   respond to the pointer at all (component-state floor, spec §4). */
+.btn:not(:disabled):hover {
   background: var(--color-bg-inset);
 }
 
-.btn:active {
+.btn:not(:disabled):active {
   transform: translateY(1px);
 }
 
@@ -410,7 +517,22 @@ p {
   color: var(--color-accent-contrast);
 }
 
-.btn--primary:hover {
+.btn--primary:not(:disabled):hover {
+  background: var(--color-accent);
+  filter: brightness(1.08);
+}
+
+/* Danger fill for destructive confirms (the shared confirm dialog's
+   Delete). WCAG: accent-contrast on danger -- light 7.32:1, dark 6.71:1
+   (computed, see DESIGN.md). */
+.btn--danger {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-accent-contrast);
+}
+
+.btn--danger:not(:disabled):hover {
+  background: var(--color-danger);
   filter: brightness(1.08);
 }
 
@@ -419,7 +541,7 @@ p {
   border-color: var(--color-border);
 }
 
-.btn--ghost:hover {
+.btn--ghost:not(:disabled):hover {
   background: var(--color-bg-inset);
   border-color: var(--color-border-interactive);
 }
@@ -430,7 +552,7 @@ p {
   color: var(--color-danger);
 }
 
-.btn--danger-ghost:hover {
+.btn--danger-ghost:not(:disabled):hover {
   background: var(--color-bg-inset);
   border-color: var(--color-danger);
 }
@@ -441,19 +563,42 @@ p {
   background: transparent;
 }
 
-/* The inline SVGs these buttons carry (close ✕, reorder chevrons) have a
-   viewBox but no width/height of their own, and the global `svg` reset
-   (display: block; max-width: 100%) gives them no intrinsic size either —
-   without this rule they render 0x0 and the button shows as an empty
-   (though still clickable) pad. Same sizing approach as .field__toggle
-   svg above. */
-.btn--icon svg {
-  width: 1.125rem;
-  height: 1.125rem;
+.btn--icon:not(:disabled):hover {
+  background: var(--color-bg-inset);
 }
 
-.btn--icon:hover {
-  background: var(--color-bg-inset);
+/* Button loading state (component-state floor): [aria-busy] runs a
+   subdued sweep shimmer inside the button -- the instrument analog of a
+   spinner without being one. The pointer is inert while busy (callers
+   pair aria-busy with :disabled); reduced motion freezes the sweep via
+   the global override, leaving a faint static wash. */
+.btn[aria-busy="true"] {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn[aria-busy="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    color-mix(in srgb, currentcolor 18%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 220% 100%;
+  animation: btn-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes btn-sweep {
+  from {
+    background-position: 140% 0;
+  }
+
+  to {
+    background-position: -40% 0;
+  }
 }
 
 /* --space-2 vertical padding (not --space-1): clears WCAG 2.5.8's 24x24
@@ -466,9 +611,12 @@ p {
   font-size: var(--text-xs);
 }
 
-.btn__icon {
-  width: 1rem;
-  height: 1rem;
+/* One size for every drawn icon (the ui/icon sprite). The global `svg`
+   reset (display: block; max-width: 100%) gives a <use> sprite no
+   intrinsic size, so this rule is what makes icons visible at all. */
+.icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
   flex-shrink: 0;
 }
 
@@ -486,7 +634,7 @@ p {
 
 .status-dot[data-state="armed"] {
   background: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  box-shadow: var(--glow-accent);
 }
 
 /* --color-warn, not --color-danger: an unarmed token is every fresh
@@ -501,7 +649,7 @@ p {
    token's armed/unarmed state (dashboard's Tunarr-reachability dot). */
 .status-dot[data-state="ok"] {
   background: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  box-shadow: var(--glow-accent);
 }
 
 .status-dot[data-state="down"] {
@@ -517,9 +665,10 @@ dialog.panel {
   background: var(--color-bg-raised);
   color: var(--color-ink);
   width: min(28rem, calc(100vw - var(--space-6)));
-  box-shadow:
-    0 20px 60px -20px rgb(0 0 0 / 45%),
-    0 4px 16px rgb(0 0 0 / 20%);
+  /* Small-viewport safety (shared confirm idiom): the dialog itself never
+     exceeds the viewport; a long body scrolls inside .panel__body. */
+  max-height: calc(100dvh - var(--space-6));
+  box-shadow: var(--shadow-dialog);
 
   /* Signature motion: a single authored open/close, not a slide or a
      flicker -- the panel "arms" rather than flashes on. Degrades to an
@@ -573,58 +722,16 @@ dialog.panel::backdrop {
   gap: var(--space-4);
 }
 
+dialog.panel .panel__body {
+  max-height: 60dvh;
+  overflow-y: auto;
+}
+
 .panel__hint {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
   line-height: var(--leading-normal);
-}
-
-.field label {
-  display: block;
-  margin-bottom: var(--space-2);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-label);
-  color: var(--color-ink-muted);
-}
-
-.field__control {
-  position: relative;
-  display: flex;
-}
-
-.field__control input {
-  flex: 1;
-  width: 100%;
-  padding: var(--space-3) var(--space-7) var(--space-3) var(--space-3);
-  background: var(--color-bg-inset);
-  border: var(--border-width) solid var(--color-border-interactive);
-  border-radius: var(--radius-sm);
-  color: var(--color-ink);
-  font-family: var(--font-mono);
-  letter-spacing: 0.08em;
-}
-
-.field__toggle {
-  position: absolute;
-  right: var(--space-2);
-  top: 50%;
-  transform: translateY(-50%);
-  background: transparent;
-  border: none;
-  padding: var(--space-1);
-  color: var(--color-ink-muted);
-  cursor: pointer;
-}
-
-.field__toggle:hover {
-  color: var(--color-ink);
-}
-
-.field__toggle svg {
-  width: 1.1rem;
-  height: 1.1rem;
 }
 
 .panel__status {
@@ -859,6 +966,40 @@ dialog.panel::backdrop {
   width: 8rem;
 }
 
+/* Table-row skeleton variant (ui/skeleton "table-row"): a bordered
+   table-shaped stand-in -- thick header rule and row dividers matching
+   .table-wrap/.history-table, so the loading state has the silhouette of
+   what replaces it. */
+.skeleton-table {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+  overflow: hidden;
+}
+
+.skeleton-table__row {
+  display: flex;
+  gap: var(--space-6);
+  padding: var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.skeleton-table__row:last-child {
+  border-bottom: none;
+}
+
+.skeleton-table__row--head {
+  border-bottom: var(--border-width-thick) solid var(--color-border-interactive);
+}
+
+.skeleton-table__row--head .skeleton-bar {
+  height: 0.75em;
+}
+
+.skeleton-table__row .skeleton-bar {
+  flex: 1;
+}
+
 /* -- inline problem panel (ApiError, network failure) ----------------------
    Near the section that failed, not a toast -- PRODUCT.md's "No silent
    failures: API errors surface inline, near the action that caused them." */
@@ -871,7 +1012,9 @@ dialog.panel::backdrop {
   padding: var(--space-4);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-bg-inset);
+  /* Danger-tinted surface (color-mix token), not plain bg-inset -- WCAG
+     for every text pairing computed in DESIGN.md. */
+  background: var(--surface-danger);
 }
 
 .problem__title {
@@ -884,6 +1027,17 @@ dialog.panel::backdrop {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
+}
+
+/* The muted REF <request_id> line: server-log correlation for the error
+   above it, styled as a quiet instrument stamp, never shouty. */
+.problem__ref {
+  margin: 0;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* -- schedule: conflict warnings --------------------------------------------
@@ -900,7 +1054,8 @@ dialog.panel::backdrop {
   padding: var(--space-4);
   border: var(--border-width) solid var(--color-warn);
   border-radius: var(--radius-md);
-  background: var(--color-bg-inset);
+  /* Warn-tinted surface (color-mix token) -- see .problem's note. */
+  background: var(--surface-warn);
 }
 
 .schedule-warnings__title {
@@ -916,17 +1071,37 @@ dialog.panel::backdrop {
   color: var(--color-ink-muted);
 }
 
-/* -- history: empty state --------------------------------------------------- */
+/* -- teaching empty state (ui/empty partial) -------------------------------
+   Legend line, one sentence, one action -- an empty section teaches what
+   fills it instead of presenting a bare shell. */
 
 .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
   margin: 0;
   padding: var(--space-6);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg-raised);
+  max-width: var(--measure);
+}
+
+.empty-state__legend {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
   color: var(--color-ink-muted);
+}
+
+.empty-state__text {
+  margin: 0;
   font-size: var(--text-sm);
-  max-width: 68ch;
+  color: var(--color-ink-muted);
+  max-width: var(--measure);
 }
 
 /* -- history: table ----------------------------------------------------------
@@ -1238,6 +1413,49 @@ dialog.panel::backdrop {
   border-radius: var(--radius-sm);
   color: var(--color-ink);
   font-family: var(--font-mono);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+/* Component-state floor (spec §4): a field flagged invalid carries the
+   danger border; the label sharpens while its field holds focus. The
+   focus ring itself stays the global :focus-visible outline. */
+.form-field input[aria-invalid="true"],
+.series-cursor__input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.form-field:focus-within > label {
+  color: var(--color-ink);
+}
+
+/* The control wrapper for a field with a trailing inline button (the
+   token panel's show/hide reveal) -- the token panel's former parallel
+   .field/.field__control vocabulary, folded into the one field system. */
+.form-field__control {
+  position: relative;
+  display: flex;
+}
+
+.form-field__control input {
+  flex: 1;
+  padding-right: var(--space-7);
+  letter-spacing: 0.08em;
+}
+
+.form-field__reveal {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  padding: var(--space-1);
+  color: var(--color-ink-muted);
+  cursor: pointer;
+}
+
+.form-field__reveal:not(:disabled):hover {
+  color: var(--color-ink);
 }
 
 .form-field--wide {
@@ -1564,4 +1782,183 @@ dialog.panel::backdrop {
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
+}
+
+/* -- channel legend plate (ui/plate partial) --------------------------------
+   `CH 04 · HORROR` -- the machined-badge idiom replacing raw channel
+   UUIDs everywhere the name is client-available (identity move 6). An
+   unresolvable channel shows its shortened raw id with no CH number --
+   the plate never fabricates a name. */
+
+.plate {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-inset);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.plate__ch {
+  color: var(--color-ink-muted);
+  padding-right: var(--space-2);
+  margin-right: var(--space-2);
+  border-right: var(--border-width) solid var(--color-border);
+  font-variant-numeric: tabular-nums;
+}
+
+.plate__name {
+  color: var(--color-ink);
+}
+
+/* A plate standing in as a section heading (schedule channel heads)
+   scales up a step so it doesn't read as a stray chip. */
+.section-head .plate {
+  font-size: var(--text-sm);
+}
+
+/* -- event tape (ui/tape partial + runtime/tape.ts) -------------------------
+   Success is printed, not toasted: timestamped uppercase lines, newest
+   first, max 3 retained, no auto-dismiss. The newest line takes a 150ms
+   print draw-in (suppressed under reduced motion by the global override);
+   older lines recede to muted. Hidden entirely until the first print. */
+
+.tape {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.tape__line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink);
+}
+
+.tape__line:not(:first-child) {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+
+.tape__time {
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.tape__action {
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.tape__action:not(:disabled):hover {
+  background: var(--color-bg-inset);
+  border-color: var(--color-border-interactive);
+}
+
+.tape__line--new {
+  animation: tape-print var(--duration-fast) var(--ease-out);
+}
+
+@keyframes tape-print {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+
+/* -- /kit/ gallery (dev builds only; excluded from production) ------------- */
+
+.kit-section {
+  margin-top: var(--space-7);
+}
+
+.kit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.kit-row--icons {
+  gap: var(--space-5);
+}
+
+.kit-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.kit-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kit-icon__glyph {
+  display: inline-flex;
+  color: var(--color-ink);
+}
+
+.kit-icon code {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+/* -- forced-colors fallbacks ------------------------------------------------
+   Windows High Contrast strips backgrounds and box-shadows: every state
+   that rides on either gets a border/system-color equivalent here. Text
+   legends (the coded-legend rule) already carry each state's meaning. */
+
+@media (forced-colors: active) {
+  .status-dot {
+    border: var(--border-width-thick) solid CanvasText;
+  }
+
+  .status-dot[data-state="armed"],
+  .status-dot[data-state="ok"] {
+    background: Highlight;
+  }
+
+  .nav__link[aria-current="page"] {
+    border-color: ButtonText;
+    border-bottom: var(--border-width-thick) solid Highlight;
+  }
+
+  .toggle__thumb {
+    border: var(--border-width) solid ButtonText;
+  }
+
+  .toggle[aria-checked="true"] .toggle__track {
+    background: Highlight;
+  }
+
+  .btn[aria-busy="true"]::after {
+    display: none;
+  }
+
+  .plate__ch {
+    border-right-color: CanvasText;
+  }
 }

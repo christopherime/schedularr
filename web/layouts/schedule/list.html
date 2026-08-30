@@ -8,6 +8,8 @@
     </p>
   </div>
 
+  {{ partial "ui/tape.html" . }}
+
   <section class="hero-panel graticule schedule-controls" aria-labelledby="schedule-controls-title">
     <h2 id="schedule-controls-title" class="visually-hidden">Preview controls</h2>
 
@@ -26,25 +28,12 @@
       </div>
       <div class="form-field">
         <label for="schedule-channel">Channel</label>
-        <template x-if="!channelsLoading && !channelsError && channels.length > 0">
-          <select id="schedule-channel" x-model="controls.channelId" :disabled="applying">
-            <option value="">All channels</option>
-            <template x-for="c in channels" :key="c.id">
-              <option :value="c.id" x-text="channelLabel(c)"></option>
-            </template>
-          </select>
-        </template>
-        <template x-if="channelsLoading || channelsError || channels.length === 0">
-          <input
-            type="text"
-            id="schedule-channel"
-            x-model="controls.channelId"
-            placeholder="Leave blank for all channels"
-            autocomplete="off"
-            :disabled="applying"
-          >
-        </template>
-        <p class="form-field__hint" x-show="channelHint()" x-text="channelHint()"></p>
+        {{ partial "ui/channel-select.html" (dict
+          "id" "schedule-channel"
+          "model" "controls.channelId"
+          "disabled" "applying"
+          "emptyOption" "All channels"
+          "placeholder" "Leave blank for all channels") }}
       </div>
     </div>
 
@@ -60,6 +49,7 @@
           type="button"
           class="btn btn--primary"
           :disabled="previewing || applying"
+          :aria-busy="previewing"
           @click="preview()"
           x-text="previewing ? 'Generating…' : 'Generate Preview'"
         ></button>
@@ -85,35 +75,29 @@
   </template>
 
   <template x-if="applyError">
-    <div class="problem" role="alert">
-      <p class="problem__title" x-text="applyError.title"></p>
-      <p class="problem__detail" x-show="applyError.detail" x-text="applyError.detail"></p>
-      <button type="button" class="btn btn--ghost btn--sm" :disabled="!canApply()" @click="requestApply()">Retry</button>
-    </div>
+    {{ partial "ui/problem.html" (dict "label" "Apply failed" "bind" "applyError" "retry" "requestApply()" "retryDisabled" "!canApply()") }}
   </template>
 
   <template x-if="previewing">
-    <div class="skeleton-stack" aria-hidden="true">
-      <span class="skeleton-bar"></span>
-      <span class="skeleton-bar"></span>
-      <span class="skeleton-bar"></span>
-    </div>
+    {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 3) }}
   </template>
 
   <template x-if="!previewing && previewError">
-    <div class="problem" role="alert">
-      <p class="problem__title" x-text="previewError.title"></p>
-      <p class="problem__detail" x-show="previewError.detail" x-text="previewError.detail"></p>
-      <button type="button" class="btn btn--ghost btn--sm" @click="preview()">Retry</button>
-    </div>
+    {{ partial "ui/problem.html" (dict "label" "Preview failed" "bind" "previewError" "retry" "preview()") }}
   </template>
 
   <template x-if="!previewing && !previewError && !plan">
-    <p class="empty-state graticule">Run a preview to see the schedule for this scope before applying anything.</p>
+    {{ partial "ui/empty.html" (dict
+      "legend" "No preview"
+      "text" "Run a preview to see the schedule for this scope before applying anything."
+      "actionLabel" "Generate preview"
+      "actionClick" "preview()") }}
   </template>
 
   <template x-if="!previewing && !previewError && plan && channelEntries().length === 0">
-    <p class="empty-state graticule">No channels matched this scope — nothing would be scheduled.</p>
+    {{ partial "ui/empty.html" (dict
+      "legend" "No match"
+      "text" "No channels matched this scope — nothing would be scheduled.") }}
   </template>
 
   <template x-if="!previewing && !previewError && plan && channelEntries().length > 0">
@@ -121,8 +105,10 @@
       <template x-for="entry in channelEntries()" :key="entry.id">
         <section class="schedule-channel" :aria-labelledby="'schedule-channel-' + entry.id">
           <div class="section-head">
-            <h2 :id="'schedule-channel-' + entry.id" x-text="'Channel ' + entry.id"></h2>
-            <p x-text="entry.slots.length + ' slot' + (entry.slots.length === 1 ? '' : 's')"></p>
+            <h2 :id="'schedule-channel-' + entry.id">
+              {{ partial "ui/plate.html" (dict "expr" "plate(entry.id)") }}
+            </h2>
+            <p x-text="slotsLabel(entry)"></p>
           </div>
           <div class="table-wrap">
             <table class="history-table schedule-table">
@@ -143,7 +129,7 @@
                     <td>
                       <template x-if="programCount(slot) > 0">
                         <details class="schedule-programs">
-                          <summary x-text="programCount(slot) + ' program' + (programCount(slot) === 1 ? '' : 's')"></summary>
+                          <summary x-text="programsLabel(slot)"></summary>
                           <ul>
                             <template x-for="(title, tidx) in programTitles(slot)" :key="tidx">
                               <li x-text="title"></li>
@@ -163,43 +149,16 @@
     </div>
   </template>
 
-  <dialog
-    class="panel"
-    x-ref="confirmDialog"
-    aria-labelledby="apply-confirm-title"
-    aria-describedby="apply-confirm-hint"
-    @click="if ($event.target === $refs.confirmDialog && !applying) cancelApply()"
-    @cancel="if (applying) $event.preventDefault()"
-  >
-    <div class="panel__head">
-      <h2 id="apply-confirm-title" x-text="'Apply ' + applyScopeLabel()"></h2>
-      <button type="button" class="btn btn--icon" :disabled="applying" @click="cancelApply()" aria-label="Close apply confirmation">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18"></path>
-        </svg>
-      </button>
-    </div>
-    <div class="panel__body">
-      <p class="panel__hint" id="apply-confirm-hint" x-text="applyConfirmBody()"></p>
-    </div>
-    <div class="panel__actions">
-      <button type="button" class="btn btn--ghost" :disabled="applying" @click="cancelApply()">Cancel</button>
-      <div class="panel__actions-right">
-        <button
-          type="button"
-          class="btn btn--primary"
-          :disabled="applying"
-          @click="confirmApply()"
-          x-text="applying ? 'Applying…' : 'Confirm Apply'"
-        ></button>
-      </div>
-    </div>
-  </dialog>
+  {{ partial "ui/confirm.html" (dict
+    "title" "'Apply ' + applyScopeLabel()"
+    "body" "applyConfirmBody()"
+    "confirmText" "applying ? 'Applying…' : 'Confirm Apply'"
+    "confirm" "confirmApply()"
+    "cancel" "cancelApply()"
+    "busy" "applying") }}
 </div>
 {{ end }}
 
 {{ define "page_js" }}
-{{- $js := resources.Get "ts/pages/schedule.ts" | js.Build (dict "targetPath" "js/schedule.js") }}
-{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
-<script src="{{ $js.RelPermalink }}" defer></script>
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/schedule.ts" "target" "js/schedule.js") }}
 {{ end }}

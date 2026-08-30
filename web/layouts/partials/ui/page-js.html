@@ -1,0 +1,23 @@
+{{- /*
+  Page-bundle boilerplate, centralized (spec §4). One esbuild bundle per
+  page: the entry imports the shared runtime (web/assets/ts/runtime/*)
+  plus its own component code, so ApiError identity and every helper are
+  the same compiled module within a page -- the old window.schedularr
+  cross-bundle hack is dead. args:
+    entry:     assets path of the page entry ("ts/pages/blocks.ts")
+    target:    js.Build targetPath ("js/blocks.js")
+    cronstrue: pass true to load the vendored cronstrue UMD build FIRST.
+               Ordering constraint: deferred scripts execute in document
+               order, and the page bundle reads the cronstrue global at
+               alpine:init -- the vendor tag must stay above the bundle.
+  Alpine itself is loaded by baseof.html AFTER this block, so every
+  Alpine.data() registration is in place before alpine:init dispatches.
+*/ -}}
+{{- if .cronstrue }}
+{{- with resources.Get "vendor/cronstrue.min.js" }}
+<script src="{{ .RelPermalink }}" defer></script>
+{{- end }}
+{{- end }}
+{{- $js := resources.Get .entry | js.Build (dict "targetPath" .target) }}
+{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
+<script src="{{ $js.RelPermalink }}" defer></script>

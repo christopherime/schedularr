@@ -1,0 +1,41 @@
+{{- /*
+  Loading skeleton (never a spinner). args:
+    variant: "stack" (default) | "row" | "bar" | "table-row"
+    count:   bars/rows to render (default 3)
+    widths:  row variant only -- slice of "sm"/"md"/"lg" modifier suffixes
+             (CSP rule: widths are classes, never inline styles).
+*/ -}}
+{{- $variant := .variant | default "stack" -}}
+{{- $count := .count | default 3 -}}
+{{- if eq $variant "stack" -}}
+<div class="skeleton-stack" aria-hidden="true">
+  {{- range seq $count }}
+  <span class="skeleton-bar"></span>
+  {{- end }}
+</div>
+{{- else if eq $variant "row" -}}
+<div class="skeleton-row" aria-hidden="true">
+  {{- range .widths | default (slice "md" "lg" "sm") }}
+  <span class="skeleton-bar skeleton-bar--w-{{ . }}"></span>
+  {{- end }}
+</div>
+{{- else if eq $variant "table-row" -}}
+<div class="skeleton-table" aria-hidden="true">
+  <div class="skeleton-table__row skeleton-table__row--head">
+    <span class="skeleton-bar skeleton-bar--w-sm"></span>
+    <span class="skeleton-bar skeleton-bar--w-sm"></span>
+    <span class="skeleton-bar skeleton-bar--w-sm"></span>
+    <span class="skeleton-bar skeleton-bar--w-sm"></span>
+  </div>
+  {{- range seq $count }}
+  <div class="skeleton-table__row">
+    <span class="skeleton-bar skeleton-bar--w-md"></span>
+    <span class="skeleton-bar skeleton-bar--w-lg"></span>
+    <span class="skeleton-bar skeleton-bar--w-md"></span>
+    <span class="skeleton-bar skeleton-bar--w-sm"></span>
+  </div>
+  {{- end }}
+</div>
+{{- else -}}
+<span class="skeleton-bar" aria-hidden="true"></span>
+{{- end -}}

@@ -8,23 +8,17 @@
     </p>
   </div>
 
+  {{ partial "ui/tape.html" . }}
+
   <section class="hero-panel graticule status-card" aria-labelledby="status-card-title">
     <h2 id="status-card-title" class="visually-hidden">System status</h2>
 
     <template x-if="statusLoading">
-      <div class="skeleton-row" aria-hidden="true">
-        <span class="skeleton-bar skeleton-bar--w-md"></span>
-        <span class="skeleton-bar skeleton-bar--w-lg"></span>
-        <span class="skeleton-bar skeleton-bar--w-sm"></span>
-      </div>
+      {{ partial "ui/skeleton.html" (dict "variant" "row" "widths" (slice "md" "lg" "sm")) }}
     </template>
 
     <template x-if="!statusLoading && statusError">
-      <div class="problem" role="alert">
-        <p class="problem__title">Status unavailable</p>
-        <p class="problem__detail" x-text="statusError"></p>
-        <button type="button" class="btn btn--ghost btn--sm" @click="loadStatus()">Retry</button>
-      </div>
+      {{ partial "ui/problem.html" (dict "label" "Status unavailable" "bind" "statusError" "retry" "loadStatus()") }}
     </template>
 
     <template x-if="!statusLoading && !statusError && status">
@@ -66,26 +60,19 @@
     </div>
 
     <template x-if="historyLoading">
-      <div class="skeleton-stack" aria-hidden="true">
-        <span class="skeleton-bar"></span>
-        <span class="skeleton-bar"></span>
-        <span class="skeleton-bar"></span>
-      </div>
+      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 3) }}
     </template>
 
     <template x-if="!historyLoading && historyError">
-      <div class="problem" role="alert">
-        <p class="problem__title">History unavailable</p>
-        <p class="problem__detail" x-text="historyError"></p>
-        <button type="button" class="btn btn--ghost btn--sm" @click="loadHistory()">Retry</button>
-      </div>
+      {{ partial "ui/problem.html" (dict "label" "History unavailable" "bind" "historyError" "retry" "loadHistory()") }}
     </template>
 
     <template x-if="!historyLoading && !historyError && history.length === 0">
-      <p class="empty-state graticule">
-        Nothing has aired yet. Once a block's schedule runs against Tunarr,
-        entries will show up here.
-      </p>
+      {{ partial "ui/empty.html" (dict
+        "legend" "No trace"
+        "text" "Nothing has aired yet. Once a block's schedule runs against Tunarr, entries show up here."
+        "actionLabel" "Set up blocks"
+        "actionHref" "/blocks/") }}
     </template>
 
     <template x-if="!historyLoading && !historyError && history.length > 0">
@@ -103,7 +90,7 @@
             <template x-for="(entry, index) in history" :key="index">
               <tr>
                 <td x-text="formatLocal(entry.scheduled_at)"></td>
-                <td x-text="entry.channel_id ?? '—'"></td>
+                <td>{{ partial "ui/plate.html" (dict "expr" "plate(entry.channel_id)") }}</td>
                 <td x-text="entry.block_name ?? '—'"></td>
                 <td class="history-table__id" x-text="entry.program_id ?? '—'"></td>
               </tr>
@@ -117,7 +104,5 @@
 {{ end }}
 
 {{ define "page_js" }}
-{{- $js := resources.Get "ts/pages/dashboard.ts" | js.Build (dict "targetPath" "js/dashboard.js") }}
-{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
-<script src="{{ $js.RelPermalink }}" defer></script>
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/dashboard.ts" "target" "js/dashboard.js") }}
 {{ end }}

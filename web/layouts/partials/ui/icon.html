@@ -1,0 +1,8 @@
+{{- /*
+  One drawn icon from the sprite (ui/icon-defs.html).
+  args: name (required, e.g. "x"), class (optional extra class).
+  Sized by --icon-size; decorative by default (aria-hidden) -- a caller
+  needing a labelled icon wraps it with its own text, per the coded-legend
+  rule.
+*/ -}}
+<svg class="icon{{ with .class }} {{ . }}{{ end }}" aria-hidden="true"><use href="#i-{{ .name }}"></use></svg>

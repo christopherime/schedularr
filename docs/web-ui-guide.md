@@ -25,9 +25,15 @@ make web
 
 `make web-types` (openapi-typescript → `web/assets/ts/gen/types.d.ts`), `make web-check` (type-check with `tsc --noEmit`), and `make web-build` (the Hugo build) are real prerequisites of each other, in that order, so `make -j` can't interleave them.
 
+Hugo's config lives in `web/config/` (`_default/hugo.toml` plus a `production/hugo.toml` overlay). `make web` builds the production environment; `hugo -s web -e development` additionally builds the dev-only **`/kit/`** component gallery — every shared partial in every state, on fixture data — which is the review gate for UI changes and never ships in the binary.
+
+### Shared runtime
+
+Each page loads exactly one script bundle: a thin page entry (`web/assets/ts/pages/*.ts`) compiled together with the shared runtime (`web/assets/ts/runtime/`) — the typed API client (with request timeouts and a double-submit guard on every mutation), token storage, error/formatting helpers, the `/channels` cache behind the channel pickers and legend plates, the event tape, and the shell wiring (token panel + bezel telemetry).
+
 ### Unit tests
 
-`make web-test` (also part of `make lint`, and a CI step) runs the UI logic tests in `web/tests/` on Node's built-in test runner — no test framework dependency; Node's native type stripping executes the `.test.ts` files directly. Page modules import cleanly under Node with a one-line `document` stub (their only top-level side effect is registering an `alpine:init` listener), and the vendored `cronstrue` UMD bundle is loaded as the same global the browser gets. Add new tests as `web/tests/*.test.ts`; they are type-checked by `tsc --noEmit` along with the sources.
+`make web-test` (also part of `make lint`, and a CI step) runs the UI logic tests in `web/tests/` on Node's built-in test runner — no test framework dependency; Node's native type stripping executes the `.test.ts` files directly. Page modules import cleanly under Node with small `document`/`window` stubs (their top-level side effects — registering an `alpine:init` listener and the shell init — are inert against them), and the vendored `cronstrue` UMD bundle is loaded as the same global the browser gets. The suite covers the runtime's error describing, typed path building, channel labeling/plates, and formatting, plus the blocks page's cron round-trip and spec round-trip and the schedule page's days clamp. Add new tests as `web/tests/*.test.ts`; they are type-checked by `tsc --noEmit` along with the sources.
 
 ## Token Setup
 
@@ -35,8 +41,22 @@ The UI talks to `/api/v1` with the same bearer token `schedularr serve` was star
 
 1. Open the UI (`http://<host>:8484/` by default). With no token stored, the **Arm API Token** panel opens automatically.
 2. Paste the same token the server was started with. The input is masked; click the eye icon to reveal it before saving.
-3. **Save** persists it and closes the panel. **Clear** wipes it (and leaves the panel open). The panel is reachable anytime via the **Token** button in the header — the status dot next to it reflects whether a token is currently *stored*, not whether it's valid.
-4. If any API call comes back `401` (wrong or expired token), the panel reopens automatically with an inline error. Saving a new token does **not** retry the action that failed — repeat it once the token is updated.
+3. **Save** stores the token, probes `GET /api/v1/status` with it, and flips the header dot to **Armed** only when that probe succeeds — the dot now means *verified*, not merely *stored*. A failed probe keeps the panel open with the error inline. **Clear** wipes the token (and leaves the panel open).
+4. If any API call comes back `401` (wrong or expired token), the panel reopens automatically with an inline error and the dot drops to **Unarmed**. Arming a new token re-fires whichever page *loads* had failed — no per-section Retry grind — but never repeats a write (create/apply/delete); repeat those yourself.
+
+## Bezel telemetry
+
+The header carries a persistent telemetry strip on every page, refreshed from `GET /api/v1/status` every 60 seconds:
+
+- **TUNARR** — signal dot plus text (**Signal** / **No Signal**, or **No data** while the poll itself can't reach the server).
+- **LAST APPLY** — how long ago the most recent apply pushed a lineup to Tunarr (`Status.last_applied_at`), or an em dash before any apply has been recorded.
+- **NEXT TICK** — when `serve`'s cron loop will next generate and apply (`Status.next_cron_tick`).
+
+There is deliberately no LIVE/POLL link legend yet — that arrives with the SSE live layer (v0.5.4), and the strip does not pretend to be live before then.
+
+## Event tape
+
+Successful writes print onto an inline **event tape** under the page heading — timestamped uppercase lines, newest first, at most three retained, never a toast and never auto-dismissed. Saving, deleting, or toggling a block and toggling a series row all print tape lines.
 
 ## Page Tour
 
@@ -49,9 +69,9 @@ The UI talks to `/api/v1` with the same bearer token `schedularr serve` was star
 Two sections, each fetched independently on load:
 
 - **System status** — reads `GET /api/v1/status`: the server `version`, a Tunarr signal indicator, and the current block count. A Tunarr that can't be reached renders as a normal instrument reading, not an error: the status dot flips to "No Signal" and the server's own `tunarr_error` text prints inline underneath it.
-- **Recent history** — reads `GET /api/v1/history?days=7`: a table of what has aired (scheduled time in the browser's local timezone, plus channel, block, and program ID). An empty result renders an explanatory empty state rather than an empty table shell.
+- **Recent history** — reads `GET /api/v1/history?days=7`: a table of what has aired (scheduled time in the browser's local timezone, plus channel, block, and program ID). The channel column renders a **legend plate** (`CH 04 · HORROR`, resolved from `GET /api/v1/channels`) instead of the raw channel UUID; an unresolvable channel falls back to its shortened id. An empty result renders a teaching empty state rather than an empty table shell.
 
-Both sections load, error, and empty-state independently: a failed `/status` call doesn't block history from rendering, and vice versa. A failure renders the API's `problem+json` `title`/`detail` inline, next to the section that failed, with a **Retry** button — never a toast.
+Both sections load, error, and empty-state independently: a failed `/status` call doesn't block history from rendering, and vice versa. A failure renders the API's `problem+json` `title`/`detail` inline, next to the section that failed, with a **Retry** button and a muted `REF <request_id>` line for correlating with the server log — never a toast.
 
 ### Blocks (`/blocks/`)
 
@@ -61,9 +81,9 @@ Both sections load, error, and empty-state independently: a failed `/status` cal
 
 List every stored block and create/edit/delete them, backed entirely by `GET`/`POST`/`PUT`/`DELETE /api/v1/blocks[/{id}]`. One page, no routing between list and editor: a **+ New Block** button and each row's **Edit** open an inline panel above the list, which auto-scrolls into view and focuses the name field when it opens.
 
-**List** — name, a type badge (`filter`/`series`), the raw cron plus a plain-language readback underneath it (**cronstrue** — see [Design System](design-system.md#vendored-dependencies)), `channel_id`, an **Enabled/Disabled** toggle, and **Edit**/**Delete**. Delete requires a second click ("Delete" → inline **Confirm**/**Cancel**) before anything is sent.
+**List** — name, a type badge (`filter`/`series`), the raw cron plus a plain-language readback underneath it (**cronstrue** — see [Design System](design-system.md#vendored-dependencies)), the channel as a legend plate, an **Enabled/Disabled** toggle, and **Edit**/**Delete**. Delete opens the shared native `<dialog>` confirmation naming the block before anything is sent — the same confirm idiom the Schedule page's Apply uses. Load and action failures share one inline problem panel above the list, with **Reload blocks** as the recovery.
 
-**Editor — common fields**: name, schedule (see "Schedule picker" below), duration (minutes), channel, priority, max duration overflow (minutes), and enabled. Name, schedule, duration, and channel are marked required with a static `*` next to the label. `channel_id` is a `<select>` populated from `GET /api/v1/channels` when Tunarr answers with at least one channel; it falls back to a free-text input (with an inline reason) when the call fails or returns nothing.
+**Editor — common fields**: name, schedule (see "Schedule picker" below), duration (minutes), channel, priority, max duration overflow (minutes), and enabled. Name, schedule, duration, and channel are marked required with a static `*` next to the label. `channel_id` is a `<select>` populated from `GET /api/v1/channels` when Tunarr answers with at least one channel; while the list is still loading it shows an explicit disabled "Loading channels…" select, and it falls back to a free-text input (with an inline reason) when the call fails or returns nothing.
 
 #### Schedule picker
 
@@ -96,7 +116,7 @@ Preview a schedule, then apply it — a dry-run/apply pair backed by `POST /api/
 
 **Controls** — a `days` number input (1–30, defaulting to 7, clamped client-side to that range before every request) and a `channel_id` scope: a `<select>` (first option always **All channels**) populated from `GET /api/v1/channels`, falling back to free text (blank still means all channels) when Tunarr is unreachable.
 
-**Preview** — **Generate Preview** sends `POST /api/v1/generate`, which always dry-runs. Each channel in the response renders as its own section: slots listed chronologically with **start**/**end** in the browser's local timezone, the block name, and a program count that expands (`<details>`) into the individual program titles. A visible **Preview — nothing applied** readout makes the dry-run state explicit.
+**Preview** — **Generate Preview** sends `POST /api/v1/generate`, which always dry-runs. Each channel in the response renders as its own section headed by its legend plate (`CH 04 · HORROR`, not the raw UUID): slots listed chronologically with **start**/**end** in the browser's local timezone, the block name, and a program count that expands (`<details>`) into the individual program titles. A visible **Preview — nothing applied** readout makes the dry-run state explicit. A blank days field previews the documented default of 7 days (previously it silently clamped to 1).
 
 **Apply** — disabled until a preview has run **for the exact controls currently on screen**: editing `days` or the channel scope after a preview invalidates it immediately, and a fresh **Generate Preview** is required to re-arm it (the web equivalent of the CLI's `--yes` gate, applied per action rather than once per process). Clicking **Apply** opens a native `<dialog>` confirmation naming the scope exactly: **"Apply ALL channels"** or **"Apply channel `<id>`"**, plus a real slot/channel count summary. Confirming sends `POST /api/v1/apply` with the identical body the preview used — `/apply` independently re-runs the generate-and-push workflow server-side, so this means the same request, not a cached payload. A successful apply flips the readout to **Applied** with a summary line and immediately disables **Apply** again.
 

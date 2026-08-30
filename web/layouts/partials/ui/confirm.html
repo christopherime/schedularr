@@ -1,0 +1,48 @@
+{{- /*
+  The one native <dialog> confirm idiom (spec §4) -- apply, delete, and
+  every future bulk action share it; ends the three-pattern drift. The
+  dialog carries max-height/overflow for small viewports (CSS). args:
+    title:        Alpine x-text expression for the heading
+    body:         Alpine x-text expression for the body sentence
+    confirmText:  Alpine x-text expression for the confirm button
+    confirm:      Alpine click expression executing the action
+    cancel:       Alpine click expression dismissing (state-level guard
+                  against closing mid-flight lives in the component)
+    busy:         Alpine expression true while the action is in flight
+    confirmClass: optional button variant (default "btn--primary";
+                  destructive confirms pass "btn--danger")
+  The component must expose $refs.confirmDialog (x-ref below) and its
+  request* method calls $refs.confirmDialog.showModal(). Native <dialog>
+  gives focus trap, Escape (guarded while busy), and focus return.
+*/ -}}
+<dialog
+  class="panel"
+  x-ref="confirmDialog"
+  aria-labelledby="confirm-title"
+  aria-describedby="confirm-body"
+  @click="if ($event.target === $refs.confirmDialog && !({{ .busy }})) { {{ .cancel }} }"
+  @cancel="if ({{ .busy }}) $event.preventDefault()"
+>
+  <div class="panel__head">
+    <h2 id="confirm-title" x-text="{{ .title }}"></h2>
+    <button type="button" class="btn btn--icon" :disabled="{{ .busy }}" @click="{{ .cancel }}" aria-label="Close confirmation">
+      {{ partial "ui/icon.html" (dict "name" "x") }}
+    </button>
+  </div>
+  <div class="panel__body">
+    <p class="panel__hint" id="confirm-body" x-text="{{ .body }}"></p>
+  </div>
+  <div class="panel__actions">
+    <button type="button" class="btn btn--ghost" :disabled="{{ .busy }}" @click="{{ .cancel }}">Cancel</button>
+    <div class="panel__actions-right">
+      <button
+        type="button"
+        class="btn {{ .confirmClass | default "btn--primary" }}"
+        :disabled="{{ .busy }}"
+        :aria-busy="{{ .busy }}"
+        @click="{{ .confirm }}"
+        x-text="{{ .confirmText }}"
+      ></button>
+    </div>
+  </div>
+</dialog>

@@ -1,0 +1,22 @@
+{{- /*
+  The role="switch" rocker toggle, shared instead of pasted. Coded-legend
+  discipline: the adjacent label text carries the state, the track color
+  is a secondary scan aid only. args:
+    checked:  Alpine expression for the on/off state
+    click:    Alpine click expression
+    disabled: optional Alpine :disabled expression
+    on / off: state label text ("Enabled" / "Disabled")
+*/ -}}
+<button
+  type="button"
+  class="toggle"
+  role="switch"
+  :aria-checked="{{ .checked }}"
+  {{- with .disabled }}
+  :disabled="{{ . }}"
+  {{- end }}
+  @click="{{ .click }}"
+>
+  <span class="toggle__track"><span class="toggle__thumb"></span></span>
+  <span class="toggle__label" x-text="({{ .checked }}) ? '{{ .on }}' : '{{ .off }}'"></span>
+</button>

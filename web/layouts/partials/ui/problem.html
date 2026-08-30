@@ -1,0 +1,21 @@
+{{- /*
+  The single inline error idiom (spec §4): rendered next to the section
+  that failed, never a toast. args:
+    label: static section context line ("Blocks unavailable")
+    bind:  Alpine expression resolving to a runtime ProblemView
+           (title/detail/requestId) -- callers gate the partial behind
+           x-if/x-show on the same expression, so it is non-null here
+    retry: optional Alpine click expression for the recovery action
+    retryLabel:    optional button label (default "Retry")
+    retryDisabled: optional Alpine :disabled expression
+  The muted REF line carries the API's request_id for server-log
+  correlation, only when the response actually sent one.
+*/ -}}
+<div class="problem" role="alert">
+  <p class="problem__title">{{ .label }}</p>
+  <p class="problem__detail" x-text="({{ .bind }}).detail ? ({{ .bind }}).title + ': ' + ({{ .bind }}).detail : ({{ .bind }}).title"></p>
+  {{- with .retry }}
+  <button type="button" class="btn btn--ghost btn--sm"{{ with $.retryDisabled }} :disabled="{{ . }}"{{ end }} @click="{{ . }}">{{ $.retryLabel | default "Retry" }}</button>
+  {{- end }}
+  <p class="problem__ref" x-show="({{ .bind }}).requestId" x-text="'REF ' + ({{ .bind }}).requestId"></p>
+</div>

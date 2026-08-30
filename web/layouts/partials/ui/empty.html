@@ -1,0 +1,18 @@
+{{- /*
+  Teaching empty state (spec §4): legend line, one sentence, one action.
+  args:
+    legend: short uppercase instrument legend ("NO TRACE")
+    text:   one sentence explaining why it's empty / what fills it
+    actionLabel + one of:
+      actionHref:  plain link action
+      actionClick: Alpine click expression
+*/ -}}
+<div class="empty-state graticule">
+  <p class="empty-state__legend">{{ .legend }}</p>
+  <p class="empty-state__text">{{ .text }}</p>
+  {{- if and .actionLabel .actionHref }}
+  <a class="btn btn--ghost btn--sm" href="{{ .actionHref }}">{{ .actionLabel }}</a>
+  {{- else if and .actionLabel .actionClick }}
+  <button type="button" class="btn btn--ghost btn--sm" @click="{{ .actionClick }}">{{ .actionLabel }}</button>
+  {{- end }}
+</div>

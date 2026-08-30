@@ -29,14 +29,22 @@
 //      non-omitempty string, so in practice a `title` key is always present
 //      -- but this file still guards with a runtime typeof check rather than
 //      asserting the shape, since the contract itself makes no promise.
-import type { ApiRequestJSON, ApiResponse } from "../api";
+import { apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
+import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
+import { channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
+import type { Channel, PlateParts } from "../runtime/channels.ts";
+import { toProblemView } from "../runtime/errors.ts";
+import type { ProblemView } from "../runtime/errors.ts";
+import { formatLocal, plural } from "../runtime/format.ts";
+import { initShell } from "../runtime/shell.ts";
 import type { components } from "../gen/types";
+
+initShell();
 
 type PlanResult = ApiResponse<"generateSchedule", 200>;
 type ScheduledSlot = components["schemas"]["ScheduledSlot"];
 type Warning = components["schemas"]["Warning"];
 type GenerateBody = ApiRequestJSON<"generateSchedule">;
-type Channel = ApiResponse<"listChannels", 200>[number];
 
 declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
@@ -46,27 +54,13 @@ declare const Alpine: {
 // is auto-invoked, so nothing on this page also wires x-init="init()" to it.
 let started = false;
 
-// ---- problem+json rendering -------------------------------------------
-//
-// Unlike dashboard.ts/blocks.ts's describeError() (which folds title+detail
-// into one string for a page-level static "X unavailable" label), this
-// page's binding contract calls for the API's own title *and* detail
-// rendered as two distinct pieces -- the 502 case specifically names
-// "schedule generation failed" (the server's literal Problem.title, see
-// internal/api/schedule.go:writeScheduleRunnerError) as something the UI
-// must show verbatim, not hide behind a generic page label.
-
-interface ProblemInfo {
-  title: string;
-  detail: string | null;
-}
-
-function toProblem(err: unknown): ProblemInfo {
-  if (err instanceof window.schedularr.ApiError) {
-    return { title: err.title, detail: err.detail ?? null };
-  }
-  return { title: "Request failed", detail: err instanceof Error ? err.message : String(err) };
-}
+// Problem rendering note: this page's binding contract calls for the
+// API's own title *and* detail rendered as two distinct pieces -- the 502
+// case specifically names "schedule generation failed" (the server's
+// literal Problem.title, internal/api/schedule.go:writeScheduleRunnerError)
+// as something the UI must show verbatim. The shared ProblemView/ui-problem
+// idiom does exactly that (title line + detail line + REF), so this page
+// now uses the runtime's toProblemView like every other page.
 
 // ---- controls -> wire request -------------------------------------------
 
@@ -91,8 +85,14 @@ interface RequestSignature {
  * still slips out of range is caught by the API's own 400 (the "rely on API
  * 400" half) -- toProblem()/previewError render that like any other
  * problem+json response. */
-function clampDays(raw: string): number {
-  const n = Number(raw.trim());
+export function clampDays(raw: string): number {
+  const trimmed = raw.trim();
+  // Blank input must take the schema default (7), not fall through
+  // Number("") === 0 into the 1-day clamp -- the latter contradicted both
+  // this function's contract and the field's own "defaults to 7" hint
+  // (caught by web/tests/schedule.test.ts during the v0.5.0 refactor).
+  if (trimmed === "") return 7;
+  const n = Number(trimmed);
   if (!Number.isFinite(n)) return 7;
   return Math.min(30, Math.max(1, Math.round(n)));
 }
@@ -116,19 +116,6 @@ function programTitle(p: Record<string, unknown>): string {
   return typeof p.title === "string" && p.title.trim() !== "" ? p.title : "—";
 }
 
-/** A real plural ("1 slot", "2 slots"), not a mechanical "slot(s)" suffix
- * -- see the copy audit's "Mechanical (s) pluralization" item. */
-function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
-}
-
-function channelLabel(c: Channel): string {
-  const parts: string[] = [];
-  if (c.number !== undefined) parts.push(String(c.number));
-  parts.push(c.name ?? c.id ?? "?");
-  return parts.join(" · ");
-}
-
 interface ChannelEntry {
   id: string;
   slots: ScheduledSlot[];
@@ -142,18 +129,19 @@ interface ScheduleState {
   channels: Channel[];
 
   previewing: boolean;
-  previewError: ProblemInfo | null;
+  previewError: ProblemView | null;
   plan: PlanResult | null;
   previewedRequest: RequestSignature | null;
 
   applying: boolean;
-  applyError: ProblemInfo | null;
+  applyError: ProblemView | null;
   appliedAt: string | null;
 
   init(): void;
   loadChannels(): Promise<void>;
   channelLabel(c: Channel): string;
   channelHint(): string;
+  plate(id: string): PlateParts;
 
   requestSignature(): RequestSignature;
   canApply(): boolean;
@@ -166,6 +154,8 @@ interface ScheduleState {
   channelEntries(): ChannelEntry[];
   programCount(slot: ScheduledSlot): number;
   programTitles(slot: ScheduledSlot): string[];
+  slotsLabel(entry: ChannelEntry): string;
+  programsLabel(slot: ScheduledSlot): string;
   formatLocal(iso: string | undefined): string;
 
   warnings(): Warning[];
@@ -207,15 +197,20 @@ document.addEventListener("alpine:init", () => {
         if (started) return;
         started = true;
         void this.loadChannels();
+        // Arming a new token re-fires the channel load; a failed preview
+        // is an action, not a load, so it stays behind its own button.
+        onReauth(() => {
+          if (this.channelsError) void this.loadChannels();
+        });
       },
 
       async loadChannels() {
         this.channelsLoading = true;
         this.channelsError = null;
         try {
-          this.channels = await window.schedularr.apiGet<Channel[]>("/api/v1/channels");
+          this.channels = await loadChannels();
         } catch (err) {
-          const problem = toProblem(err);
+          const problem = toProblemView(err);
           this.channelsError = problem.detail ?? problem.title;
           this.channels = [];
         } finally {
@@ -224,6 +219,10 @@ document.addEventListener("alpine:init", () => {
       },
 
       channelLabel,
+
+      plate(id) {
+        return channelPlate(id, this.channels);
+      },
 
       // Select-vs-free-text fallback, same gating blocks.ts uses for its own
       // channel field: a reachable Tunarr with a non-empty channel list gets
@@ -264,9 +263,9 @@ document.addEventListener("alpine:init", () => {
         this.previewError = null;
         this.applyError = null;
         try {
-          const result = await window.schedularr.apiSend<PlanResult>(
+          const result = await apiSend<PlanResult>(
             "POST",
-            "/api/v1/generate",
+            apiPath("/generate"),
             buildRequestBody(sig),
           );
           this.plan = result;
@@ -278,7 +277,7 @@ document.addEventListener("alpine:init", () => {
           // for a *different* scope sitting next to a fresh error could
           // read as still valid, even though canApply() would already
           // block it.
-          this.previewError = toProblem(err);
+          this.previewError = toProblemView(err);
           this.plan = null;
           this.previewedRequest = null;
         } finally {
@@ -323,9 +322,9 @@ document.addEventListener("alpine:init", () => {
         }
         this.applying = true;
         try {
-          const result = await window.schedularr.apiSend<PlanResult>(
+          const result = await apiSend<PlanResult>(
             "POST",
-            "/api/v1/apply",
+            apiPath("/apply"),
             buildRequestBody(sig),
           );
           this.plan = result;
@@ -337,7 +336,7 @@ document.addEventListener("alpine:init", () => {
           this.previewedRequest = null;
           this.cancelApply(true);
         } catch (err) {
-          this.applyError = toProblem(err);
+          this.applyError = toProblemView(err);
           this.cancelApply(true);
         } finally {
           this.applying = false;
@@ -373,22 +372,15 @@ document.addEventListener("alpine:init", () => {
         return (slot.programs ?? []).map(programTitle);
       },
 
-      // Local timezone, not the UTC wire value -- same convention as
-      // dashboard.ts's formatLocal (duplicated here rather than shared,
-      // since main.ts and every page bundle compile as separate esbuild
-      // bundles with no shared runtime module between them).
-      formatLocal(iso) {
-        if (!iso) return "—";
-        const d = new Date(iso);
-        if (Number.isNaN(d.getTime())) return iso;
-        return d.toLocaleString(undefined, {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+      slotsLabel(entry) {
+        return plural(entry.slots.length, "slot");
       },
+
+      programsLabel(slot) {
+        return plural(this.programCount(slot), "program");
+      },
+
+      formatLocal,
 
       // Exact wording the binding contract requires: "Apply ALL channels"
       // vs "Apply channel <id>" -- callers concatenate "Apply " + this.

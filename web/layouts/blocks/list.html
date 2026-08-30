@@ -8,6 +8,8 @@
     </p>
   </div>
 
+  {{ partial "ui/tape.html" . }}
+
   <div class="blocks-toolbar">
     <button type="button" id="new-block-btn" class="btn btn--primary" @click="openCreate()">+ New Block</button>
   </div>
@@ -17,9 +19,7 @@
       <div class="panel__head">
         <h2 id="editor-title" x-text="editor.mode === 'create' ? 'New Block' : 'Edit Block'"></h2>
         <button type="button" class="btn btn--icon" @click="closeEditor()" aria-label="Close editor">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18"></path>
-          </svg>
+          {{ partial "ui/icon.html" (dict "name" "x") }}
         </button>
       </div>
 
@@ -28,7 +28,7 @@
           <div class="form-grid">
             <div class="form-field">
               <label for="editor-name">Name<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
-              <input type="text" id="editor-name" x-model="editor.form.name" autocomplete="off">
+              <input type="text" id="editor-name" x-model="editor.form.name" autocomplete="off" :aria-invalid="editor.nameConflict ? 'true' : null">
               <p class="form-field__error" x-show="editor.nameConflict" x-text="editor.nameConflict"></p>
             </div>
             <div class="form-field">
@@ -131,18 +131,12 @@
             </div>
             <div class="form-field">
               <label for="editor-channel">Channel<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
-              <template x-if="!channelsLoading && !channelsError && channels.length > 0">
-                <select id="editor-channel" x-model="editor.form.channel_id">
-                  <option value="">— select a channel —</option>
-                  <template x-for="c in channelSelectOptions()" :key="c.id">
-                    <option :value="c.id" x-text="channelLabel(c)"></option>
-                  </template>
-                </select>
-              </template>
-              <template x-if="channelsLoading || channelsError || channels.length === 0">
-                <input type="text" id="editor-channel" x-model="editor.form.channel_id" placeholder="channel-1" autocomplete="off">
-              </template>
-              <p class="form-field__hint" x-show="channelHint()" x-text="channelHint()"></p>
+              {{ partial "ui/channel-select.html" (dict
+                "id" "editor-channel"
+                "model" "editor.form.channel_id"
+                "emptyOption" "— select a channel —"
+                "options" "channelSelectOptions()"
+                "placeholder" "channel-1") }}
             </div>
             <div class="form-field">
               <label for="editor-priority">Priority</label>
@@ -240,9 +234,7 @@
                         :aria-label="'Move series ' + (index + 1) + ' up'"
                         @click="moveSeriesRowUp(index)"
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
-                          <path d="M6 15l6-6 6 6"></path>
-                        </svg>
+                        {{ partial "ui/icon.html" (dict "name" "chevron-up") }}
                       </button>
                       <button
                         type="button"
@@ -251,9 +243,7 @@
                         :aria-label="'Move series ' + (index + 1) + ' down'"
                         @click="moveSeriesRowDown(index)"
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
-                          <path d="M6 9l6 6 6-6"></path>
-                        </svg>
+                        {{ partial "ui/icon.html" (dict "name" "chevron-down") }}
                       </button>
                       <button type="button" class="btn btn--danger-ghost btn--sm" @click="removeSeriesRow(index)">Remove</button>
                     </div>
@@ -290,7 +280,7 @@
                     </div>
                     <div class="form-field form-field--wide">
                       <label :for="'series-skip-' + index">Skip episodes</label>
-                      <input type="text" :id="'series-skip-' + index" x-model="row.skip_episodes" placeholder="S01E02, S01E04">
+                      <input type="text" :id="'series-skip-' + index" x-model="row.skip_episodes" placeholder="S01E02, S01E04" :aria-invalid="editor.seriesRowErrors[index] ? 'true' : null">
                       <p class="form-field__error" x-show="editor.seriesRowErrors[index]" x-text="editor.seriesRowErrors[index]"></p>
                     </div>
                   </div>
@@ -367,6 +357,7 @@
             type="submit"
             class="btn btn--primary"
             :disabled="editor.submitting"
+            :aria-busy="editor.submitting"
             x-text="editor.submitting ? 'Saving…' : (editor.mode === 'create' ? 'Create' : 'Save')"
           ></button>
         </div>
@@ -380,34 +371,23 @@
       <p>Every scheduling rule currently stored, enabled or not.</p>
     </div>
 
-    <template x-if="listError">
-      <p class="panel__status" data-tone="error" role="alert">
-        <span x-text="listError"></span>
-        <button type="button" class="btn btn--ghost btn--sm" @click="loadBlocks()">Retry</button>
-      </p>
-    </template>
-
     <template x-if="blocksLoading">
-      <div class="skeleton-stack" aria-hidden="true">
-        <span class="skeleton-bar"></span>
-        <span class="skeleton-bar"></span>
-        <span class="skeleton-bar"></span>
-      </div>
+      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 3) }}
     </template>
 
-    <template x-if="!blocksLoading && blocksError">
-      <div class="problem" role="alert">
-        <p class="problem__title">Blocks unavailable</p>
-        <p class="problem__detail" x-text="blocksError"></p>
-        <button type="button" class="btn btn--ghost btn--sm" @click="loadBlocks()">Retry</button>
-      </div>
+    <template x-if="!blocksLoading && blocksProblem">
+      {{ partial "ui/problem.html" (dict "label" "Blocks unavailable" "bind" "blocksProblem" "retry" "loadBlocks()" "retryLabel" "Reload blocks") }}
     </template>
 
-    <template x-if="!blocksLoading && !blocksError && blocks.length === 0">
-      <p class="empty-state graticule">No blocks yet. Create one with "+ New Block" above.</p>
+    <template x-if="!blocksLoading && !blocksProblem && blocks.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No blocks"
+        "text" "No scheduling rules stored yet — a block fills a Tunarr channel on a cron schedule."
+        "actionLabel" "New block"
+        "actionClick" "openCreate()") }}
     </template>
 
-    <template x-if="!blocksLoading && !blocksError && blocks.length > 0">
+    <template x-if="!blocksLoading && blocks.length > 0">
       <div class="table-wrap">
         <table class="history-table blocks-table">
           <thead>
@@ -431,40 +411,20 @@
                     <span class="blocks-table__cron-hint" x-show="cronReadback(block.spec.cron)" x-text="cronReadback(block.spec.cron)"></span>
                   </div>
                 </td>
-                <td x-text="block.spec.channel_id"></td>
+                <td>{{ partial "ui/plate.html" (dict "expr" "plate(block.spec.channel_id)") }}</td>
                 <td>
-                  <button
-                    type="button"
-                    class="toggle"
-                    role="switch"
-                    :aria-checked="block.enabled"
-                    :disabled="pendingId === block.id"
-                    @click="toggleEnabled(block)"
-                  >
-                    <span class="toggle__track"><span class="toggle__thumb"></span></span>
-                    <span class="toggle__label" x-text="block.enabled ? 'Enabled' : 'Disabled'"></span>
-                  </button>
+                  {{ partial "ui/toggle.html" (dict
+                    "checked" "block.enabled"
+                    "disabled" "pendingId === block.id"
+                    "click" "toggleEnabled(block)"
+                    "on" "Enabled"
+                    "off" "Disabled") }}
                 </td>
                 <td class="blocks-table__actions">
-                  <template x-if="confirmDeleteId !== block.id">
-                    <div class="row-actions">
-                      <button type="button" :id="'block-edit-' + block.id" class="btn btn--ghost btn--sm" @click="openEdit(block)">Edit</button>
-                      <button type="button" class="btn btn--danger-ghost btn--sm" @click="requestDelete(block.id)">Delete</button>
-                    </div>
-                  </template>
-                  <template x-if="confirmDeleteId === block.id">
-                    <div class="row-actions row-actions--confirm">
-                      <span class="row-actions__prompt">Delete this block?</span>
-                      <button
-                        type="button"
-                        id="block-delete-confirm-btn"
-                        class="btn btn--danger-ghost btn--sm"
-                        :disabled="pendingId === block.id"
-                        @click="performDelete(block.id)"
-                      >Confirm</button>
-                      <button type="button" class="btn btn--ghost btn--sm" @click="cancelDelete()">Cancel</button>
-                    </div>
-                  </template>
+                  <div class="row-actions">
+                    <button type="button" :id="'block-edit-' + block.id" class="btn btn--ghost btn--sm" @click="openEdit(block)">Edit</button>
+                    <button type="button" class="btn btn--danger-ghost btn--sm" @click="requestDelete(block)">Delete</button>
+                  </div>
                 </td>
               </tr>
             </template>
@@ -473,22 +433,18 @@
       </div>
     </template>
   </section>
+
+  {{ partial "ui/confirm.html" (dict
+    "title" "'Delete block'"
+    "body" "confirmDelete ? 'This permanently deletes ' + confirmDelete.name + ' — its schedule rule is gone from the next apply on.' : ''"
+    "confirmText" "pendingId ? 'Deleting…' : 'Confirm Delete'"
+    "confirm" "performDelete()"
+    "cancel" "cancelDelete()"
+    "busy" "confirmDelete !== null && pendingId === confirmDelete.id"
+    "confirmClass" "btn--danger") }}
 </div>
 {{ end }}
 
 {{ define "page_js" }}
-{{- /*
-  cronstrue is vendored the same way Alpine is (baseof.html):
-  web/assets/vendor/cronstrue.min.js, pinned, loaded via a plain <script
-  defer>, no CDN, no npm runtime dependency (see web/DESIGN.md's
-  "Vendored dependencies" note for the pinned version and sha256). It
-  must load, and execute, before blocks.js -- deferred scripts run in
-  document order, so this tag stays first.
-*/ -}}
-{{- with resources.Get "vendor/cronstrue.min.js" }}
-<script src="{{ .RelPermalink }}" defer></script>
-{{- end }}
-{{- $js := resources.Get "ts/pages/blocks.ts" | js.Build (dict "targetPath" "js/blocks.js") }}
-{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
-<script src="{{ $js.RelPermalink }}" defer></script>
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/blocks.ts" "target" "js/blocks.js" "cronstrue" true) }}
 {{ end }}

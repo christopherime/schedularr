@@ -1,0 +1,9 @@
+{{- /*
+  The event tape region (spec §4, craft-ceiling graft): success is
+  printed, not toasted. Timestamped uppercase lines, newest first, max 3
+  retained, at most one action per line, no auto-dismiss. The runtime's
+  tape controller (runtime/tape.ts, printTape) builds the lines via
+  textContent; hidden until the first line prints. Include once per page,
+  directly under the page head.
+*/ -}}
+<div class="tape" id="event-tape" role="log" aria-live="polite" aria-label="Event tape" hidden></div>

@@ -31,7 +31,15 @@
 //      404 on PATCH -- rendered as an inline row error plus a "Refresh
 //      list" action (re-running GET, which naturally drops the now-gone
 //      row) rather than leaving a row on screen that can never save again.
-import type { ApiRequestJSON, ApiResponse } from "../api";
+import { ApiError, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
+import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
+import { describeError, toProblemView } from "../runtime/errors.ts";
+import type { ProblemView } from "../runtime/errors.ts";
+import { formatLocal, pad2, plural } from "../runtime/format.ts";
+import { initShell } from "../runtime/shell.ts";
+import { printTape } from "../runtime/tape.ts";
+
+initShell();
 
 type SeriesRecord = ApiResponse<"listSeriesState", 200>[number];
 type SeriesPatch = ApiRequestJSON<"patchSeriesState">;
@@ -44,18 +52,6 @@ declare const Alpine: {
 // data()'s init() is auto-invoked, so nothing on this page also wires
 // x-init="init()" to it.
 let started = false;
-
-/** Renders an ApiError as its problem title (+ detail, when present); any
- * other thrown value falls back to its message. Always read via
- * window.schedularr.ApiError -- main.ts and this file compile as separate
- * esbuild bundles, so only the window-hung instance is guaranteed to be the
- * one apiSend/apiGet actually throw. */
-function describeError(err: unknown): string {
-  if (err instanceof window.schedularr.ApiError) {
-    return err.detail ? `${err.title}: ${err.detail}` : err.title;
-  }
-  return err instanceof Error ? err.message : String(err);
-}
 
 // ---- cursor editing --------------------------------------------------------
 //
@@ -73,10 +69,6 @@ function draftFromState(state: SeriesRecord): RowDraft {
   return { season: String(state.current_season), episode: String(state.current_episode) };
 }
 
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
 /** SxxEyy, for the visually-hidden label read alongside the two separate
  * season/episode inputs -- the binding contract's "S/E cursor as SxxEyy"
  * display, kept distinct from the raw (unpadded) values the inputs edit. */
@@ -84,11 +76,8 @@ function cursorLabel(season: number, episode: number): string {
   return `S${pad2(season)}E${pad2(episode)}`;
 }
 
-/** A real plural ("1 run", "0 runs", "2 runs"), not a mechanical "run(s)"
- * suffix -- see the copy audit's "Mechanical (s) pluralization" item. */
 function runsLabel(n: number | undefined): string {
-  const count = n ?? 0;
-  return `${count} run${count === 1 ? "" : "s"}`;
+  return plural(n ?? 0, "run");
 }
 
 /** Parses a whole number >= 1, or null when the input isn't one -- the
@@ -117,7 +106,7 @@ function buildCursorPatch(state: SeriesRecord, season: number, episode: number):
 
 interface SeriesPageState {
   statesLoading: boolean;
-  statesError: string | null;
+  statesError: ProblemView | null;
   states: SeriesRecord[];
 
   // Per-row UI state, keyed by show_title (not array index -- a full list
@@ -161,13 +150,18 @@ document.addEventListener("alpine:init", () => {
         if (started) return;
         started = true;
         void this.loadStates();
+        // Arming a new token re-fires a failed list load (the token
+        // panel's probe broadcast, runtime/api.ts's onReauth).
+        onReauth(() => {
+          if (this.statesError) void this.loadStates();
+        });
       },
 
       async loadStates() {
         this.statesLoading = true;
         this.statesError = null;
         try {
-          const list = await window.schedularr.apiGet<SeriesRecord[]>("/api/v1/state/series");
+          const list = await apiGet<SeriesRecord[]>(apiPath("/state/series"));
           this.states = list;
           // Rebuilt wholesale on every load -- a full list reload
           // (including the "Refresh list" 404 recovery action) is a
@@ -191,7 +185,7 @@ document.addEventListener("alpine:init", () => {
           this.rowNotFound = rowNotFound;
           this.fieldErrors = fieldErrors;
         } catch (err) {
-          this.statesError = describeError(err);
+          this.statesError = toProblemView(err);
           this.states = [];
         } finally {
           this.statesLoading = false;
@@ -200,23 +194,7 @@ document.addEventListener("alpine:init", () => {
 
       cursorLabel,
       runsLabel,
-
-      // Local timezone, not the UTC wire value -- same convention as
-      // dashboard.ts's/schedule.ts's formatLocal (duplicated rather than
-      // shared: main.ts and every page bundle compile as separate esbuild
-      // bundles with no shared runtime module between them).
-      formatLocal(iso) {
-        if (!iso) return "—";
-        const d = new Date(iso);
-        if (Number.isNaN(d.getTime())) return iso;
-        return d.toLocaleString(undefined, {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-      },
+      formatLocal,
 
       // Text-level diff against the loaded row, not a numeric one: "01" vs
       // "1" still counts as dirty (arms the Save button) even though they'd
@@ -261,13 +239,23 @@ document.addEventListener("alpine:init", () => {
       // wire omits it (only possible for a row this page never actually
       // renders, since seriesStateToGen always populates it for a
       // persisted row, but the OpenAPI type is optional so this still
-      // guards defensively, same as blocks.ts's fillerToForm).
+      // guards defensively, same as blocks.ts's fillerToForm). Success
+      // prints a tape line -- the settings-snap idiom; UNDO on that line
+      // arrives with the series-desk slice.
       async toggleCompleted(state) {
-        await this.applyPatch(state, { completed: !(state.completed ?? false) });
+        const next = !(state.completed ?? false);
+        await this.applyPatch(state, { completed: next });
+        if (!this.rowErrors[state.show_title]) {
+          printTape(`${state.show_title} — ${next ? "marked completed" : "back in progress"}`);
+        }
       },
 
       async toggleDisabled(state) {
-        await this.applyPatch(state, { disabled: !(state.disabled ?? false) });
+        const next = !(state.disabled ?? false);
+        await this.applyPatch(state, { disabled: next });
+        if (!this.rowErrors[state.show_title]) {
+          printTape(`${state.show_title} — ${next ? "disabled" : "active"}`);
+        }
       },
 
       // Shared PATCH path for the cursor save and both toggles. Always
@@ -282,9 +270,12 @@ document.addEventListener("alpine:init", () => {
         this.rowErrors[title] = null;
         this.rowNotFound[title] = false;
         try {
-          const updated = await window.schedularr.apiSend<SeriesRecord>(
+          // apiPath encodeURIComponent-encodes the path parameter --
+          // show titles routinely contain spaces/punctuation (mirrors the
+          // server test suite's own url.PathEscape).
+          const updated = await apiSend<SeriesRecord>(
             "PATCH",
-            `/api/v1/state/series/${encodeURIComponent(title)}`,
+            apiPath("/state/series/{show_title}", { show_title: title }),
             patch,
           );
           this.states = this.states.map((s) => (s.show_title === title ? updated : s));
@@ -294,7 +285,7 @@ document.addEventListener("alpine:init", () => {
           // save clears any stale text the operator had typed.
           this.drafts[title] = draftFromState(updated);
         } catch (err) {
-          if (err instanceof window.schedularr.ApiError && err.status === 404) {
+          if (err instanceof ApiError && err.status === 404) {
             // The row vanished server-side between load and save (its
             // persisted series_state was deleted/reset). Left on screen
             // with an inline error and a "Refresh list" action rather than

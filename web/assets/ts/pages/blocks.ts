@@ -1,8 +1,9 @@
 // Blocks page ("/blocks/"): list every stored block, toggle/edit/delete it,
 // and create/edit blocks through an inline editor panel (not a modal --
 // this form is long enough that interrupting the page for it isn't
-// justified; see the "blocks: editor panel" comment in main.css). Bundled
-// separately via the "page_js" block, same pattern as dashboard.ts.
+// justified; see the "blocks: editor panel" comment in main.css). One
+// bundle per page since the v0.5.0 runtime refactor -- this entry compiles
+// the shared runtime in with itself (see partials/ui/page-js.html).
 //
 // Two contract rules drive most of the awkward-looking code below, both
 // from the API's PUT semantics (api/openapi.yaml, BlockWrite):
@@ -21,11 +22,19 @@
 // OpenAPI schema actually defines -- no client-side convenience fields can
 // ride along in the JSON we send. buildSpec()/buildFilter()/etc. below stay
 // close to gen/types.d.ts's BlockSpec shape for exactly that reason.
-import type { ApiRequestJSON, ApiResponse } from "../api";
+import { ApiError, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
+import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
+import { channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
+import type { Channel, PlateParts } from "../runtime/channels.ts";
+import { describeError, toProblemView } from "../runtime/errors.ts";
+import type { ProblemView } from "../runtime/errors.ts";
+import { initShell } from "../runtime/shell.ts";
+import { printTape } from "../runtime/tape.ts";
 import type { components } from "../gen/types";
 
+initShell();
+
 type BlockRecord = ApiResponse<"listBlocks", 200>[number];
-type Channel = ApiResponse<"listChannels", 200>[number];
 type BlockSpec = components["schemas"]["BlockSpec"];
 type Filter = components["schemas"]["Filter"];
 type FillerConfig = components["schemas"]["FillerConfig"];
@@ -56,18 +65,6 @@ declare const cronstrue: {
 // auto-invoked, so nothing on this page also wires x-init="init()" to it
 // (see that file's comment for the full story of why this guard exists).
 let started = false;
-
-/** Renders an ApiError as its problem title (+ detail, when present); any
- * other thrown value falls back to its message. Always read via
- * window.schedularr.ApiError, not a locally imported class -- main.ts and
- * this file are separate esbuild bundles, so only the window-hung instance
- * is guaranteed to be the one apiGet/apiSend actually throw. */
-function describeError(err: unknown): string {
-  if (err instanceof window.schedularr.ApiError) {
-    return err.detail ? `${err.title}: ${err.detail}` : err.title;
-  }
-  return err instanceof Error ? err.message : String(err);
-}
 
 // ---- cron plain-language readback -----------------------------------------
 //
@@ -176,7 +173,7 @@ function pad2(n: number): string {
  * plain weekday digits for day-of-week -- exactly the shapes
  * parseCronToSimple recognizes below, so build -> parse -> build
  * round-trips for every frequency. */
-function buildCronFromSimple(s: SimpleSchedule): string {
+export function buildCronFromSimple(s: SimpleSchedule): string {
   const [hour, minute] = parseTimeInput(s.time);
   const m = String(minute);
   const h = String(hour);
@@ -216,7 +213,7 @@ function buildCronFromSimple(s: SimpleSchedule): string {
  * on this day"); more than one, to "custom" -- exactly matching which
  * label building either one back through buildCronFromSimple reproduces,
  * since both write the same daysOfWeek-driven day-of-week field. */
-function parseCronToSimple(raw: string): SimpleSchedule | null {
+export function parseCronToSimple(raw: string): SimpleSchedule | null {
   const fields = raw.trim().split(/\s+/);
   if (fields.length !== 5) return null;
   const [min, hour, dom, mon, dow] = fields;
@@ -544,7 +541,7 @@ function buildFallback(f: FallbackForm): SeriesFallback | undefined {
  * only populated for the type they belong to; filler is independent of
  * type in the schema (BlockSpec.filler isn't gated by BlockSpec.type) and
  * is always considered regardless of which type is selected. */
-function buildSpec(form: EditorForm): BlockSpec {
+export function buildSpec(form: EditorForm): BlockSpec {
   const spec: BlockSpec = {
     type: form.type,
     name: form.name.trim(),
@@ -632,7 +629,7 @@ function fallbackToForm(f: SeriesFallback | undefined): FallbackForm {
 // three by running the loaded cron through parseCronToSimple(), the same
 // "derive UI-only state right after loading" pattern seriesRowErrors
 // already uses one line below its own call site.
-function formFromSpec(spec: BlockSpec, enabled: boolean): EditorForm {
+export function formFromSpec(spec: BlockSpec, enabled: boolean): EditorForm {
   return {
     type: spec.type === "series" ? "series" : "filter",
     name: spec.name,
@@ -650,13 +647,6 @@ function formFromSpec(spec: BlockSpec, enabled: boolean): EditorForm {
     series: (spec.series ?? []).map(seriesConfigToForm),
     fallback: fallbackToForm(spec.fallback),
   };
-}
-
-function channelLabel(c: Channel): string {
-  const parts: string[] = [];
-  if (c.number !== undefined) parts.push(String(c.number));
-  parts.push(c.name ?? c.id ?? "?");
-  return parts.join(" · ");
 }
 
 interface EditorState {
@@ -687,9 +677,12 @@ interface EditorState {
 
 interface BlocksState {
   blocksLoading: boolean;
-  blocksError: string | null;
+  // The one error surface for the list section (spec §4: the page's two
+  // competing error surfaces collapse into a single .problem) -- both a
+  // failed load AND a failed row action (toggle/delete) land here, with
+  // "reload the list" as the shared recovery.
+  blocksProblem: ProblemView | null;
   blocks: BlockRecord[];
-  listError: string | null;
 
   channelsLoading: boolean;
   channelsError: string | null;
@@ -707,7 +700,9 @@ interface BlocksState {
   mediaOk: boolean;
 
   pendingId: string | null;
-  confirmDeleteId: string | null;
+  // The block the shared confirm dialog (partials/ui/confirm.html) is
+  // armed on -- name included so the dialog can say what it deletes.
+  confirmDelete: { id: string; name: string } | null;
 
   editor: EditorState;
   scheduleDayOptions: ScheduleDayOption[];
@@ -719,6 +714,7 @@ interface BlocksState {
 
   cronReadback(raw: string): string | null;
   channelLabel(c: Channel): string;
+  plate(id: string): PlateParts;
   channelSelectOptions(): Channel[];
   channelHint(): string;
   seriesTitleWarning(title: string): string | null;
@@ -743,30 +739,30 @@ interface BlocksState {
   submit(): Promise<void>;
 
   toggleEnabled(block: BlockRecord): Promise<void>;
-  requestDelete(id: string): void;
-  cancelDelete(): void;
-  performDelete(id: string): Promise<void>;
+  requestDelete(block: BlockRecord): void;
+  cancelDelete(force?: boolean): void;
+  performDelete(): Promise<void>;
 }
 
 // Alpine binds a handful of "magic" helpers (https://alpinejs.dev/magics)
 // onto the component instance at runtime, on top of whatever Alpine.data()'s
-// factory returns -- $nextTick (used by focusEditorSoon(), below) is the
-// only one this page needs. ThisType<...> (erased at compile time) tells
+// factory returns -- $nextTick (focusEditorSoon() et al.) and $refs (the
+// shared confirm <dialog>). ThisType<...> (erased at compile time) tells
 // TypeScript to type `this` inside the object literal's methods as
-// BlocksState-plus-$nextTick, without requiring the literal itself to
-// supply $nextTick -- it doesn't exist until Alpine injects it.
-interface WithNextTick {
+// BlocksState-plus-magics, without requiring the literal itself to supply
+// them -- they don't exist until Alpine injects them.
+interface WithMagics {
   $nextTick(callback: () => void): void;
+  $refs: { confirmDialog: HTMLDialogElement };
 }
 
 document.addEventListener("alpine:init", () => {
   Alpine.data(
     "blocks",
-    (): BlocksState & ThisType<BlocksState & WithNextTick> => ({
+    (): BlocksState & ThisType<BlocksState & WithMagics> => ({
       blocksLoading: true,
-      blocksError: null,
+      blocksProblem: null,
       blocks: [],
-      listError: null,
 
       channelsLoading: true,
       channelsError: null,
@@ -778,7 +774,7 @@ document.addEventListener("alpine:init", () => {
       mediaOk: false,
 
       pendingId: null,
-      confirmDeleteId: null,
+      confirmDelete: null,
 
       editor: {
         open: false,
@@ -799,15 +795,21 @@ document.addEventListener("alpine:init", () => {
         started = true;
         void this.loadBlocks();
         void this.loadChannels();
+        // Arming a new token re-fires whichever loads failed (the token
+        // panel's probe broadcast, runtime/api.ts's onReauth).
+        onReauth(() => {
+          if (this.blocksProblem) void this.loadBlocks();
+          if (this.channelsError) void this.loadChannels();
+        });
       },
 
       async loadBlocks() {
         this.blocksLoading = true;
-        this.blocksError = null;
+        this.blocksProblem = null;
         try {
-          this.blocks = await window.schedularr.apiGet<BlockRecord[]>("/api/v1/blocks");
+          this.blocks = await apiGet<BlockRecord[]>(apiPath("/blocks"));
         } catch (err) {
-          this.blocksError = describeError(err);
+          this.blocksProblem = toProblemView(err);
         } finally {
           this.blocksLoading = false;
         }
@@ -817,7 +819,7 @@ document.addEventListener("alpine:init", () => {
         this.channelsLoading = true;
         this.channelsError = null;
         try {
-          this.channels = await window.schedularr.apiGet<Channel[]>("/api/v1/channels");
+          this.channels = await loadChannels();
         } catch (err) {
           this.channelsError = describeError(err);
           this.channels = [];
@@ -840,8 +842,8 @@ document.addEventListener("alpine:init", () => {
       // raises a .problem panel either.
       async loadMedia() {
         const [showsResult, metaResult] = await Promise.allSettled([
-          window.schedularr.apiGet<MediaShow[]>("/api/v1/media/shows"),
-          window.schedularr.apiGet<MediaMeta>("/api/v1/media/meta"),
+          apiGet<MediaShow[]>(apiPath("/media/shows")),
+          apiGet<MediaMeta>(apiPath("/media/meta")),
         ]);
         const showsOk = showsResult.status === "fulfilled";
         const metaOk = metaResult.status === "fulfilled";
@@ -858,6 +860,10 @@ document.addEventListener("alpine:init", () => {
 
       cronReadback,
       channelLabel,
+
+      plate(id) {
+        return channelPlate(id, this.channels);
+      },
 
       // Factual, non-blocking nudge -- never blocks submit (buildSpec/
       // submit() never consult this). Case-insensitive on purpose (see
@@ -1142,17 +1148,21 @@ document.addEventListener("alpine:init", () => {
         this.editor.submitting = true;
         try {
           if (this.editor.mode === "create") {
-            const rec = await window.schedularr.apiSend<BlockRecord>("POST", "/api/v1/blocks", body);
+            const rec = await apiSend<BlockRecord>("POST", apiPath("/blocks"), body);
             this.blocks = [...this.blocks, rec];
           } else {
             const id = this.editor.editingId;
             if (!id) throw new Error("editor is in edit mode with no editingId set");
-            const rec = await window.schedularr.apiSend<BlockRecord>("PUT", `/api/v1/blocks/${id}`, body);
+            const rec = await apiSend<BlockRecord>("PUT", apiPath("/blocks/{id}", { id }), body);
             this.blocks = this.blocks.map((b) => (b.id === id ? rec : b));
           }
           this.closeEditor();
+          // Success is printed, not toasted: one tape line, no dismissal
+          // ceremony. The create→apply bridge line ("reaches Tunarr at
+          // <next_cron_tick>") arrives with the block power tools slice.
+          printTape(`Block saved — ${spec.name}`);
         } catch (err) {
-          if (err instanceof window.schedularr.ApiError && err.status === 409) {
+          if (err instanceof ApiError && err.status === 409) {
             // describeError, not err.detail alone: the store's own
             // ErrConflict text is a terse "conflict" (internal/store/
             // blocks.go), so err.title ("block name already exists")
@@ -1174,60 +1184,57 @@ document.addEventListener("alpine:init", () => {
       async toggleEnabled(block) {
         if (this.pendingId) return;
         this.pendingId = block.id;
-        this.listError = null;
+        this.blocksProblem = null;
         try {
           const body: BlockWrite = { enabled: !block.enabled, spec: block.spec };
-          const updated = await window.schedularr.apiSend<BlockRecord>(
+          const updated = await apiSend<BlockRecord>(
             "PUT",
-            `/api/v1/blocks/${block.id}`,
+            apiPath("/blocks/{id}", { id: block.id }),
             body,
           );
           this.blocks = this.blocks.map((b) => (b.id === block.id ? updated : b));
+          printTape(`Block ${updated.enabled ? "enabled" : "disabled"} — ${updated.name}`);
         } catch (err) {
-          this.listError = describeError(err);
+          this.blocksProblem = toProblemView(err);
         } finally {
           this.pendingId = null;
         }
       },
 
-      // Moves focus onto the Confirm button once the x-if swap has
-      // replaced the row's Edit/Delete pair with the Confirm/Cancel pair --
-      // otherwise focus is left stranded on the now-removed Delete button
-      // (the browser drops it to <body>), which is silent to a keyboard or
-      // screen-reader user. $nextTick + getElementById (not the
-      // `autofocus` HTML attribute) because autofocus's WHATWG processing
-      // model is one-shot per Document: the very first autofocus-bearing
-      // element ever inserted claims the browsing context's single
-      // "autofocus processed" flag, and every later insertion -- e.g. this
-      // same button reappearing after a Cancel, or a different row's
-      // Confirm button -- is silently ignored. Same $nextTick idiom as
-      // focusEditorSoon() above; getElementById (not x-ref) since only one
-      // row is ever in the confirm state at a time (confirmDeleteId is a
-      // single value), so the static id can't collide.
-      requestDelete(id) {
-        this.confirmDeleteId = id;
-        this.$nextTick(() => {
-          document.getElementById("block-delete-confirm-btn")?.focus();
-        });
+      // Arms the shared confirm dialog (partials/ui/confirm.html) on this
+      // block. Native <dialog> handles focus: showModal() traps it inside,
+      // close() returns it to the row's Delete button -- the old inline
+      // row-swap confirm (and its hand-rolled focus management) is gone,
+      // one confirm idiom for the whole app.
+      requestDelete(block) {
+        this.confirmDelete = { id: block.id, name: block.name };
+        this.$refs.confirmDialog.showModal();
       },
 
-      cancelDelete() {
-        this.confirmDeleteId = null;
+      // State-level re-entrancy guard, same convention as the schedule
+      // page's cancelApply: refuses to close while the delete is still in
+      // flight unless performDelete itself forces it.
+      cancelDelete(force = false) {
+        if (this.pendingId && !force) return;
+        this.$refs.confirmDialog.close();
+        this.confirmDelete = null;
       },
 
-      async performDelete(id) {
-        if (this.pendingId) return;
-        this.pendingId = id;
-        this.listError = null;
+      async performDelete() {
+        const target = this.confirmDelete;
+        if (!target || this.pendingId) return;
+        this.pendingId = target.id;
+        this.blocksProblem = null;
         try {
-          await window.schedularr.apiSend<void>("DELETE", `/api/v1/blocks/${id}`);
-          this.blocks = this.blocks.filter((b) => b.id !== id);
-          this.confirmDeleteId = null;
-          if (this.editor.open && this.editor.editingId === id) this.closeEditor();
+          await apiSend<void>("DELETE", apiPath("/blocks/{id}", { id: target.id }));
+          this.blocks = this.blocks.filter((b) => b.id !== target.id);
+          if (this.editor.open && this.editor.editingId === target.id) this.closeEditor();
+          printTape(`Block deleted — ${target.name}`);
         } catch (err) {
-          this.listError = describeError(err);
+          this.blocksProblem = toProblemView(err);
         } finally {
           this.pendingId = null;
+          this.cancelDelete(true);
         }
       },
     }),

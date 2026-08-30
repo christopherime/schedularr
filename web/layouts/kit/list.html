@@ -1,0 +1,234 @@
+{{ define "main" }}
+{{- /*
+  Dev-only component gallery -- the review gate for the component floor
+  (spec §4): every ui/* partial in every state, on fixture data, zero API
+  calls. Excluded from production builds via config/production/hugo.toml's
+  cascade; this guard is belt-and-braces should that cascade ever drift.
+*/ -}}
+{{ if not hugo.IsProduction }}
+<div x-data="kit">
+  <div class="page-head">
+    <h1>Kit</h1>
+    <p>
+      Every shared partial in every state, on fixture data. Dev builds
+      only — this page never ships in the binary. A slice is not done
+      until its new states appear here.
+    </p>
+  </div>
+
+  {{ partial "ui/tape.html" . }}
+
+  <section class="kit-section" aria-labelledby="kit-tape-title">
+    <div class="section-head">
+      <h2 id="kit-tape-title">Tape</h2>
+      <p>Success is printed, not toasted: newest first, max 3 lines, at most one action per line. Prints into the region above.</p>
+    </div>
+    <div class="row-actions">
+      <button type="button" class="btn btn--ghost btn--sm" @click="tapeDemo()">Print a line</button>
+      <button type="button" class="btn btn--ghost btn--sm" @click="tapeActionDemo()">Print a line with an action</button>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-dots-title">
+    <div class="section-head">
+      <h2 id="kit-dots-title">Status dots</h2>
+      <p>Coded-legend discipline: a dot never appears without adjacent text naming the state.</p>
+    </div>
+    <div class="kit-row">
+      <span class="status-line"><span class="status-dot" data-state="armed" aria-hidden="true"></span><span>Armed</span></span>
+      <span class="status-line"><span class="status-dot" data-state="unarmed" aria-hidden="true"></span><span>Unarmed</span></span>
+      <span class="status-line"><span class="status-dot" data-state="unknown" aria-hidden="true"></span><span>Unknown</span></span>
+      <span class="status-line"><span class="status-dot" data-state="ok" aria-hidden="true"></span><span>Signal</span></span>
+      <span class="status-line"><span class="status-dot" data-state="down" aria-hidden="true"></span><span>No Signal</span></span>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-buttons-title">
+    <div class="section-head">
+      <h2 id="kit-buttons-title">Buttons</h2>
+      <p>Hover rules carry :not(:disabled) guards; the busy state runs the subdued sweep shimmer.</p>
+    </div>
+    <div class="kit-row">
+      <button type="button" class="btn btn--primary">Primary</button>
+      <button type="button" class="btn">Default</button>
+      <button type="button" class="btn btn--ghost">Ghost</button>
+      <button type="button" class="btn btn--danger-ghost">Danger ghost</button>
+      <button type="button" class="btn btn--danger">Danger</button>
+      <button type="button" class="btn btn--ghost btn--sm">Small</button>
+      <button type="button" class="btn btn--icon" aria-label="Close example">{{ partial "ui/icon.html" (dict "name" "x") }}</button>
+      <button type="button" class="btn btn--primary" disabled>Disabled</button>
+      <button type="button" class="btn btn--primary" :aria-busy="busyDemo" :disabled="busyDemo" @click="busyPulse()" x-text="busyDemo ? 'Applying…' : 'Trigger busy (2.5s)'"></button>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-icons-title">
+    <div class="section-head">
+      <h2 id="kit-icons-title">Icons</h2>
+      <p>One inline sprite, one stroke voice, sized by --icon-size.</p>
+    </div>
+    <div class="kit-row kit-row--icons">
+      {{ range slice "key" "x" "eye" "eye-off" "chevron-up" "chevron-down" }}
+      <span class="kit-icon"><span class="kit-icon__glyph">{{ partial "ui/icon.html" (dict "name" .) }}</span><code>{{ . }}</code></span>
+      {{ end }}
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-plates-title">
+    <div class="section-head">
+      <h2 id="kit-plates-title">Channel plates</h2>
+      <p>The UUID-replacement idiom. Unresolvable ids fall back to the shortened raw id — the plate never fabricates a name.</p>
+    </div>
+    <div class="kit-row">
+      {{ partial "ui/plate.html" (dict "expr" "plate('fixture-0001')") }}
+      {{ partial "ui/plate.html" (dict "expr" "plate('fixture-0002')") }}
+      {{ partial "ui/plate.html" (dict "expr" "plate('9a1b2c3d-dead-beef-0000-000000000000')") }}
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-skeleton-title">
+    <div class="section-head">
+      <h2 id="kit-skeleton-title">Skeletons</h2>
+      <p>Loading is a pulsing skeleton, never a spinner. Variants: bar, row, stack, table-row.</p>
+    </div>
+    <div class="kit-stack">
+      {{ partial "ui/skeleton.html" (dict "variant" "bar") }}
+      {{ partial "ui/skeleton.html" (dict "variant" "row" "widths" (slice "md" "lg" "sm")) }}
+      {{ partial "ui/skeleton.html" (dict "variant" "stack" "count" 2) }}
+      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 2) }}
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-problem-title">
+    <div class="section-head">
+      <h2 id="kit-problem-title">Problem</h2>
+      <p>The single inline error idiom: context label, the API's own title/detail, a recovery action, and the muted REF correlation line.</p>
+    </div>
+    <div class="kit-stack">
+      {{ partial "ui/problem.html" (dict "label" "Blocks unavailable" "bind" "problem" "retry" "tapeDemo()" "retryLabel" "Retry") }}
+      {{ partial "ui/problem.html" (dict "label" "Status unavailable" "bind" "problemBare") }}
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-empty-title">
+    <div class="section-head">
+      <h2 id="kit-empty-title">Teaching empty state</h2>
+      <p>Legend line, one sentence, one action.</p>
+    </div>
+    {{ partial "ui/empty.html" (dict
+      "legend" "No trace"
+      "text" "Nothing has aired yet. Once a block's schedule runs against Tunarr, entries show up here."
+      "actionLabel" "Set up blocks"
+      "actionHref" "/blocks/") }}
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-toggle-title">
+    <div class="section-head">
+      <h2 id="kit-toggle-title">Toggle</h2>
+      <p>role="switch" rocker; the label text carries the fact, the track tint is a scan aid.</p>
+    </div>
+    <div class="kit-row">
+      {{ partial "ui/toggle.html" (dict "checked" "toggleOn" "click" "toggleOn = !toggleOn" "on" "Enabled" "off" "Disabled") }}
+      {{ partial "ui/toggle.html" (dict "checked" "toggleOff" "click" "toggleOff = !toggleOff" "on" "Completed" "off" "In Progress") }}
+      {{ partial "ui/toggle.html" (dict "checked" "true" "disabled" "true" "click" "void 0" "on" "Disabled control" "off" "Disabled control") }}
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-fields-title">
+    <div class="section-head">
+      <h2 id="kit-fields-title">Form fields</h2>
+      <p>One field system: focus ring on :focus-visible, [aria-invalid] danger border, warning and error lines, the reveal-button control.</p>
+    </div>
+    <div class="form-grid">
+      <div class="form-field">
+        <label for="kit-field-default">Default</label>
+        <input type="text" id="kit-field-default" placeholder="type here">
+        <p class="form-field__hint">A hint line under the field.</p>
+      </div>
+      <div class="form-field">
+        <label for="kit-field-invalid">Invalid<span class="form-field__required" aria-hidden="true">*</span></label>
+        <input type="text" id="kit-field-invalid" aria-invalid="true" x-model="invalidValue">
+        <p class="form-field__error">Season and episode must be whole numbers, 1 or greater.</p>
+      </div>
+      <div class="form-field">
+        <label for="kit-field-warn">With warning</label>
+        <input type="text" id="kit-field-warn" value="The Wier">
+        <p class="form-field__warning">Not found in Tunarr's library.</p>
+      </div>
+      <div class="form-field">
+        <label for="kit-field-reveal">Reveal control</label>
+        <div class="form-field__control" x-data="{ visible: false }">
+          <input :type="visible ? 'text' : 'password'" id="kit-field-reveal" value="secret-token" autocomplete="off">
+          <button type="button" class="form-field__reveal" @click="visible = !visible" :aria-pressed="visible" aria-label="Toggle visibility">
+            <svg x-show="!visible" class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+            <svg x-show="visible" class="icon" aria-hidden="true"><use href="#i-eye-off"></use></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-select-title">
+    <div class="section-head">
+      <h2 id="kit-select-title">Channel select</h2>
+      <p>Explicit loading state instead of the raw-text-input ambiguity. Flip the state to review each.</p>
+    </div>
+    <div class="form-grid">
+      <div class="form-field">
+        <label for="kit-select-state">Fixture state</label>
+        <select id="kit-select-state" x-model="channelMode" @change="applyChannelMode()">
+          <option value="loaded">Loaded</option>
+          <option value="loading">Loading</option>
+          <option value="error">Error</option>
+          <option value="empty">Empty list</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="kit-channel">Channel</label>
+        {{ partial "ui/channel-select.html" (dict
+          "id" "kit-channel"
+          "model" "selectedChannel"
+          "emptyOption" "— select a channel —"
+          "placeholder" "channel-1") }}
+      </div>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-warn-title">
+    <div class="section-head">
+      <h2 id="kit-warn-title">Warning panel</h2>
+      <p>Warn-tinted surface (color-mix), not plain bg-inset: the preview succeeded, this is a second-look nudge.</p>
+    </div>
+    <div class="schedule-warnings" role="presentation">
+      <p class="schedule-warnings__title">1 occurrence not scheduled — conflict with a higher-priority block</p>
+      <ul class="schedule-warnings__list">
+        <li>Late Sitcom Loop lost to Spooky Saturday Night at 08/30/2026, 09:00 PM and was not scheduled.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-confirm-title">
+    <div class="section-head">
+      <h2 id="kit-confirm-title">Confirm dialog</h2>
+      <p>The one native &lt;dialog&gt; idiom for apply/delete/bulk. Escape and backdrop close, guarded while busy.</p>
+    </div>
+    <button type="button" class="btn btn--ghost" @click="openConfirm()">Open confirm</button>
+  </section>
+
+  {{ partial "ui/confirm.html" (dict
+    "title" "'Kit confirm'"
+    "body" "'This is the shared confirm idiom — apply and delete both instantiate it.'"
+    "confirmText" "'Confirm'"
+    "confirm" "performConfirm()"
+    "cancel" "cancelConfirm()"
+    "busy" "false") }}
+</div>
+{{ end }}
+{{ end }}
+
+{{ define "page_js" }}
+{{ if not hugo.IsProduction }}
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/kit.ts" "target" "js/kit.js") }}
+{{ else }}
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/base.ts" "target" "js/base.js") }}
+{{ end }}
+{{ end }}

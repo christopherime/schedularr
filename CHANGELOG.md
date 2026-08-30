@@ -18,6 +18,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   web UI's bezel telemetry without extra requests — the v0.5.0 slice's
   only contract change.
 
+- **Web: shared TS runtime + one bundle per page**
+  (`web/assets/ts/runtime/`, `web/layouts/partials/ui/page-js.html`):
+  the four page bundles plus the shell bundle collapse into one bundle
+  per page compiling a shared runtime — killing the `window.schedularr`
+  cross-bundle `ApiError` identity hack and the 4x-duplicated
+  `describeError`/`formatLocal`/`channelLabel` helpers. The typed client
+  gains a contract-bound `apiPath` (a typo'd path no longer compiles),
+  AbortController timeouts (15s reads / 60s writes), and an entry guard
+  deduping identical in-flight mutations. `web/assets/ts/{api,token,
+  main}.ts` deleted (no-legacy).
+- **Web: `ui/*` Hugo partials** (`web/layouts/partials/ui/`): skeleton
+  (bar/stack/row/table-row), problem (single error idiom + muted
+  `REF <request_id>` line), teaching empty state, toggle,
+  channel-select (with an explicit loading state), channel legend plate
+  (`CH 04 · HORROR` replacing raw UUIDs on dashboard history, blocks
+  list, and schedule channel heads), one inline SVG icon sprite, the
+  shared native-dialog confirm (blocks delete now uses it, ending the
+  inline row-swap confirm), the event tape (successes print, never
+  toast), and the page-js bundling boilerplate. All four pages rebuilt
+  on them; duplicated markup deleted.
+- **Web: component-state floor + tokens** (`web/assets/css/main.css`):
+  z-scale, `--glow-accent`, `--shadow-dialog`, one `--icon-size`,
+  measure tokens, `--duration-slow`, warn/danger tinted surfaces via
+  `color-mix` (WCAG-checked in both palettes, worst case 5.77:1),
+  input `[aria-invalid]`/focus-within treatment, button `[aria-busy]`
+  sweep shimmer, `:not(:disabled)` hover guards, forced-colors
+  fallbacks, and the token panel's parallel `.field` vocabulary folded
+  into the one `.form-field` system.
+- **Web: bezel telemetry strip** (`web/layouts/_default/baseof.html`,
+  `web/assets/ts/runtime/shell.ts`): TUNARR dot+text, LAST APPLY, and
+  NEXT TICK readouts on every page, polled from `/status` every 60s.
+  Token Save now probes `/status` and flips ARMED only on success;
+  arming broadcasts a re-auth event that re-fires the page's failed
+  loads. No LINK legend until SSE (v0.5.4) can make it honest.
+- **Web: dev-only `/kit/` gallery** (`web/layouts/kit/list.html`,
+  `web/config/production/hugo.toml`): every partial in every state on
+  fixture data — the review gate for this and every later slice;
+  excluded from production builds via a config cascade.
+- **Web tests** (`web/tests/`): grown alongside the refactor — runtime
+  error describing, `apiPath`, channel labeling/plates, formatting,
+  the schedule-picker cron round-trip, `buildSpec`/`formFromSpec`
+  round-trips, and `clampDays`.
+
+### Fixed
+
+- **Schedule page: blank days now previews the documented default (7)**
+  (`web/assets/ts/pages/schedule.ts`): `clampDays("")` fell through
+  `Number("") === 0` into the 1-day clamp, contradicting the field's
+  own "defaults to 7" hint — caught by the new web test harness.
+
 ### Added
 
 - **v0.5.0 web-overhaul design spec**

@@ -83,7 +83,27 @@ The operator's directive (2026-08-30): this release is an overall,
 extreme, major improvement of the web interface. The committed visual
 world (CRT signal-bench, web/DESIGN.md) stays — the experience around it
 is rebuilt. Detailed scope lives in the v0.5.0 UI spec
-(docs/superpowers/specs/); headline surfaces:
+(docs/superpowers/specs/2026-08-30-v0.5-web-overhaul-design.md), cut
+into eight independently releasable slices (v0.5.0–v0.5.7).
+
+**Progress:**
+
+- **v0.5.0 — Bench rebuild: SHIPPED (2026-08-30).** The foundation
+  slice: `Status.last_applied_at` + `next_cron_tick` on the contract;
+  the shared TS runtime (one bundle per page, single `ApiError`
+  identity, request timeouts, mutation entry guards); the `ui/*` Hugo
+  partials (skeleton/problem/empty/toggle/channel-select/plate/icon/
+  confirm/tape/page-js); the CSS component-state floor (z-scale and
+  surface tokens, input invalid/focus treatment, button busy shimmer,
+  hover guards, forced-colors fallbacks, one field system); channel
+  legend plates replacing raw UUIDs; token validate-on-save with
+  re-auth re-fires; the polled bezel telemetry strip; the dev-only
+  `/kit/` review gallery; and the grown web test harness.
+- **v0.5.1+ — pending**, in spec order: the Guide (read-only), draft &
+  apply on the Guide, memory (apply runs + Log), the SSE live link,
+  block power tools, the series desk, and the polish pass.
+
+Headline surfaces across the train:
 
 - **EPG week-grid timeline** — the TV mental model: planned occurrences
   across channels on a real programme guide, not a table.

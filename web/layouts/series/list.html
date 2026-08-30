@@ -8,6 +8,8 @@
     </p>
   </div>
 
+  {{ partial "ui/tape.html" . }}
+
   <section class="series-section" aria-labelledby="series-title">
     <div class="section-head">
       <h2 id="series-title">Tracked Series</h2>
@@ -15,26 +17,19 @@
     </div>
 
     <template x-if="statesLoading">
-      <div class="skeleton-stack" aria-hidden="true">
-        <span class="skeleton-bar"></span>
-        <span class="skeleton-bar"></span>
-        <span class="skeleton-bar"></span>
-      </div>
+      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 3) }}
     </template>
 
     <template x-if="!statesLoading && statesError">
-      <div class="problem" role="alert">
-        <p class="problem__title">Series states unavailable</p>
-        <p class="problem__detail" x-text="statesError"></p>
-        <button type="button" class="btn btn--ghost btn--sm" @click="loadStates()">Retry</button>
-      </div>
+      {{ partial "ui/problem.html" (dict "label" "Series states unavailable" "bind" "statesError" "retry" "loadStates()") }}
     </template>
 
     <template x-if="!statesLoading && !statesError && states.length === 0">
-      <p class="empty-state graticule">
-        No series are tracked yet. A show's state appears here once a
-        series block airs it for the first time.
-      </p>
+      {{ partial "ui/empty.html" (dict
+        "legend" "No series tracked"
+        "text" "A show's state appears here once a series block airs it for the first time — create one on Blocks."
+        "actionLabel" "Open blocks"
+        "actionHref" "/blocks/") }}
     </template>
 
     <template x-if="!statesLoading && !statesError && states.length > 0">
@@ -75,6 +70,7 @@
                       class="series-cursor__input"
                       aria-label="Season"
                       x-model="drafts[state.show_title].season"
+                      :aria-invalid="fieldErrors[state.show_title] ? 'true' : null"
                       :aria-describedby="fieldErrors[state.show_title] ? 'season-episode-error-' + state.show_title : null"
                       :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
                     >
@@ -85,6 +81,7 @@
                       class="series-cursor__input"
                       aria-label="Episode"
                       x-model="drafts[state.show_title].episode"
+                      :aria-invalid="fieldErrors[state.show_title] ? 'true' : null"
                       :aria-describedby="fieldErrors[state.show_title] ? 'season-episode-error-' + state.show_title : null"
                       :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
                     >
@@ -92,6 +89,7 @@
                       type="button"
                       class="btn btn--ghost btn--sm"
                       :disabled="!rowDirty(state) || pending[state.show_title] || rowNotFound[state.show_title]"
+                      :aria-busy="pending[state.show_title]"
                       @click="saveCursor(state)"
                       x-text="pending[state.show_title] ? 'Saving…' : 'Save'"
                     ></button>
@@ -107,30 +105,20 @@
                 <td class="num" x-text="runsLabel(state.run_count)"></td>
                 <td x-text="formatLocal(state.last_aired)"></td>
                 <td>
-                  <button
-                    type="button"
-                    class="toggle"
-                    role="switch"
-                    :aria-checked="!!state.completed"
-                    :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
-                    @click="toggleCompleted(state)"
-                  >
-                    <span class="toggle__track"><span class="toggle__thumb"></span></span>
-                    <span class="toggle__label" x-text="state.completed ? 'Completed' : 'In Progress'"></span>
-                  </button>
+                  {{ partial "ui/toggle.html" (dict
+                    "checked" "!!state.completed"
+                    "disabled" "pending[state.show_title] || rowNotFound[state.show_title]"
+                    "click" "toggleCompleted(state)"
+                    "on" "Completed"
+                    "off" "In Progress") }}
                 </td>
                 <td>
-                  <button
-                    type="button"
-                    class="toggle"
-                    role="switch"
-                    :aria-checked="!!state.disabled"
-                    :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
-                    @click="toggleDisabled(state)"
-                  >
-                    <span class="toggle__track"><span class="toggle__thumb"></span></span>
-                    <span class="toggle__label" x-text="state.disabled ? 'Disabled' : 'Active'"></span>
-                  </button>
+                  {{ partial "ui/toggle.html" (dict
+                    "checked" "!!state.disabled"
+                    "disabled" "pending[state.show_title] || rowNotFound[state.show_title]"
+                    "click" "toggleDisabled(state)"
+                    "on" "Disabled"
+                    "off" "Active") }}
                 </td>
               </tr>
             </template>
@@ -143,7 +131,5 @@
 {{ end }}
 
 {{ define "page_js" }}
-{{- $js := resources.Get "ts/pages/series.ts" | js.Build (dict "targetPath" "js/series.js") }}
-{{- if hugo.IsProduction }}{{ $js = $js | minify | fingerprint }}{{ end }}
-<script src="{{ $js.RelPermalink }}" defer></script>
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/series.ts" "target" "js/series.js") }}
 {{ end }}

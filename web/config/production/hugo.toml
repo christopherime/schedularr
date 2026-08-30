@@ -1,0 +1,12 @@
+# Production-only overlay: the dev-only /kit/ component gallery (spec §4's
+# review gate) must never ship inside the embedded binary. `hugo -s web`
+# builds the production environment by default (make web-build), which
+# applies this cascade and drops the page entirely -- the router's 404
+# handler answers /kit/ like any other unknown path. Build it locally with
+# `hugo -s web -e development` (or `hugo server -s web`).
+[[cascade]]
+  [cascade.build]
+    render = "never"
+    list = "never"
+  [cascade.target]
+    path = "{/kit,/kit/**}"
