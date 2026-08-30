@@ -6,6 +6,8 @@
 <meta name="color-scheme" content="light dark">
 <title>{{ if .IsHome }}Schedularr{{ else }}{{ with .Title }}{{ . }} · {{ end }}Schedularr{{ end }}</title>
 <meta name="description" content="Schedularr — content scheduling for Tunarr.">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 {{- with resources.Get "css/main.css" }}
   {{- $css := . }}
   {{- if hugo.IsProduction }}{{ $css = $css | minify | fingerprint }}{{ end }}
@@ -48,6 +50,7 @@ carrying its provenance.
 <div class="shell">
   <header class="bezel">
     <a href="/" class="wordmark">
+      <img src="/favicon.png" alt="" width="24" height="24" class="wordmark__mark">
       Schedularr
       <span class="wordmark__tag">Tunarr scheduler</span>
     </a>

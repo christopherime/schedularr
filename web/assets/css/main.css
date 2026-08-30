@@ -265,6 +265,12 @@ p {
   white-space: nowrap;
 }
 
+.wordmark__mark {
+  align-self: center;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
 .wordmark__tag {
   font-size: var(--text-xs);
   font-weight: 400;

@@ -452,6 +452,16 @@ To re-vendor either file: download the exact pinned version's tarball
 into `web/assets/vendor/`, and update this table's version + sha256
 together -- never bump one without the other.
 
+## Static assets
+
+`web/static/favicon.png` (64x64) and `web/static/apple-touch-icon.png`
+(180x180) are committed, hand-derived rasters -- `sips`/`qlmanage`
+rendering the repo's `assets/logo.svg` down from its native 668x702, not
+build-time generated -- because that source SVG is 321KB of genuine but
+auto-traced vector (526 single-color `<path>` fills, no embedded raster)
+unfit to ship or inline as-is; `favicon.png` doubles as the header
+wordmark's `.wordmark__mark` brand icon (`baseof.html`).
+
 ## Content-Security-Policy
 
 Every UI response (`internal/api/ui.go`'s `newUIHandler`, spec Decision 6
@@ -464,9 +474,10 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; st
 Every directive is `'self'` (or `'none'` for `frame-ancestors`) because the
 shipped site never loads a third-party origin: Alpine is vendored (no
 CDN), `web/assets/ts/api.ts`/`token.ts` are the only modules that touch
-`fetch` and only ever call this same origin's `/api/v1`, and there are no
-`<img>`/font/stylesheet references to anywhere but `web/assets/css/main.css`
-itself.
+`fetch` and only ever call this same origin's `/api/v1`, and the only
+`<img>` reference (the header's `/favicon.png` brand mark, see Static
+assets above) and the only stylesheet are both same-origin, served from
+this same origin's `web/assets/css/main.css` and `web/static/`.
 
 `script-src` carries `'unsafe-eval'` because Alpine.js 3's directive
 expressions (`x-data`, `x-show`, `x-text`, `x-if`, ...) are evaluated via
