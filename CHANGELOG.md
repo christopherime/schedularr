@@ -37,9 +37,19 @@ reorder flow -- not a review pass.
   doesn't plan it, and the baseline-agreement guard keeps its eventual
   post-state replay from touching live state); a `channel_id` change
   leaves the seed valid (occurrence identity is block + start); a spec
-  edit ADDING a series re-derives that show from the engine's
-  deterministic S01E01 default -- the same start any new series gets --
-  which needs no seed refresh, so no narrow re-seed path was added. New
+  edit ADDING a series re-derives that show from the seed path's
+  deterministic S01E01 default. Caveat: this differs from an unseeded
+  occurrence (which plans a new show from its persisted cursor), so a
+  show with prior progress added to a block with a pending seeded
+  occurrence re-airs S01E01 once in that occurrence; live state is
+  protected by the missing-baseline guard. Second caveat: the
+  seed-preserving guarantee covers series list/order and
+  episodes_per_block/duration edits -- NOT cron. A cron change MOVES
+  occurrences to new start keys that have no seed, so an occurrence
+  already committed for the old start re-plans from the live cursor
+  and its committed round is skipped; follow an unavoidable cron
+  change with a compensating `PATCH /state/series` rewind. No narrow
+  re-seed path was added for either case. New
   regression tests at the previously-untested handler+engine layer:
   `TestUpdateBlock_Reorder_PendingOccurrenceKeepsSameEpisodes` (real PUT
   handler, real store, real engine: commit [alpha-e2, beta-e2], PUT the
@@ -1231,6 +1241,9 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/christopherime/schedularr/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/christopherime/schedularr/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/christopherime/schedularr/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/christopherime/schedularr/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/christopherime/schedularr/releases/tag/v0.1.0

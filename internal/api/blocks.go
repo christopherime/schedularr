@@ -109,9 +109,13 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // (api.PatchSeriesState, the CLI's `state set`/`state reset`/`state
 // import`) -- and to DeleteBlock's orphan cleanup below. The one spec
 // edit that changes what a seed means -- ADDING a series the seed has no
-// entry for -- is handled by the engine's own deterministic default (the
-// added show re-derives from S01E01, the same start any new series
-// gets), not by deleting the other shows' seeds along with it.
+// entry for -- re-derives that show from the seed path's S01E01 default.
+// NOTE this differs from an unseeded occurrence, which plans a new show
+// from its persisted cursor: in a seeded pending occurrence the added
+// show can therefore re-air an episode its live cursor has moved past
+// (once, for that occurrence only -- the missing-baseline guard keeps
+// the replay from touching live state). Accepted trade-off; deleting
+// the other shows' seeds to avoid it would reintroduce the skip bug.
 func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
