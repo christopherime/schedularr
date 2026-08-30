@@ -53,6 +53,7 @@ type fakeTunarr struct {
 	updates    map[string][]tunarr.Program    // channelID -> content programs extracted from the pushed lineup
 	lineups    map[string][]tunarr.LineupItem // channelID -> the raw lineup (content + flex) pushed via UpdateSchedule
 	startTimes map[string]int64               // channelID -> startTime (ms) set via PUT /api/channels/{id}
+	pushes     map[string]int                 // channelID -> how many lineups were POSTed to it in total
 }
 
 func newFakeTunarr(t *testing.T, programs []tunarr.Program) (*httptest.Server, *fakeTunarr) {
@@ -74,6 +75,7 @@ func newFakeTunarrWithSeasons(t *testing.T, programs []tunarr.Program, seasons m
 		updates:    make(map[string][]tunarr.Program),
 		lineups:    make(map[string][]tunarr.LineupItem),
 		startTimes: make(map[string]int64),
+		pushes:     make(map[string]int),
 	}
 
 	mux := http.NewServeMux()
@@ -148,6 +150,7 @@ func newFakeTunarrWithSeasons(t *testing.T, programs []tunarr.Program, seasons m
 			f.mu.Lock()
 			f.updates[id] = programs
 			f.lineups[id] = req.Lineup
+			f.pushes[id]++
 			f.mu.Unlock()
 
 			w.Header().Set("Content-Type", "application/json")
@@ -242,6 +245,15 @@ func (f *fakeTunarr) startTimeFor(channelID string) (int64, bool) {
 	defer f.mu.Unlock()
 	v, ok := f.startTimes[channelID]
 	return v, ok
+}
+
+// pushCount returns how many lineups were POSTed to channelID in total --
+// the stale-channel-clearing tests need to distinguish "pushed again" from
+// "left alone", which the last-value maps above cannot express.
+func (f *fakeTunarr) pushCount(channelID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pushes[channelID]
 }
 
 // newTestRunner builds a Runner against a fresh temp-dir store and the
@@ -1731,4 +1743,80 @@ func TestRunner_Run_Apply_ConflictDroppedOccurrence_DoesNotAdvanceCursor(t *test
 	_, err = st.GetPersistedSeriesState(ctx, "The Office")
 	assert.ErrorIs(t, err, store.ErrNotFound,
 		"a conflict-dropped series occurrence must never advance, or even create, series state")
+}
+
+// TestRunner_Run_Apply_ClearsStaleChannelLineup pins the stale-channel
+// clearing behavior (clearStaleChannels): deleting a channel's last enabled
+// block makes the NEXT apply push a flex-only lineup to that channel
+// exactly once, after which the channel is untracked and left entirely
+// alone. Without this, the previous apply's lineup keeps airing in Tunarr
+// indefinitely -- the live bug this pins (2026-08-30: a deleted block's
+// episodes stayed scheduled through every subsequent apply).
+func TestRunner_Run_Apply_ClearsStaleChannelLineup(t *testing.T) {
+	server, fake := newFakeTunarr(t, canonicalPrograms())
+	r, st := newTestRunner(t, server.URL)
+	ctx := context.Background()
+
+	// 1. Normal apply: channel-1 is planned, pushed, and tracked.
+	_, err := r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.NotZero(t, fake.pushCount("channel-1"), "expected the planned channel to be pushed")
+	applied, err := st.ListAppliedChannels(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"channel-1"}, applied)
+
+	// 2. Delete the channel's only enabled block: the next apply must push
+	// a flex-only (no content) lineup to the now-planless channel and
+	// untrack it.
+	require.NoError(t, st.DeleteBlock(ctx, "block-1"))
+	before := fake.pushCount("channel-1")
+	_, err = r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.Equal(t, before+1, fake.pushCount("channel-1"), "expected exactly one clearing push")
+	lineup := fake.pushedLineup("channel-1")
+	require.Len(t, lineup, 1)
+	require.Equal(t, "flex", lineup[0].Type, "a cleared channel's lineup must be flex-only")
+	applied, err = st.ListAppliedChannels(ctx)
+	require.NoError(t, err)
+	require.Empty(t, applied, "a cleared channel must be untracked")
+
+	// 3. A further apply leaves the untracked channel entirely alone, so a
+	// manual takeover of the channel in Tunarr is never clobbered.
+	cleared := fake.pushCount("channel-1")
+	_, err = r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.Equal(t, cleared, fake.pushCount("channel-1"), "an untracked channel must not be pushed to again")
+}
+
+// TestRunner_Run_Apply_ScopedClearRespectsChannelScope verifies
+// clearStaleChannels honors Run's o.ChannelID scoping in both directions: a
+// channel-scoped apply never clears a different tracked-but-planless
+// channel, while an unscoped apply does.
+func TestRunner_Run_Apply_ScopedClearRespectsChannelScope(t *testing.T) {
+	server, fake := newFakeTunarr(t, canonicalPrograms())
+	r, st := newTestRunner(t, server.URL)
+	ctx := context.Background()
+
+	// Track a second channel as if a previous apply had pushed to it and
+	// its blocks have since gone away.
+	require.NoError(t, st.MarkChannelApplied(ctx, "channel-9", time.Now()))
+
+	// A channel-1-scoped apply must leave channel-9 untouched and tracked.
+	_, err := r.Run(ctx, Options{Days: 1, ChannelID: "channel-1", Apply: true})
+	require.NoError(t, err)
+	require.Zero(t, fake.pushCount("channel-9"), "a scoped apply must not clear out-of-scope channels")
+	applied, err := st.ListAppliedChannels(ctx)
+	require.NoError(t, err)
+	require.Contains(t, applied, "channel-9")
+
+	// An unscoped apply then clears and untracks it.
+	_, err = r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, fake.pushCount("channel-9"), "an unscoped apply must clear the stale channel")
+	lineup := fake.pushedLineup("channel-9")
+	require.Len(t, lineup, 1)
+	require.Equal(t, "flex", lineup[0].Type)
+	applied, err = st.ListAppliedChannels(ctx)
+	require.NoError(t, err)
+	require.NotContains(t, applied, "channel-9")
 }

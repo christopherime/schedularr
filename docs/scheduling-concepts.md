@@ -260,6 +260,8 @@ Suggested ranges: **1-10** low priority (filler, background programming), **11-5
 
 The practical rule: **don't hand a channel to Schedularr and then also edit its programming by hand.** Pick one owner per channel. A channel with occasional human-curated blocks alongside Schedularr's blocks isn't supported — the next apply erases the human edits; a channel Schedularr doesn't manage at all is completely unaffected (Schedularr only ever touches channel IDs its blocks reference).
 
+**Ownership ends with a single clear, not a lingering lineup.** When a channel's last block is deleted or disabled, the channel drops out of the plan — but the previous apply's lineup would otherwise keep airing in Tunarr indefinitely, since "no longer pushed to" isn't the same as "cleared". Schedularr tracks every channel it pushes a lineup to (the `applied_channels` table); the next apply after a channel drops out of the plan pushes one flex-only (dead-air) lineup to it and stops tracking it. That clear happens exactly once per hand-back: afterwards the channel is genuinely unmanaged again, so taking it over manually in Tunarr — or just leaving it empty — is safe, and re-adding a block for it simply resumes normal ownership. A channel-scoped apply (`channel_id` set) only ever clears that one channel.
+
 This design keeps the apply model simple and its result fully predictable from the block configuration alone — what you'd get from re-running `--dry-run` is exactly what's on the channel after `--apply`, with no hidden state from a previous manual change or a prior apply's leftovers. The cost is that ownership is all-or-nothing per channel.
 
 ## Schedule history and retention

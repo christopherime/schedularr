@@ -237,7 +237,7 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	}
 
 	if o.Apply {
-		if err := r.applyChannels(ctx, start, end, channels); err != nil {
+		if err := r.applyChannels(ctx, start, end, channels, o.ChannelID); err != nil {
 			return nil, err
 		}
 		if err := engine.Commit(); err != nil { //nolint:contextcheck // see GenerateForTimeRange above
@@ -289,7 +289,11 @@ func blocksForChannel(blocks []scheduler.Block, channelID string) []scheduler.Bl
 // STARTING POINT for each channel's own anchor, though -- see
 // anchorForChannel for why a channel with an on-air occurrence shifts its
 // own anchor earlier.
-func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time, channels map[string][]scheduler.ScheduledSlot) error {
+//
+// scope is Run's o.ChannelID, threaded through to clearStaleChannels so a
+// channel-scoped apply only ever touches (including clears) that one
+// channel.
+func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time, channels map[string][]scheduler.ScheduledSlot, scope string) error {
 	failCount := 0
 	for channelID, slots := range channels {
 		channelAnchor := anchorForChannel(anchor, slots)
@@ -310,12 +314,75 @@ func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time,
 			failCount++
 			continue
 		}
+		// Track the push so a later apply can clear this channel if its
+		// blocks all disappear (see clearStaleChannels). A tracking failure
+		// is logged but never fails the apply: the push itself succeeded,
+		// and the worst case of a missing row is pre-tracking behavior (the
+		// channel just never gets auto-cleared).
+		if err := r.store.MarkChannelApplied(ctx, channelID, anchor); err != nil {
+			r.logger.Warn("failed to track applied channel", "channel_id", channelID, "error", err)
+		}
 		r.logger.Info("applied schedule to channel", "channel_id", channelID)
 	}
+
+	r.clearStaleChannels(ctx, anchor, windowEnd, channels, scope)
+
 	if failCount > 0 {
 		return fmt.Errorf("failed to apply schedule to %d channel(s)", failCount)
 	}
 	return nil
+}
+
+// clearStaleChannels pushes a flex-only lineup to -- and then untracks --
+// every channel a previous apply pushed a lineup to (applied_channels, see
+// MarkChannelApplied above) that this apply's plan no longer covers.
+// Without this, deleting or disabling a channel's last block leaves the
+// previous apply's lineup airing in Tunarr indefinitely: an absent channel
+// simply stops being pushed to, which is not the same as being cleared
+// (found live 2026-08-30: a deleted block's episodes stayed scheduled in
+// Tunarr through every subsequent apply).
+//
+// Untracking after a successful clear is what bounds this to exactly one
+// clear per channel per "all its blocks went away" transition: a channel
+// the operator takes over manually in Tunarr afterwards is never clobbered
+// by later applies, and a channel whose blocks come back is simply pushed
+// (and re-tracked) as part of the normal plan again.
+//
+// When scope (Run's o.ChannelID) is set, only that channel is considered:
+// a channel-scoped apply must not touch other channels' lineups in any
+// direction, clearing included.
+//
+// Failures here are logged but never fail the apply: the planned channels'
+// pushes already succeeded, and failing the Run would discard their
+// Engine.Commit (series-cursor advances, history) over a cleanup that the
+// still-present tracking row retries on the next apply anyway.
+func (r *Runner) clearStaleChannels(ctx context.Context, anchor, windowEnd time.Time, planned map[string][]scheduler.ScheduledSlot, scope string) {
+	tracked, err := r.store.ListAppliedChannels(ctx)
+	if err != nil {
+		r.logger.Error("failed to list applied channels for stale-lineup clearing", "error", err)
+		return
+	}
+
+	for _, channelID := range tracked {
+		if _, ok := planned[channelID]; ok {
+			continue
+		}
+		if scope != "" && channelID != scope {
+			continue
+		}
+		lineup := []tunarr.LineupItem{flexItem(windowEnd.Sub(anchor))}
+		if err := r.tunarr.UpdateSchedule(ctx, channelID, anchor, lineup); err != nil {
+			r.logger.Error("failed to clear stale channel lineup", "channel_id", channelID, "error", err)
+			continue
+		}
+		if err := r.store.UnmarkChannelApplied(ctx, channelID); err != nil {
+			// The clear itself landed; the next apply will just push the
+			// same flex-only lineup again until the row goes away.
+			r.logger.Error("failed to untrack cleared channel", "channel_id", channelID, "error", err)
+			continue
+		}
+		r.logger.Info("cleared stale channel lineup (no blocks schedule it anymore)", "channel_id", channelID)
+	}
 }
 
 // anchorForChannel returns the anchor (lineup offset 0, and the value

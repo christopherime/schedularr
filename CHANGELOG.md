@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deleting or disabling a channel's last block now clears the channel in
+  Tunarr.** A channel with no remaining occurrences simply dropped out of
+  the apply's plan, so the previous apply's lineup kept airing indefinitely
+  — found live: a deleted block's episodes stayed scheduled through every
+  subsequent apply. Applies now track every channel they push a lineup to
+  (`applied_channels` table, migration 000008, seeded from
+  `schedule_history` so pre-existing deployments cover channels orphaned
+  before the upgrade); a tracked channel absent from the next apply's plan
+  gets one flex-only lineup pushed and is untracked, so the clear happens
+  exactly once and a later manual takeover of the channel in Tunarr is
+  never clobbered. Channel-scoped applies only ever clear their own
+  channel. (`internal/service/schedule.go` `clearStaleChannels`,
+  `internal/store/channels.go`, docs/scheduling-concepts.md "Channel
+  ownership".)
+
 ## [0.2.3] - 2026-08-30
 
 One live production bug, found through real use of v0.2.2's deployed
