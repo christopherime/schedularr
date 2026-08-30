@@ -44,6 +44,7 @@ interface DashboardState {
   init(): void;
   loadStatus(): Promise<void>;
   loadHistory(): Promise<void>;
+  loadPlateChannels(): void;
   formatLocal(iso: string | undefined): string;
   blocksLabel(n: number | undefined): string;
   plate(id: string | undefined): PlateParts;
@@ -73,6 +74,13 @@ document.addEventListener("alpine:init", () => {
         onReauth(() => {
           if (this.statusError) void this.loadStatus();
           if (this.historyError) void this.loadHistory();
+          // The plate channels are a best-effort side fetch, so a 401 on
+          // /channels alone leaves historyError null and nothing above
+          // re-fires -- refetch directly whenever the plates are still on
+          // their shortened-id fallback (the re-auth broadcast has
+          // already invalidated the channel cache), so they recover
+          // without a reload.
+          if (this.channels.length === 0) this.loadPlateChannels();
         });
       },
 
@@ -92,21 +100,27 @@ document.addEventListener("alpine:init", () => {
         this.historyLoading = true;
         this.historyError = null;
         try {
-          // The channel cache feeds the history table's legend plates;
-          // best-effort -- a failed channel fetch leaves plates on their
-          // shortened-id fallback rather than failing the section.
-          void loadChannels().then(
-            (channels) => {
-              this.channels = channels;
-            },
-            () => undefined,
-          );
+          this.loadPlateChannels();
           this.history = await apiGet<HistoryEntry[]>(apiPath("/history", undefined, { days: 7 }));
         } catch (err) {
           this.historyError = toProblemView(err);
         } finally {
           this.historyLoading = false;
         }
+      },
+
+      // The channel cache feeds the history table's legend plates;
+      // best-effort -- a failed channel fetch leaves plates on their
+      // shortened-id fallback rather than failing the section. Called
+      // alongside loadHistory and again from the re-auth handler (see
+      // init) so plates recover once a working token is armed.
+      loadPlateChannels() {
+        void loadChannels().then(
+          (channels) => {
+            this.channels = channels;
+          },
+          () => undefined,
+        );
       },
 
       formatLocal,

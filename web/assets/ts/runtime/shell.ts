@@ -1,9 +1,13 @@
 // Shell wiring, run once per page by every page entry (initShell):
 //
 //   1. The token panel: opens automatically when no token is stored or on
-//      the first 401; Save PROBES GET /api/v1/status and flips the dot to
-//      ARMED only on success, then broadcasts the re-auth event that
-//      re-fires the page's failed loads (api.ts's onReauth).
+//      a 401 -- but at most ONCE per unarmed episode (see
+//      promptedThisEpisode below): the 60s telemetry poll also 401s while
+//      the token is bad, and re-opening the modal on every poll would
+//      steal focus from whatever the operator dismissed it to finish.
+//      Save PROBES GET /api/v1/status and flips the dot to ARMED only on
+//      success, then broadcasts the re-auth event that re-fires the
+//      page's failed loads (api.ts's onReauth).
 //   2. The bezel telemetry strip: TUNARR signal, LAST APPLY, and NEXT TICK
 //      readouts on every page, fed by a 60s GET /status poll (no SSE yet
 //      -- the LIVE/POLL/LINK legend arrives with the event stream in
@@ -12,7 +16,7 @@ import { apiGet, apiPath, broadcastReauth, onUnauthorized } from "./api.ts";
 import type { ApiResponse } from "./api.ts";
 import { invalidateChannels } from "./channels.ts";
 import { describeError } from "./errors.ts";
-import { relativeTime } from "./format.ts";
+import { relativeTime, untilTime } from "./format.ts";
 import { clearToken, getToken, setToken } from "./token.ts";
 
 type Status = ApiResponse<"getStatus", 200>;
@@ -49,9 +53,18 @@ export function initShell(): void {
   const teleLastApply = el<HTMLSpanElement>("tele-last-apply");
   const teleNextTick = el<HTMLSpanElement>("tele-next-tick");
 
-  // The strip re-renders relative times from the last successful poll, so
-  // "5 min ago" doesn't freeze between polls.
+  // The last successful poll's payload, or null before one has succeeded
+  // (or after a failed poll) -- renderTelemetry() reads it so a failed
+  // poll degrades to an honest NO DATA reading instead of a stale one.
   let lastStatus: Status | null = null;
+
+  // True once the token panel has auto-opened for the current unarmed
+  // episode -- the no-token first-load open and a 401's open both count.
+  // Reset when a /status probe succeeds (the poll, or Save's own probe),
+  // i.e. on every successful arm, so the NEXT episode gets exactly one
+  // prompt again. Without this the 60s poll's 401 would reopen the modal
+  // -- and steal focus -- every minute for as long as the token stays bad.
+  let promptedThisEpisode = false;
 
   function setStatusMsg(text: string, tone: "info" | "error" = "info"): void {
     if (!statusEl) return;
@@ -89,13 +102,19 @@ export function initShell(): void {
     if (teleTunarrDot) teleTunarrDot.dataset.state = lastStatus.tunarr_reachable ? "ok" : "down";
     if (teleTunarrText) teleTunarrText.textContent = lastStatus.tunarr_reachable ? "Signal" : "No signal";
     if (teleLastApply) teleLastApply.textContent = relativeTime(lastStatus.last_applied_at);
-    if (teleNextTick) teleNextTick.textContent = relativeTime(lastStatus.next_cron_tick);
+    // untilTime, not relativeTime: an overrunning tick's stored instant
+    // sits in the past while the loop is still mid-run, and that must
+    // read as "due", not "12 min ago" (which looks like a missed tick).
+    if (teleNextTick) teleNextTick.textContent = untilTime(lastStatus.next_cron_tick);
   }
 
   async function poll(): Promise<void> {
     try {
       lastStatus = await apiGet<Status>(apiPath("/status"));
       setArmedState("armed");
+      // A successful probe ends the unarmed episode: the next 401 is a
+      // NEW episode and earns one fresh auto-open.
+      promptedThisEpisode = false;
     } catch {
       lastStatus = null;
       // A 401 already flipped the dot to unarmed via onUnauthorized
@@ -151,6 +170,7 @@ export function initShell(): void {
       .then((status) => {
         lastStatus = status;
         setArmedState("armed");
+        promptedThisEpisode = false;
         renderTelemetry();
         closePanel();
         invalidateChannels();
@@ -176,18 +196,29 @@ export function initShell(): void {
     }
   });
 
-  // Opens automatically on the first 401 any API call receives. No
-  // auto-retry of the failed action -- arming (a successful save-probe)
-  // is what re-fires loads, via the re-auth broadcast.
+  // A 401 always flips the dot and sets the status line, but auto-opens
+  // the panel at most once per unarmed episode -- the 60s telemetry poll
+  // keeps 401ing while the token is bad, and reopening a dismissed modal
+  // (stealing focus mid-edit) every minute is worse than a dot the
+  // operator can act on. No auto-retry of the failed action -- arming (a
+  // successful save-probe) is what re-fires loads, via the re-auth
+  // broadcast.
   onUnauthorized(() => {
     setArmedState("unarmed");
-    openPanel();
+    if (!promptedThisEpisode) {
+      promptedThisEpisode = true;
+      openPanel();
+    }
+    // After openPanel(), which resets the status line to blank on open.
     setStatusMsg("Request rejected (401 Unauthorized). Enter a valid token.", "error");
   });
 
   if (getToken() === null) {
     setArmedState("unarmed");
     renderTelemetry();
+    // The first-load auto-open IS this episode's one prompt -- the poll's
+    // ensuing 401s must not reopen a panel the operator dismissed.
+    promptedThisEpisode = true;
     openPanel();
   } else {
     setArmedState("unknown");

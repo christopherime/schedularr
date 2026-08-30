@@ -24,10 +24,11 @@
 // close to gen/types.d.ts's BlockSpec shape for exactly that reason.
 import { ApiError, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
-import { channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
+import { channelHint as channelHintText, channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { describeError, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
+import { pad2 } from "../runtime/format.ts";
 import { initShell } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
 import type { components } from "../gen/types";
@@ -161,10 +162,6 @@ function parseTimeInput(raw: string): [hour: number, minute: number] {
   const hour = Math.min(23, Math.max(0, Number(m[1])));
   const minute = Math.min(59, Math.max(0, Number(m[2])));
   return [hour, minute];
-}
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
 }
 
 /** Builds the 5-field cron string the picker's current state represents.
@@ -974,19 +971,10 @@ document.addEventListener("alpine:init", () => {
         return [...this.channels, { id: current, name: `${current} (not in Tunarr's channel list)` }];
       },
 
-      // Select-vs-free-text is gated on "usable options exist", not just
-      // "the call didn't error": a reachable Tunarr with zero channels
-      // configured would otherwise render an unusable empty <select>. Both
-      // cases fall back to the same free-text input.
+      // Shared hint logic (runtime/channels.ts's channelHint) -- see its
+      // doc comment for the select-vs-free-text gating rationale.
       channelHint() {
-        if (this.channelsLoading) return "Loading channels from Tunarr…";
-        if (this.channelsError) {
-          return `Tunarr channel list unavailable (${this.channelsError}) — enter the channel ID manually.`;
-        }
-        if (this.channels.length === 0) {
-          return "Tunarr returned no channels — enter the channel ID manually.";
-        }
-        return "";
+        return channelHintText(this.channelsLoading, this.channelsError, this.channels);
       },
 
       openCreate() {
@@ -1125,6 +1113,14 @@ document.addEventListener("alpine:init", () => {
       },
 
       async submit() {
+        // State-level re-entrancy guard, same convention as toggleEnabled/
+        // performDelete's pendingId checks: the view layer's
+        // :disabled="editor.submitting" is a browser-enforced UI
+        // convention, not a guarantee. Two concurrent identical creates
+        // would be collapsed to one POST by apiSend's in-flight guard, but
+        // BOTH callers would then append the same record to this.blocks --
+        // a duplicate x-for key -- so the second entry must stop here.
+        if (this.editor.submitting) return;
         this.editor.error = null;
         this.editor.nameConflict = null;
         // Applies to both block types (the schedule field isn't gated by
@@ -1207,6 +1203,13 @@ document.addEventListener("alpine:init", () => {
       // row-swap confirm (and its hand-rolled focus management) is gone,
       // one confirm idiom for the whole app.
       requestDelete(block) {
+        // pendingId is global (one in-flight row action at a time), so a
+        // confirm opened while another row's toggle/delete is in flight
+        // would render an enabled Confirm button whose click
+        // performDelete() then silently drops -- a "no silent failures"
+        // violation. Refuse to arm the dialog at all until the in-flight
+        // action settles.
+        if (this.pendingId) return;
         this.confirmDelete = { id: block.id, name: block.name };
         this.$refs.confirmDialog.showModal();
       },

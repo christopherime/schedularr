@@ -31,7 +31,7 @@
 //      asserting the shape, since the contract itself makes no promise.
 import { apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
-import { channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
+import { channelHint as channelHintText, channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
@@ -104,6 +104,23 @@ function buildRequestBody(sig: RequestSignature): GenerateBody {
   const body: GenerateBody = { days: sig.days };
   if (sig.channelId !== "") body.channel_id = sig.channelId;
   return body;
+}
+
+/** Orders channel sections the way their plates read: by resolved channel
+ * number first (a plan section headed `CH 04 · HORROR` sorting on raw
+ * UUID looks arbitrary), then name, then raw id as the final tiebreak.
+ * Channels the cache can't resolve (or that carry no number) sort after
+ * numbered ones, by name/id -- exported for direct testing, same
+ * convention as clampDays above. */
+export function channelOrder(aId: string, bId: string, channels: Channel[]): number {
+  const a = channels.find((c) => c.id === aId);
+  const b = channels.find((c) => c.id === bId);
+  const aNum = a?.number ?? Number.POSITIVE_INFINITY;
+  const bNum = b?.number ?? Number.POSITIVE_INFINITY;
+  if (aNum !== bNum) return aNum - bNum;
+  const byName = (a?.name ?? "").localeCompare(b?.name ?? "");
+  if (byName !== 0) return byName;
+  return aId.localeCompare(bId);
 }
 
 // ---- program rendering ---------------------------------------------------
@@ -224,20 +241,17 @@ document.addEventListener("alpine:init", () => {
         return channelPlate(id, this.channels);
       },
 
-      // Select-vs-free-text fallback, same gating blocks.ts uses for its own
-      // channel field: a reachable Tunarr with a non-empty channel list gets
-      // a <select> (with an "All channels" option always first); anything
-      // else (loading, error, empty) falls back to free text, where a blank
-      // value still means "All channels".
+      // Shared hint logic (runtime/channels.ts's channelHint); this page's
+      // manual-entry wording additionally notes that blank still means
+      // "All channels" -- the one real difference from the blocks editor's
+      // channel field.
       channelHint() {
-        if (this.channelsLoading) return "Loading channels from Tunarr…";
-        if (this.channelsError) {
-          return `Tunarr channel list unavailable (${this.channelsError}) — enter a channel ID manually, or leave blank for all channels.`;
-        }
-        if (this.channels.length === 0) {
-          return "Tunarr returned no channels — enter a channel ID manually, or leave blank for all channels.";
-        }
-        return "";
+        return channelHintText(
+          this.channelsLoading,
+          this.channelsError,
+          this.channels,
+          "enter a channel ID manually, or leave blank for all channels",
+        );
       },
 
       requestSignature() {
@@ -361,7 +375,7 @@ document.addEventListener("alpine:init", () => {
             id,
             slots: [...slots].sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? "")),
           }))
-          .sort((a, b) => a.id.localeCompare(b.id));
+          .sort((a, b) => channelOrder(a.id, b.id, this.channels));
       },
 
       programCount(slot) {

@@ -181,7 +181,7 @@ web-build: web-check ## Build the Hugo site into web/public
 		exit 1; \
 	fi
 	@echo "Building Hugo site..."
-	@hugo --minify -s web
+	@hugo --minify --cleanDestinationDir -s web
 	@echo "Hugo build complete: web/public"
 
 web: web-build ## Regenerate types, type-check, and build the web UI (web-build -> web-check -> web-types, real prerequisites so `make -j` can't interleave them)

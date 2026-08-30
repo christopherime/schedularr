@@ -240,6 +240,10 @@ p {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    /* Without this, infinite animations (btn-sweep, skeleton-pulse) keep
+       looping at 0.01ms per iteration -- continuous repaints, the exact
+       opposite of reduced motion. One near-instant iteration, then done. */
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }

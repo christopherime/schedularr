@@ -49,9 +49,13 @@ export function printTape(text: string, action?: TapeAction): void {
     line.appendChild(btn);
   }
 
+  // Unhide BEFORE prepending: a role="log" region that is display:none is
+  // outside the accessibility tree, so content already present when it is
+  // revealed never announces as an "addition" -- the tape's very first
+  // line would be silent to screen readers if the order were reversed.
+  tape.hidden = false;
   tape.prepend(line);
   while (tape.children.length > MAX_LINES) {
     tape.removeChild(tape.lastChild as Node);
   }
-  tape.hidden = false;
 }

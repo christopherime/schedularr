@@ -7,8 +7,8 @@ import test from "node:test";
 
 const { ApiError, apiPath } = await import("../assets/ts/runtime/api.ts");
 const { describeError, toProblemView } = await import("../assets/ts/runtime/errors.ts");
-const { channelLabel, channelPlate } = await import("../assets/ts/runtime/channels.ts");
-const { formatLocal, pad2, plural, relativeTime } = await import("../assets/ts/runtime/format.ts");
+const { channelHint, channelLabel, channelPlate } = await import("../assets/ts/runtime/channels.ts");
+const { formatLocal, pad2, plural, relativeTime, untilTime } = await import("../assets/ts/runtime/format.ts");
 
 // ---- errors --------------------------------------------------------------
 
@@ -117,4 +117,31 @@ test("relativeTime reads both directions off an injected clock", () => {
   assert.equal(at("2026-08-30T15:00:00Z"), "in 3 h");
   assert.equal(at(null), "—");
   assert.equal(at("garbage"), "—");
+});
+
+test("untilTime renders a past instant as due, never 'N min ago'", () => {
+  const now = Date.parse("2026-08-30T12:00:00Z");
+  assert.equal(untilTime("2026-08-30T11:48:00Z", now), "due");
+  assert.equal(untilTime("2026-08-30T12:00:00Z", now), "due");
+  assert.equal(untilTime("2026-08-30T12:30:00Z", now), "in 30 min");
+  assert.equal(untilTime(null, now), "—");
+  assert.equal(untilTime("garbage", now), "—");
+});
+
+test("channelHint walks loading, error, empty, and usable states", () => {
+  assert.equal(channelHint(true, null, []), "Loading channels from Tunarr…");
+  assert.equal(
+    channelHint(false, "connection refused", channels),
+    "Tunarr channel list unavailable (connection refused) — enter the channel ID manually.",
+  );
+  assert.equal(channelHint(false, null, []), "Tunarr returned no channels — enter the channel ID manually.");
+  assert.equal(channelHint(false, null, channels), "");
+});
+
+test("channelHint honors a caller-supplied manual-entry wording", () => {
+  const blankMeansAll = "enter a channel ID manually, or leave blank for all channels";
+  assert.equal(
+    channelHint(false, null, [], blankMeansAll),
+    "Tunarr returned no channels — enter a channel ID manually, or leave blank for all channels.",
+  );
 });

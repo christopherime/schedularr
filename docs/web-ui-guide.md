@@ -25,6 +25,8 @@ make web
 
 `make web-types` (openapi-typescript → `web/assets/ts/gen/types.d.ts`), `make web-check` (type-check with `tsc --noEmit`), and `make web-build` (the Hugo build) are real prerequisites of each other, in that order, so `make -j` can't interleave them.
 
+`make web-build` runs `hugo --minify --cleanDestinationDir -s web`. The clean flag is load-bearing: Hugo never deletes stale output on its own, so without it a previous dev build's `/kit/` page and unminified per-page bundles would linger in `web/public/` — and ride into locally built binaries via `go:embed all:public`. With it, `make web` always leaves exactly the production site in `web/public/`.
+
 Hugo's config lives in `web/config/` (`_default/hugo.toml` plus a `production/hugo.toml` overlay). `make web` builds the production environment; `hugo -s web -e development` additionally builds the dev-only **`/kit/`** component gallery — every shared partial in every state, on fixture data — which is the review gate for UI changes and never ships in the binary.
 
 ### Shared runtime
@@ -42,7 +44,7 @@ The UI talks to `/api/v1` with the same bearer token `schedularr serve` was star
 1. Open the UI (`http://<host>:8484/` by default). With no token stored, the **Arm API Token** panel opens automatically.
 2. Paste the same token the server was started with. The input is masked; click the eye icon to reveal it before saving.
 3. **Save** stores the token, probes `GET /api/v1/status` with it, and flips the header dot to **Armed** only when that probe succeeds — the dot now means *verified*, not merely *stored*. A failed probe keeps the panel open with the error inline. **Clear** wipes the token (and leaves the panel open).
-4. If any API call comes back `401` (wrong or expired token), the panel reopens automatically with an inline error and the dot drops to **Unarmed**. Arming a new token re-fires whichever page *loads* had failed — no per-section Retry grind — but never repeats a write (create/apply/delete); repeat those yourself.
+4. If any API call comes back `401` (wrong or expired token), the dot drops to **Unarmed** and the panel opens automatically with an inline error — but at most **once per unarmed episode**: dismiss it, and later 401s (including the 60-second telemetry poll's) only keep the dot and inline error current instead of re-stealing focus every minute. Successfully arming a token starts a fresh episode. Arming also re-fires whichever page *loads* had failed — no per-section Retry grind — but never repeats a write (create/apply/delete); repeat those yourself.
 
 ## Bezel telemetry
 
@@ -50,7 +52,7 @@ The header carries a persistent telemetry strip on every page, refreshed from `G
 
 - **TUNARR** — signal dot plus text (**Signal** / **No Signal**, or **No data** while the poll itself can't reach the server).
 - **LAST APPLY** — how long ago the most recent apply pushed a lineup to Tunarr (`Status.last_applied_at`), or an em dash before any apply has been recorded.
-- **NEXT TICK** — when `serve`'s cron loop will next generate and apply (`Status.next_cron_tick`).
+- **NEXT TICK** — when `serve`'s cron loop will next generate and apply (`Status.next_cron_tick`), or **due** while an overrunning tick is still mid-run (the loop records the next tick's time before running the current one, so the stored instant can already be in the past).
 
 There is deliberately no LIVE/POLL link legend yet — that arrives with the SSE live layer (v0.5.4), and the strip does not pretend to be live before then.
 

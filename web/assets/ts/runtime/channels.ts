@@ -27,6 +27,29 @@ export function invalidateChannels(): void {
   cached = null;
 }
 
+/**
+ * The channel field's hint line (ui/channel-select's fallback messaging),
+ * shared by every page with a channel picker -- previously written
+ * near-verbatim three times (blocks, schedule, kit), which let the kit's
+ * copy drift from what ships. Select-vs-free-text is gated on "usable
+ * options exist", not just "the call didn't error": a reachable Tunarr
+ * with zero channels configured would otherwise render an unusable empty
+ * <select>. Both cases fall back to the same free-text input, described
+ * by `manualHint` (the schedule page adds "or leave blank for all
+ * channels" to it; sentence punctuation is appended here).
+ */
+export function channelHint(
+  loading: boolean,
+  error: string | null,
+  channels: Channel[],
+  manualHint = "enter the channel ID manually",
+): string {
+  if (loading) return "Loading channels from Tunarr…";
+  if (error) return `Tunarr channel list unavailable (${error}) — ${manualHint}.`;
+  if (channels.length === 0) return `Tunarr returned no channels — ${manualHint}.`;
+  return "";
+}
+
 /** "4 · Horror" -- the <option> label for channel selects. */
 export function channelLabel(c: Channel): string {
   const parts: string[] = [];

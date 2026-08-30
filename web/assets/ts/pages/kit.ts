@@ -1,12 +1,16 @@
 // Dev-only /kit/ page: renders every ui/* partial in every state from
-// fixture data -- no API calls, nothing persisted. This page is the review
-// gate for the component floor (spec §4): a slice is not done until its
-// new states appear here. Excluded from production builds (see
-// web/config/production/hugo.toml); `hugo -s web -e development` builds it.
-import { channelLabel, channelPlate } from "../runtime/channels.ts";
+// fixture data. The gallery's own components never call the API or
+// persist anything -- but the shell it initializes below is the real one,
+// same as every page: the bezel polls /status every 60s and the token
+// panel arms for real, so the shell chrome is reviewable here too rather
+// than being a dead mock. This page is the review gate for the component
+// floor (spec §4): a slice is not done until its new states appear here.
+// Excluded from production builds (see web/config/production/hugo.toml);
+// `hugo -s web -e development` builds it.
+import { channelHint as channelHintText, channelLabel, channelPlate } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import type { ProblemView } from "../runtime/errors.ts";
-import { relativeTime } from "../runtime/format.ts";
+import { relativeTime, untilTime } from "../runtime/format.ts";
 import { initShell } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
 
@@ -46,7 +50,7 @@ interface KitState {
   selectedChannel: string;
   busyDemo: boolean;
   invalidValue: string;
-  confirmArmed: boolean;
+  confirmBusy: boolean;
 
   init(): void;
   plate(id: string): PlateParts;
@@ -54,6 +58,7 @@ interface KitState {
   channelHint(): string;
   applyChannelMode(): void;
   relative(msOffset: number): string;
+  until(msOffset: number): string;
   tapeDemo(): void;
   tapeActionDemo(): void;
   busyPulse(): void;
@@ -81,10 +86,10 @@ document.addEventListener("alpine:init", () => {
       selectedChannel: "",
       busyDemo: false,
       invalidValue: "not a number",
-      confirmArmed: false,
+      confirmBusy: false,
 
       init() {
-        // Fixture-only page: nothing to fetch.
+        // Fixture-only component: nothing to fetch.
       },
 
       plate(id) {
@@ -93,15 +98,11 @@ document.addEventListener("alpine:init", () => {
 
       channelLabel,
 
+      // The SAME shared helper the blocks page uses (runtime/channels.ts)
+      // -- the gallery must exercise what ships, not a lookalike copy
+      // that can drift.
       channelHint() {
-        if (this.channelsLoading) return "Loading channels from Tunarr…";
-        if (this.channelsError) {
-          return `Tunarr channel list unavailable (${this.channelsError}) — enter the channel ID manually.`;
-        }
-        if (this.channels.length === 0) {
-          return "Tunarr returned no channels — enter the channel ID manually.";
-        }
-        return "";
+        return channelHintText(this.channelsLoading, this.channelsError, this.channels);
       },
 
       applyChannelMode() {
@@ -113,6 +114,12 @@ document.addEventListener("alpine:init", () => {
 
       relative(msOffset) {
         return relativeTime(new Date(Date.now() + msOffset).toISOString());
+      },
+
+      // The NEXT TICK variant: a past instant reads "due" (an overrunning
+      // cron tick), never "N min ago".
+      until(msOffset) {
+        return untilTime(new Date(Date.now() + msOffset).toISOString());
       },
 
       tapeDemo() {
@@ -134,18 +141,29 @@ document.addEventListener("alpine:init", () => {
       },
 
       openConfirm() {
-        this.confirmArmed = true;
         this.$refs.confirmDialog.showModal();
       },
 
+      // Same state-level guard convention as the real pages (blocks
+      // cancelDelete / schedule cancelApply): refuses to close while the
+      // simulated action is in flight.
       cancelConfirm() {
+        if (this.confirmBusy) return;
         this.$refs.confirmDialog.close();
-        this.confirmArmed = false;
       },
 
+      // Simulates an in-flight action so the confirm partial's busy state
+      // -- disabled buttons, aria-busy sweep, guarded Escape/backdrop --
+      // actually renders in the gallery instead of being wired to a
+      // literal "false".
       performConfirm() {
-        this.cancelConfirm();
-        printTape("Kit confirm — confirmed");
+        if (this.confirmBusy) return;
+        this.confirmBusy = true;
+        window.setTimeout(() => {
+          this.confirmBusy = false;
+          this.cancelConfirm();
+          printTape("Kit confirm — confirmed");
+        }, 1500);
       },
     }),
   );

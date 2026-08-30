@@ -57,3 +57,18 @@ export function relativeTime(iso: string | null | undefined, now: number = Date.
   }
   return diff < 0 ? `${value} ago` : `in ${value}`;
 }
+
+/**
+ * NEXT TICK readout: relativeTime for future instants, but a past instant
+ * renders "due" instead of "N min ago". The cron loop records the next
+ * tick's time BEFORE running the current one (cmd/serve.go's
+ * runCronLoop), so an overrunning tick leaves the stored instant in the
+ * past while the loop is still mid-run -- "12 min ago" there reads as a
+ * missed tick rather than one in progress.
+ */
+export function untilTime(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  return t <= now ? "due" : relativeTime(iso, now);
+}

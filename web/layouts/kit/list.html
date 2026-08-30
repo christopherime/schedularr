@@ -85,6 +85,20 @@
     </div>
   </section>
 
+  <section class="kit-section" aria-labelledby="kit-relative-title">
+    <div class="section-head">
+      <h2 id="kit-relative-title">Relative time</h2>
+      <p>The bezel readouts. LAST APPLY reads both directions; NEXT TICK renders a past instant as <em>due</em> (an overrunning tick), never "N min ago".</p>
+    </div>
+    <div class="kit-row">
+      <span class="status-line"><span>just now:</span> <strong x-text="relative(0)"></strong></span>
+      <span class="status-line"><span>5 min ago:</span> <strong x-text="relative(-5 * 60000)"></strong></span>
+      <span class="status-line"><span>3 h ago:</span> <strong x-text="relative(-3 * 3600000)"></strong></span>
+      <span class="status-line"><span>in 30 min:</span> <strong x-text="until(30 * 60000)"></strong></span>
+      <span class="status-line"><span>tick overrunning:</span> <strong x-text="until(-12 * 60000)"></strong></span>
+    </div>
+  </section>
+
   <section class="kit-section" aria-labelledby="kit-skeleton-title">
     <div class="section-head">
       <h2 id="kit-skeleton-title">Skeletons</h2>
@@ -209,18 +223,18 @@
   <section class="kit-section" aria-labelledby="kit-confirm-title">
     <div class="section-head">
       <h2 id="kit-confirm-title">Confirm dialog</h2>
-      <p>The one native &lt;dialog&gt; idiom for apply/delete/bulk. Escape and backdrop close, guarded while busy.</p>
+      <p>The one native &lt;dialog&gt; idiom for apply/delete/bulk. Escape and backdrop close, guarded while busy — Confirm simulates a 1.5s in-flight action so the busy state is reviewable here.</p>
     </div>
     <button type="button" class="btn btn--ghost" @click="openConfirm()">Open confirm</button>
   </section>
 
   {{ partial "ui/confirm.html" (dict
     "title" "'Kit confirm'"
-    "body" "'This is the shared confirm idiom — apply and delete both instantiate it.'"
-    "confirmText" "'Confirm'"
+    "body" "'This is the shared confirm idiom — apply and delete both instantiate it. Confirm runs a simulated 1.5s action.'"
+    "confirmText" "confirmBusy ? 'Confirming…' : 'Confirm'"
     "confirm" "performConfirm()"
     "cancel" "cancelConfirm()"
-    "busy" "false") }}
+    "busy" "confirmBusy") }}
 </div>
 {{ end }}
 {{ end }}
