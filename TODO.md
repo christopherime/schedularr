@@ -1,5 +1,15 @@
 # Project TODOs
 
+## Ladder note (2026-08-30)
+
+- **v0.5.5 became the token-at-rest security patch** (GitHub
+  code-scanning alert #2, CodeQL `js/clear-text-storage-of-sensitive-data`
+  — see CHANGELOG `[Unreleased]` → Security), so the Memory/`/history/`
+  slice shifts again, to v0.5.7, with everything behind it moving one more
+  number down. Numbers mark themes, not gates: a security patch is its own
+  theme, never a rider on a feature slice. `docs/roadmap.md` carries the
+  renumbered v0.5 train.
+
 ## v1.0 product intake (2026-08-30)
 
 Three operator-directed product streams, designed in
@@ -20,7 +30,7 @@ answers them.
   `/media/movies`. Converges with the v0.4 metadata theme (movie lookups,
   enrichment store, normalized genres/ratings, tags), with ordered movie
   sequences as a Sequence variant at v0.6.1.
-- **`/series` → `/history` (→ v0.5.6, tools at v0.5.9).** One searchable
+- **`/series` → `/history` (→ v0.5.7, tools at v0.5.10).** One searchable
   page absorbing the planned `/log/`: TRACKED sequences, AS-RUN airings,
   apply RUNS. Adds remove-from-history and range cleanup, which need the
   plan-sequence floor moved into `app_meta` and a transactional delete

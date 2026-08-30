@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **API bearer token encrypted at rest** (`web/assets/ts/runtime/token.ts`,
+  `web/assets/ts/runtime/api.ts`, `web/assets/ts/runtime/shell.ts`):
+  resolves GitHub code-scanning alert #2 (CodeQL
+  `js/clear-text-storage-of-sensitive-data`) — the UI stored the API
+  bearer token as plaintext in `localStorage`. The token is now encrypted
+  with AES-GCM-256 under a non-extractable WebCrypto key persisted in
+  IndexedDB (scripts can use the key, never read its material);
+  `localStorage`'s new `schedularr_api_token_v2` entry holds only
+  `{iv, ciphertext}` (base64), with a fresh random IV per write. A
+  surviving plaintext `schedularr_api_token` entry is migrated — encrypted,
+  then deleted — on first read (the migration is the sanctioned rename of
+  the old do-not-rename key). When WebCrypto/IndexedDB are unavailable the
+  token degrades to in-memory-only for the session, never back to
+  plaintext at rest. Reads became async: the API client and shell init
+  await the memoized `loadToken()` hydration; `getToken()` stays sync
+  against the hydrated cache. This does not defend against in-page XSS —
+  the same-origin CSP remains that defense (threat-model note in
+  `token.ts`). Unit tests in `web/tests/token.test.ts` cover the crypto
+  round trip (real WebCrypto under Node), the plaintext migration, the
+  memory-only degradation, and clear semantics.
+
 ### Added
 
 - **v1.0 product-intake planning docs** (docs-only, no code):

@@ -11,13 +11,13 @@
 //   2. The bezel telemetry strip: TUNARR signal, LAST APPLY, and NEXT TICK
 //      readouts on every page, fed by a 60s GET /status poll (no SSE yet
 //      -- the LIVE/POLL/LINK legend arrives with the event stream in
-//      v0.5.6 and is deliberately absent rather than faked).
+//      v0.5.8 and is deliberately absent rather than faked).
 import { apiGet, apiPath, broadcastReauth, onUnauthorized } from "./api.ts";
 import type { ApiResponse } from "./api.ts";
 import { invalidateChannels } from "./channels.ts";
 import { describeError } from "./errors.ts";
 import { relativeTime, untilTime } from "./format.ts";
-import { clearToken, getToken, setToken } from "./token.ts";
+import { clearToken, getToken, loadToken, setToken } from "./token.ts";
 
 type Status = ApiResponse<"getStatus", 200>;
 
@@ -158,42 +158,43 @@ export function initShell(): void {
       input?.focus();
       return;
     }
-    try {
-      setToken(value);
-    } catch (err) {
-      setStatusMsg(`Could not save token: ${err instanceof Error ? err.message : String(err)}`, "error");
-      return;
-    }
-    saveBtn?.setAttribute("aria-busy", "true");
-    setStatusMsg("Probing /status with this token…");
-    void apiGet<Status>(apiPath("/status"))
-      .then((status) => {
-        lastStatus = status;
+    void (async () => {
+      try {
+        // Async since v0.5.5: setToken encrypts before it persists.
+        await setToken(value);
+      } catch (err) {
+        setStatusMsg(`Could not save token: ${err instanceof Error ? err.message : String(err)}`, "error");
+        return;
+      }
+      saveBtn?.setAttribute("aria-busy", "true");
+      setStatusMsg("Probing /status with this token…");
+      try {
+        lastStatus = await apiGet<Status>(apiPath("/status"));
         setArmedState("armed");
         promptedThisEpisode = false;
         renderTelemetry();
         closePanel();
         invalidateChannels();
         broadcastReauth();
-      })
-      .catch((err: unknown) => {
+      } catch (err) {
         setArmedState("unarmed");
         setStatusMsg(`Probe failed — ${describeError(err)}`, "error");
-      })
-      .finally(() => {
+      } finally {
         saveBtn?.removeAttribute("aria-busy");
-      });
+      }
+    })();
   });
 
   clearBtn?.addEventListener("click", () => {
-    try {
-      clearToken();
-      if (input) input.value = "";
-      setArmedState("unarmed");
-      setStatusMsg("Token cleared.");
-    } catch (err) {
-      setStatusMsg(`Could not clear token: ${err instanceof Error ? err.message : String(err)}`, "error");
-    }
+    void clearToken()
+      .then(() => {
+        if (input) input.value = "";
+        setArmedState("unarmed");
+        setStatusMsg("Token cleared.");
+      })
+      .catch((err: unknown) => {
+        setStatusMsg(`Could not clear token: ${err instanceof Error ? err.message : String(err)}`, "error");
+      });
   });
 
   // A 401 always flips the dot and sets the status line, but auto-opens
@@ -213,16 +214,21 @@ export function initShell(): void {
     setStatusMsg("Request rejected (401 Unauthorized). Enter a valid token.", "error");
   });
 
-  if (getToken() === null) {
-    setArmedState("unarmed");
-    renderTelemetry();
-    // The first-load auto-open IS this episode's one prompt -- the poll's
-    // ensuing 401s must not reopen a panel the operator dismissed.
-    promptedThisEpisode = true;
-    openPanel();
-  } else {
-    setArmedState("unknown");
-    void poll();
-  }
-  window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+  // The stored token is encrypted at rest (token.ts): await hydration
+  // before the auto-open decision, so a stored-but-not-yet-decrypted token
+  // can't misread as "no token" and steal focus with a needless panel.
+  void loadToken().then((token) => {
+    if (token === null) {
+      setArmedState("unarmed");
+      renderTelemetry();
+      // The first-load auto-open IS this episode's one prompt -- the poll's
+      // ensuing 401s must not reopen a panel the operator dismissed.
+      promptedThisEpisode = true;
+      openPanel();
+    } else {
+      setArmedState("unknown");
+      void poll();
+    }
+    window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+  });
 }

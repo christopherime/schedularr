@@ -116,9 +116,10 @@ extreme, major improvement of the web interface. The committed visual
 world (CRT signal-bench, web/DESIGN.md) stays — the experience around it
 is rebuilt. Detailed scope lives in the v0.5.0 UI spec
 (docs/superpowers/specs/2026-08-30-v0.5-web-overhaul-design.md), cut
-into independently releasable slices — v0.5.0–v0.5.10 after three
-operator-directed insertions, the third of which the spec's own renumber
-note does not yet record (see v0.5.4 below).
+into independently releasable slices — v0.5.0–v0.5.11 after four
+insertions (three operator-directed, one security patch), of which the
+spec's own renumber note records only the first two (see v0.5.4 and
+v0.5.5 below).
 
 **Progress:**
 
@@ -177,8 +178,20 @@ note does not yet record (see v0.5.4 below).
   §9 renumber note and `web/layouts/partials/nav.html`'s comments still
   carry the pre-shift numbers and are corrected by the slice that next
   touches them.
-- **v0.5.5 — Draft & apply on the Guide: pending.** Unchanged in scope.
-- **v0.5.6 — Memory, landing as `/history/`: pending.** The spec's Memory
+- **v0.5.5 — Token encrypted at rest: SHIPPED (2026-08-30).** Fourth
+  insertion, this one a security patch rather than an operator-directed
+  feature: GitHub code-scanning alert #2 (CodeQL
+  `js/clear-text-storage-of-sensitive-data`) — the UI stored the API
+  bearer token as plaintext in `localStorage`. Now AES-GCM-256 under a
+  non-extractable WebCrypto key held in IndexedDB; `localStorage` keeps
+  only `{iv, ciphertext}` (`schedularr_api_token_v2`), the plaintext
+  entry migrated and deleted on first read, memory-only degradation when
+  crypto is unavailable. A security patch is its own theme, so every
+  pending slice below shifts one more number down (draft & apply →
+  v0.5.6, memory/`/history/` → v0.5.7, live link → v0.5.8, block power
+  tools → v0.5.9, the desk → v0.5.10, polish → v0.5.11).
+- **v0.5.6 — Draft & apply on the Guide: pending.** Unchanged in scope.
+- **v0.5.7 — Memory, landing as `/history/`: pending.** The spec's Memory
   slice, amended by the operator's `/series` → `/history` directive: the
   apply-run persistence migration, `GET /applies`, the enriched
   `HistoryEntry` and extended `Warning` — but the page ships as
@@ -188,9 +201,9 @@ note does not yet record (see v0.5.4 below).
   HISTORY`. The industry models this as one record in two states — a
   traffic log of what is scheduled, an as-run log of what aired — which
   is the operator's "one searchable place" verbatim.
-- **v0.5.7 — Live link (SSE): pending.** Unchanged in scope.
-- **v0.5.8 — Block power tools: pending.** Unchanged in scope.
-- **v0.5.9 — History desk power tools: pending.** Was "the series desk";
+- **v0.5.8 — Live link (SSE): pending.** Unchanged in scope.
+- **v0.5.9 — Block power tools: pending.** Unchanged in scope.
+- **v0.5.10 — History desk power tools: pending.** Was "the series desk";
   now the desk lives on `/history/`. Bulk cursor operations, YAML
   import/export, and the two new operator asks: **remove a show or movie
   from history entirely** (its sequence state, its snapshots, and its
@@ -203,7 +216,7 @@ note does not yet record (see v0.5.4 below).
   history. A removal that intersects a currently-on-air occurrence is the
   one case that changes what is playing right now — the spec proposes
   refusing it.
-- **v0.5.10 — Polish pass: pending.** Unchanged in scope.
+- **v0.5.11 — Polish pass: pending.** Unchanged in scope.
 
 Headline surfaces across the train:
 
@@ -324,9 +337,10 @@ No new features; everything is about being able to promise stability.
   only hard gate.
 - Because the numbers mark themes rather than order, an inserted slice
   pushes the pending ones down instead of renaming the theme. The v0.5
-  train has absorbed three such insertions (v0.5.2, v0.5.3, v0.5.4), and
-  the shifted numbers above are the current truth — the v0.5 spec's §9
-  renumber note records only the first two. Themes also do not have to
+  train has absorbed four such insertions (v0.5.2, v0.5.3, v0.5.4, and
+  the v0.5.5 security patch), and the shifted numbers above are the
+  current truth — the v0.5 spec's §9 renumber note records only the
+  first two. Themes also do not have to
   land in numeric order: the v0.4 metadata slices ship after the v0.5
   train, and if they land before v0.6.0 they are written in the current
   vocabulary and swept by the rename like everything else.

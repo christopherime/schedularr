@@ -9,7 +9,7 @@
 // ApiError class identity is the same everywhere `instanceof` checks it --
 // the old `window.schedularr` cross-bundle identity hack is gone.
 import type { operations, paths } from "../gen/types";
-import { getToken } from "./token.ts";
+import { loadToken } from "./token.ts";
 
 /** RFC 7807 problem+json fields, matching components["schemas"]["Problem"]. */
 export interface ProblemFields {
@@ -168,7 +168,9 @@ const SEND_TIMEOUT_MS = 60_000;
 
 async function request<T>(method: string, path: string, body: unknown, timeoutMs: number): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  const token = getToken();
+  // Hydration is memoized single-flight (token.ts): the first request of a
+  // page load waits for the decrypt, every later one resolves immediately.
+  const token = await loadToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
