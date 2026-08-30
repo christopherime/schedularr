@@ -52,6 +52,24 @@ export function addDays(dayStartMs: number, n: number): number {
   return d.getTime();
 }
 
+/**
+ * How many calendar days the loaded plan window touches. The server
+ * plans [fetch, fetch + days*24h) -- real hours, not calendar days --
+ * so any fetch after local midnight spills into a trailing partial
+ * calendar day: a 7-day plan fetched at 19:00 ends 19:00 seven days
+ * out, on an 8th calendar day that needs its own tab and rundown
+ * section. A fetch at exactly midnight stays at `days`. Date math via
+ * addDays, so DST-shifted windows still count real local midnights.
+ */
+export function windowDayCount(fetchMs: number, days: number): number {
+  const windowEndMs = fetchMs + days * 86_400_000;
+  const start = localDayStart(fetchMs);
+  for (let k = 1; k <= days; k++) {
+    if (addDays(start, k) >= windowEndMs) return k;
+  }
+  return days + 1;
+}
+
 /** One slot's placement on a single day's 288-quantum track. cutLeft/
  * cutRight mark an overnight spill clamped at the day edge (the slot
  * continues on the neighboring day). */
@@ -69,6 +87,9 @@ export interface SlotSpan {
  * Returns null when the slot doesn't touch this day at all. On a
  * DST-shifted day the minutes past local midnight are clamped into the
  * 288-column track (the visual day is always 24 columns of --div).
+ * Interim: placement counts real elapsed minutes while the ruler labels
+ * the track as fixed wall-clock hours, so on the two DST days slots sit
+ * one --div-hour off their labels (TODO.md, v0.5.1 guide deferrals).
  */
 export function daySpan(startMs: number, endMs: number, dayStartMs: number, dayEndMs: number): SlotSpan | null {
   if (endMs <= dayStartMs || startMs >= dayEndMs) return null;
@@ -185,6 +206,27 @@ export function resolveGhost(
   };
 }
 
+/** One rundown listing of a slot: `continuation` marks the second
+ * appearance of an overnight slot, under the day it spills into. */
+export interface RundownEntry {
+  slot: GuideSlot;
+  continuation: boolean;
+}
+
+/**
+ * The slots a rundown day section lists: everything OVERLAPPING
+ * [dayStartMs, dayEndMs), mirroring the desktop grid's cut-edge
+ * behavior (daySpan) -- an overnight slot appears under BOTH its start
+ * day and the day it spills into, the second appearance marked as a
+ * continuation. A slot ending exactly at midnight belongs only to its
+ * start day, matching daySpan's half-open window.
+ */
+export function rundownDaySlots(slots: GuideSlot[], dayStartMs: number, dayEndMs: number): RundownEntry[] {
+  return slots
+    .filter((s) => s.startMs < dayEndMs && s.endMs > dayStartMs)
+    .map((s) => ({ slot: s, continuation: s.startMs < dayStartMs }));
+}
+
 /**
  * Keyboard nav (Up/Down across channels): the index of the slot whose
  * start is nearest the target instant -- minimal |start − target|, ties
@@ -208,6 +250,11 @@ export function nearestSlotIndex(startsMs: number[], targetMs: number): number {
 export interface GridCallbacks {
   /** A slot (or ghost) was activated -- open the inspector on it. */
   onOpen(slot: GuideSlot, el: HTMLElement): void;
+  /** Element id of the inspector panel the slots disclose. When set,
+   * every slot button carries aria-controls + aria-expanded="false";
+   * the page flips the opener's aria-expanded while its inspector is
+   * open. Absent on surfaces with no inspector (the /kit/ fixtures). */
+  inspectorId?: string;
 }
 
 export interface GridHandle {
@@ -273,6 +320,10 @@ function buildSlotButton(slot: GuideSlot, span: SlotSpan, cb: GridCallbacks): HT
   else if (span.cutRight) btn.dataset.cut = "right";
   btn.style.setProperty("grid-column", gridColumn(span));
   btn.setAttribute("aria-label", slotAriaLabel(slot));
+  if (cb.inspectorId) {
+    btn.setAttribute("aria-controls", cb.inspectorId);
+    btn.setAttribute("aria-expanded", "false");
+  }
   if (slot.kind === "ghost") {
     btn.appendChild(el("span", "guide-slot__name", "NO SIGNAL"));
     btn.appendChild(el("span", "guide-slot__meta", `LOST TO ${(slot.lostTo ?? "").toUpperCase()}`));
@@ -398,7 +449,10 @@ export function renderGuideDay(
     const inDay = nowMs >= dayStartMs && nowMs < dayEndMs;
     nowline.hidden = !inDay;
     if (inDay) {
-      const min = Math.floor((nowMs - dayStartMs) / 60_000);
+      // Clamped to the 288-column track: the DST fall-back day is 25h,
+      // so raw elapsed minutes reach 1499 and would draw the line (and
+      // phantom scroll range) past the last grid column.
+      const min = Math.max(0, Math.min(24 * 60, Math.floor((nowMs - dayStartMs) / 60_000)));
       sheet.style.setProperty("--now-min", String(min));
     }
     for (const track of tracks) {
@@ -454,20 +508,34 @@ export function renderRundown(
   for (let k = 0; k < days; k++) {
     const dayStartMs = addDays(windowStartMs, k);
     const dayEndMs = addDays(windowStartMs, k + 1);
-    const slots = (row?.slots ?? []).filter((s) => s.startMs >= dayStartMs && s.startMs < dayEndMs);
-    if (slots.length === 0) continue;
+    // Overlap grouping (not start-time): an overnight slot lists under
+    // BOTH days, its second appearance marked as a continuation --
+    // rundown parity with the grid's dashed cut edges.
+    const daySlots = rundownDaySlots(row?.slots ?? [], dayStartMs, dayEndMs);
+    if (daySlots.length === 0) continue;
 
     const section = el("section", "rundown-day");
     section.appendChild(el("h3", "rundown-day__head", rundownDayHeading(k, dayStartMs)));
     const list = el("ol", "rundown-list");
     const items: PlacedSlot[] = [];
-    for (const slot of slots) {
+    for (const { slot, continuation } of daySlots) {
       const item = el("li", "rundown-item");
       const btn = el("button", slot.kind === "ghost" ? "rundown-slot rundown-slot--ghost" : "rundown-slot");
       btn.type = "button";
       btn.dataset.type = slot.blockType;
-      btn.setAttribute("aria-label", slotAriaLabel(slot));
-      btn.appendChild(el("span", "rundown-slot__time", slotTimeRange(slot)));
+      btn.setAttribute(
+        "aria-label",
+        continuation
+          ? `${slotAriaLabel(slot)} (continued from the previous day, until ${formatClock(slot.endMs)})`
+          : slotAriaLabel(slot),
+      );
+      if (cb.inspectorId) {
+        btn.setAttribute("aria-controls", cb.inspectorId);
+        btn.setAttribute("aria-expanded", "false");
+      }
+      btn.appendChild(
+        el("span", "rundown-slot__time", continuation ? `cont'd · until ${formatClock(slot.endMs)}` : slotTimeRange(slot)),
+      );
       const body = el("span", "rundown-slot__body");
       if (slot.kind === "ghost") {
         body.appendChild(el("span", "guide-slot__name", "NO SIGNAL"));

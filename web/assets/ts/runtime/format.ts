@@ -24,6 +24,16 @@ export function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
+/** "1st" / "2nd" / "3rd" / "4th" ... with the 11-13 "th" exception --
+ * the guide inspector's priority rank readout. */
+export function ordinal(n: number): string {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  const rem10 = n % 10;
+  const suffix = rem10 === 1 ? "st" : rem10 === 2 ? "nd" : rem10 === 3 ? "rd" : "th";
+  return `${n}${suffix}`;
+}
+
 /**
  * Clamps free-text days input to the plan window's documented [1, 30]
  * range (api/openapi.yaml: GenerateRequest.days and GET /schedule's days

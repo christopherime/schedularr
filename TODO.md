@@ -285,6 +285,33 @@ scoped-out gap.
 - [ ] Transactional `Engine.Commit`: today it is a sequence of independent sqlite statements (UpdateSeriesState per show, RecordScheduleHistory, SaveOccurrenceSnapshot, ReplaceOccurrenceHistory, cleanups) — a SIGKILL (or the drain-timeout os.Exit) mid-sequence can persist an advanced cursor without its snapshot/history rows. Root fix: one transaction. (v0.3.0 review, MAJOR-class root cause; the drain path now exits without closing the store, which narrows but does not close the window.)
 - [ ] `syncPostStates` stamps shows an occurrence never actually reached (post==pre rides through and gets LastAired/CursorPlanSeq written); newly visible for a series added to a full block — its `start_season`/`start_episode` is then silently never applied (initializeSeriesState early-returns once LastAired is set). Fix candidate: skip post==pre entries during sync. (v0.3.0 review, Minor.)
 - [ ] Residue from v0.2.2 final gate, last open item: (a) backward-CAS coincidence — a wrap-lap landing exactly on a slow shared-show block's frozen baseline lands a partial-lap rewind (self-healing; needs restart + shared show_title + far-future occurrence). Address with the v0.3.x seed-machinery slice. ((b) contradictory on_complete now REJECTED at write time; (c) provenance stamp direction now test-pinned — both shipped in the v0.3.0 slice.)
+- [ ] Overflow slots desync per-program `start_time` from actual Tunarr playback of the following slot (v0.5.1 review, contract lens). Block A (21:00, duration 60, `max_duration_overflow_minutes` 15) fills 70 min of content; the engine's shell still sets `EndTime = 22:00` (`internal/scheduler/engine.go` shell construction ignores the overflow in both the filter and series fill loops). `buildAnchoredLineup`'s `gap > 0` guards then skip both the end-of-slot pad and the next slot's gap, so adjacent block B's programs are appended at cumulative offset 22:10 and Tunarr plays them 10 minutes late — while the wire's per-program `start_time` (computed from B's nominal `StartTime` in `slotToGen`, `internal/api/schedule.go`) says 22:00. The guide renders air times up to the configured overflow early for every slot after an overflowing one until a real gap absorbs the shift. Pre-existing at slot level; the per-program field inherits and amplifies it. Root fix is engine-side: the shell `EndTime` must account for `max_duration_overflow_minutes` actually consumed.
+
+## Deferred (v0.5.1 Guide review)
+
+Recorded from the v0.5.1 Guide fix round (2026-08-30). Neither blocks
+the slice; both are known, scoped-out gaps.
+
+- **Season 0 (specials) is omitted from the wire, indistinguishable
+  from "not an episode".** `programToGen` (`internal/api/schedule.go`)
+  only emits `season` when `SeasonNumber > 0`, but Plex/Jellyfin
+  specials live in season 0 — a scheduled special airs on the wire as
+  `{type: "episode", episode: 5}` with no season, so the guide shows
+  `E5` with no season marker. Mitigating: `SeasonNumber == 0` also
+  means "not yet hydrated via SeasonID" (`internal/external/tunarr/
+  models.go`), so 0 is an ambiguous sentinel internally and omission is
+  the defensible projection; the wire just cannot distinguish a special
+  from an unhydrated episode. Revisit if/when hydration makes 0
+  unambiguous.
+- **DST-day slot positions disagree with the ruler's hour labels.**
+  `daySpan` (`web/assets/ts/runtime/grid.ts`) places slots by real
+  elapsed minutes since local midnight while `buildRuler` labels the
+  288-quantum track as fixed wall-clock hours: on the spring-forward
+  day a 12:00 slot renders under the 11:00 cell; the fall-back day
+  compresses an unlabeled extra hour (the now-line is clamped to the
+  track since this round). Two days a year, read-only surface —
+  documented at the `daySpan` doc comment; fix would be
+  ruler-follows-offset rendering.
 
 ## v0.5.7 polish intake
 

@@ -31,20 +31,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `grid-track` ui/skeleton variant), scanline NO SIGNAL with Retry on a
   failed plan, and two teaching empty states (no blocks vs. no match).
   Mobile reflows to a day-grouped vertical rundown (TONIGHT/TOMORROW
-  headings, channel picker, now-line as a horizontal rule).
+  headings, channel picker, now-line as a horizontal rule); an
+  overnight slot lists under BOTH days, the second appearance marked
+  `cont'd · until HH:MM` — parity with the grid's dashed cut edges.
+  The day tabs cover the window's trailing partial calendar day
+  (`windowDayCount`: the server plans [fetch, fetch + days×24h), so a
+  19:00 load needs days+1 tabs — without this the 8th day's slots and
+  ghosts were planned, returned, and unreachable), and today's tab
+  carries an accent dot paired with `aria-current="date"`. DAYS/SCOPE
+  stay enabled during a reload — a change landing mid-flight is latched
+  and re-fired, instead of the old `:disabled` blur that dumped
+  keyboard focus on body (and the SCOPE select's change event is now
+  actually wired to re-fetch — it previously only wrote state). A
+  visually-hidden `role="status"` line announces
+  loading/loaded/unreachable; the viewport is a labeled, keyboard-
+  focusable `role="region"` scroller. Warnings that cannot be placed
+  as ghosts (blocks enrichment failed) pin an amber `N OCCURRENCES
+  DROPPED BY CONFLICTS — PLACEMENT UNAVAILABLE` legend above the grid
+  rather than vanishing. The row projection is memoized on
+  (plan, blocks, channels) identity — one render pass consulted it 3+
+  times — and `--now-min` clamps to the 288-column track (the DST
+  fall-back day's 25th hour drew the sweep past the sheet). The
+  per-channel status dot on the rail plates (§3.1) is explicitly
+  deferred to the SSE era (v0.5.4): there is no per-channel signal to
+  read until the heartbeat lands.
 - **Slot inspector** (same files): desktop right rail that compresses
   the grid (never overlays), mobile bottom sheet — block-name link
   deep-linking to `/blocks/?edit=<id>` (the blocks page now opens its
   editor from that param), channel plate, time range + duration, the
   full program rundown with per-program start times and SxxEyy markers
-  from the typed shape, cron + cronstrue readback, priority, enabled
-  state; ghosts show the conflict verdict with the winner linked.
-  Esc/X close with focus returned to the slot.
+  from the typed shape, cron + cronstrue readback, priority with its
+  §3.2 rank context (`50 · 2nd of 5` among the channel's enabled
+  blocks, competition ranking on ties, computed from the loaded
+  blocksByName), enabled state, and a JUMP SERIES CURSOR action for
+  series blocks (a plain `/series/` link — no per-row anchor exists
+  yet); ghosts show the conflict verdict with the winner linked.
+  Opening is perceptible: slot buttons carry
+  `aria-controls`/`aria-expanded` and focus moves to the panel heading
+  (`tabindex="-1"`, visible ring) — which also puts the mobile bottom
+  sheet directly in the tab order. Esc/X close with focus returned to
+  the slot; a re-render closer (day switch, reload) deliberately does
+  NOT focus the about-to-die slot node — the pressed day tab keeps
+  focus instead of body.
 - **Web unit tests for the grid geometry** (`web/tests/grid.test.ts`):
   quantum clamping incl. overnight spill cut-left/right, grid-column
-  mapping, day windowing, ghost placement fallbacks, keyboard
-  nearest-slot picking; plus the relocated days-clamp/channel-order
-  coverage in `runtime.test.ts`.
+  mapping, day windowing (`windowDayCount` trailing-partial-day cases:
+  19:00 fetch at days=7 → 8, exact midnight → 7), rundown overlap
+  grouping (`rundownDaySlots` continuation marking, half-open day
+  edges), ghost placement fallbacks, keyboard nearest-slot picking;
+  plus the relocated days-clamp/channel-order coverage and the
+  `ordinal` teens exception in `runtime.test.ts`.
 
 ### Changed
 

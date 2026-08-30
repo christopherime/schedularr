@@ -20,6 +20,15 @@
 
     {{ partial "ui/tape.html" . }}
 
+    {{- /* The guide's async states, announced: one visually-hidden
+           role="status" line covering loading / loaded / unreachable
+           (present from first paint so live-region updates register). */}}
+    <p class="visually-hidden" role="status" x-text="statusLine"></p>
+
+    {{- /* DAYS/SCOPE stay ENABLED during a reload -- disabling the
+           focused control would blur it and strand keyboard focus on
+           body. requestReload() latches a change that lands mid-flight
+           and re-fires it when the flight lands. */}}
     <div class="guide-toolbar" role="group" aria-label="Plan controls">
       <div class="form-field guide-toolbar__days">
         <label for="guide-days">Days</label>
@@ -29,8 +38,7 @@
           max="30"
           id="guide-days"
           x-model="controls.days"
-          @change="onDaysChange()"
-          :disabled="loading"
+          @change="requestReload()"
         >
       </div>
       <div class="form-field guide-toolbar__scope">
@@ -38,7 +46,7 @@
         {{ partial "ui/channel-select.html" (dict
           "id" "guide-scope"
           "model" "controls.channelId"
-          "disabled" "loading"
+          "change" "requestReload()"
           "emptyOption" "All channels"
           "placeholder" "Leave blank for all channels") }}
       </div>
@@ -104,22 +112,35 @@
               type="button"
               class="guide-tab"
               :aria-pressed="tab.index === dayIndex"
+              :aria-current="tab.isToday ? 'date' : false"
               :data-today="tab.isToday"
-              @click="selectDay(tab.index)"
+              @click="selectDay(tab.index, $event.currentTarget)"
               x-text="tab.label"
             ></button>
           </template>
         </div>
+        {{- /* Honesty line: warnings that could not be placed as NO
+               SIGNAL ghosts (blocks enrichment failed) must not vanish
+               silently -- pinned above the grid/rundown in the ghosts'
+               amber vocabulary. */}}
+        <p class="guide-droplegend" x-show="droppedWarnings() > 0" x-cloak x-text="droppedLegendLine()"></p>
       </div>
-      <div class="guide-viewport" id="guide-viewport" aria-label="Programme grid"></div>
+      {{- /* role=region + tabindex=0: the one scroller is keyboard-
+             scrollable even where a track has no slots to rove onto,
+             and the aria-label is valid ARIA (it is prohibited on a
+             generic div). */}}
+      <div class="guide-viewport" id="guide-viewport" role="region" tabindex="0" aria-label="Programme grid"></div>
       <div class="guide-rundown" id="guide-rundown" aria-label="Programme rundown"></div>
     </div>
 
     {{- /* Slot inspector (spec §3.2): desktop right rail that compresses
-           the grid (never overlays); bottom sheet on mobile. Esc/X close
-           with focus returned to the slot. */}}
+           the grid (never overlays); bottom sheet on mobile. Slot
+           buttons disclose it (aria-controls/aria-expanded); opening
+           moves focus to the heading (tabindex=-1); Esc/X close with
+           focus returned to the slot. */}}
     <aside
       class="guide-inspector"
+      id="guide-inspector"
       x-show="inspector.open"
       x-cloak
       aria-label="Slot inspector"
@@ -127,7 +148,7 @@
       <template x-if="inspector.slot">
         <div>
           <div class="panel__head">
-            <h2>
+            <h2 id="guide-inspector-title" tabindex="-1">
               <a
                 class="guide-inspector__title-link"
                 :href="inspectorEditHref()"
@@ -201,6 +222,10 @@
           </div>
           <div class="panel__actions">
             <a class="btn btn--ghost" :href="inspectorEditHref()">Edit block</a>
+            {{- /* §3.2 JUMP SERIES CURSOR: a plain link -- the series
+                   page has no per-row anchor yet, so it lands on the
+                   list, not the specific cursor row. */}}
+            <a class="btn btn--ghost" href="/series/" x-show="inspector.slot.blockType === 'series'">Jump series cursor</a>
           </div>
         </div>
       </template>

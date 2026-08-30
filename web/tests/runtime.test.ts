@@ -8,7 +8,7 @@ import test from "node:test";
 const { ApiError, apiPath } = await import("../assets/ts/runtime/api.ts");
 const { describeError, toProblemView } = await import("../assets/ts/runtime/errors.ts");
 const { channelHint, channelLabel, channelOrder, channelPlate } = await import("../assets/ts/runtime/channels.ts");
-const { clampDays, durationLabel, formatClock, formatLocal, pad2, plural, relativeTime, sxxeyy, untilTime } =
+const { clampDays, durationLabel, formatClock, formatLocal, ordinal, pad2, plural, relativeTime, sxxeyy, untilTime } =
   await import("../assets/ts/runtime/format.ts");
 
 // ---- errors --------------------------------------------------------------
@@ -164,6 +164,17 @@ test("clampDays defaults blank/non-finite input to 7 and rounds", () => {
   assert.equal(clampDays("abc"), 7);
   assert.equal(clampDays("6.6"), 7);
   assert.equal(clampDays("2.2"), 2);
+});
+
+test("ordinal handles the teens exception", () => {
+  assert.equal(ordinal(1), "1st");
+  assert.equal(ordinal(2), "2nd");
+  assert.equal(ordinal(3), "3rd");
+  assert.equal(ordinal(4), "4th");
+  assert.equal(ordinal(11), "11th");
+  assert.equal(ordinal(12), "12th");
+  assert.equal(ordinal(13), "13th");
+  assert.equal(ordinal(21), "21st");
 });
 
 // ---- channel ordering ------------------------------------------------------

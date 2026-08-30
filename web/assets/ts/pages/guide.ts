@@ -19,7 +19,7 @@ import type { Channel } from "../runtime/channels.ts";
 import { cronReadback } from "../runtime/cron.ts";
 import { toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
-import { clampDays, durationLabel, formatClock, plural, sxxeyy } from "../runtime/format.ts";
+import { clampDays, durationLabel, formatClock, ordinal, plural, sxxeyy } from "../runtime/format.ts";
 import {
   addDays,
   dayLabel,
@@ -27,6 +27,7 @@ import {
   renderGuideDay,
   renderRundown,
   resolveGhost,
+  windowDayCount,
 } from "../runtime/grid.ts";
 import type { GhostBlockInfo, GridHandle, GuideRow, GuideSlot, RundownHandle } from "../runtime/grid.ts";
 import { initShell } from "../runtime/shell.ts";
@@ -57,6 +58,27 @@ let gridHandle: GridHandle | null = null;
 let rundownHandle: RundownHandle | null = null;
 let inspectorReturnEl: HTMLElement | null = null;
 
+/** The projected renderable model plus the honesty counter: warnings
+ * that could not be placed as ghosts (blocks enrichment failed, or a
+ * block vanished between plan and render). */
+interface RowsProjection {
+  rows: GuideRow[];
+  dropped: number;
+}
+
+// projection() memo: the GuideSlot graph is identical for a given
+// (plan, blocksByName, channels) triple, but one render pass asks for
+// it several times (renderAll, the rundown, the Alpine x-for over
+// rundownChannels) -- ~60-90k throwaway allocations per pass at scale.
+// Keyed on reference identity; reload()/loadChannels() replace all
+// three objects wholesale, which is the only way they change.
+let rowsMemo: {
+  plan: object;
+  blocks: object;
+  channels: object;
+  value: RowsProjection;
+} | null = null;
+
 interface DayTab {
   index: number;
   label: string;
@@ -76,6 +98,13 @@ interface GuideState {
   channels: Channel[];
 
   loading: boolean;
+  /** Latches a DAYS/SCOPE change that lands while a reload is already
+   * in flight -- the flight finishes, then re-fires with the latest
+   * control values (the controls stay enabled and keep focus). */
+  reloadPending: boolean;
+  /** The visually-hidden role="status" line: announces the guide's
+   * async states (loading / loaded / unreachable) to screen readers. */
+  statusLine: string;
   problem: ProblemView | null;
   plan: PlanResult | null;
   /** BlockRecords by name -- inspector enrichment (id for the editor
@@ -84,7 +113,9 @@ interface GuideState {
    * fails: links fall back to /blocks/, ghosts to the winner's channel. */
   blocksByName: Record<string, BlockRecord>;
 
-  /** The loaded window: local midnight of day 0 + how many days. */
+  /** The loaded window: local midnight of day 0 + how many calendar
+   * days it touches (a trailing partial day included -- see
+   * windowDayCount). */
   windowStartMs: number;
   loadedDays: number;
   dayIndex: number;
@@ -95,14 +126,17 @@ interface GuideState {
   init(): void;
   loadChannels(): Promise<void>;
   reload(): Promise<void>;
-  onDaysChange(): void;
+  requestReload(): void;
   channelLabel(c: Channel): string;
   channelHint(): string;
 
   dayTabs(): DayTab[];
-  selectDay(index: number): void;
+  selectDay(index: number, tabEl?: HTMLElement): void;
 
+  projection(): RowsProjection;
   rows(): GuideRow[];
+  droppedWarnings(): number;
+  droppedLegendLine(): string;
   rundownRow(): GuideRow | null;
   rundownChannels(): { id: string; label: string }[];
   hasAnySlots(): boolean;
@@ -112,7 +146,7 @@ interface GuideState {
   tick(): void;
 
   openInspector(slot: GuideSlot, el: HTMLElement): void;
-  closeInspector(): void;
+  closeInspector(returnFocus?: boolean): void;
   inspectorBlock(): BlockRecord | null;
   inspectorEditHref(): string;
   winnerEditHref(): string;
@@ -139,6 +173,8 @@ document.addEventListener("alpine:init", () => {
       channels: [],
 
       loading: true,
+      reloadPending: false,
+      statusLine: "Loading programme guide",
       problem: null,
       plan: null,
       blocksByName: {},
@@ -186,9 +222,12 @@ document.addEventListener("alpine:init", () => {
       // enriches (inspector deep-links, ghost placement) and degrades
       // silently, matching the blocks editor's media-fetch convention.
       async reload() {
-        this.closeInspector();
+        // A re-render is the closer here, not Esc/X: never return focus
+        // to a slot node the reload is about to hide or discard.
+        this.closeInspector(false);
         this.loading = true;
         this.problem = null;
+        this.statusLine = "Loading programme guide";
         const days = clampDays(this.controls.days);
         this.controls.days = String(days);
         const channelId = this.controls.channelId.trim();
@@ -201,8 +240,12 @@ document.addEventListener("alpine:init", () => {
         const blocksPromise = apiGet<BlockRecord[]>(apiPath("/blocks")).catch((): BlockRecord[] | null => null);
         try {
           this.plan = await planPromise;
-          this.windowStartMs = localDayStart(Date.now());
-          this.loadedDays = days;
+          const landedAt = Date.now();
+          this.windowStartMs = localDayStart(landedAt);
+          // The server plans [now, now + days*24h): any fetch after
+          // midnight spills into a trailing partial calendar day that
+          // needs its own tab and rundown section.
+          this.loadedDays = windowDayCount(landedAt, days);
           this.dayIndex = 0;
         } catch (err) {
           this.problem = toProblemView(err);
@@ -213,10 +256,36 @@ document.addEventListener("alpine:init", () => {
         for (const b of blocks ?? []) byName[b.name] = b;
         this.blocksByName = byName;
         this.loading = false;
-        if (this.plan) this.renderAll();
+        if (this.plan) {
+          const { rows, dropped } = this.projection();
+          const programCount = rows.reduce(
+            (n, r) => n + r.slots.reduce((m, s) => (s.kind === "slot" ? m + s.programs.length : m), 0),
+            0,
+          );
+          let line = `Programme guide loaded, ${plural(programCount, "program")} across ${plural(rows.length, "channel")}`;
+          if (dropped > 0) line += `; ${plural(dropped, "occurrence")} dropped by conflicts, placement unavailable`;
+          this.statusLine = line;
+          this.renderAll();
+        } else {
+          this.statusLine = "Guide unavailable — Tunarr unreachable";
+        }
+        // A DAYS/SCOPE change that landed mid-flight re-fires now with
+        // the latest control values (x-model already holds them).
+        if (this.reloadPending) {
+          this.reloadPending = false;
+          void this.reload();
+        }
       },
 
-      onDaysChange() {
+      // DAYS/SCOPE change entry point. The controls stay ENABLED during
+      // a reload (disabling the focused control would blur it and dump
+      // keyboard focus on document.body); a change landing mid-flight
+      // is latched and re-fired once the flight lands.
+      requestReload() {
+        if (this.loading) {
+          this.reloadPending = true;
+          return;
+        }
         void this.reload();
       },
 
@@ -242,17 +311,31 @@ document.addEventListener("alpine:init", () => {
       },
 
       // Day tabs are navigation only -- they never re-plan (spec §3.1).
-      selectDay(index) {
+      selectDay(index, tabEl) {
         if (index === this.dayIndex) return;
         this.dayIndex = index;
-        this.closeInspector();
+        // The re-render is about to discard the inspector's return
+        // slot: keep focus on the tab the user pressed instead of
+        // handing it to a dying node (which strands it on body).
+        this.closeInspector(false);
+        tabEl?.focus();
         this.renderAll();
       },
 
       // The full renderable model: one row per planned channel, plate
-      // resolved from the channel cache, slots + ghosts sorted by start.
-      rows() {
-        if (!this.plan) return [];
+      // resolved from the channel cache, slots + ghosts sorted by
+      // start; plus the count of warnings that could not be placed as
+      // ghosts. Memoized on (plan, blocksByName, channels) identity.
+      projection() {
+        if (!this.plan) return { rows: [], dropped: 0 };
+        if (
+          rowsMemo &&
+          rowsMemo.plan === this.plan &&
+          rowsMemo.blocks === this.blocksByName &&
+          rowsMemo.channels === this.channels
+        ) {
+          return rowsMemo.value;
+        }
         const rowsByChannel = new Map<string, GuideSlot[]>();
         for (const [channelId, slots] of Object.entries(this.plan.channels)) {
           const list: GuideSlot[] = [];
@@ -283,24 +366,43 @@ document.addEventListener("alpine:init", () => {
         }
         // Ghost slots for current-plan warnings, at their would-have-aired
         // time. A conflict is always same-channel, so the ghost's channel
-        // always already has a row in the plan.
+        // always already has a row in the plan. A warning that cannot be
+        // placed (blocks enrichment failed, block deleted, no matching
+        // row) is COUNTED, never silently dropped -- the pinned legend
+        // line above the grid keeps the reading honest.
         const ghostLookup = new Map<string, GhostBlockInfo>();
         for (const [name, b] of Object.entries(this.blocksByName)) {
           ghostLookup.set(name, { channelId: b.spec.channel_id, durationMinutes: b.spec.duration });
         }
+        let dropped = 0;
         for (const w of this.plan.warnings ?? []) {
           const ghost = resolveGhost(w, ghostLookup);
-          if (!ghost) continue;
-          const list = rowsByChannel.get(ghost.channelId);
-          if (list) list.push(ghost);
+          const list = ghost ? rowsByChannel.get(ghost.channelId) : undefined;
+          if (ghost && list) list.push(ghost);
+          else dropped++;
         }
-        return [...rowsByChannel.entries()]
+        const rows = [...rowsByChannel.entries()]
           .map(([channelId, slots]) => ({
             channelId,
             plate: channelPlate(channelId, this.channels),
             slots: slots.sort((a, b) => a.startMs - b.startMs),
           }))
           .sort((a, b) => channelOrder(a.channelId, b.channelId, this.channels));
+        const value = { rows, dropped };
+        rowsMemo = { plan: this.plan, blocks: this.blocksByName, channels: this.channels, value };
+        return value;
+      },
+
+      rows() {
+        return this.projection().rows;
+      },
+
+      droppedWarnings() {
+        return this.projection().dropped;
+      },
+
+      droppedLegendLine() {
+        return `${plural(this.droppedWarnings(), "occurrence")} dropped by conflicts — placement unavailable`;
       },
 
       rundownRow() {
@@ -339,6 +441,7 @@ document.addEventListener("alpine:init", () => {
           const dayStartMs = addDays(this.windowStartMs, this.dayIndex);
           gridHandle = renderGuideDay(viewport, rows, dayStartMs, {
             onOpen: (slot, el) => this.openInspector(slot, el),
+            inspectorId: "guide-inspector",
           });
           gridHandle.updateNow(Date.now());
           // Auto-scroll target on open: the sweep cursor, parked a third
@@ -370,6 +473,7 @@ document.addEventListener("alpine:init", () => {
         if (row) this.rundownChannelId = row.channelId;
         rundownHandle = renderRundown(rundownEl, row, this.windowStartMs, this.loadedDays, {
           onOpen: (slot, el) => this.openInspector(slot, el),
+          inspectorId: "guide-inspector",
         });
         rundownHandle.updateNow(Date.now());
       },
@@ -379,18 +483,35 @@ document.addEventListener("alpine:init", () => {
         rundownHandle?.updateNow(Date.now());
       },
 
+      // Opening is made perceptible: the opener's aria-expanded flips
+      // (every slot button carries aria-controls="guide-inspector"),
+      // and focus moves to the inspector heading (tabindex="-1") once
+      // Alpine has shown the panel -- which also puts the mobile bottom
+      // sheet directly in the tab order instead of after the whole
+      // remaining rundown.
       openInspector(slot, el) {
+        if (inspectorReturnEl && inspectorReturnEl !== el) {
+          inspectorReturnEl.setAttribute("aria-expanded", "false");
+        }
         inspectorReturnEl = el;
+        el.setAttribute("aria-expanded", "true");
         this.inspector.slot = slot;
         this.inspector.open = true;
+        this.$nextTick(() => {
+          document.getElementById("guide-inspector-title")?.focus();
+        });
       },
 
       // Esc/X close with focus returned to the slot that opened it.
-      closeInspector() {
+      // A re-render closer (selectDay/reload) passes returnFocus=false:
+      // the return slot is about to be discarded, and focusing a dying
+      // node strands keyboard focus on document.body.
+      closeInspector(returnFocus = true) {
         if (!this.inspector.open) return;
         this.inspector.open = false;
         this.inspector.slot = null;
-        inspectorReturnEl?.focus();
+        inspectorReturnEl?.setAttribute("aria-expanded", "false");
+        if (returnFocus) inspectorReturnEl?.focus();
         inspectorReturnEl = null;
       },
 
@@ -441,12 +562,23 @@ document.addEventListener("alpine:init", () => {
         return cron === "" ? null : cronReadback(cron);
       },
 
+      // §3.2 rank context: "50 · 2nd of 5" among ENABLED same-channel
+      // blocks, computed from the already-loaded blocksByName.
+      // Competition ranking, so ties share a rank (two blocks at 80 are
+      // both 1st of n). Falls back to the bare number when the blocks
+      // fetch failed (no peers resolvable).
       inspectorPriority() {
         const slot = this.inspector.slot;
         if (!slot) return "";
         const record = this.inspectorBlock();
         const priority = slot.kind === "ghost" ? (record?.spec.priority ?? slot.priority) : slot.priority;
-        return String(priority);
+        const channelId = record?.spec.channel_id ?? slot.channelId;
+        const peers = Object.values(this.blocksByName).filter(
+          (b) => b.enabled && b.spec.channel_id === channelId,
+        );
+        if (peers.length === 0) return String(priority);
+        const higher = peers.filter((b) => (b.spec.priority ?? 0) > priority).length;
+        return `${priority} · ${ordinal(higher + 1)} of ${peers.length}`;
       },
 
       // Enabled state comes from the BlockRecord (BlockSpec doesn't carry

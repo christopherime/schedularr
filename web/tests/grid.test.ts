@@ -18,6 +18,8 @@ const {
   nearestSlotIndex,
   resolveGhost,
   rundownDayHeading,
+  rundownDaySlots,
+  windowDayCount,
 } = await import("../assets/ts/runtime/grid.ts");
 
 // A fixed local day: Saturday 2026-08-29 (month is 0-based).
@@ -94,6 +96,18 @@ test("localDayStart and addDays walk local midnights", () => {
   assert.equal(daySpan(k2 + 3_600_000, k2 + 7_200_000, day, dayEnd), null, "and not in day 0's");
 });
 
+test("windowDayCount includes the trailing partial calendar day", () => {
+  // The server plans [fetch, fetch + days*24h): a 19:00 fetch spills
+  // into an extra calendar day that needs its own tab/section.
+  assert.equal(windowDayCount(at(19), 7), 8);
+  assert.equal(windowDayCount(at(19), 1), 2);
+  // A fetch at exactly local midnight stays at `days`.
+  assert.equal(windowDayCount(day, 7), 7);
+  assert.equal(windowDayCount(day, 1), 1);
+  // One millisecond past midnight already touches the next day.
+  assert.equal(windowDayCount(day + 1, 1), 2);
+});
+
 test("dayLabel and rundownDayHeading name the windows", () => {
   assert.equal(dayLabel(day), "SAT 29");
   assert.equal(dayLabel(dayEnd), "SUN 30");
@@ -141,6 +155,54 @@ test("resolveGhost drops an unplaceable or unparseable warning", () => {
     null,
   );
   assert.equal(resolveGhost({ block_name: "X" }, new Map()), null, "no occurrence_start at all");
+});
+
+// ---- rundown day grouping --------------------------------------------------
+
+function mkSlot(startMs: number, endMs: number, name = "Slot") {
+  return {
+    kind: "slot" as const,
+    channelId: "chan-1",
+    blockName: name,
+    blockType: "filter",
+    cron: "",
+    priority: 0,
+    startMs,
+    endMs,
+    programs: [],
+  };
+}
+
+test("rundownDaySlots lists an overnight slot under both days, second as continuation", () => {
+  // 23:00 -> 01:00 next day, plus a plain evening slot.
+  const overnight = mkSlot(at(23), nextDayAt(1), "Graveyard Shift");
+  const evening = mkSlot(at(19), at(21), "Prime Time");
+  const slots = [evening, overnight];
+  const day0 = rundownDaySlots(slots, day, dayEnd);
+  assert.deepEqual(
+    day0.map((e) => [e.slot.blockName, e.continuation]),
+    [["Prime Time", false], ["Graveyard Shift", false]],
+  );
+  const nextEnd = new Date(2026, 7, 31, 0, 0, 0, 0).getTime();
+  const day1 = rundownDaySlots(slots, dayEnd, nextEnd);
+  assert.deepEqual(
+    day1.map((e) => [e.slot.blockName, e.continuation]),
+    [["Graveyard Shift", true]],
+  );
+});
+
+test("rundownDaySlots keeps the half-open day window", () => {
+  // Ending exactly at midnight belongs only to the start day; starting
+  // exactly at midnight belongs only to the new day (matches daySpan).
+  const toMidnight = mkSlot(at(22), dayEnd);
+  const fromMidnight = mkSlot(dayEnd, nextDayAt(2));
+  const nextEnd = new Date(2026, 7, 31, 0, 0, 0, 0).getTime();
+  assert.equal(rundownDaySlots([toMidnight], day, dayEnd).length, 1);
+  assert.equal(rundownDaySlots([toMidnight], dayEnd, nextEnd).length, 0);
+  assert.equal(rundownDaySlots([fromMidnight], day, dayEnd).length, 0);
+  const entries = rundownDaySlots([fromMidnight], dayEnd, nextEnd);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].continuation, false);
 });
 
 // ---- keyboard nav: nearest-slot picking ------------------------------------

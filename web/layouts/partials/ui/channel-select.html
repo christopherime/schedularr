@@ -7,6 +7,8 @@
     id:          element id (shared across the mutually-exclusive states)
     model:       Alpine x-model expression
     disabled:    optional Alpine :disabled expression
+    change:      optional Alpine @change expression (fires on both the
+                 select and the free-text fallback)
     emptyOption: label of the value="" first option
                  ("All channels" / "— select a channel —")
     options:     optional Alpine expression for the option list
@@ -20,7 +22,7 @@
   </select>
 </template>
 <template x-if="!channelsLoading && !channelsError && channels.length > 0">
-  <select id="{{ .id }}" x-model="{{ .model }}"{{ with .disabled }} :disabled="{{ . }}"{{ end }}>
+  <select id="{{ .id }}" x-model="{{ .model }}"{{ with .disabled }} :disabled="{{ . }}"{{ end }}{{ with .change }} @change="{{ . }}"{{ end }}>
     <option value="">{{ .emptyOption }}</option>
     <template x-for="c in {{ $options }}" :key="c.id">
       <option :value="c.id" x-text="channelLabel(c)"></option>
@@ -36,6 +38,9 @@
     autocomplete="off"
     {{- with .disabled }}
     :disabled="{{ . }}"
+    {{- end }}
+    {{- with .change }}
+    @change="{{ . }}"
     {{- end }}
   >
 </template>
