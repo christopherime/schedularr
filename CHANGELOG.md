@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-30
+
 ### Added
 
 - **`GET /status` gains `last_applied_at` and `next_cron_tick`**
@@ -1534,7 +1536,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/christopherime/schedularr/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/christopherime/schedularr/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/christopherime/schedularr/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/christopherime/schedularr/compare/v0.2.4...v0.2.5
