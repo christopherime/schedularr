@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v0.5.0 web-overhaul design spec**
+  (`docs/superpowers/specs/2026-08-30-v0.5-web-overhaul-design.md`):
+  guide-first direction chosen by a 4-proposal, 3-judge design panel
+  (guide-first 136 · flow-first 133 · craft-ceiling 119 ·
+  mission-control 115), synthesized with 29 graft candidates. The EPG
+  grid becomes home; Schedule and Dashboard pages retire into the Guide,
+  bezel telemetry, and a new Operations Log; SSE live layer; eight
+  releasable slices v0.5.0–v0.5.7 with contract additions specced.
+
+### Added
+
 - **Metadata engine scaffold (`internal/metadata`)**, the first v0.4.0
   slice: a provider-agnostic `ShowMetadata`/`Provider` pair with
   `ErrNotFound` and `ErrUnauthorized` sentinels (a rejected key is fatal
