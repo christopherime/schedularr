@@ -1757,13 +1757,17 @@ func TestRunner_Run_Apply_ClearsStaleChannelLineup(t *testing.T) {
 	r, st := newTestRunner(t, server.URL)
 	ctx := context.Background()
 
-	// 1. Normal apply: channel-1 is planned, pushed, and tracked.
+	// 1. Normal apply: channel-1 is planned, pushed, and tracked, and the
+	// apply instant is recorded.
 	_, err := r.Run(ctx, Options{Days: 1, Apply: true})
 	require.NoError(t, err)
 	require.NotZero(t, fake.pushCount("channel-1"), "expected the planned channel to be pushed")
 	applied, err := st.ListAppliedChannels(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"channel-1"}, applied)
+	firstApply, err := st.LastApplyAt(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, firstApply, "a planned push must record the apply instant")
 
 	// 2. Delete the channel's only enabled block: the next apply must push
 	// a flex-only (no content) lineup to the now-planless channel and
@@ -1780,12 +1784,27 @@ func TestRunner_Run_Apply_ClearsStaleChannelLineup(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, applied, "a cleared channel must be untracked")
 
+	// A clear IS an apply (it pushes a flex-only lineup), so the recorded
+	// apply instant must survive the tracking set going empty and never
+	// move backwards -- the v0.5.0 review's MAJOR-1 failure modes.
+	clearApply, err := st.LastApplyAt(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, clearApply, "a clearing apply must keep the apply instant recorded")
+	require.False(t, clearApply.Before(*firstApply), "the apply instant must never go backwards")
+
 	// 3. A further apply leaves the untracked channel entirely alone, so a
 	// manual takeover of the channel in Tunarr is never clobbered.
 	cleared := fake.pushCount("channel-1")
 	_, err = r.Run(ctx, Options{Days: 1, Apply: true})
 	require.NoError(t, err)
 	require.Equal(t, cleared, fake.pushCount("channel-1"), "an untracked channel must not be pushed to again")
+
+	// An apply that pushed nothing (no plan, nothing to clear) must not
+	// touch the recorded instant either.
+	after, err := st.LastApplyAt(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.True(t, after.Equal(*clearApply), "an apply that pushed nothing must not move the apply instant")
 }
 
 // TestRunner_Run_Apply_ScopedClearRespectsChannelScope verifies

@@ -380,7 +380,7 @@ export interface components {
             blocks?: number;
             /**
              * Format: date-time
-             * @description When the most recent apply pushed a lineup to Tunarr (the max applied_at across applied_channels). Omitted when no apply has been recorded yet.
+             * @description When the most recent apply pushed at least one lineup to Tunarr (planned pushes and stale-channel clears alike), sampled at push time. Omitted when no apply has been recorded yet.
              */
             last_applied_at?: string;
             /**

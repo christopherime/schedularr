@@ -121,10 +121,14 @@ func (h *Handlers) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Same degradation contract as Blocks above: a store error omits the
 	// field (logged server-side) rather than failing the whole request.
-	lastApplied, err := h.d.Store.LastAppliedAt(r.Context())
+	// The source is the persisted apply instant (store.LastApplyAt, the
+	// app_meta key), NOT the applied_channels tracking set -- that set's
+	// rows are removed again when a stale channel is cleared, so its max
+	// can vanish or go backwards right after a successful apply.
+	lastApplied, err := h.d.Store.LastApplyAt(r.Context())
 	if err != nil {
 		h.d.Logger.Error("internal error",
-			"op", "get_status_last_applied_at",
+			"op", "get_status_last_apply_at",
 			"request_id", RequestIDFromContext(r.Context()),
 			"error", err,
 		)

@@ -171,17 +171,19 @@ func TestGetStatus_StoreCountError_StillReturns200(t *testing.T) {
 }
 
 // TestGetStatus_LastAppliedAndNextTick covers the two v0.5.0 additions:
-// last_applied_at reads the applied_channels max, next_cron_tick comes from
-// Deps.NextCronTick, and both are omitted when there is nothing to report
-// (fresh store, nil func) -- the nil-func case is every earlier test in
-// this file, so only the populated path needs asserting here.
+// last_applied_at reads the persisted apply instant (store.SetLastApplyAt/
+// LastApplyAt -- deliberately not the applied_channels tracking set, whose
+// rows get removed again), next_cron_tick comes from Deps.NextCronTick,
+// and both are omitted when there is nothing to report (fresh store, nil
+// func) -- the nil-func case is every earlier test in this file, so only
+// the populated path needs asserting here.
 func TestGetStatus_LastAppliedAndNextTick(t *testing.T) {
 	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err, "failed to create test store")
 	t.Cleanup(func() { _ = s.Close() })
 
 	applied := time.Date(2026, 8, 30, 6, 0, 0, 0, time.UTC)
-	require.NoError(t, s.MarkChannelApplied(context.Background(), "chan-1", applied))
+	require.NoError(t, s.SetLastApplyAt(context.Background(), applied))
 
 	nextTick := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	fake := &fakeTunarr{channels: []tunarr.Channel{{ID: "chan-1", Name: "News", Number: 1}}}
@@ -197,7 +199,7 @@ func TestGetStatus_LastAppliedAndNextTick(t *testing.T) {
 	var got gen.Status
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.NotNil(t, got.LastAppliedAt)
-	assert.True(t, got.LastAppliedAt.Equal(applied), "last_applied_at should be the applied_channels max, got %v", got.LastAppliedAt)
+	assert.True(t, got.LastAppliedAt.Equal(applied), "last_applied_at should be the persisted apply instant, got %v", got.LastAppliedAt)
 	require.NotNil(t, got.NextCronTick)
 	assert.True(t, got.NextCronTick.Equal(nextTick), "next_cron_tick should come from Deps.NextCronTick, got %v", got.NextCronTick)
 }

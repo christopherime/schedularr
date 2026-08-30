@@ -293,8 +293,18 @@ func blocksForChannel(blocks []scheduler.Block, channelID string) []scheduler.Bl
 // scope is Run's o.ChannelID, threaded through to clearStaleChannels so a
 // channel-scoped apply only ever touches (including clears) that one
 // channel.
+//
+// Whenever at least one push landed -- a planned channel's lineup OR a
+// stale channel's flex-only clear (clearing IS an apply: it pushes a
+// lineup to Tunarr) -- the apply instant is recorded via SetLastApplyAt,
+// sampled at write time rather than reusing the plan anchor (the anchor
+// is truncated to the minute and predates the pushes by however long
+// generation took). That persisted instant, not the applied_channels
+// tracking set (whose rows clearStaleChannels removes again), is what GET
+// /status reports as last_applied_at.
 func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time, channels map[string][]scheduler.ScheduledSlot, scope string) error {
 	failCount := 0
+	pushed := 0
 	for channelID, slots := range channels {
 		channelAnchor := anchorForChannel(anchor, slots)
 		lineup, err := buildAnchoredLineup(channelAnchor, windowEnd, slots)
@@ -322,10 +332,20 @@ func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time,
 		if err := r.store.MarkChannelApplied(ctx, channelID, anchor); err != nil {
 			r.logger.Warn("failed to track applied channel", "channel_id", channelID, "error", err)
 		}
+		pushed++
 		r.logger.Info("applied schedule to channel", "channel_id", channelID)
 	}
 
-	r.clearStaleChannels(ctx, anchor, windowEnd, channels, scope)
+	cleared := r.clearStaleChannels(ctx, anchor, windowEnd, channels, scope)
+
+	// Best-effort, same contract as MarkChannelApplied above: the pushes
+	// themselves succeeded, so a failure to record the instant is logged,
+	// never turned into an apply failure.
+	if pushed+cleared > 0 {
+		if err := r.store.SetLastApplyAt(ctx, r.now().UTC()); err != nil {
+			r.logger.Warn("failed to record last apply time", "error", err)
+		}
+	}
 
 	if failCount > 0 {
 		return fmt.Errorf("failed to apply schedule to %d channel(s)", failCount)
@@ -356,13 +376,18 @@ func (r *Runner) applyChannels(ctx context.Context, anchor, windowEnd time.Time,
 // pushes already succeeded, and failing the Run would discard their
 // Engine.Commit (series-cursor advances, history) over a cleanup that the
 // still-present tracking row retries on the next apply anyway.
-func (r *Runner) clearStaleChannels(ctx context.Context, anchor, windowEnd time.Time, planned map[string][]scheduler.ScheduledSlot, scope string) {
+//
+// Returns how many channels were successfully cleared -- each clear is a
+// lineup pushed to Tunarr, so applyChannels counts them toward "did this
+// apply push anything" when recording the last apply instant.
+func (r *Runner) clearStaleChannels(ctx context.Context, anchor, windowEnd time.Time, planned map[string][]scheduler.ScheduledSlot, scope string) int {
 	tracked, err := r.store.ListAppliedChannels(ctx)
 	if err != nil {
 		r.logger.Error("failed to list applied channels for stale-lineup clearing", "error", err)
-		return
+		return 0
 	}
 
+	cleared := 0
 	for _, channelID := range tracked {
 		if _, ok := planned[channelID]; ok {
 			continue
@@ -375,6 +400,7 @@ func (r *Runner) clearStaleChannels(ctx context.Context, anchor, windowEnd time.
 			r.logger.Error("failed to clear stale channel lineup", "channel_id", channelID, "error", err)
 			continue
 		}
+		cleared++
 		if err := r.store.UnmarkChannelApplied(ctx, channelID); err != nil {
 			// The clear itself landed; the next apply will just push the
 			// same flex-only lineup again until the row goes away.
@@ -383,6 +409,7 @@ func (r *Runner) clearStaleChannels(ctx context.Context, anchor, windowEnd time.
 		}
 		r.logger.Info("cleared stale channel lineup (no blocks schedule it anymore)", "channel_id", channelID)
 	}
+	return cleared
 }
 
 // anchorForChannel returns the anchor (lineup offset 0, and the value

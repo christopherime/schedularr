@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -34,28 +32,6 @@ func (s *Store) ListAppliedChannels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("failed to list applied channels: %w", err)
 	}
 	return ids, nil
-}
-
-// LastAppliedAt returns the most recent applied_at across all
-// applied_channels rows -- i.e. when the last apply pushed a lineup to any
-// channel -- or nil when no apply has been recorded (a fresh install, or
-// every applied channel has since been cleared and unmarked). Feeds GET
-// /status's last_applied_at field (internal/api/tunarr.go's GetStatus).
-//
-// Reads the column directly (ORDER BY ... LIMIT 1) rather than
-// MAX(applied_at): the driver's TIMESTAMP-to-time.Time conversion keys off
-// the declared column type, which a MAX() expression doesn't carry.
-func (s *Store) LastAppliedAt(ctx context.Context) (*time.Time, error) {
-	var at time.Time
-	err := s.db.GetContext(ctx, &at,
-		`SELECT applied_at FROM applied_channels ORDER BY applied_at DESC LIMIT 1`)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to read last applied time: %w", err)
-	}
-	return &at, nil
 }
 
 // UnmarkChannelApplied removes channelID from the applied set -- called

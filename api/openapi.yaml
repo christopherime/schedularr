@@ -569,9 +569,9 @@ components:
           type: integer
         last_applied_at:
           description: >-
-            When the most recent apply pushed a lineup to Tunarr (the max
-            applied_at across applied_channels). Omitted when no apply has
-            been recorded yet.
+            When the most recent apply pushed at least one lineup to Tunarr
+            (planned pushes and stale-channel clears alike), sampled at
+            push time. Omitted when no apply has been recorded yet.
           type: string
           format: date-time
         next_cron_tick:
