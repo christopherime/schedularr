@@ -25,6 +25,10 @@ make web
 
 `make web-types` (openapi-typescript → `web/assets/ts/gen/types.d.ts`), `make web-check` (type-check with `tsc --noEmit`), and `make web-build` (the Hugo build) are real prerequisites of each other, in that order, so `make -j` can't interleave them.
 
+### Unit tests
+
+`make web-test` (also part of `make lint`, and a CI step) runs the UI logic tests in `web/tests/` on Node's built-in test runner — no test framework dependency; Node's native type stripping executes the `.test.ts` files directly. Page modules import cleanly under Node with a one-line `document` stub (their only top-level side effect is registering an `alpine:init` listener), and the vendored `cronstrue` UMD bundle is loaded as the same global the browser gets. Add new tests as `web/tests/*.test.ts`; they are type-checked by `tsc --noEmit` along with the sources.
+
 ## Token Setup
 
 The UI talks to `/api/v1` with the same bearer token `schedularr serve` was started with (`SCHEDULARR_API_TOKEN` or `api.token` — see the [Deployment config reference](deployment.md#configuration-reference)). The token lives only in the browser's `localStorage` (key `schedularr_api_token`) and is attached to every API request; it is never embedded in the served HTML/JS.

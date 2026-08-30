@@ -295,5 +295,4 @@ scoped-out gap.
   instead: `Dockerfile`'s Hugo stage always runs the real `hugo --minify
   -s web` before the Go build stage, so a container image can never ship
   the placeholder as its embedded site.
-- [ ] Committed TS test infra: the web UI has no checked-in jsdom/unit harness (picker + reorder logic were verified with throwaway scripts). Add a minimal committed harness + CI step so UI logic tests accumulate. (flagged during reorder-UI task)
 - [ ] Residue from v0.2.2 final gate (adjudicated non-blocking): (a) backward-CAS coincidence — a wrap-lap landing exactly on a slow shared-show block's frozen baseline lands a partial-lap rewind (self-healing; needs restart + shared show_title + far-future occurrence); (b) shared-show blocks with contradictory on_complete policies let the newest plan re-enable a show the other disabled (documented in docs/scheduling-concepts.md "Shared shows need agreeing policies"; validation still open); (c) the max() half of the provenance stamp (engine.go:835) is unpinned by tests (unreachable-by-construction today).

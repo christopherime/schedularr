@@ -122,6 +122,9 @@ jobs:
       - name: Type-check (regenerates types, then tsc --noEmit)
         run: make web-check
 
+      - name: Web unit tests (node --test)
+        run: make web-test
+
   docker:
     name: Docker build (no push)
     runs-on: ubuntu-latest

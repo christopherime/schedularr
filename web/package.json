@@ -4,10 +4,12 @@
   "version": "0.0.0",
   "scripts": {
     "types": "openapi-typescript ../api/openapi.yaml -o assets/ts/gen/types.d.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/*.test.ts"
   },
   "devDependencies": {
-    "typescript": "5.9.3",
-    "openapi-typescript": "7.13.0"
+    "@types/node": "22.20.1",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
   }
 }

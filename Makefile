@@ -1,4 +1,4 @@
-.PHONY: build test lint clean validate e2e-up e2e-down e2e-test e2e-clean docker-build generate help web-presence web-types web-check web-build web
+.PHONY: build test lint clean validate e2e-up e2e-down e2e-test e2e-clean docker-build generate help web-presence web-types web-check web-test web-build web
 
 # Variables
 BINARY_NAME=schedularr
@@ -36,7 +36,7 @@ test: ## Run tests with race detector
 	@echo "Running tests..."
 	@go test -race -cover ./...
 
-lint: ## Run golangci-lint, gosec, govulncheck, and web-check -- runs every step even if an earlier one fails, and reports all failures at the end
+lint: ## Run golangci-lint, gosec, govulncheck, web-check, and web-test -- runs every step even if an earlier one fails, and reports all failures at the end
 	@status=0; \
 	echo "Running golangci-lint..."; \
 	golangci-lint run || status=1; \
@@ -46,6 +46,7 @@ lint: ## Run golangci-lint, gosec, govulncheck, and web-check -- runs every step
 	govulncheck ./... || status=1; \
 	if command -v npm >/dev/null 2>&1; then \
 		$(MAKE) web-check || status=1; \
+		$(MAKE) web-test || status=1; \
 	else \
 		echo "npm not found -- skipping web-check"; \
 	fi; \
@@ -154,6 +155,14 @@ web-check: web-types ## Type-check the web TS sources (skips with a notice if no
 		npm run check --prefix web; \
 	else \
 		echo "npm not found -- skipping web-check"; \
+	fi
+
+web-test: ## Run the web UI unit tests (node --test; skips with a notice if node is absent)
+	@if command -v node >/dev/null 2>&1; then \
+		echo "Running web unit tests..."; \
+		npm test --prefix web; \
+	else \
+		echo "node not found -- skipping web-test"; \
 	fi
 
 web-build: web-check ## Build the Hugo site into web/public

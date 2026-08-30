@@ -8,7 +8,8 @@
     "noEmit": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["assets/ts"]
+  "include": ["assets/ts", "tests"]
 }

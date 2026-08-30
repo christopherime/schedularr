@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Committed web UI unit-test harness** (`web/tests/`, `make web-test`,
+  wired into `make lint` and CI's web job): Node's built-in test runner
+  with native type stripping -- no test framework dependency -- pinning
+  the blocks page's `cronReadback` and `swapAdjacent` (reorder) logic that
+  was previously verified only with throwaway scripts. Tests are
+  type-checked by `tsc --noEmit` alongside the sources; `@types/node`
+  added as a pinned devDependency.
+
 ### Fixed
 
 - **Unset `${VAR}` placeholders in a config file now become empty strings,
