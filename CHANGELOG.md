@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-08-30
+
 ### Changed
 
 - **The Guide renders a full week at a time** (`web/assets/ts/runtime/
@@ -1838,7 +1840,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/christopherime/schedularr/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/christopherime/schedularr/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/christopherime/schedularr/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/christopherime/schedularr/compare/v0.3.0...v0.5.0
