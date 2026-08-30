@@ -11,12 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`GET /status` gains `last_applied_at` and `next_cron_tick`**
   (`api/openapi.yaml`, `internal/api/tunarr.go`, `internal/store/
-  channels.go`, `cmd/serve.go`): `last_applied_at` is the max
-  `applied_at` across `applied_channels` (nil until an apply is
-  recorded); `next_cron_tick` is plumbed from the serve cron loop's own
-  tick tracker into `api.Deps` (nil when no loop runs). Both feed the
-  web UI's bezel telemetry without extra requests — the v0.5.0 slice's
-  only contract change.
+  meta.go`, `internal/service/schedule.go`, `cmd/serve.go`):
+  `last_applied_at` is a persisted apply instant (new `app_meta` table,
+  migration 000009), written at push time whenever an apply pushes at
+  least one lineup — planned pushes and stale-channel clears alike.
+  Deliberately not derived from the `applied_channels` tracking set,
+  whose rows are removed again when a stale channel is cleared, so a
+  set-derived max could vanish or go backwards right after a successful
+  apply (caught in the pre-release review). `next_cron_tick` is plumbed
+  from the serve cron loop's own tick tracker into `api.Deps` (nil when
+  no loop runs). Both feed the web UI's bezel telemetry without extra
+  requests — the v0.5.0 slice's only contract change.
 
 - **Web: shared TS runtime + one bundle per page**
   (`web/assets/ts/runtime/`, `web/layouts/partials/ui/page-js.html`):
@@ -51,7 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   NEXT TICK readouts on every page, polled from `/status` every 60s.
   Token Save now probes `/status` and flips ARMED only on success;
   arming broadcasts a re-auth event that re-fires the page's failed
-  loads. No LINK legend until SSE (v0.5.4) can make it honest.
+  loads. The token panel auto-opens at most once per unarmed episode —
+  the 60s poll's repeat 401s keep the dot and inline error current
+  instead of re-stealing focus every minute — and NEXT TICK reads "due"
+  while an overrunning tick is still mid-run, never "N min ago". No
+  LINK legend until SSE (v0.5.4) can make it honest.
 - **Web: dev-only `/kit/` gallery** (`web/layouts/kit/list.html`,
   `web/config/production/hugo.toml`): every partial in every state on
   fixture data — the review gate for this and every later slice;
@@ -67,6 +76,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`web/assets/ts/pages/schedule.ts`): `clampDays("")` fell through
   `Number("") === 0` into the 1-day clamp, contradicting the field's
   own "defaults to 7" hint — caught by the new web test harness.
+- **Bench-rebuild review fix round (pre-release addendum)**: `make
+  web-build` now passes `--cleanDestinationDir` so a prior dev build's
+  `/kit/` page and stale bundles can't linger in `web/public/` and ride
+  into locally built binaries via `go:embed`; the event tape unhides
+  before prepending so its first line reaches screen readers; blocks
+  `submit()` and `requestDelete()` gained state-level re-entrancy
+  guards; the reduced-motion override also caps
+  `animation-iteration-count` so infinite animations actually stop;
+  `channelHint` deduped into the shared runtime (blocks/schedule/kit);
+  schedule channel sections sort by resolved channel number instead of
+  raw UUID; dashboard plates refetch channels on re-auth; the kit
+  gallery now exercises the confirm partial's busy state and the
+  relative-time readouts; `nextTickTracker` gained unit tests; stale
+  doc comments fixed (`internal/api/ui.go` runtime paths).
 
 ### Added
 

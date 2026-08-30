@@ -180,3 +180,35 @@ func TestApplyWindowDays(t *testing.T) {
 		}
 	}
 }
+
+// TestNextTickTracker pins the tracker's three contracts GET /status
+// leans on: the zero value reads as nil (Status.next_cron_tick omitted,
+// never 0001-01-01), set/next round-trips (with set overwriting), and
+// next returns a fresh copy a caller can't mutate the tracker through.
+func TestNextTickTracker(t *testing.T) {
+	tr := &nextTickTracker{}
+
+	if got := tr.next(); got != nil {
+		t.Fatalf("zero-value tracker must read as nil, got %v", got)
+	}
+
+	first := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	tr.set(first)
+	got := tr.next()
+	if got == nil || !got.Equal(first) {
+		t.Fatalf("expected %v after set, got %v", first, got)
+	}
+
+	// next() must hand back a copy: mutating the returned value may not
+	// leak into the tracker's own field.
+	*got = got.Add(time.Hour)
+	if again := tr.next(); again == nil || !again.Equal(first) {
+		t.Fatalf("mutating next()'s result leaked into the tracker: got %v, want %v", again, first)
+	}
+
+	second := first.Add(30 * time.Minute)
+	tr.set(second)
+	if got := tr.next(); got == nil || !got.Equal(second) {
+		t.Fatalf("set must overwrite: got %v, want %v", got, second)
+	}
+}

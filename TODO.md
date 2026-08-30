@@ -285,3 +285,27 @@ scoped-out gap.
 - [ ] Transactional `Engine.Commit`: today it is a sequence of independent sqlite statements (UpdateSeriesState per show, RecordScheduleHistory, SaveOccurrenceSnapshot, ReplaceOccurrenceHistory, cleanups) — a SIGKILL (or the drain-timeout os.Exit) mid-sequence can persist an advanced cursor without its snapshot/history rows. Root fix: one transaction. (v0.3.0 review, MAJOR-class root cause; the drain path now exits without closing the store, which narrows but does not close the window.)
 - [ ] `syncPostStates` stamps shows an occurrence never actually reached (post==pre rides through and gets LastAired/CursorPlanSeq written); newly visible for a series added to a full block — its `start_season`/`start_episode` is then silently never applied (initializeSeriesState early-returns once LastAired is set). Fix candidate: skip post==pre entries during sync. (v0.3.0 review, Minor.)
 - [ ] Residue from v0.2.2 final gate, last open item: (a) backward-CAS coincidence — a wrap-lap landing exactly on a slow shared-show block's frozen baseline lands a partial-lap rewind (self-healing; needs restart + shared show_title + far-future occurrence). Address with the v0.3.x seed-machinery slice. ((b) contradictory on_complete now REJECTED at write time; (c) provenance stamp direction now test-pinned — both shipped in the v0.3.0 slice.)
+
+## v0.5.7 polish intake
+
+Punted from the v0.5.0 bench-rebuild review fix round (2026-08-30) — real
+findings, deliberately deferred to the v0.5.7 polish slice rather than
+patched piecemeal mid-rebuild.
+
+- [ ] **`aria-busy` on loading sections + skeleton announcement.** Every
+  skeleton is `aria-hidden="true"` and no section carries `aria-busy`
+  while loading, so a screen-reader user gets silence during load and no
+  announcement when content arrives. Mark the loading section
+  `aria-busy="true"` (cleared when content lands) and add a polite
+  announcement for the arrival.
+- [ ] **Toggle accessible name / row association.** `ui/toggle.html` puts
+  the state label inside the `role="switch"` button, so it announces as
+  "Completed, switch, on" — the accessible name changes with the value —
+  and nothing associates the switch with its row (the show-title cell is
+  a `<td>`, not `<th scope="row">`). Same shape on the blocks table.
+- [ ] **Per-row expression evaluation costs.** `ui/problem.html` inlines
+  its `.bind` expression three times, `ui/plate.html` twice,
+  `ui/channel-select.html` calls `channelHint()` twice, and
+  `blocks/list.html` runs `cronReadback()` twice per row (2N cronstrue
+  parses per list render). Not a bug today; audit before the grid slice
+  multiplies row counts.

@@ -44,8 +44,8 @@ const uiAllowedMethods = "GET, HEAD"
 // uiCSP is deliberately narrow: every directive is 'self' (or 'none' for
 // frame-ancestors) since the embedded site never loads a third-party
 // origin -- no CDN scripts, no remote fonts/images, no cross-origin
-// fetches (web/assets/ts/api.ts and token.ts only ever call this same
-// origin's /api/v1). script-src carries 'unsafe-eval' because Alpine.js 3
+// fetches (web/assets/ts/runtime/api.ts and runtime/token.ts only ever
+// call this same origin's /api/v1). script-src carries 'unsafe-eval' because Alpine.js 3
 // evaluates directive expressions (x-data, x-show, x-text, ...) via `new
 // Function(...)`, which CSP classifies as eval; there is no CSP-compliant
 // build of Alpine 3 that avoids this (Alpine's own CSP-friendly build,
