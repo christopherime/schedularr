@@ -11,6 +11,7 @@ Schedularr is a Go application that automates TV channel programming for [Tunarr
 1. **Lean and clean codebase.** Only code the project uses right now. Superseded code is deleted outright — commands, config keys, schema sections, and dependencies in the same change. No deprecation aliases, no transition shims, no commented-out remnants.
 2. **Feature first — never block on tests.** Implementation leads; tests accompany the feature and `make test` must be green before every commit, but no test-ceremony (strict TDD ritual) may stall delivery.
 3. **Bespoke, up-to-date documentation — always.** README, this file, AGENTS.md, and `docs/` are updated in the SAME commit as the code they describe. Documentation drift is a defect.
+   Four surfaces hang off `docs/` (the single source of truth): the **documentation site** (<https://christopherime.github.io/schedularr/>, built by `.github/workflows/pages.yaml` on every docs push — new pages must be added to `mkdocs.yml`'s `nav`), the **cluster wiki page** (applicationset repo, `wiki/docs/applications/media/schedularr.md`, updated on every image-pin bump), and the operator's **Obsidian note** (`PERSO/k8s-home/GXF Schedularr & Tunarr.md` in the vault at `~/Documents/main` — update on each release or operational change).
 4. **Use the configured skills.** Front-end/UI work (the Hugo web UI) goes through the `impeccable` skill; generated prose (docs, READMEs, release notes) gets cleaned with `stop-slop`.
 
 ## Development Commands
