@@ -36,7 +36,7 @@ filter:
   year_to: int # Maximum release year
   min_duration: int # Minimum duration, minutes
   max_duration: int # Maximum duration, minutes
-  tags: []string # Custom tags, AND logic (matches ALL specified tags)
+  tags: []string # ACCEPTED BUT NOT YET EVALUATED -- no matcher consumes tags today (planned with the metadata engine; see docs/roadmap.md)
 ```
 
 | Field | Example | Notes |
@@ -46,7 +46,7 @@ filter:
 | `ratings` | `["PG", "PG-13", "TV-PG"]` | TV: TV-Y…TV-MA; movie: G…NC-17; or NR/Unrated |
 | `year_from` / `year_to` | `1980` / `1999` | Inclusive range |
 | `min_duration` / `max_duration` | `90` / `150` | Minutes; stored in Tunarr as milliseconds internally |
-| `tags` | `["christmas", "family-favorite"]` | All listed tags must match |
+| `tags` | `["christmas", "family-favorite"]` | Accepted, **not yet evaluated** — lands with the metadata engine |
 
 **Example — Saturday night sci-fi marathon:**
 

@@ -323,6 +323,13 @@ scoped-out gap.
 - [ ] Residue from v0.2.2 final gate, last open item: (a) backward-CAS coincidence — a wrap-lap landing exactly on a slow shared-show block's frozen baseline lands a partial-lap rewind (self-healing; needs restart + shared show_title + far-future occurrence). Address with the v0.3.x seed-machinery slice. ((b) contradictory on_complete now REJECTED at write time; (c) provenance stamp direction now test-pinned — both shipped in the v0.3.0 slice.)
 - [ ] Overflow slots desync per-program `start_time` from actual Tunarr playback of the following slot (v0.5.1 review, contract lens). Block A (21:00, duration 60, `max_duration_overflow_minutes` 15) fills 70 min of content; the engine's shell still sets `EndTime = 22:00` (`internal/scheduler/engine.go` shell construction ignores the overflow in both the filter and series fill loops). `buildAnchoredLineup`'s `gap > 0` guards then skip both the end-of-slot pad and the next slot's gap, so adjacent block B's programs are appended at cumulative offset 22:10 and Tunarr plays them 10 minutes late — while the wire's per-program `start_time` (computed from B's nominal `StartTime` in `slotToGen`, `internal/api/schedule.go`) says 22:00. The guide renders air times up to the configured overflow early for every slot after an overflowing one until a real gap absorbs the shift. Pre-existing at slot level; the per-program field inherits and amplifies it. Root fix is engine-side: the shell `EndTime` must account for `max_duration_overflow_minutes` actually consumed.
 
+## Deferred (v0.5.5 token-encryption review — APPROVED, fast-follows)
+
+- Multi-tab first-hydration race: no cross-tab lock around key generation + migration; two tabs upgrading simultaneously can leave localStorage ciphertext under a key IndexedDB no longer holds → silent token loss, re-auth needed (no security exposure). Candidate: navigator.locks around obtainKey()+migration.
+- Manual token-panel trigger click isn't gated on loadToken(): a click in the pre-hydration millisecond window shows an empty input despite a stored token (auto-open path IS gated).
+- indexedDB.open has no onblocked handler/timeout; harmless at fixed version 1, but every request awaits this promise — guard before any future schema bump.
+- clearToken() nulls the cache before the fallible removeItem — a failed remove shows "could not clear" while the session is already de-armed (cosmetic).
+
 ## Deferred (v0.5.3 week-grid review — all non-blocking, APPROVED)
 
 - Silent cross-midnight slot pieces are browse-mode-discoverable buttons whose aria-label repeats the full base label + "continues across midnight" — trim to a short cross-reference or aria-hidden the silent piece (grid.ts buildSlotPiece / main.css .guide-slot--silent).

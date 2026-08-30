@@ -116,7 +116,7 @@ extreme, major improvement of the web interface. The committed visual
 world (CRT signal-bench, web/DESIGN.md) stays — the experience around it
 is rebuilt. Detailed scope lives in the v0.5.0 UI spec
 (docs/superpowers/specs/2026-08-30-v0.5-web-overhaul-design.md), cut
-into independently releasable slices — v0.5.0–v0.5.11 after four
+into independently releasable slices — numbered at ship time after four
 insertions (three operator-directed, one security patch), of which the
 spec's own renumber note records only the first two (see v0.5.4 and
 v0.5.5 below).
@@ -190,8 +190,13 @@ v0.5.5 below).
   pending slice below shifts one more number down (draft & apply →
   v0.5.6, memory/`/history/` → v0.5.7, live link → v0.5.8, block power
   tools → v0.5.9, the desk → v0.5.10, polish → v0.5.11).
-- **v0.5.6 — Draft & apply on the Guide: pending.** Unchanged in scope.
-- **v0.5.7 — Memory, landing as `/history/`: pending.** The spec's Memory
+> **Numbering convention (2026-08-31):** patch numbers kept being consumed
+> by operator-directed fixes (v0.5.2 polish, v0.5.4 brand, v0.5.5 security),
+> so pending slices are listed in THEME ORDER and get their number when they
+> ship — no more ladder renumbering.
+
+- **Next — Draft & apply on the Guide: pending.** Unchanged in scope.
+- **Then — Memory, landing as `/history/`: pending.** The spec's Memory
   slice, amended by the operator's `/series` → `/history` directive: the
   apply-run persistence migration, `GET /applies`, the enriched
   `HistoryEntry` and extended `Warning` — but the page ships as
@@ -201,9 +206,9 @@ v0.5.5 below).
   HISTORY`. The industry models this as one record in two states — a
   traffic log of what is scheduled, an as-run log of what aired — which
   is the operator's "one searchable place" verbatim.
-- **v0.5.8 — Live link (SSE): pending.** Unchanged in scope.
-- **v0.5.9 — Block power tools: pending.** Unchanged in scope.
-- **v0.5.10 — History desk power tools: pending.** Was "the series desk";
+- **Then — Live link (SSE): pending.** Unchanged in scope.
+- **Then — Block power tools: pending.** Unchanged in scope.
+- **Then — History desk power tools: pending.** Was "the series desk";
   now the desk lives on `/history/`. Bulk cursor operations, YAML
   import/export, and the two new operator asks: **remove a show or movie
   from history entirely** (its sequence state, its snapshots, and its
@@ -216,7 +221,7 @@ v0.5.5 below).
   history. A removal that intersects a currently-on-air occurrence is the
   one case that changes what is playing right now — the spec proposes
   refusing it.
-- **v0.5.11 — Polish pass: pending.** Unchanged in scope.
+- **Last — Polish pass: pending.** Unchanged in scope.
 
 Headline surfaces across the train:
 
