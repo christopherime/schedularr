@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-30
+
 ### Added
 
 - **The Guide — the EPG grid as home** (`web/layouts/index.html`,
@@ -76,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web unit tests for the grid geometry** (`web/tests/grid.test.ts`):
   quantum clamping incl. overnight spill cut-left/right, grid-column
   mapping, day windowing (`windowDayCount` trailing-partial-day cases:
-  19:00 fetch at days=7 → 8, exact midnight → 7), rundown overlap
+  19:00 fetch at days=7 → 8, exact midnight → 7 absent a DST transition), rundown overlap
   grouping (`rundownDaySlots` continuation marking, half-open day
   edges), ghost placement fallbacks, keyboard nearest-slot picking;
   plus the relocated days-clamp/channel-order coverage and the
@@ -1653,7 +1655,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/christopherime/schedularr/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/christopherime/schedularr/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/christopherime/schedularr/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/christopherime/schedularr/compare/v0.2.5...v0.2.6

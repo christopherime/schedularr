@@ -58,7 +58,7 @@ export function addDays(dayStartMs: number, n: number): number {
  * so any fetch after local midnight spills into a trailing partial
  * calendar day: a 7-day plan fetched at 19:00 ends 19:00 seven days
  * out, on an 8th calendar day that needs its own tab and rundown
- * section. A fetch at exactly midnight stays at `days`. Date math via
+ * section. A fetch at exactly midnight stays at `days` (unless an intervening spring-forward day shortens the span, in which case the window still spills into one more calendar day and the count reflects it). Date math via
  * addDays, so DST-shifted windows still count real local midnights.
  */
 export function windowDayCount(fetchMs: number, days: number): number {
