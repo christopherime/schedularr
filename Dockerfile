@@ -86,7 +86,7 @@ RUN apk add --no-cache curl && \
 # ---------------------------------------------------------------------------
 FROM hugo AS webui
 WORKDIR /src/web
-COPY web/hugo.toml ./
+COPY web/config ./config
 COPY web/content ./content
 COPY web/layouts ./layouts
 COPY web/assets/css ./assets/css
