@@ -413,7 +413,7 @@ func TestUpdateBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
 	created := decodeBlockRecord(t, w)
 
 	future := time.Now().Add(24 * time.Hour)
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, future, snapshot))
 
 	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
@@ -437,7 +437,7 @@ func TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
 	created := decodeBlockRecord(t, w)
 
 	future := time.Now().Add(24 * time.Hour)
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, future, snapshot))
 
 	wd := doRequest(t, h, http.MethodDelete, "/blocks/"+created.Id, nil)
@@ -454,8 +454,8 @@ func TestDeleteBlock_InvalidatesFutureOccurrenceSnapshots(t *testing.T) {
 // "occurrence_start > now" cutoff never catches an occurrence that's
 // CURRENTLY on air (its own occurrence_start is already in the past) --
 // UpdateBlock/DeleteBlock must widen the cutoff by the block's own
-// Duration (invalidationCutoff, internal/api/state.go) so an edit/delete
-// also reaches it, not just strictly future occurrences.
+// airing envelope (store.InvalidationCutoff) so an edit/delete also
+// reaches it, not just strictly future occurrences.
 func TestUpdateBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
 	h, s := newTestServerWithStore(t)
 	ctx := t.Context()
@@ -468,7 +468,7 @@ func TestUpdateBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
 	// matter here: the snapshot's occurrence_start is set directly,
 	// independent of what the block's own schedule would generate.
 	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into a 90min block: on air
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
 
 	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
@@ -488,7 +488,7 @@ func TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
 	created := decodeBlockRecord(t, w)
 
 	onAirStart := time.Now().Add(-10 * time.Minute)
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
 
 	wd := doRequest(t, h, http.MethodDelete, "/blocks/"+created.Id, nil)
@@ -497,6 +497,47 @@ func TestDeleteBlock_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
 	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, onAirStart)
 	require.NoError(t, err)
 	assert.False(t, ok, "DELETE must invalidate the on-air occurrence's own snapshot too, not just strictly future ones")
+}
+
+// TestUpdateBlock_ShortenedDuration_InvalidatesUnderPreEditEnvelope is
+// round-4 finding 4's regression: UpdateBlock used to compute the
+// invalidation cutoff from existing.Spec AFTER overwriting it with the
+// new body -- so shortening a block's duration shrank the cutoff too,
+// leaving alive the snapshot of an occurrence still airing under the
+// OLD, longer envelope. The cutoff also ignored
+// max_duration_overflow_minutes entirely. The snapshots being
+// invalidated were captured under the PRE-edit spec, so the cutoff must
+// use the pre-edit duration + overflow.
+func TestUpdateBlock_ShortenedDuration_InvalidatesUnderPreEditEnvelope(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	// Original spec: 90min duration + 30min overflow -- a 120min airing
+	// envelope.
+	original := seriesBlockWrite("shrinking-marathon")
+	overflow := 30
+	original.Spec.MaxDurationOverflowMinutes = &overflow
+	w := doRequest(t, h, http.MethodPost, "/blocks", original)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	// An occurrence 100min in: past the nominal 90min, still airing in
+	// the old envelope's overflow tail.
+	onAirStart := time.Now().Add(-100 * time.Minute)
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
+
+	// Shorten the block to 30min with no overflow. A cutoff computed
+	// from the POST-edit spec (30min) would never reach the occurrence
+	// that started 100min ago; the pre-edit envelope (120min) must.
+	shortened := seriesBlockWrite("shrinking-marathon")
+	shortened.Spec.Duration = 30
+	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, shortened)
+	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
+
+	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, onAirStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "the occurrence still airing under the PRE-edit envelope (90+30min) must have its snapshot invalidated despite the shortened new duration")
 }
 
 // corruptOccurrenceSnapshotsTable drops the series_occurrence_snapshots

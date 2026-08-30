@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
 	"github.com/christopherime/schedularr/internal/scheduler"
@@ -44,6 +45,13 @@ func (h *Handlers) ListSeriesState(w http.ResponseWriter, r *http.Request) {
 // doc comment), so this uses store.GetPersistedSeriesState instead, which
 // returns store.ErrNotFound when no row exists.
 //
+// The write is stamped as an operator write (OperatorUpdatedAt) before
+// persisting: Engine.syncPostStates skips any aired-occurrence
+// post-state replay whose own commit predates the stamp, so this PATCH
+// -- a backward cursor jump included -- can never be re-advanced by an
+// occurrence planned before it, even if the invalidation below fails or
+// races an in-flight apply.
+//
 // After a successful update, every not-yet-FINISHED occurrence snapshot
 // for every block that references showTitle in its Series config is
 // deleted (store.Store.InvalidateSeriesOccurrenceSnapshots) -- otherwise
@@ -51,11 +59,9 @@ func (h *Handlers) ListSeriesState(w http.ResponseWriter, r *http.Request) {
 // schedule-generation window (~a day): planSeriesOccurrences never
 // re-reads series_state for an occurrence that already has a snapshot,
 // so an operator's manual cursor reset would have no visible effect
-// until every affected occurrence aged out of the window on its own (or,
-// worse, an on-air occurrence's stale cursor would clobber the PATCH
-// right back on the next apply -- see
-// store.InvalidationCutoff's/scheduler.advanceStateFromCommittedContent's
-// doc comments). A failure at this step is logged, not surfaced as a
+// until every affected occurrence aged out of the window on its own --
+// see store.InvalidationCutoff's/scheduler.Engine.syncPostStates' doc
+// comments. A failure at this step is logged, not surfaced as a
 // response error: UpdateSeriesState has already committed by then, so
 // the PATCH genuinely succeeded, and there's no compensating action for
 // the caller to take (see logInternalError's doc comment,
@@ -98,6 +104,9 @@ func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, show
 	if patch.Disabled != nil {
 		current.Disabled = *patch.Disabled
 	}
+
+	patchedAt := time.Now()
+	current.OperatorUpdatedAt = &patchedAt
 
 	if err := h.d.Store.UpdateSeriesState(r.Context(), current); err != nil {
 		h.logAndWriteInternalError(w, r, "patch_series_state_update", err)

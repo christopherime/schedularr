@@ -1591,11 +1591,11 @@ func TestRunner_Run_Apply_IsIdempotentPerOccurrence(t *testing.T) {
 	// exists for it anywhere), so it legitimately takes a one-time "plan
 	// for real" path (Engine.establishSeriesChain's virgin branch) that
 	// stamps LastAired from time.Now() at plan time -- different, on
-	// purpose, from every later re-derive of that SAME (now frozen,
-	// historical) occurrence, which instead derives purely from its own
-	// committed content and stamps LastAired from the occurrence's own
+	// purpose, from every later replay of that SAME (now frozen,
+	// historical) occurrence, which instead replays its stored plan-time
+	// post-state and stamps LastAired from the occurrence's own
 	// airtime (see planSeriesOccurrences' aired branch and
-	// advanceStateFromCommittedContent's doc comments). The idempotency
+	// Engine.syncPostStates' doc comments). The idempotency
 	// invariant this test exists to pin is about REPEATED re-applies of
 	// an already-committed occurrence, which apply-2-vs-apply-3 tests
 	// directly without that one-time, legitimate transition in the way.

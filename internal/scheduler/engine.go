@@ -43,11 +43,13 @@ type Engine struct {
 
 // occurrenceSnapshotRecord is one pending SaveOccurrenceSnapshot call,
 // queued during planning and flushed by Commit(). Keyed by blockID, not
-// blockName -- see StateStore.GetOccurrenceSnapshot's doc comment.
+// blockName -- see StateStore.GetOccurrenceSnapshot's doc comment. The
+// snapshot carries both the occurrence's pre-plan seed and its plan-time
+// post-state -- see OccurrenceSnapshot's doc comment.
 type occurrenceSnapshotRecord struct {
 	blockID         string
 	occurrenceStart time.Time
-	snapshot        map[string]SeriesStateSnapshot
+	snapshot        OccurrenceSnapshot
 }
 
 // occurrenceReplacement is one pending ReplaceOccurrenceHistory call,
@@ -666,21 +668,25 @@ func (e *Engine) PlanBlock(block Block, availablePrograms []tunarr.Program, occu
 // re-derived, regardless of chain state: its content is replayed verbatim
 // from committed history via airedSeriesOccurrenceContent (empty if that
 // history has since been pruned -- what actually aired is historical
-// fact a later apply cannot invent). It still advances `chain`, though,
-// so a not-yet-aired occurrence right after it chains from the correct
-// baseline -- the same planning function runs once against it, content
-// discarded, keeping only the resulting state. That resulting state is
-// ALSO synced into e.pendingStates (persisted for real by Commit(), like
-// engineSeriesContext's real-plan path already was) -- an aired
-// occurrence's content is settled historical fact, so its post-state is
-// exactly what series_state should reflect as of "now," not just a
-// scratch value discarded at the end of this call. Without this,
-// series_state stays frozen at whatever the very first real plan
-// produced: every later occurrence that only ever advanced the scratch
-// chain (which is the common case once a block has been running a
-// while -- chain is seeded from a stored snapshot far more often than
-// from a genuinely fresh real plan) left the persisted cursor further
-// and further behind reality.
+// fact a later apply cannot invent). Its effect on cursor state is
+// replayed too, not recomputed: the occurrence's own stored snapshot
+// already carries the per-show POST-state captured when it was planned
+// (OccurrenceSnapshot.PostStates), so the aired branch applies that to
+// `chain` -- the baseline any not-yet-aired occurrence after it
+// re-derives from -- and syncs it into e.pendingStates (persisted for
+// real by Commit()) through syncPostStates' guards. Deriving the advance
+// from anything else was every prior round's bug in turn: a re-plan
+// against the current spec drifted with edits, and reconstructing from
+// committed content metadata broke on mid-occurrence on_complete
+// restarts (content [E1..E3], correct post-state S01E01), on programs
+// that vanished from the Tunarr catalog (history rows carry no
+// season/episode to reconstruct from), and on stale replays dragging a
+// cursor another block had already advanced. An aired occurrence whose
+// snapshot is gone (operator invalidation) or predates post-state
+// capture (a pre-migration-000006 legacy row) contributes no advance at
+// all; the chain re-seeds from live series_state, which the
+// invalidation's own trigger (an operator write or block edit) has just
+// made the freshest truth.
 
 // seriesChainResult is establishSeriesChain's result, bundled into one
 // struct to stay within revive's 3-result-limit (chain, content, and
@@ -728,7 +734,7 @@ func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Pr
 		return seriesChainResult{}, fmt.Errorf("failed to check occurrence snapshot for block %q at %s: %w", block.Name, occurrenceStart, err)
 	}
 	if hasSnapshot {
-		return seriesChainResult{chain: statesFromSnapshot(snapshot)}, nil
+		return seriesChainResult{chain: statesFromSnapshot(snapshot.PreStates)}, nil
 	}
 
 	_, hasCommitted, err := e.store.GetCommittedOccurrence(ctx, block.Name, occurrenceStart)
@@ -751,8 +757,18 @@ func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Pr
 	rng := occurrenceRand(block.ID, occurrenceStart)
 	content := e.planSeriesBlockWithContext(engineSeriesContext{e}, block, availablePrograms, rng)
 	e.recordHistory(content, block.ChannelID, block.Name, time.Now(), occurrenceStart)
+	// Capture the post-plan cursor too (planning just advanced it through
+	// engineSeriesContext into e.pendingStates, which captureSeriesSnapshot
+	// reads first): once this occurrence airs, its stored post-state --
+	// not a reconstruction from its content -- is what advances
+	// series_state. See OccurrenceSnapshot's doc comment.
+	after, err := e.captureSeriesSnapshot(block)
+	if err != nil {
+		return seriesChainResult{}, err
+	}
 	e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
-		blockID: block.ID, occurrenceStart: occurrenceStart, snapshot: before,
+		blockID: block.ID, occurrenceStart: occurrenceStart,
+		snapshot: OccurrenceSnapshot{PreStates: before, PostStates: after},
 	})
 
 	// Seed the chain for subsequent occurrences from CLONES of the
@@ -768,7 +784,6 @@ func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Pr
 }
 
 func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.Program, shells []ScheduledSlot, now time.Time) ([]ScheduledSlot, error) {
-	ctx := context.Background()
 	var chain map[string]*SeriesState
 
 	out := make([]ScheduledSlot, 0, len(shells))
@@ -794,29 +809,22 @@ func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.P
 		}
 
 		if aired {
-			content, err := e.airedSeriesOccurrenceContent(ctx, block, availablePrograms, occurrenceStart)
+			content, newChain, err := e.replayAiredOccurrence(block, availablePrograms, chain, occurrenceStart)
 			if err != nil {
 				return nil, err
 			}
-			// Advance the chain -- and, since this occurrence really
-			// aired, persist that advance for real too -- purely from
-			// what ACTUALLY aired (content), never from a re-plan
-			// against the current spec. See advanceStateFromCommittedContent's
-			// doc comment for why (and why it's advance-only).
-			advanced := advanceStateFromCommittedContent(chain, content, occurrenceStart)
-			if err := e.syncPendingStatesFromChain(chain, advanced); err != nil {
-				return nil, err
-			}
+			chain = newChain
 			shell.Programs = content
 			out = append(out, shell)
 			continue
 		}
 
 		rng := occurrenceRand(block.ID, occurrenceStart)
-		before := snapshotFromStates(cloneStates(chain)) // clone before planning mutates chain in place
+		before := snapshotFromStates(chain) // value-only copies: planning's in-place chain mutation can't touch them
 		content := e.planSeriesBlockWithContext(&snapshotSeriesContext{states: chain}, block, availablePrograms, rng)
 		e.pendingSnapshots = append(e.pendingSnapshots, occurrenceSnapshotRecord{
-			blockID: block.ID, occurrenceStart: occurrenceStart, snapshot: before,
+			blockID: block.ID, occurrenceStart: occurrenceStart,
+			snapshot: OccurrenceSnapshot{PreStates: before, PostStates: snapshotFromStates(chain)},
 		})
 		entries := makeHistoryEntries(content, block.ChannelID, block.Name, time.Now(), occurrenceStart)
 		e.pendingReplacements = append(e.pendingReplacements, occurrenceReplacement{
@@ -828,6 +836,49 @@ func (e *Engine) planSeriesOccurrences(block Block, availablePrograms []tunarr.P
 	}
 
 	return out, nil
+}
+
+// replayAiredOccurrence handles one aired (or on-air) shell of
+// planSeriesOccurrences: replays the occurrence's committed content
+// verbatim, and replays its plan-time post-state -- never a
+// reconstruction from content or a re-plan against the current spec.
+// Each aired shell reads its OWN snapshot row (only the batch's first
+// shell went through establishSeriesChain): the post-state becomes the
+// chain baseline for whatever follows (the returned chain), and
+// (guarded, see syncPostStates) the persisted cursor advance.
+//
+// When there is no post-state to replay -- the snapshot was invalidated
+// (operator PATCH/CLI write or block edit -- live series_state IS the
+// fresher truth now) or predates post-state capture (a
+// pre-migration-000006 legacy row, whose old-code plan already advanced
+// live state itself) -- the chain is re-seeded from live state instead,
+// so any not-yet-aired occurrence after this one derives from that
+// truth, and nothing is persisted: there is nothing trustworthy of this
+// occurrence's own to persist.
+func (e *Engine) replayAiredOccurrence(block Block, availablePrograms []tunarr.Program, chain map[string]*SeriesState, occurrenceStart time.Time) ([]tunarr.Program, map[string]*SeriesState, error) {
+	ctx := context.Background()
+	content, err := e.airedSeriesOccurrenceContent(ctx, block, availablePrograms, occurrenceStart)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	snap, hasSnap, err := e.store.GetOccurrenceSnapshot(ctx, block.ID, occurrenceStart)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to check occurrence snapshot for block %q at %s: %w", block.Name, occurrenceStart, err)
+	}
+	if !hasSnap || snap.PostStates == nil {
+		reseeded, err := e.cloneLiveSeriesStates(block)
+		if err != nil {
+			return nil, nil, err
+		}
+		return content, reseeded, nil
+	}
+
+	applyPostStates(chain, snap.PostStates)
+	if err := e.syncPostStates(snap.PostStates, snap.RecordedAt, occurrenceStart); err != nil {
+		return nil, nil, err
+	}
+	return content, chain, nil
 }
 
 // airedSeriesOccurrenceContent returns an aired (or on-air) series
@@ -886,76 +937,16 @@ func (e *Engine) cloneLiveSeriesStates(block Block) (map[string]*SeriesState, er
 	return states, nil
 }
 
-// advanceStateFromCommittedContent updates chain's per-show cursors to
-// reflect what actually aired in an occurrence's committed content --
-// never a re-plan against the (possibly since-edited) current block
-// spec. For each show that appears in content, sets its CurrentSeason/
-// CurrentEpisode to just past the LATEST (season, episode) pair found
-// there and stamps LastAired from occurrenceStart -- the occurrence's
-// own fixed, deterministic airtime, not time.Now() -- so re-deriving the
-// same frozen content for the same occurrence on a later apply is
-// idempotent: same inputs, same outputs, every time.
-//
-// This is advance-only: a candidate is applied only if it's genuinely
-// AHEAD of chain's current value for that show (never regresses it).
-// That guards a real clobbering bug: DeleteFutureOccurrenceSnapshots (an
-// operator's PATCH /state/series, or a block edit) invalidates a
-// not-yet-FINISHED occurrence's snapshot -- including the currently
-// on-air one (see api.invalidateSeriesOccurrenceSnapshots' widened
-// cutoff) -- so its next apply re-derives from the just-changed live
-// series_state (establishSeriesChain's "hasCommitted" case,
-// cloneLiveSeriesStates) rather than a stale pre-PATCH baseline. But the
-// on-air occurrence's own committed content is frozen (it already aired,
-// verbatim, regardless of any later PATCH); deriving from it
-// unconditionally would still overwrite an operator's forward jump (e.g.
-// current_episode: 20) back down to whatever the frozen content implies
-// (e.g. episode 2) on every single apply while it's still on air.
-// Comparing against chain's current baseline -- which, for the
-// just-invalidated on-air occurrence, IS that freshly-patched live state
-// -- and only applying a candidate that's actually ahead of it closes
-// that gap; once the block is done "airing" past the patched value, this
-// naturally stops mattering (every later occurrence, still not-yet-aired
-// at PATCH time, already re-derives from the patched cursor via the
-// normal not-aired branch below).
-//
-// Returns the set of show titles actually advanced -- see
-// syncPendingStatesFromChain, the only caller, which persists ONLY those
-// (never Completed/Disabled/RunCount, and never a show this occurrence
-// didn't touch at all).
-func advanceStateFromCommittedContent(chain map[string]*SeriesState, content []tunarr.Program, occurrenceStart time.Time) map[string]bool {
-	type seasonEpisode struct{ season, episode int }
-	latest := make(map[string]seasonEpisode)
-	for _, p := range content {
-		if p.Type != "episode" || p.ShowTitle == "" {
-			continue
-		}
-		cur, ok := latest[p.ShowTitle]
-		if !ok || p.SeasonNumber > cur.season || (p.SeasonNumber == cur.season && p.EpisodeNumber > cur.episode) {
-			latest[p.ShowTitle] = seasonEpisode{season: p.SeasonNumber, episode: p.EpisodeNumber}
-		}
+// applyPostStates overwrites chain's entry for every show in post with
+// that show's stored plan-time post-state -- an aired occurrence's
+// actual end state, which is the baseline any not-yet-aired occurrence
+// after it in the same batch must re-derive from. Shows absent from post
+// (this occurrence's plan never touched them) keep whatever the chain
+// already holds.
+func applyPostStates(chain map[string]*SeriesState, post map[string]SeriesStateSnapshot) {
+	for title, s := range post {
+		chain[title] = stateFromSnapshot(title, s)
 	}
-
-	advanced := make(map[string]bool, len(latest))
-	for title, se := range latest {
-		nextSeason, nextEpisode := se.season, se.episode+1
-
-		state, ok := chain[title]
-		if !ok {
-			state = &SeriesState{ShowTitle: title, CurrentSeason: 1, CurrentEpisode: 1}
-			chain[title] = state
-		}
-
-		if !seasonEpisodeAhead(nextSeason, nextEpisode, state.CurrentSeason, state.CurrentEpisode) {
-			continue
-		}
-
-		state.CurrentSeason = nextSeason
-		state.CurrentEpisode = nextEpisode
-		occurrenceStartCopy := occurrenceStart
-		state.LastAired = &occurrenceStartCopy
-		advanced[title] = true
-	}
-	return advanced
 }
 
 // seasonEpisodeAhead reports whether (season, episode) represents later
@@ -968,33 +959,54 @@ func seasonEpisodeAhead(season, episode, otherSeason, otherEpisode int) bool {
 	return episode > otherEpisode
 }
 
-// syncPendingStatesFromChain persists chain's current cursor
-// (CurrentSeason/CurrentEpisode/LastAired only) into e.pendingStates, so
-// Commit() writes it for real via UpdateSeriesState -- but only for the
-// shows named in advanced (advanceStateFromCommittedContent's result),
-// and only those three fields. Completed/Disabled/RunCount are never
-// touched here: those are exactly the fields an operator's PATCH
-// /state/series sets that a series occurrence's aired content can never
-// legitimately imply anything about, so clobbering them (even
-// unintentionally, by cloning chain's whole stale-seeded state the way
-// an earlier version of this function did) is never correct. A show not
-// in advanced is left completely alone -- not even rewritten with an
-// unchanged value -- so this can never touch a show's persisted state
-// for a reason unrelated to what this specific occurrence's content
-// actually advanced.
-func (e *Engine) syncPendingStatesFromChain(chain map[string]*SeriesState, advanced map[string]bool) error {
-	for title := range advanced {
-		state := chain[title]
-
+// syncPostStates persists an aired occurrence's stored plan-time
+// post-state into e.pendingStates, so Commit() writes it for real via
+// UpdateSeriesState. Cursor fields only -- CurrentSeason/CurrentEpisode,
+// plus LastAired stamped from occurrenceStart (the occurrence's own
+// fixed airtime, so replaying the same occurrence on every apply is
+// idempotent, and so a Seeded pre-state's sentinel marker can never leak
+// into persistence). Completed/Disabled/RunCount are never written here:
+// those are exactly the fields an operator's PATCH /state/series sets
+// that an aired occurrence's replay must never clobber, and the clone
+// below carries their (and OperatorUpdatedAt's) live values through
+// untouched.
+//
+// Two guards, checked per show and in this order:
+//
+//   - operator wins: a show whose live series_state carries an operator
+//     write (SeriesState.OperatorUpdatedAt -- PATCH /state/series, CLI
+//     `state set`/`state reset`) NEWER than this occurrence's own commit
+//     stamp (committedAt, the snapshot row's recorded_at) is skipped
+//     entirely. The operator paths normally delete the occurrence's
+//     snapshot outright (store.InvalidateSeriesOccurrenceSnapshots), so
+//     this is the backstop for when they couldn't: a logged-and-continued
+//     invalidation failure, or an operator write racing an in-flight
+//     apply. It's what makes an operator's BACKWARD jump stick -- every
+//     occurrence planned before the jump is, by definition, older than
+//     it.
+//   - monotonic: the post-state cursor is written only if strictly AHEAD
+//     of the live cursor's current value. Two blocks scheduling the same
+//     show plan their occurrences independently; replaying a
+//     slower-moving block's on-air occurrence must never drag the shared
+//     cursor back behind what another block already advanced it to.
+func (e *Engine) syncPostStates(post map[string]SeriesStateSnapshot, committedAt, occurrenceStart time.Time) error {
+	for title, s := range post {
 		existing, err := e.getSeriesState(title)
 		if err != nil {
 			return fmt.Errorf("failed to read existing series state for %q: %w", title, err)
 		}
+		if existing.OperatorUpdatedAt != nil && existing.OperatorUpdatedAt.After(committedAt) {
+			continue
+		}
+		if !seasonEpisodeAhead(s.CurrentSeason, s.CurrentEpisode, existing.CurrentSeason, existing.CurrentEpisode) {
+			continue
+		}
 
 		cloned := *existing
-		cloned.CurrentSeason = state.CurrentSeason
-		cloned.CurrentEpisode = state.CurrentEpisode
-		cloned.LastAired = state.LastAired
+		cloned.CurrentSeason = s.CurrentSeason
+		cloned.CurrentEpisode = s.CurrentEpisode
+		aired := occurrenceStart
+		cloned.LastAired = &aired
 		e.pendingStates[title] = &cloned
 	}
 	return nil
@@ -1190,40 +1202,33 @@ type snapshotSeriesContext struct {
 var seededMarker = time.Unix(0, 0)
 
 // statesFromSnapshot reconstructs live *SeriesState values from a
-// persisted SeriesStateSnapshot map -- see SeriesStateSnapshot.Seeded's
-// doc comment for why LastAired is set (to seededMarker, an arbitrary
-// fixed non-zero instant) exactly when Seeded is true, rather than always
-// left nil.
+// persisted SeriesStateSnapshot map -- see stateFromSnapshot.
 func statesFromSnapshot(snapshot map[string]SeriesStateSnapshot) map[string]*SeriesState {
 	states := make(map[string]*SeriesState, len(snapshot))
 	for showTitle, s := range snapshot {
-		state := &SeriesState{
-			ShowTitle:      showTitle,
-			CurrentSeason:  s.CurrentSeason,
-			CurrentEpisode: s.CurrentEpisode,
-			Completed:      s.Completed,
-			Disabled:       s.Disabled,
-			RunCount:       s.RunCount,
-		}
-		if s.Seeded {
-			state.LastAired = &seededMarker
-		}
-		states[showTitle] = state
+		states[showTitle] = stateFromSnapshot(showTitle, s)
 	}
 	return states
 }
 
-// cloneStates deep-copies a chain state map so mutating the copy (or the
-// original) afterward can never affect the other -- used to capture a
-// series occurrence's "before" snapshot immediately before the SAME chain
-// map is handed to planning, which mutates it in place.
-func cloneStates(states map[string]*SeriesState) map[string]*SeriesState {
-	clone := make(map[string]*SeriesState, len(states))
-	for title, s := range states {
-		cp := *s
-		clone[title] = &cp
+// stateFromSnapshot reconstructs one live *SeriesState from its
+// persisted, value-only SeriesStateSnapshot form -- see
+// SeriesStateSnapshot.Seeded's doc comment for why LastAired is set (to
+// seededMarker, an arbitrary fixed non-zero instant) exactly when Seeded
+// is true, rather than always left nil.
+func stateFromSnapshot(showTitle string, s SeriesStateSnapshot) *SeriesState {
+	state := &SeriesState{
+		ShowTitle:      showTitle,
+		CurrentSeason:  s.CurrentSeason,
+		CurrentEpisode: s.CurrentEpisode,
+		Completed:      s.Completed,
+		Disabled:       s.Disabled,
+		RunCount:       s.RunCount,
 	}
-	return clone
+	if s.Seeded {
+		state.LastAired = &seededMarker
+	}
+	return state
 }
 
 // snapshotFromStates is statesFromSnapshot's inverse: converts live

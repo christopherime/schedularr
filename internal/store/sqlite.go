@@ -99,7 +99,7 @@ func (s *Store) Ping(ctx context.Context) error {
 func (s *Store) seriesStateRow(ctx context.Context, showTitle string) (*scheduler.SeriesState, error) {
 	var state scheduler.SeriesState
 	err := s.db.GetContext(ctx, &state, `
-		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled
+		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at
 		FROM series_state WHERE show_title = ?`, showTitle)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -153,17 +153,22 @@ func (s *Store) GetPersistedSeriesState(ctx context.Context, showTitle string) (
 }
 
 // UpdateSeriesState updates or inserts the tracking state for a show.
+// operator_updated_at is written from the struct like any other column:
+// operator entry points (api.PatchSeriesState) stamp it before calling
+// this, while the engine's Commit only ever writes clones of the state it
+// read, so the stamp rides through engine writes unchanged.
 func (s *Store) UpdateSeriesState(ctx context.Context, state *scheduler.SeriesState) error {
 	_, err := s.db.NamedExecContext(ctx, `
-		INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled)
-		VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled)
+		INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at)
+		VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled, :operator_updated_at)
 		ON CONFLICT(show_title) DO UPDATE SET
 			current_season = excluded.current_season,
 			current_episode = excluded.current_episode,
 			completed = excluded.completed,
 			last_aired = excluded.last_aired,
 			run_count = excluded.run_count,
-			disabled = excluded.disabled`, state)
+			disabled = excluded.disabled,
+			operator_updated_at = excluded.operator_updated_at`, state)
 	if err != nil {
 		return fmt.Errorf("failed to update series state: %w", err)
 	}
@@ -259,47 +264,73 @@ func (s *Store) GetCommittedOccurrence(ctx context.Context, blockName string, oc
 	return programs, true, nil
 }
 
-// GetOccurrenceSnapshot returns the per-show cursor snapshot captured the
-// first time a series block's occurrence (blockID, occurrenceStart) was
-// ever planned. See scheduler.SeriesStateSnapshot's and
-// scheduler.Engine.planSeriesOccurrences' doc comments for the mechanism.
-func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time) (map[string]scheduler.SeriesStateSnapshot, bool, error) {
-	var raw string
-	err := s.db.GetContext(ctx, &raw, `
-		SELECT snapshot_json FROM series_occurrence_snapshots
+// GetOccurrenceSnapshot returns the pre/post cursor snapshot captured
+// when a series block's occurrence (blockID, occurrenceStart) was
+// planned. See scheduler.OccurrenceSnapshot's and
+// scheduler.Engine.planSeriesOccurrences' doc comments for the
+// mechanism. A NULL post_state_json (a legacy row written before
+// migration 000006) comes back as a nil PostStates -- the marker the
+// engine's aired branch treats as "no cursor advance of this
+// occurrence's own to replay."
+func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time) (scheduler.OccurrenceSnapshot, bool, error) {
+	var row struct {
+		SnapshotJSON  string         `db:"snapshot_json"`
+		PostStateJSON sql.NullString `db:"post_state_json"`
+		RecordedAt    time.Time      `db:"recorded_at"`
+	}
+	err := s.db.GetContext(ctx, &row, `
+		SELECT snapshot_json, post_state_json, recorded_at FROM series_occurrence_snapshots
 		WHERE block_id = ? AND occurrence_start = ?`, blockID, occurrenceStart)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, false, nil
+			return scheduler.OccurrenceSnapshot{}, false, nil
 		}
-		return nil, false, fmt.Errorf("failed to query occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
+		return scheduler.OccurrenceSnapshot{}, false, fmt.Errorf("failed to query occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
 
-	var snapshot map[string]scheduler.SeriesStateSnapshot
-	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
-		return nil, false, fmt.Errorf("failed to decode occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
+	snapshot := scheduler.OccurrenceSnapshot{RecordedAt: row.RecordedAt}
+	if err := json.Unmarshal([]byte(row.SnapshotJSON), &snapshot.PreStates); err != nil {
+		return scheduler.OccurrenceSnapshot{}, false, fmt.Errorf("failed to decode occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
+	}
+	if row.PostStateJSON.Valid {
+		if err := json.Unmarshal([]byte(row.PostStateJSON.String), &snapshot.PostStates); err != nil {
+			return scheduler.OccurrenceSnapshot{}, false, fmt.Errorf("failed to decode occurrence post-state for block %q at %s: %w", blockID, occurrenceStart, err)
+		}
 	}
 	return snapshot, true, nil
 }
 
-// SaveOccurrenceSnapshot persists a series block occurrence's cursor
-// snapshot. It upserts: a not-yet-aired occurrence's snapshot can be
-// rewritten when an earlier occurrence of the same block is re-derived
-// and its actual end-state is carried forward as this occurrence's new
-// baseline (see Engine.planSeriesOccurrences' chain mechanism) -- so a
-// second call for the same (blockID, occurrenceStart) is expected, not a
-// bug. An aired occurrence's snapshot is never written to again because
-// aired occurrences are never re-derived in the first place.
-func (s *Store) SaveOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time, snapshot map[string]scheduler.SeriesStateSnapshot) error {
-	raw, err := json.Marshal(snapshot)
+// SaveOccurrenceSnapshot persists a series block occurrence's pre/post
+// cursor snapshot, stamping recorded_at with the current wall clock (the
+// snapshot's own RecordedAt field is ignored on write -- the store owns
+// the commit stamp). It upserts: a not-yet-aired occurrence's snapshot
+// can be rewritten when an earlier occurrence of the same block is
+// re-derived and its actual end-state is carried forward as this
+// occurrence's new baseline (see Engine.planSeriesOccurrences' chain
+// mechanism) -- so a second call for the same (blockID, occurrenceStart)
+// is expected, not a bug. An aired occurrence's snapshot is never
+// written to again because aired occurrences are never re-derived in the
+// first place -- which is exactly what freezes recorded_at at the plan
+// the occurrence actually aired with, the commit stamp
+// Engine.syncPostStates' operator-wins guard compares against.
+func (s *Store) SaveOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time, snapshot scheduler.OccurrenceSnapshot) error {
+	pre, err := json.Marshal(snapshot.PreStates)
 	if err != nil {
 		return fmt.Errorf("failed to encode occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
+	var post any
+	if snapshot.PostStates != nil {
+		raw, err := json.Marshal(snapshot.PostStates)
+		if err != nil {
+			return fmt.Errorf("failed to encode occurrence post-state for block %q at %s: %w", blockID, occurrenceStart, err)
+		}
+		post = string(raw)
+	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO series_occurrence_snapshots (block_id, occurrence_start, snapshot_json, recorded_at)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT (block_id, occurrence_start) DO UPDATE SET snapshot_json = excluded.snapshot_json, recorded_at = excluded.recorded_at`,
-		blockID, occurrenceStart, string(raw), time.Now()); err != nil {
+		INSERT INTO series_occurrence_snapshots (block_id, occurrence_start, snapshot_json, post_state_json, recorded_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (block_id, occurrence_start) DO UPDATE SET snapshot_json = excluded.snapshot_json, post_state_json = excluded.post_state_json, recorded_at = excluded.recorded_at`,
+		blockID, occurrenceStart, string(pre), post, time.Now()); err != nil {
 		return fmt.Errorf("failed to save occurrence snapshot for block %q at %s: %w", blockID, occurrenceStart, err)
 	}
 	return nil
@@ -338,29 +369,36 @@ func (s *Store) DeleteFutureOccurrenceSnapshots(ctx context.Context, blockID str
 }
 
 // InvalidationCutoff returns the "now" DeleteFutureOccurrenceSnapshots
-// should be called with to invalidate every occurrence of a
-// durationMinutes-long block that hasn't FINISHED yet -- not just ones
-// that haven't STARTED yet. DeleteFutureOccurrenceSnapshots deletes rows
-// with occurrence_start > cutoff; passing now - duration makes that
-// condition equivalent to occurrence_start + duration > now, i.e. "still
-// airing, or entirely in the future," instead of "hasn't started."
+// should be called with to invalidate every occurrence of a block (spec)
+// that hasn't FINISHED yet -- not just ones that haven't STARTED yet.
+// DeleteFutureOccurrenceSnapshots deletes rows with occurrence_start >
+// cutoff; passing now - (duration + max overflow) makes that condition
+// equivalent to "still airing, or entirely in the future," instead of
+// "hasn't started." MaxDurationOverflowMinutes is part of the airing
+// envelope: a block whose actual content legitimately runs past its
+// nominal duration (see scheduler.Block.MaxDurationOverflowMinutes) can
+// still be on air during the overflow, and its snapshot must not survive
+// the invalidation just because the nominal duration already elapsed.
 //
-// Without this, invalidating a show's (or block's) occurrence snapshots
-// while one of its occurrences is CURRENTLY on air never touches that
-// specific occurrence's own snapshot at all: its occurrence_start is
-// already in the past by definition, so a plain "occurrence_start > now"
-// cutoff always excludes it. The on-air occurrence then keeps re-deriving
-// from its stale pre-change cursor snapshot -- see
-// scheduler.advanceStateFromCommittedContent's doc comment for the
-// clobbering bug that causes -- until it finishes airing on its own and
-// a later occurrence finally picks up the change. Every caller that
-// invalidates snapshots outside the normal apply flow needs this: an
-// operator's PATCH /state/series or a block edit/delete
-// (internal/api/state.go, internal/api/blocks.go), and the CLI's
-// `schedularr state reset`/`state set` (cmd/state.go, via
-// InvalidateSeriesOccurrenceSnapshots below).
-func InvalidationCutoff(now time.Time, durationMinutes int) time.Time {
-	return now.Add(-time.Duration(durationMinutes) * time.Minute)
+// Without the widening past "hasn't started," invalidating a show's (or
+// block's) occurrence snapshots while one of its occurrences is
+// CURRENTLY on air never touches that specific occurrence's own snapshot
+// at all: its occurrence_start is already in the past by definition, so
+// a plain "occurrence_start > now" cutoff always excludes it. The on-air
+// occurrence then keeps feeding its stale pre-change post-state into the
+// chain (and, if the operator-wins guard in scheduler.Engine.
+// syncPostStates were ever the only defense, contending with the live
+// cursor) until it finishes airing on its own and a later occurrence
+// finally picks up the change. Every caller that invalidates snapshots
+// outside the normal apply flow needs this: an operator's PATCH
+// /state/series or a block edit/delete (internal/api/state.go,
+// internal/api/blocks.go -- a block EDIT must pass its PRE-edit spec,
+// since the snapshots being invalidated were captured under the old
+// airing envelope), and the CLI's `schedularr state reset`/`state set`
+// (cmd/state.go, via InvalidateSeriesOccurrenceSnapshots below).
+func InvalidationCutoff(now time.Time, spec scheduler.Block) time.Time {
+	envelope := time.Duration(spec.Duration+spec.MaxDurationOverflowMinutes) * time.Minute
+	return now.Add(-envelope)
 }
 
 // InvalidateSeriesOccurrenceSnapshots deletes every not-yet-FINISHED
@@ -391,7 +429,7 @@ func (s *Store) InvalidateSeriesOccurrenceSnapshots(ctx context.Context, showTit
 		if !blockReferencesShow(b.Spec, showTitle) {
 			continue
 		}
-		if err := s.DeleteFutureOccurrenceSnapshots(ctx, b.ID, InvalidationCutoff(now, b.Spec.Duration)); err != nil {
+		if err := s.DeleteFutureOccurrenceSnapshots(ctx, b.ID, InvalidationCutoff(now, b.Spec)); err != nil {
 			return fmt.Errorf("failed to invalidate occurrence snapshots for block %q: %w", b.Name, err)
 		}
 	}
@@ -487,7 +525,7 @@ func (s *Store) CleanupScheduleHistory(ctx context.Context, window time.Duration
 func (s *Store) ExportAllSeriesStates(ctx context.Context) ([]scheduler.SeriesState, error) {
 	var states []scheduler.SeriesState
 	err := s.db.SelectContext(ctx, &states, `
-		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled
+		SELECT show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at
 		FROM series_state ORDER BY show_title`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query series states: %w", err)
@@ -509,15 +547,16 @@ func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.Serie
 
 	for _, state := range states {
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled)
-			VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled)
+			INSERT INTO series_state (show_title, current_season, current_episode, completed, last_aired, run_count, disabled, operator_updated_at)
+			VALUES (:show_title, :current_season, :current_episode, :completed, :last_aired, :run_count, :disabled, :operator_updated_at)
 			ON CONFLICT(show_title) DO UPDATE SET
 				current_season = excluded.current_season,
 				current_episode = excluded.current_episode,
 				completed = excluded.completed,
 				last_aired = excluded.last_aired,
 				run_count = excluded.run_count,
-				disabled = excluded.disabled`, state); err != nil {
+				disabled = excluded.disabled,
+				operator_updated_at = excluded.operator_updated_at`, state); err != nil {
 			return fmt.Errorf("failed to import state for %s: %w", state.ShowTitle, err)
 		}
 	}
@@ -529,14 +568,17 @@ func (s *Store) ImportSeriesStates(ctx context.Context, states []scheduler.Serie
 	return nil
 }
 
-// ResetSeriesState resets a series to its starting state (S01E01, not completed).
+// ResetSeriesState resets a series to its starting state (S01E01, not
+// completed). It is an operator write (the CLI's `state reset`), so it
+// stamps operator_updated_at -- see scheduler.SeriesState.OperatorUpdatedAt
+// for what that protects.
 func (s *Store) ResetSeriesState(ctx context.Context, showTitle string) error {
 	query := `
 		UPDATE series_state
-		SET current_season = 1, current_episode = 1, completed = 0, last_aired = NULL, run_count = 0, disabled = 0
+		SET current_season = 1, current_episode = 1, completed = 0, last_aired = NULL, run_count = 0, disabled = 0, operator_updated_at = ?
 		WHERE show_title = ?
 	`
-	result, err := s.db.ExecContext(ctx, query, showTitle)
+	result, err := s.db.ExecContext(ctx, query, time.Now(), showTitle)
 	if err != nil {
 		return fmt.Errorf("failed to reset series state: %w", err)
 	}
@@ -555,20 +597,23 @@ func (s *Store) ResetSeriesState(ctx context.Context, showTitle string) error {
 }
 
 // SetSeriesState sets a series to a specific season and episode.
-// If the series doesn't exist, it creates a new entry.
+// If the series doesn't exist, it creates a new entry. It is an operator
+// write (the CLI's `state set`), so it stamps operator_updated_at -- see
+// scheduler.SeriesState.OperatorUpdatedAt for what that protects.
 func (s *Store) SetSeriesState(ctx context.Context, showTitle string, season, episode int) error {
 	if season < 1 || episode < 1 {
 		return fmt.Errorf("season and episode must be >= 1, got S%02dE%02d", season, episode)
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO series_state (show_title, current_season, current_episode, completed, run_count, disabled)
-		VALUES (?, ?, ?, 0, 0, 0)
+		INSERT INTO series_state (show_title, current_season, current_episode, completed, run_count, disabled, operator_updated_at)
+		VALUES (?, ?, ?, 0, 0, 0, ?)
 		ON CONFLICT(show_title) DO UPDATE SET
 			current_season = excluded.current_season,
 			current_episode = excluded.current_episode,
 			completed = 0,
-			disabled = 0`, showTitle, season, episode)
+			disabled = 0,
+			operator_updated_at = excluded.operator_updated_at`, showTitle, season, episode, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to set series state: %w", err)
 	}

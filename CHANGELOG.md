@@ -345,6 +345,72 @@ testing against a real Tunarr 1.3.13 instance.
     table so only the invalidation step fails, not the primary
     mutation); and store-level coverage for `InvalidationCutoff`/
     `InvalidateSeriesOccurrenceSnapshots` directly.
+- **A fourth review pass found the content-derived cursor advance above
+  structurally unsound, and it has been replaced wholesale: a series
+  occurrence's effect on the persisted cursor is now decided exactly
+  once, at plan time, stored, and replayed -- never re-derived from
+  committed content.** `advanceStateFromCommittedContent` and
+  `syncPendingStatesFromChain` (both introduced by the previous pass)
+  are deleted; the mechanism descriptions in that pass's entry are
+  superseded by this one. Deriving from content's `max(season, episode)`
+  was a broken foundation: `schedule_history` rows carry no
+  season/episode metadata at all (only ID/title/duration/type), and
+  content fundamentally cannot represent a plan whose cursor moved
+  backward. Migration `000006` adds `post_state_json` to
+  `series_occurrence_snapshots` (the per-show cursor as of the END of
+  the occurrence's plan, captured alongside the existing pre-plan seed)
+  and `operator_updated_at` to `series_state` (stamped by
+  `PATCH /state/series` and the CLI's `state set`/`state reset`; never
+  by engine writes). The aired branch (`internal/scheduler/engine.go`)
+  now replays each aired occurrence's stored post-state -- into the
+  planning chain unconditionally, and into persisted `series_state`
+  through two guards in `Engine.syncPostStates`: *operator wins* (a show
+  whose operator stamp is newer than the occurrence's commit
+  (`recorded_at`) is skipped outright -- the backstop that makes an
+  operator's BACKWARD cursor jump stick even when snapshot invalidation
+  failed or raced an in-flight apply) and *monotonic* (the live cursor
+  is only ever moved strictly forward, so a slower block's stale on-air
+  replay can never drag back a cursor another block already advanced).
+  Specific bugs this closes, each now a permanent regression test:
+  - **`on_complete: restart` completing mid-occurrence** (content
+    `[E1..E3]`, correct post-state S01E01) used to persist
+    `max(content)+1` = S01E04, leaving the next occurrence permanently
+    empty once committed -- the stored post-state is the only
+    representation that can carry "the cursor wrapped."
+  - **Two blocks scheduling the same show**: re-applying the slower
+    block's on-air occurrence dragged the shared live cursor backward
+    (E7 -> E3, re-airing E3-E6); the advance-only comparison ran against
+    the block's own stale chain baseline, not the live value.
+  - **An operator's backward jump** (`state reset`, or PATCH E10 -> E2)
+    was re-advanced by the next apply's aired-branch sync; it now sticks
+    (both via the invalidation path -- an aired occurrence with no
+    snapshot contributes no advance and the chain re-seeds from the
+    freshly patched live state, landing the change on the next
+    not-yet-aired occurrence -- and via the operator-wins guard when the
+    stale snapshot survived).
+  - **A committed program that vanished from the Tunarr catalog** is
+    reconstructed from history with no season/episode metadata, which
+    made the old derivation skip the show entirely and re-air the same
+    episodes; post-state replay never reads content at all.
+  - **Block edits computed the snapshot-invalidation cutoff from the
+    POST-edit spec and ignored `max_duration_overflow_minutes`**
+    (`internal/api/blocks.go`, `store.InvalidationCutoff`): shortening a
+    block's duration left the occurrence still airing under the OLD,
+    longer envelope with a live stale snapshot. `InvalidationCutoff` now
+    takes the block spec and widens by duration + overflow, and
+    `UpdateBlock` captures the cutoff from the PRE-edit spec before
+    overwriting it.
+  - Legacy `series_occurrence_snapshots` rows written before migration
+    `000006` (no post-state) degrade gracefully: aired occurrences still
+    replay committed content verbatim and simply contribute no cursor
+    advance of their own (the old code's plan already advanced live
+    state itself); future occurrences self-heal on their next
+    re-derivation. Covered at both the store and engine level.
+  - Regression tests beyond the above: direct unit tests for
+    `syncPostStates` (cursor-only writes, `LastAired` stamped from the
+    occurrence's own airtime, Seeded-sentinel non-leak, both guards);
+    `docs/scheduling-concepts.md`'s idempotent-apply section rewritten
+    to describe the real post-state-replay/operator-wins semantics.
 
 ## [0.2.1] - 2026-08-29
 

@@ -94,10 +94,16 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // After a successful update, every not-yet-FINISHED occurrence snapshot
 // for this block ID is deleted (DeleteFutureOccurrenceSnapshots, with
 // store.InvalidationCutoff's widened cutoff -- see its doc comment for
-// why "not yet finished" and not just "not yet started") so the next
-// apply re-derives those occurrences from the
-// just-edited spec instead of silently keeping a snapshot/committed
-// assignment captured under the OLD spec until it ages out of the
+// why "not yet finished" and not just "not yet started"). The cutoff is
+// computed from the PRE-edit spec, captured before existing.Spec is
+// overwritten: the snapshots being invalidated were captured under the
+// OLD spec's airing envelope (duration + overflow), so whether one is
+// "still airing" is a question about that old envelope -- computing it
+// from the just-shortened new duration would leave the on-air
+// occurrence's stale snapshot alive past the new, shorter cutoff. This
+// makes the next apply re-derive those occurrences from the just-edited
+// spec instead of silently keeping a snapshot/committed assignment
+// captured under the OLD spec until it ages out of the
 // schedule-generation window on its own -- see
 // StateStore.DeleteFutureOccurrenceSnapshots' doc comment. This is a
 // series-only mechanism (only series blocks have occurrence snapshots at
@@ -139,6 +145,10 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	// PRE-edit cutoff -- see the doc comment above for why this must be
+	// captured before existing.Spec is replaced.
+	preEditCutoff := store.InvalidationCutoff(time.Now(), existing.Spec)
+
 	existing.Name = spec.Name
 	existing.Enabled = blockEnabled(body.Enabled)
 	existing.Spec = spec
@@ -148,7 +158,7 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, store.InvalidationCutoff(time.Now(), existing.Spec.Duration)); err != nil {
+	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, preEditCutoff); err != nil {
 		h.logInternalError(r, "update_block_invalidate_snapshots", err)
 	}
 
@@ -184,7 +194,7 @@ func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, store.InvalidationCutoff(time.Now(), existing.Spec.Duration)); err != nil {
+	if err := h.d.Store.DeleteFutureOccurrenceSnapshots(r.Context(), id, store.InvalidationCutoff(time.Now(), existing.Spec)); err != nil {
 		h.logInternalError(r, "delete_block_invalidate_snapshots", err)
 	}
 

@@ -10,23 +10,24 @@ import (
 
 // MockStateStore is a mock implementation of StateStore for testing.
 type MockStateStore struct {
-	States    map[string]*SeriesState
-	History   []ScheduleHistoryEntry
-	Snapshots map[occurrenceKey]map[string]SeriesStateSnapshot
-	// SnapshotRecordedAt mirrors Store's series_occurrence_snapshots.recorded_at
-	// column (real wall-clock write time, refreshed on every upsert) --
-	// see CleanupOccurrenceSnapshots' doc comment for why cleanup keys off
-	// this instead of occurrence_start.
-	SnapshotRecordedAt map[occurrenceKey]time.Time
+	States  map[string]*SeriesState
+	History []ScheduleHistoryEntry
+	// Snapshots mirrors the series_occurrence_snapshots table, each
+	// entry's RecordedAt mirroring the recorded_at column (real
+	// wall-clock write time, refreshed on every upsert) -- see
+	// CleanupOccurrenceSnapshots' doc comment for why cleanup keys off
+	// this instead of occurrence_start. Tests pin a specific commit stamp
+	// (e.g. for syncPostStates' operator-wins guard) by writing the entry
+	// directly instead of going through SaveOccurrenceSnapshot.
+	Snapshots map[occurrenceKey]OccurrenceSnapshot
 }
 
 // NewMockStateStore creates a new MockStateStore with initialized maps.
 func NewMockStateStore() *MockStateStore {
 	return &MockStateStore{
-		States:             make(map[string]*SeriesState),
-		History:            []ScheduleHistoryEntry{},
-		Snapshots:          make(map[occurrenceKey]map[string]SeriesStateSnapshot),
-		SnapshotRecordedAt: make(map[occurrenceKey]time.Time),
+		States:    make(map[string]*SeriesState),
+		History:   []ScheduleHistoryEntry{},
+		Snapshots: make(map[occurrenceKey]OccurrenceSnapshot),
 	}
 }
 
@@ -124,31 +125,30 @@ func (m *MockStateStore) GetCommittedOccurrence(_ context.Context, blockName str
 // generic string-key slot reused here for that, not literally a block
 // name (see keyFor, its other user, for the phase-2 conflict-resolution
 // use where the field name is literal).
-func (m *MockStateStore) GetOccurrenceSnapshot(_ context.Context, blockID string, occurrenceStart time.Time) (map[string]SeriesStateSnapshot, bool, error) {
+func (m *MockStateStore) GetOccurrenceSnapshot(_ context.Context, blockID string, occurrenceStart time.Time) (OccurrenceSnapshot, bool, error) {
 	snapshot, ok := m.Snapshots[occurrenceKey{blockName: blockID, startUnixNano: occurrenceStart.UnixNano()}]
 	return snapshot, ok, nil
 }
 
 // SaveOccurrenceSnapshot mirrors Store.SaveOccurrenceSnapshot: an upsert
-// keyed by blockID that also refreshes SnapshotRecordedAt (mirroring the
-// real store's recorded_at column).
-func (m *MockStateStore) SaveOccurrenceSnapshot(_ context.Context, blockID string, occurrenceStart time.Time, snapshot map[string]SeriesStateSnapshot) error {
+// keyed by blockID that also refreshes the entry's RecordedAt (mirroring
+// the real store's recorded_at column).
+func (m *MockStateStore) SaveOccurrenceSnapshot(_ context.Context, blockID string, occurrenceStart time.Time, snapshot OccurrenceSnapshot) error {
 	key := occurrenceKey{blockName: blockID, startUnixNano: occurrenceStart.UnixNano()}
+	snapshot.RecordedAt = time.Now()
 	m.Snapshots[key] = snapshot
-	m.SnapshotRecordedAt[key] = time.Now()
 	return nil
 }
 
 // CleanupOccurrenceSnapshots mirrors Store.CleanupOccurrenceSnapshots:
-// prunes by SnapshotRecordedAt (real wall-clock write time), not
+// prunes by RecordedAt (real wall-clock write time), not
 // occurrence_start -- see that field's doc comment.
 func (m *MockStateStore) CleanupOccurrenceSnapshots(_ context.Context, window time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-window)
 	removed := int64(0)
-	for key, recordedAt := range m.SnapshotRecordedAt {
-		if recordedAt.Before(cutoff) {
+	for key, snapshot := range m.Snapshots {
+		if snapshot.RecordedAt.Before(cutoff) {
 			delete(m.Snapshots, key)
-			delete(m.SnapshotRecordedAt, key)
 			removed++
 		}
 	}
@@ -160,7 +160,6 @@ func (m *MockStateStore) DeleteFutureOccurrenceSnapshots(_ context.Context, bloc
 	for key := range m.Snapshots {
 		if key.blockName == blockID && time.Unix(0, key.startUnixNano).After(now) {
 			delete(m.Snapshots, key)
-			delete(m.SnapshotRecordedAt, key)
 		}
 	}
 	return nil

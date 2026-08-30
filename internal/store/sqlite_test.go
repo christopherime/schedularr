@@ -159,31 +159,37 @@ func TestStore_OccurrenceSnapshots(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok, "expected no snapshot before any save")
 
-	// 2. Save, then read back.
-	first := map[string]scheduler.SeriesStateSnapshot{
-		"Show A": {CurrentSeason: 1, CurrentEpisode: 1, Seeded: false},
+	// 2. Save, then read back: pre-states, post-states, and the store's
+	// own recorded_at commit stamp must all round-trip.
+	first := scheduler.OccurrenceSnapshot{
+		PreStates:  map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1, Seeded: false}},
+		PostStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 2, Seeded: true}},
 	}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", occurrenceStart, first))
 
 	got, ok, err := s.GetOccurrenceSnapshot(ctx, "block-a", occurrenceStart)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, first, got)
+	assert.Equal(t, first.PreStates, got.PreStates)
+	assert.Equal(t, first.PostStates, got.PostStates)
+	assert.False(t, got.RecordedAt.IsZero(), "the store must stamp recorded_at on save")
 
 	// 3. Saving again for the SAME (block_id, occurrence_start) must
 	// upsert -- overwrite, not error on a duplicate primary key -- since
 	// planSeriesOccurrences' chain mechanism rewrites a not-yet-aired
 	// occurrence's snapshot when an earlier occurrence in the same block
 	// is re-derived.
-	second := map[string]scheduler.SeriesStateSnapshot{
-		"Show A": {CurrentSeason: 1, CurrentEpisode: 6, Seeded: true},
+	second := scheduler.OccurrenceSnapshot{
+		PreStates:  map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 6, Seeded: true}},
+		PostStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 7, Seeded: true}},
 	}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", occurrenceStart, second), "second save for the same key must upsert, not fail")
 
 	got, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", occurrenceStart)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, second, got, "expected the upsert to have overwritten the first snapshot")
+	assert.Equal(t, second.PreStates, got.PreStates, "expected the upsert to have overwritten the first snapshot")
+	assert.Equal(t, second.PostStates, got.PostStates, "expected the upsert to have overwritten the first post-state too")
 
 	// 4. A different block ID at the SAME occurrence_start is independent
 	// -- proves the key is (block_id, occurrence_start), not just
@@ -193,6 +199,37 @@ func TestStore_OccurrenceSnapshots(t *testing.T) {
 	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-b", occurrenceStart)
 	require.NoError(t, err)
 	assert.False(t, ok, "a different block ID must not see block-a's snapshot")
+}
+
+// TestStore_OccurrenceSnapshots_LegacyRowWithoutPostState pins migration
+// 000006's backward-compatibility contract: a row written before the
+// post_state_json column existed (NULL there) must read back cleanly --
+// ok=true, PreStates intact, PostStates nil -- never error. A nil
+// PostStates is the marker Engine.planSeriesOccurrences' aired branch
+// treats as "legacy: replay content verbatim, contribute no cursor
+// advance."
+func TestStore_OccurrenceSnapshots_LegacyRowWithoutPostState(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
+
+	// Insert the pre-migration shape directly: no post_state_json value.
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO series_occurrence_snapshots (block_id, occurrence_start, snapshot_json, recorded_at)
+		VALUES (?, ?, ?, ?)`,
+		"block-legacy", occurrenceStart, `{"Show A":{"current_season":2,"current_episode":3,"seeded":true}}`, time.Now())
+	require.NoError(t, err)
+
+	got, ok, err := s.GetOccurrenceSnapshot(ctx, "block-legacy", occurrenceStart)
+	require.NoError(t, err, "a legacy row must never fail to read")
+	require.True(t, ok)
+	assert.Equal(t, map[string]scheduler.SeriesStateSnapshot{
+		"Show A": {CurrentSeason: 2, CurrentEpisode: 3, Seeded: true},
+	}, got.PreStates)
+	assert.Nil(t, got.PostStates, "a legacy row's absent post-state must come back as nil, the engine's no-advance marker")
 }
 
 // TestStore_DeleteFutureOccurrenceSnapshots pins finding 3's fix: an
@@ -210,7 +247,9 @@ func TestStore_DeleteFutureOccurrenceSnapshots(t *testing.T) {
 	future1 := now.Add(1 * time.Hour)
 	future2 := now.Add(2 * time.Hour)
 
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{
+		PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}},
+	}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", past, snapshot))
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", future1, snapshot))
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", future2, snapshot))
@@ -239,9 +278,12 @@ func TestStore_DeleteFutureOccurrenceSnapshots(t *testing.T) {
 // finding 2's core cutoff-math fix directly: DeleteFutureOccurrenceSnapshots
 // deletes rows with occurrence_start > cutoff, so passing "now" as the
 // cutoff only ever catches occurrences that HAVEN'T STARTED yet.
-// InvalidationCutoff(now, duration) must shift the cutoff back by
-// duration, so it also catches one that's ON AIR (started, but not yet
-// finished) without also catching one that's already finished.
+// InvalidationCutoff(now, spec) must shift the cutoff back by the spec's
+// full airing envelope -- duration PLUS max_duration_overflow_minutes
+// (round-4 finding: the overflow used to be ignored, leaving an
+// occurrence airing in its overflow tail uninvalidated) -- so it also
+// catches one that's ON AIR (started, but not yet finished, overflow
+// included) without also catching one that's already finished.
 func TestStore_InvalidationCutoff_WidensPastStartToPastFinish(t *testing.T) {
 	s, err := New(":memory:")
 	require.NoError(t, err, "Failed to create store")
@@ -249,20 +291,29 @@ func TestStore_InvalidationCutoff_WidensPastStartToPastFinish(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now()
-	onAirStart := now.Add(-10 * time.Minute)   // 10min into a 30min occurrence: on air
-	finishedStart := now.Add(-2 * time.Hour)   // well past a 30min occurrence's end
-	notYetStarted := now.Add(20 * time.Minute) // hasn't started yet
+	spec := scheduler.Block{Duration: 30, MaxDurationOverflowMinutes: 15} // 45min airing envelope
+	onAirStart := now.Add(-10 * time.Minute)                             // 10min into the nominal 30min: on air
+	overflowAirStart := now.Add(-40 * time.Minute)                       // past nominal 30min, inside the 45min envelope: still on air
+	finishedStart := now.Add(-2 * time.Hour)                             // well past even the overflow envelope
+	notYetStarted := now.Add(20 * time.Minute)                           // hasn't started yet
 
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{
+		PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}},
+	}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", onAirStart, snapshot))
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", overflowAirStart, snapshot))
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", finishedStart, snapshot))
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", notYetStarted, snapshot))
 
-	require.NoError(t, s.DeleteFutureOccurrenceSnapshots(ctx, "block-a", InvalidationCutoff(now, 30)))
+	require.NoError(t, s.DeleteFutureOccurrenceSnapshots(ctx, "block-a", InvalidationCutoff(now, spec)))
 
 	_, ok, err := s.GetOccurrenceSnapshot(ctx, "block-a", onAirStart)
 	require.NoError(t, err)
 	assert.False(t, ok, "the on-air occurrence's snapshot must be invalidated -- it hasn't FINISHED yet")
+
+	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", overflowAirStart)
+	require.NoError(t, err)
+	assert.False(t, ok, "an occurrence airing in its overflow tail must be invalidated too -- the envelope is duration + overflow")
 
 	_, ok, err = s.GetOccurrenceSnapshot(ctx, "block-a", finishedStart)
 	require.NoError(t, err)
@@ -302,7 +353,9 @@ func TestStore_InvalidateSeriesOccurrenceSnapshots(t *testing.T) {
 
 	now := time.Now()
 	onAirStart := now.Add(-10 * time.Minute) // 10min into block-a's 30min duration: on air
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{
+		PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}},
+	}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", onAirStart, snapshot))
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-b", onAirStart, snapshot))
 
@@ -352,7 +405,9 @@ func TestStore_CleanupOccurrenceSnapshots(t *testing.T) {
 	require.NoError(t, err)
 
 	// A fresh row via the normal path -- recorded_at is "now".
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{
+		PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}},
+	}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-fresh", freshOccurrenceStart, snapshot))
 
 	removed, err := s.CleanupOccurrenceSnapshots(ctx, 24*time.Hour)

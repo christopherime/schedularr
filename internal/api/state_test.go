@@ -227,7 +227,7 @@ func TestPatchSeriesState_InvalidatesFutureOccurrenceSnapshotsForReferencingBloc
 	}))
 
 	future := time.Now().Add(24 * time.Hour)
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-1", future, snapshot))
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-2", future, snapshot))
 
@@ -249,12 +249,13 @@ func TestPatchSeriesState_InvalidatesFutureOccurrenceSnapshotsForReferencingBloc
 // finding 2's API-layer regression: DeleteFutureOccurrenceSnapshots'
 // plain "occurrence_start > now" cutoff never catches an occurrence
 // that's CURRENTLY on air (its own occurrence_start is already in the
-// past) -- invalidateSeriesOccurrenceSnapshots must widen the cutoff by
-// the block's own Duration (invalidationCutoff) so a PATCH also reaches
-// it, not just strictly future occurrences. Without this, an operator's
-// cursor-jump PATCH issued mid-episode would be silently reverted by the
-// next apply -- see scheduler.advanceStateFromCommittedContent's doc
-// comment for the clobbering mechanism this prevents.
+// past) -- store.InvalidateSeriesOccurrenceSnapshots must widen the
+// cutoff by the block's own airing envelope (store.InvalidationCutoff)
+// so a PATCH also reaches it, not just strictly future occurrences.
+// Without this, an operator's cursor-jump PATCH issued mid-episode would
+// keep being shadowed by the on-air occurrence's stale snapshot -- see
+// scheduler.Engine.syncPostStates' doc comment for the guards backing
+// this up.
 func TestPatchSeriesState_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
 	h, s := newTestServerWithStore(t)
 	ctx := t.Context()
@@ -271,7 +272,7 @@ func TestPatchSeriesState_InvalidatesOnAirOccurrenceSnapshot(t *testing.T) {
 	}))
 
 	onAirStart := time.Now().Add(-10 * time.Minute) // 10min into a 30min block: on air
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-1", onAirStart, snapshot))
 
 	season := 20
@@ -305,7 +306,7 @@ func TestPatchSeriesState_DoesNotInvalidateAlreadyFinishedOccurrenceSnapshot(t *
 	}))
 
 	finishedStart := time.Now().Add(-2 * time.Hour) // finished well over an hour ago (30min block)
-	snapshot := map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}
+	snapshot := scheduler.OccurrenceSnapshot{PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}}}
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-1", finishedStart, snapshot))
 
 	season := 20

@@ -21,25 +21,27 @@ type StateStore interface {
 	// (and for an aired series block occurrence). ok is false when no such
 	// occurrence has ever been committed.
 	GetCommittedOccurrence(ctx context.Context, blockName string, occurrenceStart time.Time) (programs []tunarr.Program, ok bool, err error)
-	// GetOccurrenceSnapshot returns the per-show cursor snapshot captured
-	// the first time a series block's occurrence (blockID,
-	// occurrenceStart) was ever planned -- see SeriesStateSnapshot's and
+	// GetOccurrenceSnapshot returns the pre/post cursor snapshot captured
+	// when a series block's occurrence (blockID, occurrenceStart) was
+	// planned -- see OccurrenceSnapshot's and
 	// Engine.planSeriesOccurrences' doc comments. ok is false when this
-	// occurrence has never been planned before. Keyed by blockID (the
-	// block's stable store UUID, scheduler.Block.ID) rather than the
-	// block's name, which is renameable -- a rename must not orphan a
-	// not-yet-aired occurrence's stored cursor snapshot.
-	GetOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time) (snapshot map[string]SeriesStateSnapshot, ok bool, err error)
-	// SaveOccurrenceSnapshot persists a series block occurrence's cursor
-	// snapshot. It is an upsert: the first time an occurrence is planned
-	// this creates its row, and re-deriving a not-yet-aired occurrence
-	// (see planSeriesOccurrences' chain mechanism) overwrites it with the
-	// occurrence's new baseline -- carried forward from whatever the
-	// block's PRECEDING occurrence actually ended up at, not necessarily
-	// what was stored before. An aired occurrence's snapshot, once
-	// written, is never touched again (aired occurrences aren't
+	// occurrence has never been planned before (or its snapshot was since
+	// invalidated). Keyed by blockID (the block's stable store UUID,
+	// scheduler.Block.ID) rather than the block's name, which is
+	// renameable -- a rename must not orphan a not-yet-aired occurrence's
+	// stored cursor snapshot.
+	GetOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time) (snapshot OccurrenceSnapshot, ok bool, err error)
+	// SaveOccurrenceSnapshot persists a series block occurrence's pre/post
+	// cursor snapshot, refreshing its RecordedAt commit stamp. It is an
+	// upsert: the first time an occurrence is planned this creates its
+	// row, and re-deriving a not-yet-aired occurrence (see
+	// planSeriesOccurrences' chain mechanism) overwrites it with the
+	// occurrence's new baseline and post-state -- carried forward from
+	// whatever the block's PRECEDING occurrence actually ended up at, not
+	// necessarily what was stored before. An aired occurrence's snapshot,
+	// once written, is never touched again (aired occurrences aren't
 	// re-derived at all).
-	SaveOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time, snapshot map[string]SeriesStateSnapshot) error
+	SaveOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time, snapshot OccurrenceSnapshot) error
 	// CleanupOccurrenceSnapshots deletes snapshot rows for occurrences that
 	// started more than window before now -- mirrors
 	// CleanupScheduleHistory's retention window, since a snapshot for an

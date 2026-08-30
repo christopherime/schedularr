@@ -13,6 +13,15 @@ type SeriesState struct {
 	LastAired      *time.Time `json:"last_aired" db:"last_aired"`           // Timestamp of last successful schedule (nullable)
 	RunCount       int        `json:"run_count" db:"run_count"`             // Number of times series has been completed (for restart tracking)
 	Disabled       bool       `json:"disabled" db:"disabled"`               // True if series has been disabled due to completion
+	// OperatorUpdatedAt is when an operator last wrote this row directly
+	// (PATCH /state/series, or the CLI's `state set`/`state reset`) --
+	// nil if never. Engine.syncPostStates skips any aired-occurrence
+	// post-state replay whose own commit predates this stamp, so an
+	// operator write -- a BACKWARD cursor jump included -- is never
+	// re-advanced by an occurrence planned before it. Engine-side writes
+	// (Commit's UpdateSeriesState calls) carry the stamp through
+	// unchanged; only the operator entry points ever set it.
+	OperatorUpdatedAt *time.Time `json:"operator_updated_at,omitempty" db:"operator_updated_at"`
 }
 
 // SeriesStateSnapshot is the per-show cursor captured immutably the FIRST
@@ -49,4 +58,30 @@ type SeriesStateSnapshot struct {
 	Disabled       bool `json:"disabled"`
 	RunCount       int  `json:"run_count"`
 	Seeded         bool `json:"seeded"`
+}
+
+// OccurrenceSnapshot is everything persisted per series-block occurrence
+// in series_occurrence_snapshots: the per-show cursor the occurrence
+// plans FROM (PreStates -- the seed, captured at first plan and
+// rewritten only when an earlier occurrence's re-derivation shifts this
+// occurrence's baseline), the per-show cursor it ends AT (PostStates,
+// captured at that same plan time), and when that plan was last written
+// (RecordedAt -- the occurrence's commit stamp, refreshed on every
+// upsert; an aired occurrence's row is never written again, so it
+// freezes at the plan the occurrence actually aired with).
+//
+// PostStates is what advances the persisted series_state cursor once the
+// occurrence airs: Engine.planSeriesOccurrences' aired branch replays it
+// (see Engine.syncPostStates for the guards) instead of re-deriving the
+// advance from committed content metadata or a re-plan -- an
+// occurrence's effect on the global cursor is decided exactly once, at
+// plan time, when the full planning context (on_complete restarts,
+// skips, season rollovers) is still in hand. A nil PostStates marks a
+// legacy row written before migration 000006 added the column: its
+// occurrence still replays committed content verbatim if aired (and
+// re-derives if future) but contributes no cursor advance of its own.
+type OccurrenceSnapshot struct {
+	PreStates  map[string]SeriesStateSnapshot
+	PostStates map[string]SeriesStateSnapshot
+	RecordedAt time.Time
 }

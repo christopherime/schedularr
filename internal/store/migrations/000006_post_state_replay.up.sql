@@ -1,0 +1,24 @@
+-- Post-state replay: an occurrence's effect on the persisted series
+-- cursor is decided exactly once, at plan time, and stored -- never
+-- re-derived later from committed content metadata or a re-plan.
+--
+-- post_state_json holds the per-show cursor AFTER planning the
+-- occurrence (same JSON shape as snapshot_json, which remains the
+-- PRE-plan seed). Once the occurrence airs, the engine replays this
+-- stored post-state into series_state (guarded, forward-only) instead of
+-- reconstructing an advance from schedule_history rows -- which lose
+-- season/episode metadata entirely and can't represent a mid-occurrence
+-- on_complete:restart (content [E1..E3] with a correct post-state of
+-- S01E01). NULL marks a pre-migration row: its occurrence still replays
+-- committed content verbatim if aired (re-derives if future) but
+-- contributes no cursor advance of its own; future occurrences self-heal
+-- on their next re-derivation, aired ones age out via retention.
+--
+-- series_state.operator_updated_at stamps direct operator writes
+-- (PATCH /state/series, `schedularr state set`/`state reset`; NULL if
+-- never). The aired-occurrence replay skips any show whose operator
+-- stamp is newer than the occurrence's own commit (recorded_at), so an
+-- operator write -- a backward cursor jump included -- is never
+-- re-advanced by an occurrence planned before it.
+ALTER TABLE series_occurrence_snapshots ADD COLUMN post_state_json TEXT;
+ALTER TABLE series_state ADD COLUMN operator_updated_at DATETIME;
