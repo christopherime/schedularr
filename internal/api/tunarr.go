@@ -119,5 +119,22 @@ func (h *Handlers) GetStatus(w http.ResponseWriter, r *http.Request) {
 		status.Blocks = &blocks
 	}
 
+	// Same degradation contract as Blocks above: a store error omits the
+	// field (logged server-side) rather than failing the whole request.
+	lastApplied, err := h.d.Store.LastAppliedAt(r.Context())
+	if err != nil {
+		h.d.Logger.Error("internal error",
+			"op", "get_status_last_applied_at",
+			"request_id", RequestIDFromContext(r.Context()),
+			"error", err,
+		)
+	} else {
+		status.LastAppliedAt = lastApplied
+	}
+
+	if h.d.NextCronTick != nil {
+		status.NextCronTick = h.d.NextCronTick()
+	}
+
 	writeJSON(w, http.StatusOK, status)
 }

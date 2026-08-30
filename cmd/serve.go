@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -156,9 +157,16 @@ func runServe(cmd *cobra.Command) error {
 		return fmt.Errorf("failed to load embedded web UI: %w", err)
 	}
 
+	// Shared between the cron loop (writer) and GET /status (reader) --
+	// see nextTickTracker's doc comment.
+	tick := &nextTickTracker{}
+
 	router, err := api.NewRouter(
 		api.Config{Token: config.APIToken(cfg), InsecureNoAuth: insecureNoAuth, UI: site},
-		api.Deps{Store: st, Tunarr: client, Sched: runner, Media: runner, Logger: logger, Version: Version},
+		api.Deps{
+			Store: st, Tunarr: client, Sched: runner, Media: runner,
+			Logger: logger, Version: Version, NextCronTick: tick.next,
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to build api router: %w", err)
@@ -179,7 +187,35 @@ func runServe(cmd *cobra.Command) error {
 		runner:       runner,
 		cronInterval: interval,
 		logger:       logger,
+		nextTick:     tick,
 	})
+}
+
+// nextTickTracker records when the cron loop's next tick is due, so GET
+// /status can report it as Status.next_cron_tick (api.Deps.NextCronTick).
+// The loop goroutine writes (set), request handlers read (next) -- hence
+// the mutex. The zero value means "no tick scheduled" and reads as nil.
+type nextTickTracker struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func (t *nextTickTracker) set(at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.at = at
+}
+
+// next returns the tracked tick time, or nil when none has been scheduled
+// yet. It returns a copy, so callers can't race the tracker's own field.
+func (t *nextTickTracker) next() *time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.at.IsZero() {
+		return nil
+	}
+	at := t.at
+	return &at
 }
 
 // resolveCronInterval determines the effective cron-loop interval:
@@ -206,6 +242,9 @@ type serveParams struct {
 	runner       service.ScheduleRunner
 	cronInterval time.Duration
 	logger       *slog.Logger
+	// nextTick receives the loop's next scheduled tick time for GET
+	// /status; nil (tests that don't care) disables the reporting.
+	nextTick *nextTickTracker
 }
 
 // serveUntil runs the HTTP server (bound to p.ln) and the cron scheduling
@@ -239,7 +278,13 @@ func serveUntil(ctx context.Context, p serveParams) error {
 	cronDone := make(chan struct{})
 	go func() {
 		defer close(cronDone)
-		runCronLoop(cronCtx, p.runner, p.cronInterval, applyWindowDays(p.cronInterval), p.logger)
+		runCronLoop(cronCtx, cronParams{
+			runner:   p.runner,
+			interval: p.cronInterval,
+			days:     applyWindowDays(p.cronInterval),
+			logger:   p.logger,
+			nextTick: p.nextTick,
+		})
 	}()
 
 	var result error
@@ -315,27 +360,55 @@ func applyWindowDays(interval time.Duration) int {
 	return days
 }
 
+// cronParams bundles runCronLoop's dependencies into one argument -- the
+// same 5-argument lint-limit reasoning as serveParams (see CLAUDE.md's
+// Linting Limits). interval is resolveCronInterval's result (flag > config
+// > 6h default), threaded in from runServe via serveUntil; days is
+// applyWindowDays(interval), computed once at loop start.
+type cronParams struct {
+	runner   service.ScheduleRunner
+	interval time.Duration
+	days     int
+	logger   *slog.Logger
+	nextTick *nextTickTracker // nil = don't report tick times
+}
+
 // runCronLoop runs one schedule generate-and-apply cycle immediately, then
 // again every interval, until ctx is canceled. This is the same shape the
 // removed cmd/run.go's runDaemonLoop had (immediate run, then
 // ticker-driven, cancelable) -- minus SIGHUP (serve has no config-reload
 // story) and minus --once (serve is always long-running, never a one-shot
-// invocation). interval is resolveCronInterval's result (flag > config >
-// 6h default), threaded in from runServe via serveUntil; days is
-// applyWindowDays(interval), computed once at loop start.
-func runCronLoop(ctx context.Context, runner service.ScheduleRunner, interval time.Duration, days int, logger *slog.Logger) {
-	runScheduleTick(ctx, runner, days, logger)
+// invocation).
+//
+// The tick tracker is set before each tick runs, not after: a tick can
+// spend minutes inside Runner.Run, and during that window "next tick" must
+// already mean the one after it. The pre-loop set is an estimate (the
+// ticker only starts once the immediate run finishes); the set right after
+// NewTicker corrects it to the exact schedule.
+func runCronLoop(ctx context.Context, p cronParams) {
+	setNextTick(p.nextTick, time.Now().Add(p.interval))
+	runScheduleTick(ctx, p.runner, p.days, p.logger)
 
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
+	setNextTick(p.nextTick, time.Now().Add(p.interval))
 
 	for {
 		select {
 		case <-ticker.C:
-			runScheduleTick(ctx, runner, days, logger)
+			setNextTick(p.nextTick, time.Now().Add(p.interval))
+			runScheduleTick(ctx, p.runner, p.days, p.logger)
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// setNextTick is runCronLoop's nil-tolerant tracker write -- tests drive
+// serveUntil without a tracker, and the loop shouldn't care.
+func setNextTick(t *nextTickTracker, at time.Time) {
+	if t != nil {
+		t.set(at)
 	}
 }
 

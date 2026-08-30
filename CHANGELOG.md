@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`GET /status` gains `last_applied_at` and `next_cron_tick`**
+  (`api/openapi.yaml`, `internal/api/tunarr.go`, `internal/store/
+  channels.go`, `cmd/serve.go`): `last_applied_at` is the max
+  `applied_at` across `applied_channels` (nil until an apply is
+  recorded); `next_cron_tick` is plumbed from the serve cron loop's own
+  tick tracker into `api.Deps` (nil when no loop runs). Both feed the
+  web UI's bezel telemetry without extra requests — the v0.5.0 slice's
+  only contract change.
+
+### Added
+
 - **v0.5.0 web-overhaul design spec**
   (`docs/superpowers/specs/2026-08-30-v0.5-web-overhaul-design.md`):
   guide-first direction chosen by a 4-proposal, 3-judge design panel

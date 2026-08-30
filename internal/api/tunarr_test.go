@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -167,4 +168,52 @@ func TestGetStatus_StoreCountError_StillReturns200(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.True(t, got.TunarrReachable)
 	assert.Nil(t, got.Blocks, "blocks should be omitted, not zero-valued, on a store error")
+}
+
+// TestGetStatus_LastAppliedAndNextTick covers the two v0.5.0 additions:
+// last_applied_at reads the applied_channels max, next_cron_tick comes from
+// Deps.NextCronTick, and both are omitted when there is nothing to report
+// (fresh store, nil func) -- the nil-func case is every earlier test in
+// this file, so only the populated path needs asserting here.
+func TestGetStatus_LastAppliedAndNextTick(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err, "failed to create test store")
+	t.Cleanup(func() { _ = s.Close() })
+
+	applied := time.Date(2026, 8, 30, 6, 0, 0, 0, time.UTC)
+	require.NoError(t, s.MarkChannelApplied(context.Background(), "chan-1", applied))
+
+	nextTick := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	fake := &fakeTunarr{channels: []tunarr.Channel{{ID: "chan-1", Name: "News", Number: 1}}}
+	h := NewHandlers(Deps{
+		Store: s, Logger: slog.Default(), Version: "test", Tunarr: fake,
+		NextCronTick: func() *time.Time { return &nextTick },
+	})
+	router := gen.HandlerFromMux(h, chi.NewRouter())
+
+	w := doRequest(t, router, http.MethodGet, "/status", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got gen.Status
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.NotNil(t, got.LastAppliedAt)
+	assert.True(t, got.LastAppliedAt.Equal(applied), "last_applied_at should be the applied_channels max, got %v", got.LastAppliedAt)
+	require.NotNil(t, got.NextCronTick)
+	assert.True(t, got.NextCronTick.Equal(nextTick), "next_cron_tick should come from Deps.NextCronTick, got %v", got.NextCronTick)
+}
+
+// TestGetStatus_FreshStore_OmitsLastApplied pins the omission contract for
+// both new fields: no applies recorded and no cron loop wired means neither
+// key appears in the JSON at all (nullable-by-omission, not null literals).
+func TestGetStatus_FreshStore_OmitsLastApplied(t *testing.T) {
+	fake := &fakeTunarr{channels: []tunarr.Channel{{ID: "chan-1", Name: "News", Number: 1}}}
+	h := newTestServerWithTunarr(t, fake)
+
+	w := doRequest(t, h, http.MethodGet, "/status", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	assert.NotContains(t, raw, "last_applied_at")
+	assert.NotContains(t, raw, "next_cron_tick")
 }

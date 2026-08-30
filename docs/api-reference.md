@@ -87,7 +87,7 @@ The Tunarr boundary: `ListChannels` proxies `GET /api/channels` on the configure
 | GET | `/status` | 200 | — |
 
 - `GET /channels` returns `502` (`title: "tunarr unreachable"`) both when Tunarr isn't configured (`detail: "tunarr not configured"`) and when the configured client's call fails (`detail` carries the wrapped connectivity error).
-- `GET /status` never returns a `5xx`. It always responds `200` with `version`, `tunarr_reachable` (a live probe), `tunarr_error` (set whenever `tunarr_reachable` is `false`), and `blocks` (the current block count, omitted rather than failing the request if the count itself errors).
+- `GET /status` never returns a `5xx`. It always responds `200` with `version`, `tunarr_reachable` (a live probe), `tunarr_error` (set whenever `tunarr_reachable` is `false`), `blocks` (the current block count, omitted rather than failing the request if the count itself errors), `last_applied_at` (when the most recent apply pushed a lineup to Tunarr — the max `applied_at` across tracked channels; omitted when no apply has been recorded), and `next_cron_tick` (when `serve`'s cron loop will next generate and apply; omitted when no cron loop is running). The two timestamp fields feed the web UI's bezel telemetry strip.
 
 ## Media discovery
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
 	"github.com/christopherime/schedularr/internal/service"
@@ -27,6 +28,14 @@ type Deps struct {
 	// passes a *service.Runner, which satisfies ScheduleRunner as-is;
 	// tests pass a fake.
 	Sched service.ScheduleRunner
+
+	// NextCronTick reports when the serve command's cron loop will next
+	// generate and apply a schedule -- GetStatus surfaces it as
+	// Status.next_cron_tick. nil (the whole func, or its result) means no
+	// cron loop is running / no tick is scheduled, and the field is
+	// omitted; tests and any future loop-less mode simply leave this
+	// unset. cmd/serve.go wires it to the loop's own tick tracker.
+	NextCronTick func() *time.Time
 
 	// Media is the media-discovery boundary used by ListMediaShows and
 	// GetMediaMeta (see media.go). Production wiring passes the same

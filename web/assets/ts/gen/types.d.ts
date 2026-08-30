@@ -378,6 +378,16 @@ export interface components {
             tunarr_reachable: boolean;
             tunarr_error?: string;
             blocks?: number;
+            /**
+             * Format: date-time
+             * @description When the most recent apply pushed a lineup to Tunarr (the max applied_at across applied_channels). Omitted when no apply has been recorded yet.
+             */
+            last_applied_at?: string;
+            /**
+             * Format: date-time
+             * @description When the serve command's cron loop will next generate and apply a schedule. Omitted when no cron loop is running (or before its first tick has been scheduled).
+             */
+            next_cron_tick?: string;
         };
         MediaShow: {
             title: string;

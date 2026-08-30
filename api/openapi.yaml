@@ -567,6 +567,20 @@ components:
           type: string
         blocks:
           type: integer
+        last_applied_at:
+          description: >-
+            When the most recent apply pushed a lineup to Tunarr (the max
+            applied_at across applied_channels). Omitted when no apply has
+            been recorded yet.
+          type: string
+          format: date-time
+        next_cron_tick:
+          description: >-
+            When the serve command's cron loop will next generate and apply
+            a schedule. Omitted when no cron loop is running (or before its
+            first tick has been scheduled).
+          type: string
+          format: date-time
     MediaShow:
       type: object
       required: [title, episode_count]
