@@ -29,11 +29,11 @@
 //      em dash so the expandable list never shows an empty row.
 import { apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
-import { channelHint as channelHintText, channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
+import { channelHint as channelHintText, channelLabel, channelOrder, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
-import { formatLocal, plural } from "../runtime/format.ts";
+import { clampDays, formatLocal, plural } from "../runtime/format.ts";
 import { initShell } from "../runtime/shell.ts";
 import type { components } from "../gen/types";
 
@@ -76,24 +76,8 @@ interface RequestSignature {
   channelId: string;
 }
 
-/** Clamps free-text days input to the API's documented [1, 30] range
- * (api/openapi.yaml GenerateRequest.days minimum/maximum), defaulting to 7
- * (the schema's own default) for blank/non-finite input. This is the
- * "client-side clamp" half of the binding contract; a value that somehow
- * still slips out of range is caught by the API's own 400 (the "rely on API
- * 400" half) -- toProblem()/previewError render that like any other
- * problem+json response. */
-export function clampDays(raw: string): number {
-  const trimmed = raw.trim();
-  // Blank input must take the schema default (7), not fall through
-  // Number("") === 0 into the 1-day clamp -- the latter contradicted both
-  // this function's contract and the field's own "defaults to 7" hint
-  // (caught by web/tests/schedule.test.ts during the v0.5.0 refactor).
-  if (trimmed === "") return 7;
-  const n = Number(trimmed);
-  if (!Number.isFinite(n)) return 7;
-  return Math.min(30, Math.max(1, Math.round(n)));
-}
+// clampDays and channelOrder moved to the shared runtime in v0.5.1
+// (runtime/format.ts, runtime/channels.ts) -- the guide consumes both.
 
 /** Builds the GenerateRequest body preview() and confirmApply() both send --
  * one shape, shared, per the contract note above. channel_id is omitted
@@ -102,23 +86,6 @@ function buildRequestBody(sig: RequestSignature): GenerateBody {
   const body: GenerateBody = { days: sig.days };
   if (sig.channelId !== "") body.channel_id = sig.channelId;
   return body;
-}
-
-/** Orders channel sections the way their plates read: by resolved channel
- * number first (a plan section headed `CH 04 · HORROR` sorting on raw
- * UUID looks arbitrary), then name, then raw id as the final tiebreak.
- * Channels the cache can't resolve (or that carry no number) sort after
- * numbered ones, by name/id -- exported for direct testing, same
- * convention as clampDays above. */
-export function channelOrder(aId: string, bId: string, channels: Channel[]): number {
-  const a = channels.find((c) => c.id === aId);
-  const b = channels.find((c) => c.id === bId);
-  const aNum = a?.number ?? Number.POSITIVE_INFINITY;
-  const bNum = b?.number ?? Number.POSITIVE_INFINITY;
-  if (aNum !== bNum) return aNum - bNum;
-  const byName = (a?.name ?? "").localeCompare(b?.name ?? "");
-  if (byName !== 0) return byName;
-  return aId.localeCompare(bId);
 }
 
 // ---- program rendering ---------------------------------------------------

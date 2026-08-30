@@ -1,108 +1,214 @@
 {{ define "main" }}
-<div x-data="dashboard">
-  <div class="page-head">
-    <h1>Dashboard</h1>
-    <p>
-      Live readout from this instance's own API: Tunarr signal, block
-      count, and what has aired in the last 7 days.
-    </p>
-  </div>
-
-  {{ partial "ui/tape.html" . }}
-
-  <section class="hero-panel graticule status-card" aria-labelledby="status-card-title">
-    <h2 id="status-card-title" class="visually-hidden">System status</h2>
-
-    <template x-if="statusLoading">
-      {{ partial "ui/skeleton.html" (dict "variant" "row" "widths" (slice "md" "lg" "sm")) }}
-    </template>
-
-    <template x-if="!statusLoading && statusError">
-      {{ partial "ui/problem.html" (dict "label" "Status unavailable" "bind" "statusError" "retry" "loadStatus()") }}
-    </template>
-
-    <template x-if="!statusLoading && !statusError && status">
-      <dl class="hero-panel__meta status-card__grid">
-        <div>
-          <dt>Version</dt>
-          <dd><code x-text="status.version"></code></dd>
-        </div>
-        <div>
-          <dt>Tunarr</dt>
-          <dd class="status-card__tunarr">
-            <span class="status-line">
-              <span
-                class="status-dot"
-                :data-state="status.tunarr_reachable ? 'ok' : 'down'"
-                aria-hidden="true"
-              ></span>
-              <span x-text="status.tunarr_reachable ? 'Signal' : 'No Signal'"></span>
-            </span>
-            <span
-              class="status-card__tunarr-detail"
-              x-show="!status.tunarr_reachable && status.tunarr_error"
-              x-text="status.tunarr_error"
-            ></span>
-          </dd>
-        </div>
-        <div>
-          <dt>Blocks</dt>
-          <dd x-text="blocksLabel(status.blocks)"></dd>
-        </div>
-      </dl>
-    </template>
-  </section>
-
-  <section class="history-section" aria-labelledby="history-title">
-    <div class="section-head">
-      <h2 id="history-title">Recent History</h2>
-      <p>Programs Schedularr has scheduled onto Tunarr channels in the last 7 days.</p>
+{{- /*
+  The Guide (spec §3.1) -- the EPG grid as home. The grid + mobile
+  rundown DOM is built in TS (runtime/grid.ts); Alpine here drives ONLY
+  the toolbar (DAYS / SCOPE / day tabs / rundown channel picker) and the
+  slot inspector (§3.2). Full-bleed: content/_index.md sets full_bleed,
+  the one sanctioned --content-max exception. CSP discipline: zero inline
+  style attributes anywhere below -- all geometry is CSSOM-set classes.
+*/ -}}
+<div x-data="guide" class="guide" @keydown.escape.window="closeInspector()">
+  <div class="guide-chrome">
+    <div class="page-head">
+      <h1>Guide</h1>
+      <p>
+        The planned programme across every channel — what airs, what
+        didn't, and why. Slots re-plan live from your blocks; click one
+        for its rundown.
+      </p>
     </div>
 
-    <template x-if="historyLoading">
-      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 3) }}
+    {{ partial "ui/tape.html" . }}
+
+    <div class="guide-toolbar" role="group" aria-label="Plan controls">
+      <div class="form-field guide-toolbar__days">
+        <label for="guide-days">Days</label>
+        <input
+          type="number"
+          min="1"
+          max="30"
+          id="guide-days"
+          x-model="controls.days"
+          @change="onDaysChange()"
+          :disabled="loading"
+        >
+      </div>
+      <div class="form-field guide-toolbar__scope">
+        <label for="guide-scope">Scope</label>
+        {{ partial "ui/channel-select.html" (dict
+          "id" "guide-scope"
+          "model" "controls.channelId"
+          "disabled" "loading"
+          "emptyOption" "All channels"
+          "placeholder" "Leave blank for all channels") }}
+      </div>
+      <div class="form-field guide-toolbar__rundown-scope">
+        <label for="guide-rundown-channel">Channel</label>
+        <select
+          id="guide-rundown-channel"
+          x-model="rundownChannelId"
+          @change="renderRundownOnly()"
+        >
+          <template x-for="c in rundownChannels()" :key="c.id">
+            <option :value="c.id" x-text="c.label"></option>
+          </template>
+        </select>
+      </div>
+    </div>
+
+    <template x-if="loading">
+      {{ partial "ui/skeleton.html" (dict "variant" "grid-track" "count" 4) }}
     </template>
 
-    <template x-if="!historyLoading && historyError">
-      {{ partial "ui/problem.html" (dict "label" "History unavailable" "bind" "historyError" "retry" "loadHistory()") }}
+    <template x-if="!loading && problem">
+      <section class="hero-panel graticule guide-nosignal" data-scan aria-labelledby="guide-nosignal-title">
+        <h2 id="guide-nosignal-title" class="visually-hidden">No Signal</h2>
+        <p class="status-line">
+          <span class="status-dot" data-state="down" aria-hidden="true"></span>
+          <span>No Signal</span>
+        </p>
+        <p class="guide-nosignal__detail" x-text="problemLine()"></p>
+        <p>
+          The guide re-plans live from Tunarr, so there is no cached
+          lineup to fall back on. Check the TUNARR reading in the bezel,
+          then retry.
+        </p>
+        <button type="button" class="btn btn--primary" @click="reload()">Retry</button>
+        <p class="problem__ref" x-show="problem.requestId" x-text="'REF ' + problem.requestId"></p>
+      </section>
     </template>
 
-    <template x-if="!historyLoading && !historyError && history.length === 0">
+    <template x-if="!loading && !problem && plan && !hasAnySlots() && !hasBlocks()">
       {{ partial "ui/empty.html" (dict
-        "legend" "No trace"
-        "text" "Nothing has aired yet. Once a block's schedule runs against Tunarr, entries show up here."
-        "actionLabel" "Set up blocks"
+        "legend" "No programme"
+        "text" "Nothing is scheduled because no blocks exist yet. Create one on Blocks and it appears here on its cron."
+        "actionLabel" "Create a block"
         "actionHref" "/blocks/") }}
     </template>
 
-    <template x-if="!historyLoading && !historyError && history.length > 0">
-      <div class="table-wrap">
-        <table class="history-table">
-          <thead>
-            <tr>
-              <th scope="col">Scheduled</th>
-              <th scope="col">Channel</th>
-              <th scope="col">Block</th>
-              <th scope="col">Program ID</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="(entry, index) in history" :key="index">
-              <tr>
-                <td x-text="formatLocal(entry.scheduled_at)"></td>
-                <td>{{ partial "ui/plate.html" (dict "expr" "plate(entry.channel_id)") }}</td>
-                <td x-text="entry.block_name ?? '—'"></td>
-                <td class="history-table__id" x-text="entry.program_id ?? '—'"></td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
+    <template x-if="!loading && !problem && plan && !hasAnySlots() && hasBlocks()">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No match"
+        "text" "No block airs inside this window and scope — widen DAYS, clear the SCOPE, or check that the blocks for this channel are enabled."
+        "actionLabel" "Review blocks"
+        "actionHref" "/blocks/") }}
     </template>
-  </section>
+  </div>
+
+  <div class="guide-body" x-show="!loading && !problem && plan && hasAnySlots()" x-cloak>
+    <div class="guide-main">
+      <div class="guide-chrome">
+        <div class="guide-tabs" role="group" aria-label="Day">
+          <template x-for="tab in dayTabs()" :key="tab.index">
+            <button
+              type="button"
+              class="guide-tab"
+              :aria-pressed="tab.index === dayIndex"
+              :data-today="tab.isToday"
+              @click="selectDay(tab.index)"
+              x-text="tab.label"
+            ></button>
+          </template>
+        </div>
+      </div>
+      <div class="guide-viewport" id="guide-viewport" aria-label="Programme grid"></div>
+      <div class="guide-rundown" id="guide-rundown" aria-label="Programme rundown"></div>
+    </div>
+
+    {{- /* Slot inspector (spec §3.2): desktop right rail that compresses
+           the grid (never overlays); bottom sheet on mobile. Esc/X close
+           with focus returned to the slot. */}}
+    <aside
+      class="guide-inspector"
+      x-show="inspector.open"
+      x-cloak
+      aria-label="Slot inspector"
+    >
+      <template x-if="inspector.slot">
+        <div>
+          <div class="panel__head">
+            <h2>
+              <a
+                class="guide-inspector__title-link"
+                :href="inspectorEditHref()"
+                x-text="inspector.slot.kind === 'ghost' ? 'No Signal' : inspector.slot.blockName"
+              ></a>
+            </h2>
+            <button type="button" class="btn btn--icon" @click="closeInspector()" aria-label="Close inspector">
+              {{ partial "ui/icon.html" (dict "name" "x") }}
+            </button>
+          </div>
+          <div class="panel__body">
+            <template x-if="inspector.slot.kind === 'ghost'">
+              <div class="guide-inspector__verdict">
+                <p class="guide-inspector__verdict-title">Conflict — occurrence dropped</p>
+                <p>
+                  <span x-text="inspector.slot.blockName"></span> lost this
+                  slot to
+                  <a :href="winnerEditHref()" x-text="inspector.slot.lostTo"></a>
+                  and was not scheduled.
+                </p>
+              </div>
+            </template>
+
+            <div class="guide-inspector__meta">
+              <span class="plate">
+                <span class="plate__ch" x-show="inspectorPlate().ch" x-text="inspectorPlate().ch"></span>
+                <span class="plate__name" x-text="inspectorPlate().name"></span>
+              </span>
+              <span class="guide-inspector__time">
+                <span x-text="inspectorTimeRange()"></span>
+                <span class="guide-inspector__duration" x-text="'· ' + inspectorDuration()"></span>
+              </span>
+            </div>
+
+            <template x-if="inspector.slot.kind === 'slot'">
+              <section class="guide-inspector__rundown" aria-label="Program rundown">
+                <h3 class="guide-inspector__section-head" x-text="'Rundown — ' + programCountLabel()"></h3>
+                <template x-if="inspectorPrograms().length === 0">
+                  <p class="guide-inspector__none">No programs matched this block's filter for this slot.</p>
+                </template>
+                <ol class="guide-inspector__programs">
+                  <template x-for="(p, pidx) in inspectorPrograms()" :key="pidx">
+                    <li>
+                      <span class="guide-inspector__p-start" x-text="p.start"></span>
+                      <span class="guide-inspector__p-title" x-text="p.title"></span>
+                      <span class="guide-inspector__p-marker" x-show="p.marker" x-text="p.marker"></span>
+                      <span class="guide-inspector__p-duration" x-text="p.duration"></span>
+                    </li>
+                  </template>
+                </ol>
+              </section>
+            </template>
+
+            <dl class="guide-inspector__facts">
+              <div x-show="inspectorCron()">
+                <dt>Schedule</dt>
+                <dd>
+                  <code x-text="inspectorCron()"></code>
+                  <span class="guide-inspector__cron-readback" x-show="inspectorCronReadback()" x-text="inspectorCronReadback()"></span>
+                </dd>
+              </div>
+              <div>
+                <dt>Priority</dt>
+                <dd x-text="inspectorPriority()"></dd>
+              </div>
+              <div x-show="inspectorEnabled()">
+                <dt>State</dt>
+                <dd x-text="inspectorEnabled()"></dd>
+              </div>
+            </dl>
+          </div>
+          <div class="panel__actions">
+            <a class="btn btn--ghost" :href="inspectorEditHref()">Edit block</a>
+          </div>
+        </div>
+      </template>
+    </aside>
+  </div>
 </div>
 {{ end }}
 
 {{ define "page_js" }}
-{{ partial "ui/page-js.html" (dict "entry" "ts/pages/dashboard.ts" "target" "js/dashboard.js") }}
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/guide.ts" "target" "js/guide.js" "cronstrue" true) }}
 {{ end }}

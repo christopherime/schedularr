@@ -7,7 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The Guide — the EPG grid as home** (`web/layouts/index.html`,
+  `web/assets/ts/pages/guide.ts`, `web/assets/ts/runtime/grid.ts`,
+  `web/assets/css/main.css`): v0.5.1, spec §3.1/§3.2. `GET /schedule`
+  auto-loads on open (days=7, all channels) — the manual Generate click
+  is dead for reading. Channels render as sticky-plate tracks under a
+  sticky time ruler whose 30-minute cells ARE the graticule divisions
+  (`--div`, scoped to 44px in the guide); slots land on a per-channel
+  288-column CSS grid via CSSOM-set `grid-column` line numbers (the
+  measured spike topology: flex-flow stickiness, never sticky grid
+  items). The sweep cursor advances once per minute on a local timer
+  (`--now-min` via CSSOM; SSE skew correction lands in v0.5.4), with a
+  phosphor trail that reduced-motion drops. Past slots dim; the on-air
+  slot glows. Conflict warnings render as amber-hatched `NO SIGNAL —
+  LOST TO <block>` ghosts at their would-have-aired time (channel +
+  duration resolved client-side from the losing block's spec until the
+  v0.5.3 Warning fields land). DAYS/SCOPE re-fetch the plan (draft mode
+  is v0.5.2); day tabs navigate the loaded window without re-planning.
+  Keyboard: roving tabindex, Left/Right along a track, Up/Down across
+  channels, Enter/Esc. States: division-aligned grid skeleton (new
+  `grid-track` ui/skeleton variant), scanline NO SIGNAL with Retry on a
+  failed plan, and two teaching empty states (no blocks vs. no match).
+  Mobile reflows to a day-grouped vertical rundown (TONIGHT/TOMORROW
+  headings, channel picker, now-line as a horizontal rule).
+- **Slot inspector** (same files): desktop right rail that compresses
+  the grid (never overlays), mobile bottom sheet — block-name link
+  deep-linking to `/blocks/?edit=<id>` (the blocks page now opens its
+  editor from that param), channel plate, time range + duration, the
+  full program rundown with per-program start times and SxxEyy markers
+  from the typed shape, cron + cronstrue readback, priority, enabled
+  state; ghosts show the conflict verdict with the winner linked.
+  Esc/X close with focus returned to the slot.
+- **Web unit tests for the grid geometry** (`web/tests/grid.test.ts`):
+  quantum clamping incl. overnight spill cut-left/right, grid-column
+  mapping, day windowing, ghost placement fallbacks, keyboard
+  nearest-slot picking; plus the relocated days-clamp/channel-order
+  coverage in `runtime.test.ts`.
+
 ### Changed
+
+- **IA: nav is GUIDE · BLOCKS · SCHEDULE · SERIES**
+  (`web/layouts/partials/nav.html`): the Guide replaces the Dashboard
+  as home. The old dashboard moved to an **unlinked, temporary**
+  `/dashboard/` route (`web/layouts/dashboard/list.html`) kept only for
+  its history table until the Log absorbs it in v0.5.3 — noted as
+  temporary on the page and in `docs/web-ui-guide.md`. The Schedule
+  page keeps preview/apply untouched this slice. The 404 page's return
+  action now names the Guide.
+- **Shared runtime grew for the guide** (`web/assets/ts/runtime/`):
+  `cronReadback` moved out of the blocks page into `runtime/cron.ts`
+  (the inspector reads it too); `clampDays` and `channelOrder` moved
+  into `runtime/format.ts`/`runtime/channels.ts` (guide + schedule both
+  consume them); `format.ts` gained `formatClock`/`durationLabel`/
+  `sxxeyy`. Superseded page-local copies deleted (no-legacy).
 
 - **Typed `ScheduledProgram` replaces the untyped slot programs — hard
   swap** (`api/openapi.yaml`, `internal/api/schedule.go`):

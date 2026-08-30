@@ -7,8 +7,12 @@
   load.
 */ -}}
 {{- $current := .RelPermalink -}}
+{{- /* v0.5.1 IA: the Guide replaces the Dashboard as home; the old
+       dashboard survives on an unlinked /dashboard/ route until the Log
+       absorbs its history table (v0.5.3). Schedule keeps preview/apply
+       until v0.5.2 folds it into the guide's draft mode. */ -}}
 {{- $items := slice
-  (dict "href" "/" "label" "Dashboard")
+  (dict "href" "/" "label" "Guide")
   (dict "href" "/blocks/" "label" "Blocks")
   (dict "href" "/schedule/" "label" "Schedule")
   (dict "href" "/series/" "label" "Series")

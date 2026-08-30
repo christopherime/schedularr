@@ -194,11 +194,75 @@ Added in the v0.5.0 foundation slice (spec §4), all on `:root`:
 | `--duration-slow` | `250ms` | Reserved for the largest disclosures. |
 | `--surface-warn` / `--surface-danger` | color-mix tints | See Colors above. |
 
-`--div` is re-documented as load-bearing: from v0.5.1 it IS the guide's
-30-minute column width, so graticule lines and slot boundaries coincide.
-Any dynamic geometry keyed to it must go through CSSOM
+`--div` is load-bearing since v0.5.1: it IS the guide's 30-minute column
+width, so graticule lines, ruler cells, and slot boundaries coincide.
+The guide scopes `--div` up to `44px` (`.guide`) so an hour label fits
+one division; the identity "one graticule square = 30 minutes" holds at
+any `--div`, and every derived length (`--q-w` = `--div`/6 per 5-minute
+quantum, `--px-per-min` = `--div`/30) follows the override
+automatically. Any dynamic geometry keyed to it must go through CSSOM
 (`el.style.setProperty`, Alpine `:style`) -- see Content-Security-Policy
 below for why an inline `style` attribute silently fails.
+
+## The guide grid (v0.5.1)
+
+The Guide (`/`, `web/layouts/index.html` + `web/assets/ts/pages/guide.ts`
++ `web/assets/ts/runtime/grid.ts`) renders the EPG as home. Its geometry
+contract comes from the measured pre-slice spike (spec §9) and is
+binding:
+
+- **Sticky topology from FLEX FLOW, never grid membership.** The sheet
+  (`.guide-sheet`) is a block with `width: max-content`; the ruler
+  (`.guide-ruler`) is a sticky-top flex row with a sticky-left corner;
+  each channel row (`.guide-row`) is a flex of sticky-left plate cell +
+  track. Chromium forgives sticky grid items; Safari historically does
+  not. Both axes scroll inside ONE scrollport (`.guide-viewport`, a
+  bounded-height `overflow: auto` box) -- that is what makes top and
+  left stickiness hold simultaneously.
+- **One CSS grid per channel track**, `repeat(288, var(--q-w))` -- 288
+  five-minute quanta per day. Slots are placed by grid-column line
+  numbers set via CSSOM (`el.style.setProperty("grid-column", ...)`);
+  the pure quantization (floor start, ceil end, clamp to the day,
+  cut-left/right flags for overnight spills) lives in
+  `runtime/grid.ts`'s geometry section and is unit-tested
+  (`web/tests/grid.test.ts`).
+- **The now-line** (`.guide-nowline`) is an absolute overlay child of
+  the sheet at `calc(var(--rail-w) + var(--now-min) * var(--px-per-min))`;
+  `--now-min` is set once per minute via CSSOM by a local 60s timer (a
+  discrete step, not an animation loop; heartbeat skew correction
+  arrives with SSE in v0.5.4). No scroll handler anywhere. The
+  phosphor-persistence trail is a `::before` gradient riding the rule;
+  reduced motion drops the trail and keeps the rule. z-order inside the
+  sheet: nowline (1) < plates (2) < ruler (3) < corner (4).
+- **Ghost slots** (`.guide-slot--ghost`): a current-plan conflict
+  warning renders as an amber-hatched `NO SIGNAL — LOST TO <block>`
+  block at its would-have-aired time, in an implicit second track lane
+  under the slot that displaced it. Hatching never carries the fact
+  alone -- the text label does (SC 1.4.1). INTERIM: the Warning wire
+  shape carries only names + `occurrence_start` until v0.5.3, so the
+  ghost's channel and duration resolve client-side from the losing
+  block's spec (`resolveGhost`, `runtime/grid.ts`).
+- **Slot states**: `.is-past` dims behind the sweep, `.is-on-air`
+  carries the armed glow; both are refreshed by the same minute tick.
+  The series tint (`data-type="series"`, a 7% accent mix) is a
+  secondary scan aid -- the meta line names the type in text.
+- **Inspector** (`.guide-inspector`): a desktop right rail sharing the
+  flex row with the grid -- opening it compresses the grid, never
+  overlays it; under the 640px breakpoint it becomes a fixed bottom
+  sheet. Esc/X close with focus returned to the opening slot.
+- **Mobile rundown** (`.rundown-*`): under 640px the grid yields to a
+  vertical day-grouped rundown (TONIGHT / TOMORROW / `MON 02` headings)
+  for one channel behind a picker, with the now-line as a horizontal
+  rule re-slotted between past and future rows each minute.
+- **Full-bleed**: the guide is the ONE sanctioned `--content-max`
+  exception -- `content/_index.md` sets `full_bleed`, baseof adds
+  `.content--bleed`, and the guide's chrome (head/toolbar) stays on the
+  page column while the grid region escapes it.
+- The grid and rundown DOM are built in TS from the typed plan
+  (`renderGuideDay` / `renderRundown`); Alpine drives ONLY the toolbar
+  and the inspector. Keyboard: roving tabindex across slots --
+  Left/Right along a track, Up/Down across channels (nearest start
+  time), Enter opens, Esc closes.
 
 ## Typography
 
@@ -277,8 +341,11 @@ of being copy-pasted per page -- a page template instantiates a partial
 with its Alpine expressions as dict args. The set:
 
 - **`skeleton`** -- variants `bar` / `row` / `stack` / `table-row` (the
-  table-shaped loading silhouette); widths via modifier classes, never
-  inline styles (CSP rule).
+  table-shaped loading silhouette) / `grid-track` (the guide's
+  silhouette: plate stubs + pulsing bars whose widths and offsets are
+  multiples of `--div`, so the loading state pulses on the same
+  30-minute graticule the real grid lands on); widths via modifier
+  classes, never inline styles (CSP rule).
 - **`problem`** -- the single inline error idiom: static context label,
   the API's own `title: detail` line, an optional retry action, and a
   muted `REF <request_id>` line for server-log correlation. Binds a
@@ -498,6 +565,23 @@ dark):
 Every pairing clears WCAG AA's 4.5:1 text floor (worst case 5.77:1). The
 telemetry strip's label/value inks on `--color-bg-raised` are the
 already-verified Task 3/4 pairings.
+
+**v0.5.1 guide** introduced the slot faces, the series tint, and the
+ghost hatching. Checked computationally (same throwaway-script
+convention):
+
+| Pairing | Light | Dark |
+| ------- | ----- | ---- |
+| `--color-ink-muted` on `--color-bg-inset` (slot meta line) | 6.88:1 | 8.13:1 |
+| `--color-ink` on the series tint (7% accent mix over bg-inset) | 12.20:1 | 15.09:1 |
+| `--color-ink-muted` on the series tint | 6.23:1 | 7.39:1 |
+| `--color-warn` on `--surface-warn` (ghost text, base surface) | 6.14:1 | 7.15:1 |
+| `--color-warn` on the 18% hatch stripe (ghost text, worst case) | 4.71:1 | 5.00:1 |
+
+Every pairing clears the 4.5:1 AA floor; the ghost's worst case (text
+over a hatch stripe) is the tightest at 4.71:1 light. Ruler labels,
+rundown rows, and the inspector reuse already-verified token pairings on
+`--color-bg-raised`.
 
 ## TypeScript runtime and Alpine.js conventions
 

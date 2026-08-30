@@ -83,3 +83,20 @@ export function channelPlate(id: string | null | undefined, channels: Channel[])
     name: c.name ?? shortId(id),
   };
 }
+
+/** Orders channels the way their plates read: by resolved channel number
+ * first (a section headed `CH 04 · HORROR` sorting on raw UUID looks
+ * arbitrary), then name, then raw id as the final tiebreak. Channels the
+ * cache can't resolve (or that carry no number) sort after numbered ones,
+ * by name/id. Shared by the guide's row order and the schedule page's
+ * section order. */
+export function channelOrder(aId: string, bId: string, channels: Channel[]): number {
+  const a = channels.find((c) => c.id === aId);
+  const b = channels.find((c) => c.id === bId);
+  const aNum = a?.number ?? Number.POSITIVE_INFINITY;
+  const bNum = b?.number ?? Number.POSITIVE_INFINITY;
+  if (aNum !== bNum) return aNum - bNum;
+  const byName = (a?.name ?? "").localeCompare(b?.name ?? "");
+  if (byName !== 0) return byName;
+  return aId.localeCompare(bId);
+}

@@ -35,7 +35,7 @@ Each page loads exactly one script bundle: a thin page entry (`web/assets/ts/pag
 
 ### Unit tests
 
-`make web-test` (also part of `make lint`, and a CI step) runs the UI logic tests in `web/tests/` on Node's built-in test runner — no test framework dependency; Node's native type stripping executes the `.test.ts` files directly. Page modules import cleanly under Node with small `document`/`window` stubs (their top-level side effects — registering an `alpine:init` listener and the shell init — are inert against them), and the vendored `cronstrue` UMD bundle is loaded as the same global the browser gets. The suite covers the runtime's error describing, typed path building, channel labeling/plates, and formatting, plus the blocks page's cron round-trip and spec round-trip and the schedule page's days clamp. Add new tests as `web/tests/*.test.ts`; they are type-checked by `tsc --noEmit` along with the sources.
+`make web-test` (also part of `make lint`, and a CI step) runs the UI logic tests in `web/tests/` on Node's built-in test runner — no test framework dependency; Node's native type stripping executes the `.test.ts` files directly. Page modules import cleanly under Node with small `document`/`window` stubs (their top-level side effects — registering an `alpine:init` listener and the shell init — are inert against them), and the vendored `cronstrue` UMD bundle is loaded as the same global the browser gets. The suite covers the runtime's error describing, typed path building, channel labeling/plates/ordering, formatting and the plan-days clamp, the guide grid's pure geometry (time→quantum clamping with overnight spills, grid-column mapping, day windowing, ghost placement, keyboard-nav picking), and the blocks page's cron round-trip and spec round-trip. Add new tests as `web/tests/*.test.ts`; they are type-checked by `tsc --noEmit` along with the sources.
 
 ## Token Setup
 
@@ -62,18 +62,25 @@ Successful writes print onto an inline **event tape** under the page heading —
 
 ## Page Tour
 
-### Dashboard (`/`)
+### The Guide (`/`)
 
-![Schedularr dashboard showing Tunarr signal, block count, and recent history](assets/screenshots/dashboard.png)
+![Schedularr guide showing the EPG grid with the sweep cursor, dimmed past slots, and a NO SIGNAL ghost](assets/screenshots/guide.png)
 
-*System status (version, Tunarr signal, block count) and recent history, each loaded independently.*
+*The programme guide as home: channels as tracks, one graticule division = 30 minutes, the sweep cursor at now, and a hatched NO SIGNAL ghost where a dropped occurrence would have aired.*
 
-Two sections, each fetched independently on load:
+The home page is a full EPG grid of the **current plan**, loaded automatically from `GET /api/v1/schedule` the moment the page opens — no Generate click. Channels are rows headed by their legend plates; time runs horizontally on a ruler whose 30-minute cells are the literal graticule divisions, so slot boundaries land exactly on grid lines. The grid scrolls on its own axes (the page body never scrolls sideways) and opens scrolled to the **sweep cursor** — the accent now-line with its phosphor trail, advancing once per minute. Past slots dim behind it; the on-air slot carries the armed glow.
 
-- **System status** — reads `GET /api/v1/status`: the server `version`, a Tunarr signal indicator, and the current block count. A Tunarr that can't be reached renders as a normal instrument reading, not an error: the status dot flips to "No Signal" and the server's own `tunarr_error` text prints inline underneath it.
-- **Recent history** — reads `GET /api/v1/history?days=7`: a table of what has aired (scheduled time in the browser's local timezone, plus channel, block, and program ID). The channel column renders a **legend plate** (`CH 04 · HORROR`, resolved from `GET /api/v1/channels`) instead of the raw channel UUID; an unresolvable channel falls back to its shortened id. An empty result renders a teaching empty state rather than an empty table shell.
+- **Toolbar** — **DAYS** (1–30, default 7) and **SCOPE** (a channel picker, default all channels). In this read-only slice, changing either re-fetches the plan; the draft/apply mode arrives on the Guide in v0.5.2, and until then the [Schedule page](#schedule-schedule) still owns preview/apply.
+- **Day tabs** (`SUN 30 … SAT 05`) — navigate within the already-loaded window; tabs never re-plan. A slot that crosses midnight is cut at the day edge with a dashed edge and continues on the neighboring day.
+- **Slots** — block name, time range, program count, and type on the face. Click (or Enter) opens the **inspector**: a right rail on desktop that compresses the grid (a bottom sheet on mobile) with the block name linking to its editor (`/blocks/?edit=<id>`), the channel plate, the time range with duration, the full **program rundown** (per-program start times and `SxxEyy` markers from the typed schedule shape), the cron with its plain-language readback, priority, and enabled state. Esc or the X closes it and returns focus to the slot.
+- **NO SIGNAL ghosts** — every conflict warning in the current plan renders as an amber-hatched ghost slot at exactly the time it would have aired, labeled `NO SIGNAL — LOST TO <block>`, in a thin lane under the slot that displaced it. Its inspector states the verdict and links both blocks.
+- **Keyboard** — slots form a roving tab stop: Left/Right walk a channel's track, Up/Down jump across channels to the nearest slot by start time, Enter opens the inspector, Esc closes it.
+- **States** — loading is a grid-shaped skeleton aligned to the divisions. A failed plan (Tunarr unreachable) is an honest scanline **NO SIGNAL** blackout with a Retry — the guide re-plans live and never shows a cached lineup. An empty plan teaches: with no blocks at all it points at Blocks; with blocks that simply don't air in the window it says so.
+- **Mobile** — under 640px the grid reflows into a vertical rundown: `TONIGHT` / `TOMORROW` / dated headings, one chronological slot list for the channel chosen in the picker, and the now-line as a horizontal rule between what aired and what's next. The inspector becomes a bottom sheet.
 
-Both sections load, error, and empty-state independently: a failed `/status` call doesn't block history from rendering, and vice versa. A failure renders the API's `problem+json` `title`/`detail` inline, next to the section that failed, with a **Retry** button and a muted `REF <request_id>` line for correlating with the server log — never a toast.
+### Dashboard (`/dashboard/`, temporary)
+
+The old dashboard left the navigation in v0.5.1: its status readouts live in the bezel telemetry strip on every page, and the Guide took home. The route survives **unlinked** at `/dashboard/` only for its Recent History table — reads `GET /api/v1/history?days=7` with channel legend plates — and is deleted outright when the Log page absorbs history in v0.5.3. Don't bookmark it.
 
 ### Blocks (`/blocks/`)
 
@@ -114,7 +121,7 @@ A **Filler** section (enabled, filler list ID, max filler time, min gap time) is
 
 *A generated preview: chronological slots per channel, each with an expandable program list.*
 
-Preview a schedule, then apply it — a dry-run/apply pair backed by `POST /api/v1/generate` and `POST /api/v1/apply`, the same `GenerateRequest` body (`days`, optional `channel_id`) as the CLI's `generate`/`generate --apply`. No timeline graphic: a chronological list per channel.
+Preview a schedule, then apply it — a dry-run/apply pair backed by `POST /api/v1/generate` and `POST /api/v1/apply`, the same `GenerateRequest` body (`days`, optional `channel_id`) as the CLI's `generate`/`generate --apply`. A chronological list per channel; this page remains the apply surface until v0.5.2 folds preview/apply into the Guide as its draft mode (and then it is deleted).
 
 **Controls** — a `days` number input (1–30, defaulting to 7, clamped client-side to that range before every request) and a `channel_id` scope: a `<select>` (first option always **All channels**) populated from `GET /api/v1/channels`, falling back to free text (blank still means all channels) when Tunarr is unreachable.
 

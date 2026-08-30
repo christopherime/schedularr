@@ -1891,6 +1891,791 @@ dialog.panel .panel__body {
   }
 }
 
+/* -- the guide (home, spec §3.1) ---------------------------------------------
+   The EPG grid as home surface. Geometry contract (the resolved spike,
+   spec §9): sticky rail/ruler topology from FLEX FLOW, never grid
+   membership -- sheet = block width:max-content; ruler = sticky-top flex
+   row with sticky-left corner; each channel row = flex of sticky-left
+   plate + a per-channel CSS grid of 288 five-minute columns. Slots land
+   on grid lines set via CSSOM (style.setProperty -- inline style
+   attributes are dropped by the CSP). The 30-minute column width IS
+   --div, so the graticule gradient, the ruler cells, and slot boundaries
+   coincide exactly; the guide scopes --div up to 44px so hour labels fit
+   a division, and every derived length (--q-w, --px-per-min) follows.
+   z-order inside the sheet: nowline (1) < plates (2) < ruler (3) <
+   corner (4). */
+
+.content--bleed {
+  max-width: none;
+  padding: 0;
+}
+
+.guide {
+  --div: 44px;
+  --rail-w: 11rem;
+  --q-w: calc(var(--div) / 6);
+  --px-per-min: calc(var(--div) / 30);
+  padding: var(--space-6) 0 var(--space-8);
+}
+
+/* The head/toolbar/tape stay on the page column; only the grid region
+   goes full-bleed (the one sanctioned --content-max exception). */
+.guide-chrome {
+  max-width: var(--content-max);
+  margin-inline: auto;
+  padding-inline: var(--space-5);
+}
+
+.guide-toolbar {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.guide-toolbar__days input {
+  width: 6.5rem;
+}
+
+.guide-toolbar__scope {
+  min-width: 16rem;
+}
+
+/* The mobile rundown's channel picker -- desktop hides it (the grid
+   shows every channel at once). */
+.guide-toolbar__rundown-scope {
+  display: none;
+  min-width: 12rem;
+}
+
+/* Day tabs: navigation within the loaded window, never a re-plan. Same
+   instrument-legend vocabulary as the nav channel-select. */
+.guide-tabs {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.guide-tab {
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  background: transparent;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.guide-tab:not(:disabled):hover {
+  color: var(--color-ink);
+  background: var(--color-bg-inset);
+}
+
+.guide-tab[aria-pressed="true"] {
+  color: var(--color-ink);
+  background: var(--color-bg-inset);
+  border-color: var(--color-border-interactive);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+/* Grid region + inspector: the inspector COMPRESSES the grid (flex),
+   never overlays it. */
+.guide-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  padding-inline: var(--space-5);
+}
+
+.guide-body .guide-chrome {
+  padding-inline: 0;
+  margin-inline: 0;
+  max-width: none;
+}
+
+.guide-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The one scroller for both axes: sticky top/left work against a single
+   scrollport, so the ruler and plates hold on both scroll directions. */
+.guide-viewport {
+  position: relative;
+  overflow: auto;
+  max-height: calc(100dvh - 16rem);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+}
+
+.guide-sheet {
+  --now-min: 0;
+  position: relative;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* -- ruler ---------------------------------------------------------------- */
+
+.guide-ruler {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  background: var(--color-bg-raised);
+  border-bottom: var(--border-width-thick) solid var(--color-border-interactive);
+}
+
+.guide-ruler__corner {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  flex-shrink: 0;
+  width: var(--rail-w);
+  display: flex;
+  align-items: center;
+  padding-inline: var(--space-3);
+  background: var(--color-bg-raised);
+  border-right: var(--border-width) solid var(--color-border);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One gradient for the whole cell strip, not per-cell borders -- the
+   ruler lines and the track graticule are the SAME repeating gradient at
+   --div, so they coincide to the pixel. */
+.guide-ruler__cells {
+  display: flex;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--color-graticule) 0 1px,
+    transparent 1px var(--div)
+  );
+}
+
+.guide-ruler__cell {
+  flex-shrink: 0;
+  width: var(--div);
+  padding: var(--space-2) 0 var(--space-2) 3px;
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* -- channel rows ---------------------------------------------------------- */
+
+.guide-row {
+  display: flex;
+}
+
+.guide-plate-cell {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex-shrink: 0;
+  width: var(--rail-w);
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-raised);
+  border-right: var(--border-width) solid var(--color-border);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.guide-plate-cell .plate {
+  max-width: 100%;
+}
+
+.guide-plate-cell .plate__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The track: one CSS grid per channel, 288 five-minute columns, the
+   graticule as its literal background. Row 1 is the airing lane; a NO
+   SIGNAL ghost drops into an implicit second lane at its would-have-aired
+   columns, under the slot that displaced it. */
+.guide-track {
+  display: grid;
+  grid-template-columns: repeat(288, var(--q-w));
+  grid-template-rows: minmax(3.9rem, auto);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--color-graticule) 0 1px,
+    transparent 1px var(--div)
+  );
+}
+
+/* -- slots ------------------------------------------------------------------ */
+
+.guide-slot {
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  margin: var(--space-1) 1px;
+  padding: var(--space-1) var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  font: inherit;
+  color: var(--color-ink);
+  background: var(--color-bg-inset);
+  border: var(--border-width) solid var(--color-border-interactive);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.guide-slot:not(:disabled):hover {
+  border-color: var(--color-ink);
+}
+
+/* Series tint: a secondary scan aid only -- the meta line names the type
+   in text. WCAG (computed): ink 12.20/15.09, ink-muted 6.23/7.39 on this
+   tint (light/dark). */
+.guide-slot[data-type="series"] {
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-inset));
+}
+
+/* An overnight spill clamped at a day edge: the cut side loses its
+   border and radius -- the block visibly continues past the window. */
+.guide-slot[data-cut="right"],
+.guide-slot[data-cut="both"] {
+  border-right-style: dashed;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.guide-slot[data-cut="left"],
+.guide-slot[data-cut="both"] {
+  border-left-style: dashed;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.guide-slot__name {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.guide-slot__meta {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Past slots dim behind the sweep; the on-air slot carries the armed
+   glow -- the one reading that answers "what airs now". */
+.guide-slot.is-past {
+  opacity: 0.55;
+}
+
+.guide-slot.is-on-air {
+  border-color: var(--color-accent);
+  box-shadow: var(--glow-accent);
+}
+
+/* NO SIGNAL ghost: hatched amber + text label (coded legend -- the
+   hatching never carries the fact alone). WCAG (computed): warn text on
+   the 18% hatch stripe 4.71/5.00 (light/dark), on the base surface
+   6.14/7.15. */
+.guide-slot--ghost {
+  grid-row: 2;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--color-warn) 18%, transparent) 0 6px,
+      transparent 6px 12px
+    ),
+    var(--surface-warn);
+  border: var(--border-width) dashed var(--color-warn);
+  color: var(--color-warn);
+}
+
+.guide-slot--ghost .guide-slot__meta {
+  color: var(--color-warn);
+}
+
+.guide-slot--ghost:not(:disabled):hover {
+  border-color: var(--color-warn);
+  border-style: solid;
+}
+
+/* -- sweep cursor (motion inventory item 1) ---------------------------------
+   The now-line: an absolute overlay repositioned once per minute via
+   CSSOM (--now-min on the sheet) -- a discrete step, no animation loop,
+   no scroll handler. The phosphor-persistence trail is a static gradient
+   riding the rule; reduced motion drops the trail and keeps the rule. */
+
+.guide-nowline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--rail-w) + var(--now-min) * var(--px-per-min));
+  width: 2px;
+  background: var(--color-accent);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.guide-nowline::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 2px;
+  width: calc(var(--div) * 1.25);
+  background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--color-accent) 20%, transparent),
+    transparent
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guide-nowline::before {
+    display: none;
+  }
+}
+
+/* -- NO SIGNAL state -------------------------------------------------------- */
+
+.guide-nosignal .status-line {
+  font-size: var(--text-md);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.guide-nosignal__detail {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.guide-nosignal .btn {
+  margin-top: var(--space-2);
+}
+
+.guide-nosignal .problem__ref {
+  margin-top: var(--space-3);
+}
+
+/* -- slot inspector (spec §3.2) ---------------------------------------------
+   Desktop: a right rail sharing the flex row with the grid -- opening it
+   compresses the grid, never overlays it. Mobile: a bottom sheet. Reuses
+   the panel head/body/actions spacing vocabulary. */
+
+.guide-inspector {
+  flex-shrink: 0;
+  width: 24rem;
+  position: sticky;
+  top: 4.5rem;
+  max-height: calc(100dvh - 6rem);
+  overflow-y: auto;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+}
+
+.guide-inspector .panel__head h2 {
+  overflow-wrap: anywhere;
+}
+
+.guide-inspector__title-link {
+  color: var(--color-ink);
+  text-decoration-color: var(--color-border-interactive);
+  text-underline-offset: 3px;
+}
+
+.guide-inspector__title-link:hover {
+  text-decoration-color: var(--color-accent);
+}
+
+.guide-inspector__verdict {
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-warn);
+  border-radius: var(--radius-md);
+  background: var(--surface-warn);
+  font-size: var(--text-sm);
+}
+
+.guide-inspector__verdict p {
+  margin: 0;
+  color: var(--color-ink-muted);
+}
+
+.guide-inspector__verdict-title {
+  font-weight: 700;
+  color: var(--color-warn);
+  margin: 0 0 var(--space-1);
+}
+
+.guide-inspector__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.guide-inspector__time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.guide-inspector__duration {
+  color: var(--color-ink-muted);
+  font-weight: 400;
+}
+
+.guide-inspector__section-head {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.guide-inspector__none {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+/* The rundown: the one place a slot's exact contents are legible without
+   leaving the guide -- per-program start times + SxxEyy markers. */
+.guide-inspector__programs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.guide-inspector__programs li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-size: var(--text-sm);
+}
+
+.guide-inspector__p-start {
+  flex-shrink: 0;
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.guide-inspector__p-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.guide-inspector__p-marker {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.guide-inspector__p-duration {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.guide-inspector__facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.guide-inspector__facts dt {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-muted);
+  margin: 0 0 var(--space-1);
+}
+
+.guide-inspector__facts dd {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.guide-inspector__cron-readback {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+/* -- mobile rundown (spec §7: structural reflow, never shrink) -------------- */
+
+.guide-rundown {
+  display: none;
+}
+
+.rundown-day {
+  margin-bottom: var(--space-5);
+}
+
+.rundown-day__head {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.rundown-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+  overflow: hidden;
+}
+
+.rundown-item:not(:first-child) .rundown-slot {
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.rundown-slot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  text-align: left;
+  color: var(--color-ink);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.rundown-slot:not(:disabled):hover {
+  background: var(--color-bg-inset);
+}
+
+.rundown-slot__time {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rundown-slot__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rundown-slot.is-past {
+  opacity: 0.55;
+}
+
+.rundown-slot.is-on-air {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.rundown-slot--ghost {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--color-warn) 18%, transparent) 0 6px,
+      transparent 6px 12px
+    ),
+    var(--surface-warn);
+  color: var(--color-warn);
+}
+
+.rundown-slot--ghost .guide-slot__meta {
+  color: var(--color-warn);
+}
+
+/* The now-line as a horizontal rule between past and future rows. */
+.rundown-nowrule {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  border-top: 2px solid var(--color-accent);
+}
+
+.rundown-nowrule__label {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-50%);
+  background: var(--color-bg-raised);
+  padding-inline: var(--space-1);
+}
+
+/* -- grid-track skeleton (ui/skeleton "grid-track") -------------------------
+   Division-aligned pulsing bars: every width/offset is a multiple of
+   --div, so the loading silhouette pulses on the same 30-minute
+   graticule the real grid lands on. */
+
+.skeleton-grid {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+  overflow: hidden;
+}
+
+.skeleton-grid__row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: var(--space-3) var(--space-3);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.skeleton-grid__row:last-child {
+  border-bottom: none;
+}
+
+.skeleton-grid__row--ruler {
+  border-bottom: var(--border-width-thick) solid var(--color-border-interactive);
+}
+
+.skeleton-grid__row--ruler .skeleton-bar {
+  height: 0.75em;
+}
+
+.skeleton-grid__plate {
+  flex-shrink: 0;
+  width: calc(var(--rail-w, 11rem) - var(--space-6));
+  margin-right: var(--space-5);
+}
+
+.skeleton-grid__span {
+  height: 2rem;
+  border-radius: var(--radius-sm);
+}
+
+.skeleton-grid__span--ruler {
+  height: 0.75em;
+  width: calc(var(--div, 32px) * 16);
+}
+
+.skeleton-grid__span--a {
+  width: calc(var(--div, 32px) * 4);
+}
+
+.skeleton-grid__span--b {
+  width: calc(var(--div, 32px) * 3);
+  margin-left: calc(var(--div, 32px) * 1);
+}
+
+.skeleton-grid__span--c {
+  width: calc(var(--div, 32px) * 5);
+  margin-left: calc(var(--div, 32px) * 2);
+}
+
+/* Stagger the rows so the silhouette reads as a lineup, not a table. */
+.skeleton-grid__row:nth-child(odd) .skeleton-grid__span--a {
+  margin-left: calc(var(--div, 32px) * 2);
+}
+
+/* -- guide mobile switch (the file's one breakpoint) ------------------------ */
+
+@media (max-width: 640px) {
+  .guide {
+    padding: var(--space-5) 0 var(--space-7);
+  }
+
+  .guide-chrome {
+    padding-inline: var(--space-4);
+  }
+
+  .guide-body {
+    padding-inline: var(--space-4);
+  }
+
+  /* Structural reflow: the grid yields to the vertical rundown; the
+     day tabs yield to the day-grouped headings; the channel picker
+     appears. */
+  .guide-viewport {
+    display: none;
+  }
+
+  .guide-rundown {
+    display: block;
+  }
+
+  .guide-tabs {
+    display: none;
+  }
+
+  .guide-toolbar__rundown-scope {
+    display: block;
+    flex: 1;
+  }
+
+  .guide-toolbar__scope {
+    min-width: 100%;
+  }
+
+  /* Inspector becomes a bottom sheet with an explicit close affordance;
+     focus return is handled by the page code. */
+  .guide-inspector {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    top: auto;
+    width: auto;
+    max-height: 70dvh;
+    z-index: var(--z-popover);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    box-shadow: var(--shadow-dialog);
+  }
+}
+
 /* -- /kit/ gallery (dev builds only; excluded from production) ------------- */
 
 .kit-section {
@@ -1964,5 +2749,34 @@ dialog.panel .panel__body {
 
   .plate__ch {
     border-right-color: CanvasText;
+  }
+
+  /* Guide states that ride on box-shadow/background (v0.5.1): the sweep
+     and the on-air glow become Highlight strokes; the day tab's accent
+     underline becomes a border; the ghost's hatching drops but its
+     dashed border + NO SIGNAL text label still carry the state. */
+  .guide-nowline {
+    background: Highlight;
+  }
+
+  .guide-nowline::before {
+    display: none;
+  }
+
+  .guide-slot.is-on-air {
+    border: var(--border-width-thick) solid Highlight;
+  }
+
+  .rundown-slot.is-on-air {
+    border-left: var(--border-width-thick) solid Highlight;
+  }
+
+  .guide-tab[aria-pressed="true"] {
+    border-color: ButtonText;
+    border-bottom: var(--border-width-thick) solid Highlight;
+  }
+
+  .rundown-nowrule {
+    border-top-color: Highlight;
   }
 }

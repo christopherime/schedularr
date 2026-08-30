@@ -7,8 +7,9 @@ import test from "node:test";
 
 const { ApiError, apiPath } = await import("../assets/ts/runtime/api.ts");
 const { describeError, toProblemView } = await import("../assets/ts/runtime/errors.ts");
-const { channelHint, channelLabel, channelPlate } = await import("../assets/ts/runtime/channels.ts");
-const { formatLocal, pad2, plural, relativeTime, untilTime } = await import("../assets/ts/runtime/format.ts");
+const { channelHint, channelLabel, channelOrder, channelPlate } = await import("../assets/ts/runtime/channels.ts");
+const { clampDays, durationLabel, formatClock, formatLocal, pad2, plural, relativeTime, sxxeyy, untilTime } =
+  await import("../assets/ts/runtime/format.ts");
 
 // ---- errors --------------------------------------------------------------
 
@@ -144,4 +145,69 @@ test("channelHint honors a caller-supplied manual-entry wording", () => {
     channelHint(false, null, [], blankMeansAll),
     "Tunarr returned no channels — enter a channel ID manually, or leave blank for all channels.",
   );
+});
+
+// ---- plan-days clamp (shared by guide + schedule) --------------------------
+
+test("clampDays clamps to the API's [1, 30] range", () => {
+  assert.equal(clampDays("7"), 7);
+  assert.equal(clampDays("1"), 1);
+  assert.equal(clampDays("30"), 30);
+  assert.equal(clampDays("0"), 1);
+  assert.equal(clampDays("-4"), 1);
+  assert.equal(clampDays("45"), 30);
+});
+
+test("clampDays defaults blank/non-finite input to 7 and rounds", () => {
+  assert.equal(clampDays(""), 7);
+  assert.equal(clampDays("  "), 7);
+  assert.equal(clampDays("abc"), 7);
+  assert.equal(clampDays("6.6"), 7);
+  assert.equal(clampDays("2.2"), 2);
+});
+
+// ---- channel ordering ------------------------------------------------------
+
+test("channelOrder sorts by resolved channel number, not raw id", () => {
+  const ordered = [
+    { id: "zzz-uuid", name: "Horror", number: 4 },
+    { id: "aaa-uuid", name: "Sitcoms", number: 12 },
+  ];
+  // Raw-id order would put aaa-uuid first; the plates read CH 04 before CH 12.
+  assert.ok(channelOrder("zzz-uuid", "aaa-uuid", ordered) < 0);
+  assert.ok(channelOrder("aaa-uuid", "zzz-uuid", ordered) > 0);
+});
+
+test("channelOrder falls back to name, then id, and sorts unresolved last", () => {
+  const mixed = [
+    { id: "num-1", name: "Horror", number: 4 },
+    { id: "name-b", name: "Beta" },
+    { id: "name-a", name: "Alpha" },
+  ];
+  assert.ok(channelOrder("num-1", "name-a", mixed) < 0, "numbered before unnumbered");
+  assert.ok(channelOrder("name-a", "name-b", mixed) < 0, "both unnumbered: by name");
+  assert.ok(channelOrder("unknown-a", "unknown-b", mixed) < 0, "unresolvable: by raw id");
+  assert.ok(channelOrder("unknown-a", "num-1", mixed) > 0, "unresolved after numbered");
+});
+
+// ---- guide-adjacent formatting ---------------------------------------------
+
+test("formatClock renders a padded local HH:MM", () => {
+  const d = new Date(2026, 7, 30, 9, 5, 0, 0); // local time, no TZ math
+  assert.equal(formatClock(d.getTime()), "09:05");
+});
+
+test("durationLabel folds minutes into h/min", () => {
+  assert.equal(durationLabel(45), "45 min");
+  assert.equal(durationLabel(60), "1 h");
+  assert.equal(durationLabel(90), "1 h 30 min");
+  assert.equal(durationLabel(480), "8 h");
+});
+
+test("sxxeyy marks episodes and refuses to fabricate S00E00", () => {
+  assert.equal(sxxeyy(2, 5), "S02E05");
+  assert.equal(sxxeyy(1, 12), "S01E12");
+  assert.equal(sxxeyy(undefined, 5), null);
+  assert.equal(sxxeyy(2, undefined), null);
+  assert.equal(sxxeyy(undefined, undefined), null);
 });

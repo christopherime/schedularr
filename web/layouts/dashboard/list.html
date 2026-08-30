@@ -1,0 +1,114 @@
+{{ define "main" }}
+{{- /*
+  The old dashboard, off the nav since v0.5.1 (the Guide is home; the
+  bezel telemetry strip carries the status readouts). This unlinked route
+  exists only for its Recent History table and is deleted when the Log
+  absorbs it (v0.5.3) -- no redirect stub will replace it.
+*/ -}}
+<div x-data="dashboard">
+  <div class="page-head">
+    <h1>Dashboard</h1>
+    <p>
+      Unlinked, temporary route — its history table moves to the Log in
+      v0.5.3. Live status readouts now live in the bezel on every page.
+    </p>
+  </div>
+
+  {{ partial "ui/tape.html" . }}
+
+  <section class="hero-panel graticule status-card" aria-labelledby="status-card-title">
+    <h2 id="status-card-title" class="visually-hidden">System status</h2>
+
+    <template x-if="statusLoading">
+      {{ partial "ui/skeleton.html" (dict "variant" "row" "widths" (slice "md" "lg" "sm")) }}
+    </template>
+
+    <template x-if="!statusLoading && statusError">
+      {{ partial "ui/problem.html" (dict "label" "Status unavailable" "bind" "statusError" "retry" "loadStatus()") }}
+    </template>
+
+    <template x-if="!statusLoading && !statusError && status">
+      <dl class="hero-panel__meta status-card__grid">
+        <div>
+          <dt>Version</dt>
+          <dd><code x-text="status.version"></code></dd>
+        </div>
+        <div>
+          <dt>Tunarr</dt>
+          <dd class="status-card__tunarr">
+            <span class="status-line">
+              <span
+                class="status-dot"
+                :data-state="status.tunarr_reachable ? 'ok' : 'down'"
+                aria-hidden="true"
+              ></span>
+              <span x-text="status.tunarr_reachable ? 'Signal' : 'No Signal'"></span>
+            </span>
+            <span
+              class="status-card__tunarr-detail"
+              x-show="!status.tunarr_reachable && status.tunarr_error"
+              x-text="status.tunarr_error"
+            ></span>
+          </dd>
+        </div>
+        <div>
+          <dt>Blocks</dt>
+          <dd x-text="blocksLabel(status.blocks)"></dd>
+        </div>
+      </dl>
+    </template>
+  </section>
+
+  <section class="history-section" aria-labelledby="history-title">
+    <div class="section-head">
+      <h2 id="history-title">Recent History</h2>
+      <p>Programs Schedularr has scheduled onto Tunarr channels in the last 7 days.</p>
+    </div>
+
+    <template x-if="historyLoading">
+      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 3) }}
+    </template>
+
+    <template x-if="!historyLoading && historyError">
+      {{ partial "ui/problem.html" (dict "label" "History unavailable" "bind" "historyError" "retry" "loadHistory()") }}
+    </template>
+
+    <template x-if="!historyLoading && !historyError && history.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No trace"
+        "text" "Nothing has aired yet. Once a block's schedule runs against Tunarr, entries show up here."
+        "actionLabel" "Set up blocks"
+        "actionHref" "/blocks/") }}
+    </template>
+
+    <template x-if="!historyLoading && !historyError && history.length > 0">
+      <div class="table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th scope="col">Scheduled</th>
+              <th scope="col">Channel</th>
+              <th scope="col">Block</th>
+              <th scope="col">Program ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(entry, index) in history" :key="index">
+              <tr>
+                <td x-text="formatLocal(entry.scheduled_at)"></td>
+                <td>{{ partial "ui/plate.html" (dict "expr" "plate(entry.channel_id)") }}</td>
+                <td x-text="entry.block_name ?? '—'"></td>
+                <td class="history-table__id" x-text="entry.program_id ?? '—'"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </template>
+  </section>
+</div>
+{{ end }}
+
+{{ define "page_js" }}
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/dashboard.ts" "target" "js/dashboard.js") }}
+{{ end }}

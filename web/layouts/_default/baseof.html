@@ -92,7 +92,10 @@ carrying its provenance.
     </button>
   </header>
 
-  <main class="content" id="main">
+  {{- /* full_bleed (front matter): the guide is the ONE sanctioned
+         --content-max exception (DESIGN.md token note) -- its grid
+         escapes the page column; nothing else does. */}}
+  <main class="content{{ if .Params.full_bleed }} content--bleed{{ end }}" id="main">
     {{ block "main" . }}{{ end }}
   </main>
 

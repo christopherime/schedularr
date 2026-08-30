@@ -11,6 +11,8 @@ import { channelHint as channelHintText, channelLabel, channelPlate } from "../r
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { relativeTime, untilTime } from "../runtime/format.ts";
+import { localDayStart, renderGuideDay } from "../runtime/grid.ts";
+import type { GuideRow, GuideSlot } from "../runtime/grid.ts";
 import { initShell } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
 
@@ -37,6 +39,90 @@ const fixtureProblemBare: ProblemView = {
   detail: null,
   requestId: null,
 };
+
+// ---- guide grid fixtures ---------------------------------------------------
+//
+// The REAL renderer (runtime/grid.ts) on fixture data: an on-air slot, a
+// past slot dimmed behind the sweep, a series-tinted slot, a NO SIGNAL
+// ghost in its sub-lane, and an overnight spill cut at the day's right
+// edge -- every slot state the guide can render, reviewable without a
+// server. Times are derived from "now" so the sweep cursor always crosses
+// the fixture.
+
+function fixtureSlot(
+  channelId: string,
+  blockName: string,
+  blockType: string,
+  startMs: number,
+  minutes: number,
+  programCount: number,
+): GuideSlot {
+  const programs = [];
+  for (let i = 0; i < programCount; i++) {
+    programs.push({
+      title: `${blockName} program ${i + 1}`,
+      type: blockType === "series" ? "episode" : "movie",
+      season: blockType === "series" ? 1 : undefined,
+      episode: blockType === "series" ? i + 1 : undefined,
+      durationMs: (minutes / programCount) * 60_000,
+      startMs: startMs + (minutes / programCount) * 60_000 * i,
+    });
+  }
+  return {
+    kind: "slot",
+    channelId,
+    blockName,
+    blockType,
+    cron: "0 21 * * 6",
+    priority: 50,
+    startMs,
+    endMs: startMs + minutes * 60_000,
+    programs,
+  };
+}
+
+function fixtureGuideRows(): GuideRow[] {
+  const now = Date.now();
+  const hour = 3_600_000;
+  const ghost: GuideSlot = {
+    kind: "ghost",
+    channelId: "fixture-0001",
+    blockName: "Late Sitcom Loop",
+    blockType: "filter",
+    cron: "",
+    priority: 10,
+    startMs: now + 2 * hour,
+    endMs: now + 3 * hour,
+    programs: [],
+    lostTo: "Spooky Saturday Night",
+  };
+  return [
+    {
+      channelId: "fixture-0001",
+      plate: channelPlate("fixture-0001", fixtureChannels),
+      slots: [
+        fixtureSlot("fixture-0001", "Morning Creatures", "filter", now - 4 * hour, 120, 4),
+        fixtureSlot("fixture-0001", "Matinee Massacre", "filter", now - 0.5 * hour, 90, 2),
+        fixtureSlot("fixture-0001", "Spooky Saturday Night", "series", now + 2 * hour, 120, 4),
+        ghost,
+        fixtureSlot("fixture-0001", "Graveyard Shift", "filter", localDayStart(now) + 23.5 * hour, 120, 3),
+      ],
+    },
+    {
+      channelId: "fixture-0002",
+      plate: channelPlate("fixture-0002", fixtureChannels),
+      slots: [
+        fixtureSlot("fixture-0002", "Cereal Cartoons", "series", now - 2 * hour, 180, 6),
+        fixtureSlot("fixture-0002", "After School", "filter", now + 4 * hour, 60, 2),
+      ],
+    },
+    {
+      channelId: "fixture-0003",
+      plate: channelPlate("fixture-0003", fixtureChannels),
+      slots: [fixtureSlot("fixture-0003", "Laugh Track", "filter", now + hour, 240, 8)],
+    },
+  ];
+}
 
 interface KitState {
   channels: Channel[];
@@ -89,7 +175,19 @@ document.addEventListener("alpine:init", () => {
       confirmBusy: false,
 
       init() {
-        // Fixture-only component: nothing to fetch.
+        // Fixture-only component: nothing to fetch. The guide grid is the
+        // one section that renders through real runtime code
+        // (runtime/grid.ts) rather than static markup -- the gallery must
+        // exercise what ships.
+        const viewport = document.getElementById("kit-guide-viewport");
+        if (viewport) {
+          const handle = renderGuideDay(viewport, fixtureGuideRows(), localDayStart(Date.now()), {
+            onOpen: (slot) => printTape(`Inspector would open — ${slot.blockName}`),
+          });
+          handle.updateNow(Date.now());
+          const nowX = handle.nowOffsetPx(Date.now());
+          if (nowX !== null) viewport.scrollLeft = Math.max(0, nowX - viewport.clientWidth / 3);
+        }
       },
 
       plate(id) {

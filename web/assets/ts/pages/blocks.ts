@@ -26,6 +26,7 @@ import { ApiError, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts"
 import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
 import { channelHint as channelHintText, channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
+import { cronReadback } from "../runtime/cron.ts";
 import { describeError, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { pad2 } from "../runtime/format.ts";
@@ -52,49 +53,14 @@ declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
 };
 
-// cronstrue is vendored as a plain UMD script (web/assets/vendor/
-// cronstrue.min.js, loaded before this bundle -- see blocks/list.html's
-// "page_js" block), the same no-CDN/no-runtime-dep convention as Alpine
-// (DESIGN.md's "Vendored dependencies" note). It attaches itself to the
-// global scope when loaded as a plain <script> (no module system present),
-// so it's declared here the same way `Alpine` above is.
-declare const cronstrue: {
-  toString(expression: string, options?: { throwExceptionOnParseError?: boolean; verbose?: boolean }): string;
-};
-
 // Same double-init defense as dashboard.ts: Alpine.data()'s init() is
 // auto-invoked, so nothing on this page also wires x-init="init()" to it
 // (see that file's comment for the full story of why this guard exists).
 let started = false;
 
-// ---- cron plain-language readback -----------------------------------------
-//
-// cronstrue (vendored, see the `declare const cronstrue` comment above)
-// replaces this file's earlier hand-rolled cronHint(): that parser only
-// recognized fixed-time/weekday-restricted patterns and returned null (no
-// hint at all) for anything else -- a day-of-month/month restriction, a
-// list/step on minute or hour. cronstrue reads any valid 5-field
-// expression, so the readback is now universal rather than a narrow
-// subset, and is shown next to the schedule field in both Simple and Cron
-// mode (see EditorForm.scheduleMode below).
-
-const CRONSTRUE_ERROR_PREFIX = "An error occurred";
-
-/** Plain-language readback for a cron string, or null for blank/
- * unparseable input (never thrown out of a template expression -- Alpine
- * evaluates x-text/x-show inline, so a thrown error here would break the
- * whole editor panel's render, not just this one field). */
-export function cronReadback(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  let text: string;
-  try {
-    text = cronstrue.toString(trimmed, { throwExceptionOnParseError: false });
-  } catch {
-    return null;
-  }
-  return text.startsWith(CRONSTRUE_ERROR_PREFIX) ? null : text;
-}
+// The cron plain-language readback lives in runtime/cron.ts since v0.5.1
+// (the guide inspector reads it too); cronstrue itself stays the vendored
+// UMD global loaded before this bundle (ui/page-js's `cronstrue: true`).
 
 // ---- schedule picker: simple <-> cron ---------------------------------
 //
@@ -705,6 +671,7 @@ interface BlocksState {
   scheduleDayOptions: ScheduleDayOption[];
 
   init(): void;
+  openLinkedEditor(): void;
   loadBlocks(): Promise<void>;
   loadChannels(): Promise<void>;
   loadMedia(): Promise<void>;
@@ -790,7 +757,7 @@ document.addEventListener("alpine:init", () => {
       init() {
         if (started) return;
         started = true;
-        void this.loadBlocks();
+        void this.loadBlocks().then(() => this.openLinkedEditor());
         void this.loadChannels();
         // Arming a new token re-fires whichever loads failed (the token
         // panel's probe broadcast, runtime/api.ts's onReauth).
@@ -798,6 +765,18 @@ document.addEventListener("alpine:init", () => {
           if (this.blocksProblem) void this.loadBlocks();
           if (this.channelsError) void this.loadChannels();
         });
+      },
+
+      // /blocks/?edit=<id> deep-link (the guide inspector's EDIT BLOCK
+      // path): once the list has loaded, open the editor on the linked
+      // block. A stale link (block deleted since the guide rendered)
+      // prints an honest tape line instead of failing silently.
+      openLinkedEditor() {
+        const editId = new URLSearchParams(window.location.search).get("edit");
+        if (!editId) return;
+        const target = this.blocks.find((b) => b.id === editId);
+        if (target) this.openEdit(target);
+        else if (!this.blocksProblem) printTape("Linked block not found — it may have been deleted");
       },
 
       async loadBlocks() {

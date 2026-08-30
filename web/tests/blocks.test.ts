@@ -25,9 +25,11 @@ const cronstrueUMD: { default?: unknown } = require("../assets/vendor/cronstrue.
 (globalThis as unknown as GlobalStub).cronstrue = cronstrueUMD.default ?? cronstrueUMD;
 
 // Dynamic import so the global stubs above are in place before the
-// module's top-level registration code runs.
-const { cronReadback, swapAdjacent, buildCronFromSimple, parseCronToSimple, buildSpec, formFromSpec } =
+// module's top-level registration code runs. cronReadback lives in the
+// shared runtime since v0.5.1 (the guide inspector reads it too).
+const { swapAdjacent, buildCronFromSimple, parseCronToSimple, buildSpec, formFromSpec } =
   await import("../assets/ts/pages/blocks.ts");
+const { cronReadback } = await import("../assets/ts/runtime/cron.ts");
 
 test("cronReadback describes a valid cron in plain language", () => {
   const text = cronReadback("30 20 * * 6");

@@ -1,9 +1,13 @@
 {{- /*
   Loading skeleton (never a spinner). args:
-    variant: "stack" (default) | "row" | "bar" | "table-row"
+    variant: "stack" (default) | "row" | "bar" | "table-row" | "grid-track"
     count:   bars/rows to render (default 3)
     widths:  row variant only -- slice of "sm"/"md"/"lg" modifier suffixes
              (CSP rule: widths are classes, never inline styles).
+  "grid-track" is the guide's loading silhouette: plate stubs plus
+  division-aligned pulsing track bars (widths/offsets are multiples of
+  --div in CSS, so the skeleton pulses on the same 30-minute graticule
+  the real grid lands on).
 */ -}}
 {{- $variant := .variant | default "stack" -}}
 {{- $count := .count | default 3 -}}
@@ -17,6 +21,21 @@
 <div class="skeleton-row" aria-hidden="true">
   {{- range .widths | default (slice "md" "lg" "sm") }}
   <span class="skeleton-bar skeleton-bar--w-{{ . }}"></span>
+  {{- end }}
+</div>
+{{- else if eq $variant "grid-track" -}}
+<div class="skeleton-grid" aria-hidden="true">
+  <div class="skeleton-grid__row skeleton-grid__row--ruler">
+    <span class="skeleton-bar skeleton-grid__plate"></span>
+    <span class="skeleton-bar skeleton-grid__span skeleton-grid__span--ruler"></span>
+  </div>
+  {{- range seq $count }}
+  <div class="skeleton-grid__row">
+    <span class="skeleton-bar skeleton-grid__plate"></span>
+    <span class="skeleton-bar skeleton-grid__span skeleton-grid__span--a"></span>
+    <span class="skeleton-bar skeleton-grid__span skeleton-grid__span--b"></span>
+    <span class="skeleton-bar skeleton-grid__span skeleton-grid__span--c"></span>
+  </div>
   {{- end }}
 </div>
 {{- else if eq $variant "table-row" -}}

@@ -99,9 +99,18 @@ into eight independently releasable slices (v0.5.0–v0.5.7).
   legend plates replacing raw UUIDs; token validate-on-save with
   re-auth re-fires; the polled bezel telemetry strip; the dev-only
   `/kit/` review gallery; and the grown web test harness.
-- **v0.5.1+ — pending**, in spec order: the Guide (read-only), draft &
-  apply on the Guide, memory (apply runs + Log), the SSE live link,
-  block power tools, the series desk, and the polish pass.
+- **v0.5.1 — The Guide, read-only: SHIPPED (2026-08-30).** The typed
+  `ScheduledProgram` hard swap + `channel_id` on `GET /schedule`; the
+  EPG grid as home (auto-loading, day tabs, graticule-coupled ruler,
+  sweep cursor on a local minute timer, NO SIGNAL ghost slots, slot
+  inspector rail/bottom-sheet with the typed program rundown, keyboard
+  grid navigation, grid skeleton / NO SIGNAL / teaching empty states,
+  mobile vertical rundown); nav became GUIDE · BLOCKS · SCHEDULE ·
+  SERIES, with the old dashboard surviving unlinked at `/dashboard/`
+  until v0.5.3. The old Schedule page still owns preview/apply.
+- **v0.5.2+ — pending**, in spec order: draft & apply on the Guide,
+  memory (apply runs + Log), the SSE live link, block power tools, the
+  series desk, and the polish pass.
 
 Headline surfaces across the train:
 

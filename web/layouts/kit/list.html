@@ -102,13 +102,70 @@
   <section class="kit-section" aria-labelledby="kit-skeleton-title">
     <div class="section-head">
       <h2 id="kit-skeleton-title">Skeletons</h2>
-      <p>Loading is a pulsing skeleton, never a spinner. Variants: bar, row, stack, table-row.</p>
+      <p>Loading is a pulsing skeleton, never a spinner. Variants: bar, row, stack, table-row, grid-track (the guide's division-aligned silhouette).</p>
     </div>
     <div class="kit-stack">
       {{ partial "ui/skeleton.html" (dict "variant" "bar") }}
       {{ partial "ui/skeleton.html" (dict "variant" "row" "widths" (slice "md" "lg" "sm")) }}
       {{ partial "ui/skeleton.html" (dict "variant" "stack" "count" 2) }}
       {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 2) }}
+      {{ partial "ui/skeleton.html" (dict "variant" "grid-track" "count" 3) }}
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-guide-title">
+    <div class="section-head">
+      <h2 id="kit-guide-title">Guide grid</h2>
+      <p>
+        The real renderer (runtime/grid.ts) on fixture data: sticky
+        ruler/plates, graticule-coupled 30-minute divisions, the sweep
+        cursor, a past slot dimmed behind it, an on-air slot, a series
+        tint, a NO SIGNAL ghost in its sub-lane, and an overnight spill
+        cut at the day edge. Arrow keys move across slots; Enter prints
+        a tape line where the guide would open its inspector.
+      </p>
+    </div>
+    <div class="guide kit-guide">
+      <div class="guide-viewport" id="kit-guide-viewport" aria-label="Fixture programme grid"></div>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-nosignal-title">
+    <div class="section-head">
+      <h2 id="kit-nosignal-title">Guide NO SIGNAL</h2>
+      <p>The Tunarr-down reading: the guide re-plans live, so an unreachable Tunarr is an honest scanline blackout with a retry — never a cached lineup.</p>
+    </div>
+    <section class="hero-panel graticule guide-nosignal" data-scan>
+      <p class="status-line">
+        <span class="status-dot" data-state="down" aria-hidden="true"></span>
+        <span>No Signal</span>
+      </p>
+      <p class="guide-nosignal__detail">schedule generation failed: unable to generate or apply the schedule</p>
+      <p>
+        The guide re-plans live from Tunarr, so there is no cached lineup
+        to fall back on. Check the TUNARR reading in the bezel, then retry.
+      </p>
+      <button type="button" class="btn btn--primary" @click="tapeDemo()">Retry</button>
+      <p class="problem__ref">REF 3f9c2a7e51d84b0c</p>
+    </section>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-guide-empty-title">
+    <div class="section-head">
+      <h2 id="kit-guide-empty-title">Guide teaching empty states</h2>
+      <p>No blocks at all vs. nothing inside the window/scope — the guide distinguishes the two.</p>
+    </div>
+    <div class="kit-stack">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No programme"
+        "text" "Nothing is scheduled because no blocks exist yet. Create one on Blocks and it appears here on its cron."
+        "actionLabel" "Create a block"
+        "actionHref" "/blocks/") }}
+      {{ partial "ui/empty.html" (dict
+        "legend" "No match"
+        "text" "No block airs inside this window and scope — widen DAYS, clear the SCOPE, or check that the blocks for this channel are enabled."
+        "actionLabel" "Review blocks"
+        "actionHref" "/blocks/") }}
     </div>
   </section>
 
