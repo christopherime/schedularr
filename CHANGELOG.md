@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-08-29
+## [0.2.2] - 2026-08-30
 
 A critical bug plus two smaller ones found during live multi-block
 testing against a real Tunarr 1.3.13 instance.
