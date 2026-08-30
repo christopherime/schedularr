@@ -58,6 +58,16 @@ type StateStore interface {
 	// those occurrences as unseen again and re-derives them from current
 	// state/spec rather than silently keeping a now-stale snapshot.
 	DeleteFutureOccurrenceSnapshots(ctx context.Context, blockID string, now time.Time) error
+	// MaxPlanSeq returns the highest plan-provenance sequence recorded
+	// anywhere in the store -- across both series_occurrence_snapshots.
+	// plan_seq and series_state.cursor_plan_seq -- or 0 when none exists.
+	// Engine construction seeds its sequence allocator's floor from this
+	// (see Engine.nextPlanSeq), so newly allocated sequences always
+	// outrank every stored one even after a backward wall-clock step or
+	// an import that carried a clock-ahead cursor_plan_seq; without the
+	// floor, either would wedge the provenance guard (every replay <=
+	// live provenance, silently dropped) until the clock caught up.
+	MaxPlanSeq(ctx context.Context) (int64, error)
 	// ReplaceOccurrenceHistory atomically replaces every schedule_history
 	// row for one occurrence (blockName, occurrenceStart) with entries --
 	// used when a not-yet-aired series occurrence is re-derived against a

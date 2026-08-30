@@ -235,6 +235,37 @@ func TestStore_OccurrenceSnapshots_LegacyRowWithoutPostState(t *testing.T) {
 	assert.Zero(t, got.PlanSeq, "a legacy row's absent plan_seq must come back as 0, which never outranks an established provenance")
 }
 
+// TestStore_MaxPlanSeq covers the plan-sequence floor query the engine
+// seeds its allocator from at construction (see StateStore.MaxPlanSeq):
+// it must span BOTH tables -- snapshot plan_seq and live cursor_plan_seq
+// -- and return 0 on an empty store rather than erroring.
+func TestStore_MaxPlanSeq(t *testing.T) {
+	s, err := New(":memory:")
+	require.NoError(t, err, "Failed to create store")
+	defer s.Close()
+
+	ctx := context.Background()
+
+	maxSeq, err := s.MaxPlanSeq(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, maxSeq, "an empty store has no provenance yet")
+
+	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, "block-a", time.Now().Add(time.Hour), scheduler.OccurrenceSnapshot{
+		PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}},
+		PlanSeq:   500,
+	}))
+	maxSeq, err = s.MaxPlanSeq(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(500), maxSeq)
+
+	require.NoError(t, s.UpdateSeriesState(ctx, &scheduler.SeriesState{
+		ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 2, CursorPlanSeq: 900,
+	}))
+	maxSeq, err = s.MaxPlanSeq(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(900), maxSeq, "the floor must span series_state.cursor_plan_seq too, not just snapshots")
+}
+
 // TestStore_ImportSeriesStates_StampsOperatorWrite is round-6 finding
 // 3's store-level regression: `state import` restores a backup, which is
 // an operator write of every listed cursor -- but ImportSeriesStates

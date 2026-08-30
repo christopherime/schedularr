@@ -471,6 +471,52 @@ testing against a real Tunarr 1.3.13 instance.
     real store + fake Tunarr). `docs/scheduling-concepts.md` updated so
     "decided exactly once at plan time, replayed into the persisted
     cursor" is true again, including for wraps and completion state.
+- **The closing review pass refined the provenance guard's backward-move
+  rule and hardened the sequence allocator** (amending the previous
+  entry's "newer plan wins in EITHER direction"):
+  - **Provenance alone reopened the shared-show rewind from the other
+    side**: a not-yet-aired occurrence is re-derived every apply, so it
+    always carries the freshest `plan_seq` -- while its stored PRE-plan
+    baseline stays frozen. When two blocks share a show, the slower
+    block's occurrence eventually airs holding "newest plan + ancient
+    baseline" and rewound live E7 -> E3, re-airing e3-e6 on the next
+    new occurrence. A BACKWARD move now additionally requires baseline
+    agreement -- the plan's own `PreStates` cursor must equal the live
+    cursor (compare-and-swap). A restart wrap passes (its pre-state IS
+    the live high-water mark it planned from); a stale-baseline slow
+    block fails. Forward moves keep pure plan-order provenance. Sharing
+    a `show_title` across multiple series blocks is thereby supported
+    (one cooperatively-advanced cursor, never rewound past the furthest
+    point reached) and is now documented honestly in
+    `docs/scheduling-concepts.md`, including that it interleaves ONE
+    continuous run, not per-block parallel runs.
+  - **A case-3 real plan stamped `cursor_plan_seq` on every
+    `block.Series` show holding a pendingStates entry -- including
+    entries written by an EARLIER block in the same apply.** A second
+    block that never reached a shared show (disabled, completed, or
+    duration exhausted before its turn) bumped the live provenance
+    without changing the value, outranking -- and silently dropping --
+    the first block's legitimate later replay. Only shows the plan
+    actually changed (pre/post capture diff) are stamped now, via max()
+    rather than assignment so provenance can never move backward.
+  - **The sequence allocator's floor was the wall clock alone**: a
+    backward clock step, or an import carrying a clock-ahead
+    `cursor_plan_seq`, wedged the guard (every replay <= live
+    provenance, silently dropped) until the clock caught up. New
+    `StateStore.MaxPlanSeq` (max across snapshot `plan_seq` and live
+    `cursor_plan_seq`) seeds `Engine.lastPlanSeq` at construction, so
+    fresh sequences always outrank every stored one; a seed failure
+    logs and falls back to the wall clock rather than failing
+    construction.
+  - Regression tests, each probed red against the reverted behavior:
+    the reviewer's two-block rewind probe end to end (B plans
+    far-future early, A advances to E7 and airs, B airs with newest
+    seq -> live stays E7, next new occurrence continues e7-e8);
+    backward-move CAS unit tests (wrap-with-agreeing-baseline lands,
+    stale baseline and missing baseline rejected);
+    second-block-never-reaches-shared-show provenance no-bump;
+    plan-seq floor seeding (clock-ahead stored provenance) and
+    store-level `MaxPlanSeq` spanning both tables.
 
 ## [0.2.1] - 2026-08-29
 

@@ -165,6 +165,22 @@ func (m *MockStateStore) DeleteFutureOccurrenceSnapshots(_ context.Context, bloc
 	return nil
 }
 
+// MaxPlanSeq mirrors Store.MaxPlanSeq over the in-memory maps.
+func (m *MockStateStore) MaxPlanSeq(_ context.Context) (int64, error) {
+	var maxSeq int64
+	for _, snapshot := range m.Snapshots {
+		if snapshot.PlanSeq > maxSeq {
+			maxSeq = snapshot.PlanSeq
+		}
+	}
+	for _, state := range m.States {
+		if state.CursorPlanSeq > maxSeq {
+			maxSeq = state.CursorPlanSeq
+		}
+	}
+	return maxSeq, nil
+}
+
 // ReplaceOccurrenceHistory mirrors Store.ReplaceOccurrenceHistory: drops
 // every existing entry for (blockName, occurrenceStart) and appends
 // entries in its place.

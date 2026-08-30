@@ -45,15 +45,21 @@ type Engine struct {
 
 // nextPlanSeq allocates the next plan-provenance sequence
 // (OccurrenceSnapshot.PlanSeq / SeriesState.CursorPlanSeq): the current
-// wall clock in nanoseconds, bumped past the previous allocation if two
-// calls ever land on the same nanosecond, so sequences are strictly
-// increasing in plan order within a process. Across processes (the serve
-// loop vs. a one-shot CLI apply) plain wall-clock ordering is what
-// relates them, which is ample at real apply cadences. Wall-clock nanos
-// rather than a persisted counter so the sequence can never move
-// backward when rows that carried the highest values are deleted
-// (invalidation, retention GC). Engines are single-run, not concurrent,
-// so no locking.
+// wall clock in nanoseconds, bumped past the previous allocation if it
+// isn't already ahead of it, so sequences are strictly increasing in
+// plan order within an engine. Across processes (the serve loop vs. a
+// one-shot CLI apply) plain wall-clock ordering is what relates them,
+// which is ample at real apply cadences. Wall-clock nanos rather than a
+// persisted counter so the sequence can never move backward when rows
+// that carried the highest values are deleted (invalidation, retention
+// GC). lastPlanSeq is seeded at engine construction from the store's own
+// high-water mark (StateStore.MaxPlanSeq, across snapshot plan_seq and
+// live cursor_plan_seq), so new allocations outrank every stored
+// sequence even after a backward wall-clock step or an import that
+// carried a clock-ahead cursor_plan_seq -- without the seed, either
+// would wedge the provenance guard (every replay <= live provenance,
+// silently dropped) until the clock caught up. Engines are single-run,
+// not concurrent, so no locking.
 func (e *Engine) nextPlanSeq() int64 {
 	seq := time.Now().UnixNano()
 	if seq <= e.lastPlanSeq {
@@ -183,16 +189,21 @@ const defaultHistoryWindow = 7 * 24 * time.Hour
 // NewEngine creates a new scheduling engine with the given Tunarr client and
 // scheduling blocks, using the default 7-day history window. Callers that
 // need a configured window (e.g. service.NewRunner, which threads through
-// maintenance.history_retention) should use NewEngineWithOptions instead.
+// maintenance.history_retention) should use NewEngineWithOptions instead,
+// which also lets them thread a real context through the construction-time
+// plan-sequence floor read; this convenience constructor uses
+// context.Background() for it.
 func NewEngine(client *tunarr.Client, blocks []Block, store StateStore, logger *slog.Logger, loc *time.Location) *Engine {
-	return NewEngineWithOptions(client, blocks, store, EngineOptions{Logger: logger, Location: loc})
+	return NewEngineWithOptions(context.Background(), client, blocks, store, EngineOptions{Logger: logger, Location: loc})
 }
 
 // NewEngineWithOptions creates a new scheduling engine with optional
 // configuration. Any zero-valued field in opts falls back to the same
 // default NewEngine uses: opts.Logger -> slog.Default(), opts.Location ->
-// time.Local, opts.HistoryWindow -> defaultHistoryWindow (7 days).
-func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStore, opts EngineOptions) *Engine {
+// time.Local, opts.HistoryWindow -> defaultHistoryWindow (7 days). ctx
+// bounds the construction-time plan-sequence floor read (MaxPlanSeq --
+// see nextPlanSeq's doc comment); it is not retained.
+func NewEngineWithOptions(ctx context.Context, client *tunarr.Client, blocks []Block, store StateStore, opts EngineOptions) *Engine {
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -205,7 +216,7 @@ func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStor
 	if historyWindow == 0 {
 		historyWindow = defaultHistoryWindow
 	}
-	return &Engine{
+	e := &Engine{
 		client:         client,
 		blocks:         blocks,
 		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
@@ -216,6 +227,19 @@ func NewEngineWithOptions(client *tunarr.Client, blocks []Block, store StateStor
 		pendingHistory: nil,
 		logger:         logger,
 	}
+	if store != nil {
+		// Seed the plan-sequence floor from the store's high-water mark
+		// (see nextPlanSeq's doc comment). Failure is survivable -- the
+		// wall clock alone is still correct on any host whose clock never
+		// stepped backward -- so log and continue rather than fail
+		// engine construction.
+		if maxSeq, err := store.MaxPlanSeq(ctx); err != nil {
+			logger.Warn("failed to seed plan-sequence floor from store; falling back to wall clock alone", "error", err)
+		} else {
+			e.lastPlanSeq = maxSeq
+		}
+	}
+	return e
 }
 
 // GenerateForTimeRange generates a schedule for the given window with
@@ -794,10 +818,21 @@ func (e *Engine) establishSeriesChain(block Block, availablePrograms []tunarr.Pr
 	// the eventual aired replay of this occurrence then ties against the
 	// live cursor (seq == CursorPlanSeq) and is correctly a no-op, while
 	// a STALE replay from an older plan can't outrank what this plan
-	// just wrote. Shows the plan never touched (e.g. disabled) have no
-	// pendingStates entry and no live write to stamp.
+	// just wrote. Only shows this plan ACTUALLY changed (before !=
+	// after) are stamped: a block.Series show can carry a pendingStates
+	// entry written by an EARLIER block in this same apply, and a plan
+	// that never reached the show (disabled, completed, duration
+	// exhausted) must not bump its provenance -- doing so would outrank,
+	// and silently drop, that other block's legitimate later replay
+	// whose sequence falls in between. max() rather than assignment as a
+	// last-ditch floor: provenance must never move backward even if a
+	// higher value got in some other way (e.g. an imported
+	// cursor_plan_seq from a machine with a fast clock).
 	for _, sc := range block.Series {
-		if st, ok := e.pendingStates[sc.ShowTitle]; ok {
+		if before[sc.ShowTitle] == after[sc.ShowTitle] {
+			continue
+		}
+		if st, ok := e.pendingStates[sc.ShowTitle]; ok && seq > st.CursorPlanSeq {
 			st.CursorPlanSeq = seq
 		}
 	}
@@ -1015,15 +1050,28 @@ func applyPostStates(chain map[string]*SeriesState, post map[string]SeriesStateS
 //     it.
 //   - provenance: the post-state is written only if its plan sequence
 //     (snap.PlanSeq) is strictly newer than the plan that last wrote the
-//     live cursor (SeriesState.CursorPlanSeq). Newer-plan replays win in
-//     EITHER direction -- an on_complete:restart wrap (S01E05 ->
-//     S01E01) lands instead of freezing the persisted cursor at the
+//     live cursor (SeriesState.CursorPlanSeq) -- a stale replay from an
+//     OLDER plan (or a re-replay of an occurrence already applied) is
+//     rejected. A value-scoped "forward-only" comparison here would
+//     silently drop a legitimate on_complete:restart wrap (post-state
+//     S01E01 after S01E05), freezing the persisted cursor at the
 //     pre-wrap high-water mark, where the next snapshot invalidation
-//     would have re-derived onto already-aired episodes -- while a stale
-//     replay from an OLDER plan (a slower block sharing the show, or a
-//     re-replay of an occurrence already applied) is rejected. A
-//     value-scoped "forward-only" comparison cannot express both; plan
-//     order can.
+//     would re-derive onto already-aired episodes.
+//   - baseline agreement, for BACKWARD moves only: provenance alone
+//     over-corrects the other way when two blocks share a show. A
+//     not-yet-aired occurrence is re-derived every apply, so it always
+//     carries the freshest PlanSeq -- while its PreStates baseline
+//     (seeded from its own frozen snapshot) can be arbitrarily stale. A
+//     slower block's occurrence airing with "newest plan + ancient
+//     baseline" must not rewind a cursor a faster block advanced. So a
+//     backward move additionally requires the plan's OWN starting
+//     baseline (snap.PreStates[title]) to equal the live cursor -- a
+//     compare-and-swap. A restart wrap passes (its pre-state IS the
+//     live high-water mark it planned from); a stale-baseline slow
+//     block fails (it planned from a cursor that is no longer the live
+//     one, so its wrap-shaped result is about a different past).
+//     Forward moves keep pure provenance ordering: blocks sharing a
+//     show cooperatively advance one cursor, newest plan wins.
 func (e *Engine) syncPostStates(snap OccurrenceSnapshot, occurrenceStart time.Time) error {
 	for title, s := range snap.PostStates {
 		existing, err := e.getSeriesState(title)
@@ -1035,6 +1083,12 @@ func (e *Engine) syncPostStates(snap OccurrenceSnapshot, occurrenceStart time.Ti
 		}
 		if snap.PlanSeq <= existing.CursorPlanSeq {
 			continue
+		}
+		if cursorBehind(s.CurrentSeason, s.CurrentEpisode, existing.CurrentSeason, existing.CurrentEpisode) {
+			pre, ok := snap.PreStates[title]
+			if !ok || pre.CurrentSeason != existing.CurrentSeason || pre.CurrentEpisode != existing.CurrentEpisode {
+				continue
+			}
 		}
 
 		cloned := *existing
@@ -1051,6 +1105,16 @@ func (e *Engine) syncPostStates(snap OccurrenceSnapshot, occurrenceStart time.Ti
 		e.pendingStates[title] = &cloned
 	}
 	return nil
+}
+
+// cursorBehind reports whether cursor (season, episode) is strictly
+// earlier than (otherSeason, otherEpisode) -- a lower season, or the
+// same season with a lower episode number.
+func cursorBehind(season, episode, otherSeason, otherEpisode int) bool {
+	if season != otherSeason {
+		return season < otherSeason
+	}
+	return episode < otherEpisode
 }
 
 // resolveCommittedPrograms upgrades a committed occurrence's stored

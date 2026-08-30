@@ -203,7 +203,7 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 		return nil, fmt.Errorf("failed to fetch programs: %w", err)
 	}
 
-	engine := scheduler.NewEngineWithOptions(r.tunarr, blocks, r.store, scheduler.EngineOptions{
+	engine := scheduler.NewEngineWithOptions(ctx, r.tunarr, blocks, r.store, scheduler.EngineOptions{
 		Logger:        r.logger,
 		Location:      r.loc,
 		HistoryWindow: r.historyWindow,

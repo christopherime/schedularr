@@ -259,7 +259,7 @@ func TestCommit_CleansUpScheduleHistory(t *testing.T) {
 		},
 	}
 
-	engine := NewEngineWithOptions(client, []Block{}, store, EngineOptions{
+	engine := NewEngineWithOptions(context.Background(), client, []Block{}, store, EngineOptions{
 		HistoryWindow: 24 * time.Hour,
 		Logger:        slog.Default(),
 		Location:      time.UTC,
@@ -1009,35 +1009,68 @@ func TestSyncPostStates_ProvenanceRejectsStalePlan(t *testing.T) {
 	assert.False(t, pending, "re-replaying the plan that already wrote the cursor must be a no-op")
 }
 
-// TestSyncPostStates_ProvenanceAllowsBackwardWrap pins the other half of
-// the provenance guard, the exact case the round-5 value-scoped guard
-// got wrong (round-6 finding 1, HIGH): an on_complete:restart wrap
-// legitimately moves the cursor BACKWARD (S01E05 -> S01E01), and its
-// replay carries a NEWER plan than whatever wrote the live cursor -- so
-// it must land. Under the old value guard it was dropped as "backward,"
-// freezing the persisted cursor at the pre-wrap high-water mark; the
-// next snapshot invalidation then re-derived from the frozen cursor,
-// regressing onto already-aired episodes permanently.
-func TestSyncPostStates_ProvenanceAllowsBackwardWrap(t *testing.T) {
+// TestSyncPostStates_BackwardMove_RequiresBaselineAgreement pins the
+// backward-move semantics jointly established by round-6 finding 1 and
+// the final round's HIGH finding: a backward move needs BOTH a newer
+// plan (provenance) AND baseline agreement -- the plan's own PreStates
+// cursor must equal the live cursor (compare-and-swap). A restart wrap
+// passes: it planned FROM the live high-water mark, so its pre-state IS
+// the live value, and it must land (a value-scoped "forward-only" guard
+// froze the cursor at the high-water mark). A slower block's occurrence
+// -- re-derived every apply, so always carrying the freshest PlanSeq,
+// but from its own frozen, ancient baseline -- fails the CAS and must
+// not rewind what a faster block advanced.
+func TestSyncPostStates_BackwardMove_RequiresBaselineAgreement(t *testing.T) {
 	store := NewMockStateStore()
 	engine := NewEngine(&tunarr.Client{}, nil, store, slog.Default(), time.UTC)
 	occurrenceStart := time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC)
 
 	store.States["Show A"] = &SeriesState{ShowTitle: "Show A", CurrentSeason: 1, CurrentEpisode: 5, CursorPlanSeq: 100}
 
-	snap := OccurrenceSnapshot{
+	// A restart wrap: newest plan, planned FROM the live E5 -- baseline
+	// agrees -- so the backward move to E1 lands.
+	wrap := OccurrenceSnapshot{
+		PreStates:  map[string]SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 5, Seeded: true}},
 		PostStates: map[string]SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1, RunCount: 1, Seeded: true}},
 		RecordedAt: occurrenceStart.Add(-1 * time.Hour),
 		PlanSeq:    200,
 	}
-	require.NoError(t, engine.syncPostStates(snap, occurrenceStart))
+	require.NoError(t, engine.syncPostStates(wrap, occurrenceStart))
 
 	state := engine.pendingStates["Show A"]
-	require.NotNil(t, state, "a newer plan's wrap must land")
+	require.NotNil(t, state, "a newer plan's wrap whose baseline agrees must land")
 	assert.Equal(t, 1, state.CurrentSeason)
 	assert.Equal(t, 1, state.CurrentEpisode, "the restart wrap (E5 -> E1) must be written, not dropped as backward")
 	assert.Equal(t, 1, state.RunCount)
 	assert.Equal(t, int64(200), state.CursorPlanSeq)
+
+	// A stale-baseline backward move: SAME newest-plan property (a
+	// future occurrence is re-derived every apply, refreshing its seq),
+	// but planned from an ancient E1 baseline that is no longer the live
+	// cursor -- the CAS fails and the live cursor must not rewind.
+	store.States["Show B"] = &SeriesState{ShowTitle: "Show B", CurrentSeason: 1, CurrentEpisode: 7, CursorPlanSeq: 100}
+	stale := OccurrenceSnapshot{
+		PreStates:  map[string]SeriesStateSnapshot{"Show B": {CurrentSeason: 1, CurrentEpisode: 1}},
+		PostStates: map[string]SeriesStateSnapshot{"Show B": {CurrentSeason: 1, CurrentEpisode: 3, Seeded: true}},
+		RecordedAt: occurrenceStart.Add(-1 * time.Hour),
+		PlanSeq:    300,
+	}
+	require.NoError(t, engine.syncPostStates(stale, occurrenceStart))
+	_, pending := engine.pendingStates["Show B"]
+	assert.False(t, pending, "newest seq is not enough for a backward move: a stale baseline (pre E1 != live E7) must fail the compare-and-swap")
+
+	// And a backward move whose plan carries NO pre-state for the show
+	// at all (the show entered the block after the baseline was
+	// captured) has nothing to verify against -- rejected too.
+	store.States["Show C"] = &SeriesState{ShowTitle: "Show C", CurrentSeason: 1, CurrentEpisode: 7, CursorPlanSeq: 100}
+	missing := OccurrenceSnapshot{
+		PostStates: map[string]SeriesStateSnapshot{"Show C": {CurrentSeason: 1, CurrentEpisode: 3, Seeded: true}},
+		RecordedAt: occurrenceStart.Add(-1 * time.Hour),
+		PlanSeq:    300,
+	}
+	require.NoError(t, engine.syncPostStates(missing, occurrenceStart))
+	_, pending = engine.pendingStates["Show C"]
+	assert.False(t, pending, "a backward move with no pre-state to verify against must be rejected")
 }
 
 // TestSyncPostStates_OperatorWriteWins pins the operator-wins guard: a
@@ -1079,6 +1112,177 @@ func TestSyncPostStates_OperatorWriteWins(t *testing.T) {
 	assert.Equal(t, 10, state.CurrentEpisode)
 	require.NotNil(t, state.OperatorUpdatedAt)
 	assert.True(t, state.OperatorUpdatedAt.Equal(operatorAt), "the operator stamp itself must ride through unchanged")
+}
+
+// TestNewEngine_SeedsPlanSeqFloorFromStore pins the final round's LOW
+// hardening: nextPlanSeq's floor is seeded at engine construction from
+// the store's own high-water mark (MaxPlanSeq, across snapshot plan_seq
+// AND live cursor_plan_seq), so a backward wall-clock step -- or an
+// import that carried a clock-ahead cursor_plan_seq -- can't wedge the
+// provenance guard by leaving every new allocation at or below the live
+// provenance.
+func TestNewEngine_SeedsPlanSeqFloorFromStore(t *testing.T) {
+	store := NewMockStateStore()
+	clockAhead := time.Now().AddDate(1, 0, 0).UnixNano() // a year past any wall clock this test runs under
+	store.Snapshots[occurrenceKey{blockName: "block-x", startUnixNano: 0}] = OccurrenceSnapshot{PlanSeq: clockAhead - 5}
+	store.States["Wedged Show"] = &SeriesState{ShowTitle: "Wedged Show", CurrentSeason: 1, CurrentEpisode: 1, CursorPlanSeq: clockAhead}
+
+	engine := NewEngine(&tunarr.Client{}, nil, store, slog.Default(), time.UTC)
+
+	assert.Greater(t, engine.nextPlanSeq(), clockAhead,
+		"a freshly allocated sequence must outrank every stored one, wall clock notwithstanding")
+}
+
+// TestPlanSeriesOccurrences_SharedShow_StaleBaselineNewestSeq_DoesNotRewind
+// is the final round's HIGH regression (the reviewer's probe): two
+// blocks share one show. Block B plans a far-future occurrence early
+// (baseline E1); block A then advances the live cursor to E7 and airs.
+// B's occurrence is re-derived on every apply, so by the time it airs it
+// carries the NEWEST plan sequence -- with its ancient E1 baseline. A
+// provenance-only "newest plan wins either direction" guard let that
+// replay rewind live E7 -> E3, and the next new occurrence re-aired
+// e3-e6. The baseline-agreement check must reject it (pre E1 != live
+// E7), the live cursor must stay at E7, and a genuinely new occurrence
+// must continue with e7-e8.
+func TestPlanSeriesOccurrences_SharedShow_StaleBaselineNewestSeq_DoesNotRewind(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := make([]tunarr.Program, 0, 8)
+	for i := 1; i <= 8; i++ {
+		availablePrograms = append(availablePrograms, tunarr.Program{
+			ID: fmt.Sprintf("w-s1e%d", i), Type: "episode", ShowTitle: "Wide Show",
+			SeasonNumber: 1, EpisodeNumber: i, Duration: 1_800_000,
+		})
+	}
+	blockB := Block{
+		ID: "wide-block-b", Name: "Wide Block B", Type: BlockTypeSeries, Duration: 60, ChannelID: "channel-2",
+		Series: []SeriesConfig{{ShowTitle: "Wide Show", EpisodesPerBlock: 2}},
+	}
+	blockA := Block{
+		ID: "wide-block-a", Name: "Wide Block A", Type: BlockTypeSeries, Duration: 120, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Wide Show", EpisodesPerBlock: 4}},
+	}
+	engine := NewEngine(client, []Block{blockB, blockA}, store, slog.Default(), time.UTC)
+
+	base := time.Now()
+	obStart := base.Add(5 * time.Hour) // B's far-future occurrence
+	oaStart := base.Add(1 * time.Hour) // A's occurrence, airing well before B's
+	oa2Start := base.Add(6 * time.Hour)
+
+	// Apply 1: B plans its far-future occurrence FIRST (baseline E1,
+	// content [e1,e2], live -> E3), then A plans and will air [e3..e6]
+	// (live -> E7, newer provenance).
+	bFirst, err := engine.planSeriesOccurrences(blockB, availablePrograms, []ScheduledSlot{{StartTime: obStart, Block: blockB}}, base)
+	require.NoError(t, err)
+	require.Equal(t, []string{"w-s1e1", "w-s1e2"}, programIDs(bFirst[0].Programs))
+	aFirst, err := engine.planSeriesOccurrences(blockA, availablePrograms, []ScheduledSlot{{StartTime: oaStart, Block: blockA}}, base)
+	require.NoError(t, err)
+	require.Equal(t, []string{"w-s1e3", "w-s1e4", "w-s1e5", "w-s1e6"}, programIDs(aFirst[0].Programs))
+	require.NoError(t, engine.Commit())
+
+	// Apply 2: A's occurrence is on air (replay, no-op); B's is STILL
+	// future and gets re-derived -- same frozen E1 baseline, fresh
+	// (newest) plan sequence. This is what arms the rewind.
+	now2 := oaStart.Add(10 * time.Minute)
+	_, err = engine.planSeriesOccurrences(blockA, availablePrograms, []ScheduledSlot{{StartTime: oaStart, Block: blockA}}, now2)
+	require.NoError(t, err)
+	_, err = engine.planSeriesOccurrences(blockB, availablePrograms, []ScheduledSlot{{StartTime: obStart, Block: blockB}}, now2)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	// Apply 3: B's occurrence has now aired, holding the newest sequence
+	// AND the ancient baseline. Its replay must not rewind the live
+	// cursor, and A's genuinely new next occurrence must continue from
+	// E7.
+	now3 := obStart.Add(10 * time.Minute)
+	aThird, err := engine.planSeriesOccurrences(blockA, availablePrograms,
+		[]ScheduledSlot{{StartTime: oaStart, Block: blockA}, {StartTime: oa2Start, Block: blockA}}, now3)
+	require.NoError(t, err)
+	bThird, err := engine.planSeriesOccurrences(blockB, availablePrograms, []ScheduledSlot{{StartTime: obStart, Block: blockB}}, now3)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	require.Equal(t, []string{"w-s1e1", "w-s1e2"}, programIDs(bThird[0].Programs), "B's aired content stays the verbatim replay")
+
+	state, err := store.GetSeriesState(ctx, "Wide Show")
+	require.NoError(t, err)
+	assert.Equal(t, 7, state.CurrentEpisode,
+		"B's newest-seq, stale-baseline replay must NOT rewind the live cursor past block A's advance (E7 -> E3)")
+
+	assert.Equal(t, []string{"w-s1e7", "w-s1e8"}, programIDs(aThird[1].Programs),
+		"the next new occurrence must continue from E7 -- e7,e8 -- never re-air e3-e6")
+}
+
+// TestPlanSeriesOccurrences_SecondBlockNotReachingSharedShow_DoesNotBumpProvenance
+// is the final round's MEDIUM regression: a case-3 real plan used to
+// stamp CursorPlanSeq on EVERY block.Series show holding a pendingStates
+// entry -- but that entry may have been written by an EARLIER block in
+// the same apply. A second block that real-plans without ever reaching a
+// shared show (here: its first series fills the whole duration) bumped
+// the live provenance without changing the value, outranking -- and
+// silently dropping -- the first block's legitimate later replay whose
+// sequence falls in between. Only shows the plan actually advanced may
+// be stamped.
+func TestPlanSeriesOccurrences_SecondBlockNotReachingSharedShow_DoesNotBumpProvenance(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+	ctx := context.Background()
+
+	availablePrograms := []tunarr.Program{
+		{ID: "x-s1e1", Type: "episode", ShowTitle: "Shared Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+		{ID: "x-s1e2", Type: "episode", ShowTitle: "Shared Show", SeasonNumber: 1, EpisodeNumber: 2, Duration: 1_800_000},
+		{ID: "x-s1e3", Type: "episode", ShowTitle: "Shared Show", SeasonNumber: 1, EpisodeNumber: 3, Duration: 1_800_000},
+		{ID: "y-s1e1", Type: "episode", ShowTitle: "Filler Show", SeasonNumber: 1, EpisodeNumber: 1, Duration: 1_800_000},
+	}
+	block1 := Block{
+		ID: "shared-block-1", Name: "Shared Block 1", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-1",
+		Series: []SeriesConfig{{ShowTitle: "Shared Show", EpisodesPerBlock: 1}},
+	}
+	// Filler Show fills block 2's whole duration, so Shared Show -- also
+	// listed -- is never reached by its plan.
+	block2 := Block{
+		ID: "shared-block-2", Name: "Shared Block 2", Type: BlockTypeSeries, Duration: 30, ChannelID: "channel-2",
+		Series: []SeriesConfig{{ShowTitle: "Filler Show", EpisodesPerBlock: 1}, {ShowTitle: "Shared Show", EpisodesPerBlock: 1}},
+	}
+	engine := NewEngine(client, []Block{block1, block2}, store, slog.Default(), time.UTC)
+
+	base := time.Now()
+	o1a := base.Add(1 * time.Hour)
+	o1b := base.Add(2 * time.Hour)
+	o2 := base.Add(90 * time.Minute)
+
+	// Apply 1: block 1 real-plans o1a (live Shared -> E2, seq s1) and
+	// chain-plans o1b (post E3, seq s2, no live write yet). Block 2 then
+	// real-plans o2 (seq s3): advances Filler Show only -- it must NOT
+	// bump Shared Show's provenance to s3.
+	first1, err := engine.planSeriesOccurrences(block1, availablePrograms,
+		[]ScheduledSlot{{StartTime: o1a, Block: block1}, {StartTime: o1b, Block: block1}}, base)
+	require.NoError(t, err)
+	require.Equal(t, []string{"x-s1e1"}, programIDs(first1[0].Programs))
+	require.Equal(t, []string{"x-s1e2"}, programIDs(first1[1].Programs))
+	first2, err := engine.planSeriesOccurrences(block2, availablePrograms, []ScheduledSlot{{StartTime: o2, Block: block2}}, base)
+	require.NoError(t, err)
+	require.Equal(t, []string{"y-s1e1"}, programIDs(first2[0].Programs), "test setup: block 2's duration must be filled before Shared Show is reached")
+	require.NoError(t, engine.Commit())
+
+	// Apply 2: everything has aired. Block 1's o1b replay (seq s2, the
+	// only pending advance to E3) must LAND -- it would be silently
+	// dropped if block 2's no-op stamp had pushed Shared Show's
+	// provenance to s3 > s2.
+	now2 := o1b.Add(10 * time.Minute)
+	_, err = engine.planSeriesOccurrences(block1, availablePrograms,
+		[]ScheduledSlot{{StartTime: o1a, Block: block1}, {StartTime: o1b, Block: block1}}, now2)
+	require.NoError(t, err)
+	_, err = engine.planSeriesOccurrences(block2, availablePrograms, []ScheduledSlot{{StartTime: o2, Block: block2}}, now2)
+	require.NoError(t, err)
+	require.NoError(t, engine.Commit())
+
+	state, err := store.GetSeriesState(ctx, "Shared Show")
+	require.NoError(t, err)
+	assert.Equal(t, 3, state.CurrentEpisode,
+		"block 1's aired replay must land: a block that never reached the shared show must not have bumped its provenance")
 }
 
 // TestPlanSeriesOccurrences_TripleReapplyDuringOnAir_StableCursorAndNextOccurrence
@@ -2238,7 +2442,7 @@ func TestFilterByHistory(t *testing.T) {
 		},
 	}
 
-	engine := NewEngineWithOptions(client, []Block{}, store, EngineOptions{
+	engine := NewEngineWithOptions(context.Background(), client, []Block{}, store, EngineOptions{
 		HistoryWindow: 7 * 24 * time.Hour,
 		Logger:        slog.Default(),
 		Location:      time.UTC,
@@ -2696,7 +2900,7 @@ func TestNewEngineWithOptions_AllOptionsProvided(t *testing.T) {
 		HistoryWindow: historyWindow,
 	}
 
-	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+	engine := NewEngineWithOptions(context.Background(), client, []Block{}, store, opts)
 
 	assert.Equal(t, logger, engine.logger, "Expected custom logger to be used")
 	assert.Equal(t, loc, engine.location, "Expected custom location to be used")
@@ -2711,7 +2915,7 @@ func TestNewEngineWithOptions_DefaultLogger(t *testing.T) {
 		Logger: nil, // Should use slog.Default()
 	}
 
-	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+	engine := NewEngineWithOptions(context.Background(), client, []Block{}, store, opts)
 
 	assert.NotNil(t, engine.logger, "Expected logger to be set to default")
 }
@@ -2724,7 +2928,7 @@ func TestNewEngineWithOptions_DefaultLocation(t *testing.T) {
 		Location: nil, // Should use time.Local
 	}
 
-	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+	engine := NewEngineWithOptions(context.Background(), client, []Block{}, store, opts)
 
 	assert.Equal(t, time.Local, engine.location, "Expected location to be set to time.Local")
 }
@@ -2737,7 +2941,7 @@ func TestNewEngineWithOptions_DefaultHistoryWindow(t *testing.T) {
 		HistoryWindow: 0, // Should use 7 days default
 	}
 
-	engine := NewEngineWithOptions(client, []Block{}, store, opts)
+	engine := NewEngineWithOptions(context.Background(), client, []Block{}, store, opts)
 
 	expectedWindow := 7 * 24 * time.Hour
 	assert.Equal(t, expectedWindow, engine.history.Window(), "Expected history window to be 7 days")

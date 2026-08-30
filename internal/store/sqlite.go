@@ -449,6 +449,23 @@ func blockReferencesShow(spec scheduler.Block, showTitle string) bool {
 	return false
 }
 
+// MaxPlanSeq returns the highest plan-provenance sequence recorded
+// anywhere in the store -- see StateStore.MaxPlanSeq's doc comment
+// (internal/scheduler/interfaces.go) for why engine construction seeds
+// its allocator floor from this.
+func (s *Store) MaxPlanSeq(ctx context.Context) (int64, error) {
+	var maxSeq int64
+	err := s.db.GetContext(ctx, &maxSeq, `
+		SELECT MAX(
+			COALESCE((SELECT MAX(plan_seq) FROM series_occurrence_snapshots), 0),
+			COALESCE((SELECT MAX(cursor_plan_seq) FROM series_state), 0)
+		)`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query max plan sequence: %w", err)
+	}
+	return maxSeq, nil
+}
+
 // ReplaceOccurrenceHistory atomically replaces every schedule_history row
 // for one occurrence (blockName, occurrenceStart) with entries -- see its
 // interface doc comment (internal/scheduler/interfaces.go) for why a
