@@ -15,7 +15,7 @@ There is no interactive UI: Schedularr is a CLI (one-shot commands like `generat
 - **HTTP API:** [chi](https://github.com/go-chi/chi) router with a handler layer generated from `api/openapi.yaml` via [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) (`internal/api/gen`)
 - **Configuration:** [CUE](https://cuelang.org/) for both schema validation and default values (`cmd/schema/`, `internal/cueconfig`) -- no Viper
 - **Database:** SQLite (via `github.com/jmoiron/sqlx` + `github.com/mattn/go-sqlite3`)
-- **HTTP Client:** [Resty](https://github.com/go-resty/resty) with retry logic (`internal/httpclient`, used by the Tunarr client in `internal/external/tunarr`)
+- **HTTP Client:** [Resty](https://github.com/go-resty/resty) with retry logic (`internal/httpclient`, used by the Tunarr client in `internal/external/tunarr` and the metadata providers in `internal/metadata`)
 - **Scheduling:** [robfig/cron](https://github.com/robfig/cron)
 
 ## Build & Run Instructions
@@ -72,6 +72,7 @@ The project follows a standard Go project layout with a strong separation of con
 - `internal/`: Private application code.
   - `scheduler/`: Core scheduling logic (Engine, Filter, History).
   - `external/tunarr/`: Tunarr API client.
+  - `metadata/`: Show metadata providers (`tmdb/`, `tvdb/`) plus the canonical genre vocabulary (`normalize.go`); see `docs/metadata.md`.
   - `store/`: SQLite persistence layer (blocks, series state, schedule history).
   - `config/`: Configuration loading and typed accessors over `internal/cueconfig`.
   - `cueconfig/`: CUE schema compilation, validation, and default-config generation.

@@ -54,10 +54,21 @@ can see.
 
 - **TMDB/TVDB clients** (no IMDb — no official free API) with on-disk
   cache and rate-limit respect; API keys via env/secret, never in config
-  files.
+  files. ~~Provider interface, TMDB v3 client, TheTVDB v4 client~~ done
+  (first v0.4.0 slice, `internal/metadata` — see
+  [Metadata Engine](metadata.md)): keys arrive through the constructors
+  so a caller can source them from env/secret, and retry with
+  429-backoff rides on the house HTTP client. Remaining: the on-disk
+  cache (only TMDB's genre table is cached today, in memory) and the
+  wiring that calls a provider at all.
 - **Genre/rating normalization.** Close the genre-filter gap: Tunarr's
   library genres are inconsistent across sources; normalize to one
-  vocabulary so `filter.genres` matches what operators expect.
+  vocabulary so `filter.genres` matches what operators expect. ~~The
+  genre half~~ done (first v0.4.0 slice): a 23-name canonical vocabulary
+  plus a mapping table covering the TMDB and TheTVDB spellings
+  (`metadata.NormalizeGenres`). Remaining: rating normalization, and
+  feeding normalized genres into the engine's filter — the gap an
+  operator feels stays open until that lands.
 - **Tag engine.** Operator-defined tags (`filter.tags` exists but nothing
   populates tags today) assignable per show/movie, persisted in the
   store, editable in the UI.

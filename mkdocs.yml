@@ -54,6 +54,7 @@ nav:
   - CLI Reference: cli-reference.md
   - API Reference: api-reference.md
   - Architecture: architecture.md
+  - Metadata Engine: metadata.md
   - Design System: design-system.md
   - Deployment: deployment.md
   - Roadmap: roadmap.md

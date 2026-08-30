@@ -151,6 +151,9 @@ func TestClient_NoAuth(t *testing.T) {
 		if r.Header.Get("X-Emby-Token") != "" {
 			t.Error("expected no X-Emby-Token header")
 		}
+		if r.Header.Get("Authorization") != "" {
+			t.Error("expected no Authorization header")
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -160,6 +163,29 @@ func TestClient_NoAuth(t *testing.T) {
 
 	err := client.Get(context.Background(), "/test", nil)
 	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestClient_AuthBearer pins the RFC 6750 header shape AuthBearer sends.
+// internal/metadata/tvdb depends on it: TheTVDB v4 mints a bearer token
+// from a login call and rejects every other route without exactly this
+// header.
+func TestClient_AuthBearer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer minted-token" {
+			t.Errorf("expected Authorization header %q, got %q", "Bearer minted-token", got)
+		}
+		if r.Header.Get("X-API-Key") != "" {
+			t.Error("expected no X-API-Key header for a bearer client")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := New(DefaultConfig(server.URL, "minted-token", AuthBearer))
+
+	if err := client.Get(context.Background(), "/test", nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

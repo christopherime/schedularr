@@ -58,6 +58,10 @@ internal/
 │   └── types.go
 ├── external/                 # API clients
 │   └── tunarr/               # Tunarr REST API client
+├── metadata/                 # Show metadata providers + canonical genre vocabulary
+│   ├── normalize.go          # NormalizeGenre/NormalizeGenres (see docs/metadata.md)
+│   ├── tmdb/                 # The Movie Database v3 client
+│   └── tvdb/                 # TheTVDB v4 client
 ├── store/                    # SQLite state persistence (blocks, series state, history)
 │   └── migrations/           # DB migrations
 ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface

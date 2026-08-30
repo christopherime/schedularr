@@ -97,6 +97,10 @@ schedularr/
 │   │   ├── history.go            # Schedule history (prevent repeats)
 │   │   └── types.go
 │   ├── external/tunarr/          # Tunarr REST API client
+│   ├── metadata/                 # Show metadata providers + canonical genre vocabulary
+│   │   ├── normalize.go          # NormalizeGenre/NormalizeGenres
+│   │   ├── tmdb/                 # The Movie Database v3 client
+│   │   └── tvdb/                 # TheTVDB v4 client
 │   ├── store/                    # SQLite persistence (blocks, series state, history)
 │   │   └── migrations/
 │   ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface

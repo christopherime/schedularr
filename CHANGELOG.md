@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Metadata engine scaffold (`internal/metadata`)**, the first v0.4.0
+  slice: a provider-agnostic `ShowMetadata`/`Provider` pair with
+  `ErrNotFound` and `ErrUnauthorized` sentinels (a rejected key is fatal
+  to a lookup pass; a missing title is not), a TMDB v3 client
+  (`/search/tv` then `/tv/{id}`, with `content_ratings` and
+  `external_ids` appended so a full lookup costs two requests, and
+  `/genre/tv/list` cached in memory for 24h to name a search hit's
+  `genre_ids`), and a TheTVDB v4 client (`/login` for a bearer token
+  reused for 24h, then `/search` and `/series/{id}/extended`). Both
+  build on `internal/httpclient`, so both inherit its retry and
+  429-backoff. Neither reads the environment: the API key is a
+  constructor parameter, so the caller decides where a secret comes
+  from. Nothing calls these yet -- the engine's `filter.genres` still
+  matches Tunarr's raw genres; wiring is a later slice. (`docs/metadata.md`.)
+- **Canonical genre vocabulary** (`metadata.NormalizeGenre`,
+  `NormalizeGenres`, `CanonicalGenres`): 23 canonical names plus a
+  mapping table for the spellings TMDB and TheTVDB disagree on --
+  `Action & Adventure` to Action, `Sci-Fi & Fantasy` to Science Fiction,
+  `War & Politics` to War, `Children` to Kids, `Anime` to Animation,
+  `Talk Show` to Talk, `Suspense` to Thriller, `Game Show` to Reality.
+  Compounds collapse to one canonical name rather than splitting, since
+  asserting a genre the provider never published would make a filter
+  match shows the operator did not ask for. Format labels
+  (`Mini-Series`, `TV Movie`) and categories with no canonical
+  equivalent (`Sport`, `Travel`, `Food`) are dropped rather than mapped
+  to a near-neighbor. Each non-obvious mapping carries its reason in
+  `normalize.go` and in `docs/metadata.md`.
+- **`httpclient.AuthBearer`**: an RFC 6750 `Authorization: Bearer <key>`
+  auth mode alongside the existing `X-API-Key`/`X-Emby-Token` ones,
+  needed by the TheTVDB client, whose token is minted by a login call
+  rather than configured.
+
+### Security
+
+- **The TMDB client never forwards the underlying transport error.**
+  TMDB v3 authenticates by `api_key` query parameter and
+  `httpclient.APIError.Error()` prints the full request URL, so wrapping
+  it would print the operator's API key into the log line of every
+  failed lookup. The client rebuilds its errors from the endpoint path,
+  the status and the response body instead; a test asserts the key never
+  appears in an error string. (`internal/metadata/tmdb` `apiFailure`.)
+
 ### Changed
 
 - **Roadmap reshaped at the operator's direction: v0.5.0 is now the web

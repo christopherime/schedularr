@@ -50,6 +50,7 @@ Open `http://<host>:8484/` and paste the token from `SCHEDULARR_API_TOKEN` into 
 - [CLI Reference](cli-reference.md) — every subcommand and flag
 - [API Reference](api-reference.md) — HTTP endpoints, or the live contract at `/openapi.json`
 - [Architecture](architecture.md) — components, data flow, design patterns
+- [Metadata Engine](metadata.md) — TMDB/TheTVDB providers and the canonical genre vocabulary
 - [Design System](design-system.md) — the web UI's visual system
 - [Deployment](deployment.md) — `docker run`, config reference, Helm chart
 - [Roadmap](roadmap.md) — the feature plan and versioning toward v1.0.0

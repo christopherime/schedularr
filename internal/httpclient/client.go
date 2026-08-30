@@ -30,6 +30,10 @@ const (
 	AuthXAPIKey
 	// AuthXEmbyToken uses X-Emby-Token header (Emby-compatible APIs).
 	AuthXEmbyToken
+	// AuthBearer uses an RFC 6750 "Authorization: Bearer <key>" header
+	// (TheTVDB v4, whose bearer token is minted by a separate login call
+	// rather than configured directly -- see internal/metadata/tvdb).
+	AuthBearer
 )
 
 // Config holds the configuration for creating a new HTTP client.
@@ -93,6 +97,8 @@ func (c *Client) addAuthHeader(_ *resty.Client, req *resty.Request) error {
 		req.SetHeader("X-API-Key", c.apiKey)
 	case AuthXEmbyToken:
 		req.SetHeader("X-Emby-Token", c.apiKey)
+	case AuthBearer:
+		req.SetHeader("Authorization", "Bearer "+c.apiKey)
 	}
 	return nil
 }
