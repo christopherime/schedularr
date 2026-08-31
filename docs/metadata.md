@@ -21,10 +21,10 @@ A `ShowMetadata` carries the title, first-air year, normalized genres, content r
 
 Two sentinels separate the outcomes a caller has to treat differently:
 
-| Sentinel | Meaning | What a caller does |
-| --- | --- | --- |
-| `ErrNotFound` | The provider has no match for this title | Skip the show, continue the pass |
-| `ErrUnauthorized` | The provider rejected the API key | Abort the pass — every later call fails identically |
+| Sentinel          | Meaning                                  | What a caller does                                  |
+| ----------------- | ---------------------------------------- | --------------------------------------------------- |
+| `ErrNotFound`     | The provider has no match for this title | Skip the show, continue the pass                    |
+| `ErrUnauthorized` | The provider rejected the API key        | Abort the pass — every later call fails identically |
 
 Without the second one, a wrong key would read as "none of your 400 shows exist".
 
@@ -32,14 +32,14 @@ Without the second one, a wrong key would read as "none of your 400 shows exist"
 
 Both clients are built on `internal/httpclient`, so both inherit its retry behavior: three attempts with exponential backoff on 429, 5xx, and transport failures, which is also how they respect provider rate limits. Neither client reads the environment. The API key is a constructor parameter, so the caller decides where it comes from.
 
-| | `internal/metadata/tmdb` | `internal/metadata/tvdb` |
-| --- | --- | --- |
-| API | The Movie Database v3, `api.themoviedb.org/3` | TheTVDB v4, `api4.thetvdb.com/v4` |
-| Auth | `api_key` query parameter | `POST /login` with the key, then a bearer token |
-| Lookup | `GET /search/tv`, then `GET /tv/{id}` | `GET /search?type=series`, then `GET /series/{id}/extended` |
-| Genres | From `/tv/{id}`; falls back to mapping the search hit's `genre_ids` through `GET /genre/tv/list` | From the extended record; falls back to the search hit's flat genre list |
-| Rating | `content_ratings`, preferring the `US` certification | `contentRatings`, preferring the `usa` certification |
-| Cross-refs | `external_ids` (`imdb_id`, `tvdb_id`) | `remoteIds`, matched by source name |
+|            | `internal/metadata/tmdb`                                                                         | `internal/metadata/tvdb`                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| API        | The Movie Database v3, `api.themoviedb.org/3`                                                    | TheTVDB v4, `api4.thetvdb.com/v4`                                        |
+| Auth       | `api_key` query parameter                                                                        | `POST /login` with the key, then a bearer token                          |
+| Lookup     | `GET /search/tv`, then `GET /tv/{id}`                                                            | `GET /search?type=series`, then `GET /series/{id}/extended`              |
+| Genres     | From `/tv/{id}`; falls back to mapping the search hit's `genre_ids` through `GET /genre/tv/list` | From the extended record; falls back to the search hit's flat genre list |
+| Rating     | `content_ratings`, preferring the `US` certification                                             | `contentRatings`, preferring the `usa` certification                     |
+| Cross-refs | `external_ids` (`imdb_id`, `tvdb_id`)                                                            | `remoteIds`, matched by source name                                      |
 
 Both take a year hint. A non-zero year narrows the provider-side search and then breaks ties locally: an exact-year hit wins over the provider's own relevance order, because both providers order by popularity and the popular hit is not always the one a library means (there are two shows called *The Office*).
 
@@ -77,17 +77,17 @@ Reality     Soap        Talk
 
 Anything that is already one of those names matches directly. The mapping table covers the rest:
 
-| Raw label | Canonical | Why |
-| --- | --- | --- |
-| `Action & Adventure` | Action | TMDB television genre 10759 is a compound with no plain "Action" twin. Action is the half an operator means; a source publishing `Adventure` alone still reaches Adventure directly. |
-| `Sci-Fi & Fantasy` | Science Fiction | TMDB television genre 10765 fuses two vocabulary entries. Science Fiction is the more discriminating of the two. Known cost: a fantasy-only TMDB series normalizes to Science Fiction. TheTVDB, which publishes both separately, is unaffected. |
-| `War & Politics` | War | TMDB television genre 10768. No canonical entry covers politics alone. |
-| `Children` | Kids | TheTVDB's spelling of TMDB genre 10762. |
-| `Anime` | Animation | An animation style, not a separate genre. A canonical entry for it would be unreachable from any non-TheTVDB source. |
-| `Talk Show` | Talk | TheTVDB's spelling of TMDB genre 10767. |
-| `Suspense` | Thriller | TheTVDB carries both; they describe the same territory. |
-| `Game Show` | Reality | Unscripted competition programming. Reality is the only canonical entry covering unscripted television, and dropping it would leave game shows with no genre at all. |
-| `Reality-TV`, `Soap Opera`, `Musical`, `Historical` | Reality, Soap, Music, History | Spellings library scrapers feeding Tunarr emit. |
+| Raw label                                           | Canonical                     | Why                                                                                                                                                                                                                                             |
+| --------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Action & Adventure`                                | Action                        | TMDB television genre 10759 is a compound with no plain "Action" twin. Action is the half an operator means; a source publishing `Adventure` alone still reaches Adventure directly.                                                            |
+| `Sci-Fi & Fantasy`                                  | Science Fiction               | TMDB television genre 10765 fuses two vocabulary entries. Science Fiction is the more discriminating of the two. Known cost: a fantasy-only TMDB series normalizes to Science Fiction. TheTVDB, which publishes both separately, is unaffected. |
+| `War & Politics`                                    | War                           | TMDB television genre 10768. No canonical entry covers politics alone.                                                                                                                                                                          |
+| `Children`                                          | Kids                          | TheTVDB's spelling of TMDB genre 10762.                                                                                                                                                                                                         |
+| `Anime`                                             | Animation                     | An animation style, not a separate genre. A canonical entry for it would be unreachable from any non-TheTVDB source.                                                                                                                            |
+| `Talk Show`                                         | Talk                          | TheTVDB's spelling of TMDB genre 10767.                                                                                                                                                                                                         |
+| `Suspense`                                          | Thriller                      | TheTVDB carries both; they describe the same territory.                                                                                                                                                                                         |
+| `Game Show`                                         | Reality                       | Unscripted competition programming. Reality is the only canonical entry covering unscripted television, and dropping it would leave game shows with no genre at all.                                                                            |
+| `Reality-TV`, `Soap Opera`, `Musical`, `Historical` | Reality, Soap, Music, History | Spellings library scrapers feeding Tunarr emit.                                                                                                                                                                                                 |
 
 Compounds collapse to a single canonical name rather than splitting into two. A genre filter answers "does this show carry genre X", so asserting a second genre the provider never published would make a filter match shows the operator did not ask for.
 

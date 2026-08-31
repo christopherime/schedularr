@@ -58,12 +58,12 @@ whole-hour layout, not one rule.
 
 There is no single cross-industry noun. The evidence splits by domain:
 
-| Domain | Term for "pool of eligible content, order not predetermined" | Source |
-| --- | --- | --- |
+| Domain                                                   | Term for "pool of eligible content, order not predetermined"                  | Source                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Radio automation (RCS GSelector, Broadcast Radio Myriad) | **Category** (the pool) cycled by **Rotation** rules, called from a **Clock** | [RCS](https://www.rcsworks.com/gselector-priority-list-scheduling-tips/), [Broadcast Radio](https://help.broadcastradio.com/support/solutions/articles/101000563883-category-analysis-myriad-schedule-pro-only-), [Wikipedia, *Music scheduling system*](https://en.wikipedia.org/wiki/Music_scheduling_system) |
-| IPTV playout (ErsatzTV) | **Search** content source; the saved/named form is a **Smart Collection** | [ErsatzTV](https://ersatztv.org/docs/scheduling/sequential/content/) |
-| IPTV playout (Tunarr — the integration target) | **Random** slots (with a *Uniform* weighting sub-mode) | [Tunarr](https://tunarr.com/configure/scheduling/random-slots/) |
-| Ad sales | **Run-of-schedule (ROS)** — *not* this concept: it is an ad-placement term | [AllBusiness](https://www.allbusiness.com/dictionary-run-of-schedule-ros-4965120-1.html) |
+| IPTV playout (ErsatzTV)                                  | **Search** content source; the saved/named form is a **Smart Collection**     | [ErsatzTV](https://ersatztv.org/docs/scheduling/sequential/content/)                                                                                                                                                                                                                                            |
+| IPTV playout (Tunarr — the integration target)           | **Random** slots (with a *Uniform* weighting sub-mode)                        | [Tunarr](https://tunarr.com/configure/scheduling/random-slots/)                                                                                                                                                                                                                                                 |
+| Ad sales                                                 | **Run-of-schedule (ROS)** — *not* this concept: it is an ad-placement term    | [AllBusiness](https://www.allbusiness.com/dictionary-run-of-schedule-ros-4965120-1.html)                                                                                                                                                                                                                        |
 
 > "'Search' content sources use ErsatzTV's search engine to dynamically find
 > content matching your criteria (query)."
@@ -98,13 +98,13 @@ content noun.
 
 ### 1.4 Proposed names
 
-| Today | Proposed | Why |
-| --- | --- | --- |
-| block (concept) | **block** — unchanged | Validated above. |
-| `type: "series"` | `type: "sequence"` | Operator-chosen, fixed. Aligns with Tunarr's "sequential"/iterator vocabulary. |
-| `type: "filter"` | `type: "rotation"` | Recommended; ranked against alternates below. |
-| `filter: {…}` (the criteria bag) | `criteria: {…}` | Under the no-legacy policy a half-rename leaves the confusing word in the schema. Ranked as a separate decision — Open Question Q3. |
-| `fallback.filler_filter` | `fallback.filler_criteria` | Follows the same decision. |
+| Today                            | Proposed                   | Why                                                                                                                                 |
+| -------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| block (concept)                  | **block** — unchanged      | Validated above.                                                                                                                    |
+| `type: "series"`                 | `type: "sequence"`         | Operator-chosen, fixed. Aligns with Tunarr's "sequential"/iterator vocabulary.                                                      |
+| `type: "filter"`                 | `type: "rotation"`         | Recommended; ranked against alternates below.                                                                                       |
+| `filter: {…}` (the criteria bag) | `criteria: {…}`            | Under the no-legacy policy a half-rename leaves the confusing word in the schema. Ranked as a separate decision — Open Question Q3. |
+| `fallback.filler_filter`         | `fallback.filler_criteria` | Follows the same decision.                                                                                                          |
 
 **Ranked candidates for the `filter` block type:**
 
@@ -136,17 +136,17 @@ content noun.
 
 Measured by grep on 2026-08-30, non-test files unless noted.
 
-| Surface | What changes | Scale |
-| --- | --- | --- |
-| OpenAPI (`api/openapi.yaml`) | `BlockSpec.type` enum (line 387); schemas `Filter` → `Criteria`, `SeriesConfig` → `SequenceConfig`, `SeriesFallback` → `SequenceFallback`, `SeriesState` → `SequenceState`, `SeriesStatePatch`; paths `/state/series`, `/state/series/{show_title}` | 11 `Series` hits, 7 `Filter` hits |
-| Generated code | `internal/api/gen/server.gen.go` (oapi-codegen) and `web/assets/ts/gen/types.d.ts` regenerate; CI's codegen-drift job is the gate | 2 artifacts |
-| CUE (`cmd/schema/config.cue`, `scheduler.cue`) | `#Block.type` disjunction and default (`config.cue:90`), `#Filter` → `#Criteria`, `#SeriesConfig` → `#SequenceConfig`, `#FallbackConfig` field; the `scheduler.cue` example | 11 hits |
-| Go domain | `BlockType{Filter,Series}`, `Filter`, `SeriesConfig`, `SeriesFallback`, `Block.Filter/.Series`, `SeriesState`, `SeriesStateSnapshot`, `FilterPrograms`, `planFilterBlock`, `planSeriesBlock`, `establishSeriesChain`, … | 348 `Series` + 50 `Filter` identifier hits across `internal/`, `cmd/` |
-| Store schema | `series_state` → `sequence_state`, `series_occurrence_snapshots` → `sequence_occurrence_snapshots`, plus their indexes. SQLite `ALTER TABLE … RENAME TO` in a new migration | 35 SQL hits |
-| Store data | `blocks.spec_json` holds the block spec as JSON with `type`, `filter`, `series`, `fallback.filler_filter` keys (`internal/store/blocks.go:39,107`). A **data** migration must rewrite every row's JSON, not just the DDL. **ASSUMPTION:** the SQLite driver in use exposes the JSON1 functions (`json_set`/`json_remove`/`json_extract`) so this can be a SQL migration; verify before planning, else it becomes a Go-side migration step, which `golang-migrate`'s SQL-file setup does not currently have a slot for | 1 table, N rows |
-| `scheduler.yaml` import format | `type:`, `filter:`, `series:`, `fallback.filler_filter:` keys. Import-only, so no in-place data migration — but `scheduler init`'s template, `testdata/configs/*.yaml`, and `e2e/fixtures/test-scheduler.yaml` all change | 4 fixture files |
-| Web UI | `web/assets/ts/**`, `web/layouts/**` copy, type badges, the `/series/` route (which Stream 3 deletes anyway) | 185 case-insensitive hits |
-| Docs | `scheduling-concepts.md` (the concept page, rewritten), `api-reference.md`, `cli-reference.md`, `web-ui-guide.md`, `metadata.md`, `architecture.md`, `README.md`, `PRODUCT.md` | 104 `series` + 49 `filter` hits |
+| Surface                                        | What changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Scale                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| OpenAPI (`api/openapi.yaml`)                   | `BlockSpec.type` enum (line 387); schemas `Filter` → `Criteria`, `SeriesConfig` → `SequenceConfig`, `SeriesFallback` → `SequenceFallback`, `SeriesState` → `SequenceState`, `SeriesStatePatch`; paths `/state/series`, `/state/series/{show_title}`                                                                                                                                                                                                                                                                   | 11 `Series` hits, 7 `Filter` hits                                     |
+| Generated code                                 | `internal/api/gen/server.gen.go` (oapi-codegen) and `web/assets/ts/gen/types.d.ts` regenerate; CI's codegen-drift job is the gate                                                                                                                                                                                                                                                                                                                                                                                     | 2 artifacts                                                           |
+| CUE (`cmd/schema/config.cue`, `scheduler.cue`) | `#Block.type` disjunction and default (`config.cue:90`), `#Filter` → `#Criteria`, `#SeriesConfig` → `#SequenceConfig`, `#FallbackConfig` field; the `scheduler.cue` example                                                                                                                                                                                                                                                                                                                                           | 11 hits                                                               |
+| Go domain                                      | `BlockType{Filter,Series}`, `Filter`, `SeriesConfig`, `SeriesFallback`, `Block.Filter/.Series`, `SeriesState`, `SeriesStateSnapshot`, `FilterPrograms`, `planFilterBlock`, `planSeriesBlock`, `establishSeriesChain`, …                                                                                                                                                                                                                                                                                               | 348 `Series` + 50 `Filter` identifier hits across `internal/`, `cmd/` |
+| Store schema                                   | `series_state` → `sequence_state`, `series_occurrence_snapshots` → `sequence_occurrence_snapshots`, plus their indexes. SQLite `ALTER TABLE … RENAME TO` in a new migration                                                                                                                                                                                                                                                                                                                                           | 35 SQL hits                                                           |
+| Store data                                     | `blocks.spec_json` holds the block spec as JSON with `type`, `filter`, `series`, `fallback.filler_filter` keys (`internal/store/blocks.go:39,107`). A **data** migration must rewrite every row's JSON, not just the DDL. **ASSUMPTION:** the SQLite driver in use exposes the JSON1 functions (`json_set`/`json_remove`/`json_extract`) so this can be a SQL migration; verify before planning, else it becomes a Go-side migration step, which `golang-migrate`'s SQL-file setup does not currently have a slot for | 1 table, N rows                                                       |
+| `scheduler.yaml` import format                 | `type:`, `filter:`, `series:`, `fallback.filler_filter:` keys. Import-only, so no in-place data migration — but `scheduler init`'s template, `testdata/configs/*.yaml`, and `e2e/fixtures/test-scheduler.yaml` all change                                                                                                                                                                                                                                                                                             | 4 fixture files                                                       |
+| Web UI                                         | `web/assets/ts/**`, `web/layouts/**` copy, type badges, the `/series/` route (which Stream 3 deletes anyway)                                                                                                                                                                                                                                                                                                                                                                                                          | 185 case-insensitive hits                                             |
+| Docs                                           | `scheduling-concepts.md` (the concept page, rewritten), `api-reference.md`, `cli-reference.md`, `web-ui-guide.md`, `metadata.md`, `architecture.md`, `README.md`, `PRODUCT.md`                                                                                                                                                                                                                                                                                                                                        | 104 `series` + 49 `filter` hits                                       |
 
 Under the house no-legacy policy this is a hard swap: no aliases, no dual
 acceptance, no redirect stubs. It therefore **must** land before the v0.9.0
@@ -175,14 +175,14 @@ concept is authored once under its final name.
 
 Six gaps follow, each verified:
 
-| # | Gap | Evidence |
-| --- | --- | --- |
-| G1 | **No media-kind criterion.** `tunarr.Program.Type` carries `movie`/`episode`/… (`internal/external/tunarr/models.go:76`) and `matchesFilter` never reads it. There is no way to say "movies only". | `filter.go:30-49`, `types.go:24-33` |
-| G2 | **`filter.tags` is dead code, and the docs claim otherwise.** `Filter.Tags` exists in Go (`types.go:32`), CUE (`config.cue:143`), and OpenAPI (`openapi.yaml:336`), and round-trips through `internal/api/blocks.go:473,592,629`. `matchesFilter` never evaluates it: a block with `tags: [x]` behaves exactly as if the field were absent. `docs/scheduling-concepts.md:39,49` documents it as working AND-logic. The roadmap's "nothing populates tags today" understates it — nothing *reads* them either. | `filter.go:30-49` |
-| G3 | **Genres are raw.** `internal/metadata`'s canonical vocabulary is unwired (`docs/metadata.md`'s own admonition); `f.Genres` is compared against whatever the source library published. | `filter.go:35` |
-| G4 | **No order, no cursor for non-episodic content.** Filter content is shuffled with global `rand` (`engine.go:1246`) and frozen verbatim after first commit (`docs/scheduling-concepts.md:142`). Nothing can express "Movie A this week, Movie B next". | `engine.go:1199-1301` |
-| G5 | **No movie discovery endpoint.** `GET /media/shows` groups only `Type == "episode"` programmes — its own doc says "a movie has no show to belong to" (`internal/service/media.go`). There is no `/media/movies`, so a UI cannot offer a movie picker. `GET /media/meta` does already return the distinct genre and rating values across movies *and* episodes. | `openapi.yaml:241-263` |
-| G6 | **The metadata `Provider` interface is show-only.** `LookupShow(ctx, title, year)` is the whole interface (`internal/metadata/types.go:64-75`); both clients implement TV endpoints only (`/search/tv` + `/tv/{id}`; `/search?type=series` + `/series/{id}/extended`). | `docs/metadata.md` |
+| #   | Gap                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Evidence                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| G1  | **No media-kind criterion.** `tunarr.Program.Type` carries `movie`/`episode`/… (`internal/external/tunarr/models.go:76`) and `matchesFilter` never reads it. There is no way to say "movies only".                                                                                                                                                                                                                                                                                                            | `filter.go:30-49`, `types.go:24-33` |
+| G2  | **`filter.tags` is dead code, and the docs claim otherwise.** `Filter.Tags` exists in Go (`types.go:32`), CUE (`config.cue:143`), and OpenAPI (`openapi.yaml:336`), and round-trips through `internal/api/blocks.go:473,592,629`. `matchesFilter` never evaluates it: a block with `tags: [x]` behaves exactly as if the field were absent. `docs/scheduling-concepts.md:39,49` documents it as working AND-logic. The roadmap's "nothing populates tags today" understates it — nothing *reads* them either. | `filter.go:30-49`                   |
+| G3  | **Genres are raw.** `internal/metadata`'s canonical vocabulary is unwired (`docs/metadata.md`'s own admonition); `f.Genres` is compared against whatever the source library published.                                                                                                                                                                                                                                                                                                                        | `filter.go:35`                      |
+| G4  | **No order, no cursor for non-episodic content.** Filter content is shuffled with global `rand` (`engine.go:1246`) and frozen verbatim after first commit (`docs/scheduling-concepts.md:142`). Nothing can express "Movie A this week, Movie B next".                                                                                                                                                                                                                                                         | `engine.go:1199-1301`               |
+| G5  | **No movie discovery endpoint.** `GET /media/shows` groups only `Type == "episode"` programmes — its own doc says "a movie has no show to belong to" (`internal/service/media.go`). There is no `/media/movies`, so a UI cannot offer a movie picker. `GET /media/meta` does already return the distinct genre and rating values across movies *and* episodes.                                                                                                                                                | `openapi.yaml:241-263`              |
+| G6  | **The metadata `Provider` interface is show-only.** `LookupShow(ctx, title, year)` is the whole interface (`internal/metadata/types.go:64-75`); both clients implement TV endpoints only (`/search/tv` + `/tv/{id}`; `/search?type=series` + `/series/{id}/extended`).                                                                                                                                                                                                                                        | `docs/metadata.md`                  |
 
 ### 2.2 Convergence: the v0.4 metadata theme and this stream are one thing
 
@@ -342,18 +342,18 @@ occurrence a month, and the advance is already one step per occurrence.
 
 ### 2.4 Contract deltas (design level)
 
-| Surface | Delta |
-| --- | --- |
-| `Criteria` (was `Filter`) | `+ kinds: string[]`; `tags` becomes load-bearing rather than ignored |
-| `SequenceConfig` (was `SeriesConfig`) | `+ items: MediaRef[]`, `+ list_id`; `episodes_per_block` → `items_per_occurrence`; `start_season`/`start_episode` → `start_at`; `skip_episodes` → `skip` |
-| `SequenceState` (was `SeriesState`) | `+ kind`, `+ cursor_index`, `+ channel_id`; `show_title` → `sequence_key` |
-| `GET /media/movies` (new) | `MediaMovie {title, year, duration_ms}` — the symmetric counterpart of `/media/shows`, required for a movie picker |
-| `GET /media/meta` | unchanged (already spans movies and episodes) |
-| `POST /metadata/refresh` (new) | trigger an enrichment pass; `202` + a run summary |
-| `GET /metadata/{kind}/{title}` (new, optional) | read one enriched record, for the UI's tag editor |
-| `GET/PUT /tags` (new) | operator tag vocabulary and per-title assignment |
-| Migrations | `0000NN_media_metadata`, `0000NN_media_tags`, `0000NN_sequence_state` (rename + re-key + widen) |
-| Config schema | provider enablement + cache options; **no keys in config** |
+| Surface                                        | Delta                                                                                                                                                    |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Criteria` (was `Filter`)                      | `+ kinds: string[]`; `tags` becomes load-bearing rather than ignored                                                                                     |
+| `SequenceConfig` (was `SeriesConfig`)          | `+ items: MediaRef[]`, `+ list_id`; `episodes_per_block` → `items_per_occurrence`; `start_season`/`start_episode` → `start_at`; `skip_episodes` → `skip` |
+| `SequenceState` (was `SeriesState`)            | `+ kind`, `+ cursor_index`, `+ channel_id`; `show_title` → `sequence_key`                                                                                |
+| `GET /media/movies` (new)                      | `MediaMovie {title, year, duration_ms}` — the symmetric counterpart of `/media/shows`, required for a movie picker                                       |
+| `GET /media/meta`                              | unchanged (already spans movies and episodes)                                                                                                            |
+| `POST /metadata/refresh` (new)                 | trigger an enrichment pass; `202` + a run summary                                                                                                        |
+| `GET /metadata/{kind}/{title}` (new, optional) | read one enriched record, for the UI's tag editor                                                                                                        |
+| `GET/PUT /tags` (new)                          | operator tag vocabulary and per-title assignment                                                                                                         |
+| Migrations                                     | `0000NN_media_metadata`, `0000NN_media_tags`, `0000NN_sequence_state` (rename + re-key + widen)                                                          |
+| Config schema                                  | provider enablement + cache options; **no keys in config**                                                                                               |
 
 ---
 
@@ -401,11 +401,11 @@ block, title).
 **Shape.** One route, three panes behind a segmented control, one shared filter
 toolbar, deep-linkable by query (`/history/?view=asrun&block=…`):
 
-| Pane | Content | Replaces |
-| --- | --- | --- |
-| **TRACKED** | One row per sequence (show or movie list): cursor, completed/disabled, run count, last aired. Edit cursor, reset, **remove**. Searchable by title. | the whole `/series/` page |
-| **AS-RUN** | Chronological airings grouped by day: local time, channel plate, block link, programme title + SxxEyy. Search across scheduled and played. | the v0.5 spec's Log "AIRED" rows |
-| **RUNS** | Apply-run cards: timestamp, source badge (UI/CRON/CLI), scope, counts, expandable persisted warnings naming loser, winner, and would-have-aired time. | the v0.5 spec's Log "APPLY RUN" cards |
+| Pane        | Content                                                                                                                                               | Replaces                              |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **TRACKED** | One row per sequence (show or movie list): cursor, completed/disabled, run count, last aired. Edit cursor, reset, **remove**. Searchable by title.    | the whole `/series/` page             |
+| **AS-RUN**  | Chronological airings grouped by day: local time, channel plate, block link, programme title + SxxEyy. Search across scheduled and played.            | the v0.5 spec's Log "AIRED" rows      |
+| **RUNS**    | Apply-run cards: timestamp, source badge (UI/CRON/CLI), scope, counts, expandable persisted warnings naming loser, winner, and would-have-aired time. | the v0.5 spec's Log "APPLY RUN" cards |
 
 Nav becomes `GUIDE · BLOCKS · HISTORY` once draft-and-apply kills `/schedule/`
 — three items, room for a fourth later. `/series/`, `/dashboard/`, and the
@@ -543,19 +543,19 @@ alternative of re-cutting instead).
 
 ### 4.2 Proposed ladder
 
-| Number | Theme | Change from today's plan |
-| --- | --- | --- |
-| v0.5.5 | Draft & apply on the Guide | shifted +1 by the brand-mark insertion |
-| **v0.5.6** | **Memory, landing as `/history/`** | the spec's Memory slice, amended by Stream 3: the page ships as `/history/` with TRACKED/AS-RUN/RUNS panes; `/series/` and `/dashboard/` deleted; nav becomes `GUIDE · BLOCKS · HISTORY` |
-| v0.5.7 | Live link (SSE) | shifted +1 |
-| v0.5.8 | Block power tools | shifted +1 |
-| **v0.5.9** | **History desk power tools** (was "series desk") | bulk cursor ops, import/export, **remove-from-history**, **range cleanup**, the STORAGE strip. Engine-first: the monotonic plan-seq floor in `app_meta` (I5) and the transactional deletion path (I4) |
-| v0.5.10 | Polish pass | shifted +1 |
-| v0.4.x | **Metadata engine + any-media criteria** — Stream 2's L1–L4 | the existing v0.4 theme, restructured into ordered slices: enrichment wiring → normalized genres/ratings in the engine → tags (with the missing `matchesFilter` branch) → media-kind criterion + `/media/movies` |
-| **v0.6.0** | **Station terminology** — Stream 1's hard rename | **new**; the old v0.6 moves to v0.7.0 |
-| **v0.6.1** | **Media sequences** — Stream 2's §2.3 | **new**; lands after the rename so the generalized concept is born as `Sequence` |
-| v0.7.0 | Operations and observability | renumbered from v0.6.0 |
-| v0.9.0 | Freeze candidate | unchanged; the rename is upstream of it by construction |
+| Number     | Theme                                                       | Change from today's plan                                                                                                                                                                                         |
+| ---------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.5.5     | Draft & apply on the Guide                                  | shifted +1 by the brand-mark insertion                                                                                                                                                                           |
+| **v0.5.6** | **Memory, landing as `/history/`**                          | the spec's Memory slice, amended by Stream 3: the page ships as `/history/` with TRACKED/AS-RUN/RUNS panes; `/series/` and `/dashboard/` deleted; nav becomes `GUIDE · BLOCKS · HISTORY`                         |
+| v0.5.7     | Live link (SSE)                                             | shifted +1                                                                                                                                                                                                       |
+| v0.5.8     | Block power tools                                           | shifted +1                                                                                                                                                                                                       |
+| **v0.5.9** | **History desk power tools** (was "series desk")            | bulk cursor ops, import/export, **remove-from-history**, **range cleanup**, the STORAGE strip. Engine-first: the monotonic plan-seq floor in `app_meta` (I5) and the transactional deletion path (I4)            |
+| v0.5.10    | Polish pass                                                 | shifted +1                                                                                                                                                                                                       |
+| v0.4.x     | **Metadata engine + any-media criteria** — Stream 2's L1–L4 | the existing v0.4 theme, restructured into ordered slices: enrichment wiring → normalized genres/ratings in the engine → tags (with the missing `matchesFilter` branch) → media-kind criterion + `/media/movies` |
+| **v0.6.0** | **Station terminology** — Stream 1's hard rename            | **new**; the old v0.6 moves to v0.7.0                                                                                                                                                                            |
+| **v0.6.1** | **Media sequences** — Stream 2's §2.3                       | **new**; lands after the rename so the generalized concept is born as `Sequence`                                                                                                                                 |
+| v0.7.0     | Operations and observability                                | renumbered from v0.6.0                                                                                                                                                                                           |
+| v0.9.0     | Freeze candidate                                            | unchanged; the rename is upstream of it by construction                                                                                                                                                          |
 
 ### 4.3 Why the rename gets its own minor, and sits there
 

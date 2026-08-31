@@ -28,11 +28,13 @@
 ### Task 1: Module rename, Go 1.27, origin repoint
 
 **Files:**
+
 - Modify: `go.mod` (module line + go directive)
 - Modify: every `.go` file importing `github.com/geekxflood/schedularr/...` (mechanical rewrite)
 - Modify: `Dockerfile`, `README.md`, `.golangci.yml` (any hardcoded module-path references)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: module `github.com/christopherime/schedularr`; all later tasks import under this path.
 
@@ -75,12 +77,14 @@ git push origin main
 ### Task 2: Delete the TUI and all charmbracelet dependencies
 
 **Files:**
+
 - Delete: `internal/tui/` (entire package), `cmd/tui.go`
 - Modify: `cmd/root.go` (remove `runTUI` at ~line 112 and the tui command registration in `init()`)
 - Modify: `cmd/generate.go`, `cmd/validate.go` (replace `charmbracelet/huh` interactive prompts)
 - Modify: `go.mod` (all `charmbracelet/*` deps gone)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `generate --apply` requires explicit `--yes` when it would prompt; no interactive code remains.
 
@@ -131,12 +135,14 @@ git push origin main
 ### Task 3: Remove Jellyfin, Sonarr, and Radarr integrations
 
 **Files:**
+
 - Delete: `internal/external/jellyfin/`, `internal/external/sonarr/`, `internal/external/radarr/`, `cmd/content_sources.go`
 - Modify: `cmd/generate.go` (remove guide-refresh hook + availability filtering wiring)
 - Modify: `internal/config/config.go` + `cmd/schema/config.cue` (drop jellyfin/sonarr/radarr config sections)
 - Modify: `internal/scheduler/engine.go` / `filter.go` only if they reference *arr availability (verify with grep; the engine consumes `[]tunarr.Program`, so likely untouched)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `config.Config` carries Tunarr + database + logging only; the engine's inputs are unchanged (`[]tunarr.Program`).
 
@@ -173,11 +179,13 @@ git push origin main
 ### Task 4: Blocks table + store CRUD
 
 **Files:**
+
 - Create: `internal/store/migrations/000002_blocks.up.sql`, `internal/store/migrations/000002_blocks.down.sql`
 - Create: `internal/store/blocks.go`
 - Test: `internal/store/blocks_test.go`
 
 **Interfaces:**
+
 - Consumes: `store.New(dsn string) (*Store, error)` (existing), `scheduler.Block` (existing).
 - Produces (used by Tasks 6, 7, 11, 16):
 
@@ -266,10 +274,12 @@ git push origin main
 ### Task 5: Block validation + YAML import/export + bootstrap (`internal/blockio`)
 
 **Files:**
+
 - Create: `internal/blockio/blockio.go`, `internal/blockio/bootstrap.go`
 - Test: `internal/blockio/blockio_test.go`, `internal/blockio/bootstrap_test.go`
 
 **Interfaces:**
+
 - Consumes: `cueconfig.NewValidator().ValidateScheduler(data []byte, format string) error` (existing), Task 4 store methods, `scheduler.Config{Blocks []Block}` (existing yaml tags).
 - Produces (used by Tasks 11, 15, 16):
 
@@ -308,11 +318,13 @@ git push origin main
 ### Task 6: Engine reads blocks from the store
 
 **Files:**
+
 - Modify: `cmd/generate.go` (load blocks via `store.ListBlocks` instead of `config.LoadScheduler`; keep `--scheduler` flag ONLY as import hint removal — delete the flag, ~line 621)
 - Modify: `internal/config` (delete `LoadScheduler` and its tests if nothing else uses it)
 - Test: adjust `cmd/scheduler_test.go` / config tests
 
 **Interfaces:**
+
 - Consumes: Task 4 `ListBlocks`; Task 5 `Bootstrap`.
 - Produces: `loadActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error)` in `cmd/generate.go` — filters `Enabled`, maps `BlockRecord.Spec`; reused by Task 16's serve loop.
 
@@ -332,6 +344,7 @@ git push origin main
 ### Task 7: OpenAPI contract + codegen scaffolding + 501 stubs
 
 **Files:**
+
 - Create: `api/openapi.yaml`, `api/oapi-codegen.yaml`, `tools/tools.go`
 - Create: `internal/api/gen/server.gen.go` (generated, committed)
 - Create: `internal/api/server.go` (Handlers struct, every operation → 501 problem)
@@ -340,6 +353,7 @@ git push origin main
 - Test: `internal/api/problem_test.go`
 
 **Interfaces:**
+
 - Consumes: nothing yet.
 - Produces (used by Tasks 8–15):
 
@@ -587,10 +601,12 @@ git push origin main
 ### Task 8: Middleware — request-id, logging, recovery, bearer auth
 
 **Files:**
+
 - Create: `internal/api/middleware/requestid.go`, `logging.go`, `recovery.go`, `auth.go`
 - Test: `internal/api/middleware/middleware_test.go`
 
 **Interfaces:**
+
 - Consumes: `api.WriteProblem` (Task 7).
 - Produces (used by Task 16):
 
@@ -633,11 +649,13 @@ git push origin main
 ### Task 9: Blocks CRUD handlers
 
 **Files:**
+
 - Modify: `internal/api/server.go` (replace 5 block stubs)
 - Create: `internal/api/blocks.go`
 - Test: `internal/api/blocks_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 4 store CRUD, Task 5 `blockio.ValidateBlocks`, Task 7 gen types.
 - Produces: JSON wire shapes exactly as the spec's `BlockRecord`/`BlockWrite`.
 
@@ -656,10 +674,12 @@ git push origin main
 ### Task 10: Series state handlers
 
 **Files:**
+
 - Modify: `internal/api/server.go` (2 stubs), Create: `internal/api/state.go`, Test: `internal/api/state_test.go`
 - Modify: `internal/store/sqlite.go` — add `ListSeriesStates(ctx) ([]scheduler.SeriesState, error)` (thin wrapper over existing `ExportAllSeriesStates`) if not already exported under that name; reuse existing `SetSeriesState`/`UpdateSeriesState`.
 
 **Interfaces:**
+
 - Consumes: existing store series-state methods (`GetSeriesState`, `UpdateSeriesState`, `ExportAllSeriesStates`).
 - Produces: PATCH semantics — only fields present in `SeriesStatePatch` change; unknown show_title → 404.
 
@@ -678,10 +698,12 @@ git push origin main
 ### Task 11: History endpoint + store query
 
 **Files:**
+
 - Modify: `internal/store/sqlite.go` (add `ListScheduleHistory`), Test: extend `internal/store/blocks_test.go` sibling file
 - Modify: `internal/api/server.go` (1 stub), Create: `internal/api/history.go`, Test: `internal/api/history_test.go`
 
 **Interfaces:**
+
 - Produces: `func (s *Store) ListScheduleHistory(ctx context.Context, since time.Time) ([]scheduler.ScheduleHistoryEntry, error)` ordered by `scheduled_at DESC`.
 
 - [ ] **Step 1: Failing store test** (seed via existing `RecordScheduleHistory`, query with `since` cutting off older entries) → FAIL → implement → PASS.
@@ -699,9 +721,11 @@ git push origin main
 ### Task 12: Channels + status handlers (Tunarr boundary)
 
 **Files:**
+
 - Create: `internal/api/tunarr.go` (interface + impl adapter), Modify: `internal/api/server.go` (2 stubs), Test: `internal/api/tunarr_test.go`
 
 **Interfaces:**
+
 - Consumes: existing `tunarr.Client.GetChannels(ctx) ([]tunarr.Channel, error)`.
 - Produces:
 
@@ -724,11 +748,13 @@ git push origin main
 ### Task 13: Schedule service extraction + generate/apply/schedule handlers
 
 **Files:**
+
 - Create: `internal/service/schedule.go`, Test: `internal/service/schedule_test.go`
 - Modify: `cmd/generate.go` (its core becomes a call into the service — delete the duplicated logic)
 - Modify: `internal/api/server.go` (3 stubs), Create: `internal/api/schedule.go`, Test: `internal/api/schedule_test.go`
 
 **Interfaces:**
+
 - Consumes: `scheduler.NewEngine(client, blocks, store, logger, loc)`, `Engine.GenerateForTimeRange(start, end, programs)`, `Engine.Commit()`, `tunarr.Client.SearchPrograms`, `tunarr.Client.UpdateSchedule`, Task 6 `loadActiveBlocks` (move it into this package as `ActiveBlocks(ctx, store)`).
 - Produces:
 
@@ -761,9 +787,11 @@ git push origin main
 ### Task 14: Import/export handlers
 
 **Files:**
+
 - Modify: `internal/api/server.go` (2 stubs), Create: `internal/api/importexport.go`, Test: `internal/api/importexport_test.go`
 
 **Interfaces:**
+
 - Consumes: `blockio.ParseYAML`, `blockio.RenderYAML`, store CRUD, `toGen`/`fromGen` (Task 9).
 
 - [ ] **Step 1: Failing tests** — import valid YAML (2 blocks) → 200 `{imported:2, dry_run:false, names:[...]}` and records exist; `?dry_run=true` → counts but store unchanged; invalid YAML → 400 problem with CUE detail; name collision with existing block → 409 problem, nothing partially imported (wrap in a transaction or pre-check all names). Export: seeded store → 200 `application/yaml` body that `blockio.ParseYAML` round-trips.
@@ -780,12 +808,14 @@ git push origin main
 ### Task 15: `serve` command — router assembly, cron co-hosting, graceful shutdown; delete `run`
 
 **Files:**
+
 - Create: `cmd/serve.go`, `internal/api/router.go`
 - Delete: `cmd/run.go` (its cron loop moves into serve; no alias — no-legacy policy)
 - Modify: `cmd/root.go` (register serveCmd, drop runCmd), `internal/config` + `cmd/schema/config.cue` (add `api: { listen, token, insecure_no_auth }` keys; token also read from `SCHEDULARR_API_TOKEN` env, env wins)
 - Test: `internal/api/router_test.go`, `cmd/serve_test.go`
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces:
 
@@ -828,6 +858,7 @@ git push origin main
 ### Task 16: Documentation + changelog sweep
 
 **Files:**
+
 - Modify: `README.md` (commands, API section with auth + curl examples, config keys incl. `SCHEDULARR_API_TOKEN`, remove all TUI/*arr/jellyfin content)
 - Modify: `CLAUDE.md` (architecture tree: add `api/`, `internal/api/`, `internal/service/`, `internal/blockio/`; remove tui/external clients; update commands)
 - Modify: `CHANGELOG.md` (one entry per breaking change: module rename, TUI removal, integration removals, blocks-in-store, serve/run)

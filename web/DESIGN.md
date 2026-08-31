@@ -150,21 +150,21 @@ and `color-scheme: light dark` (in `main.css`'s `:root`) tell the browser
 both palettes are genuinely supported so native form controls and
 scrollbars theme correctly too.
 
-| Token                        | Light     | Dark      | Role                                                    |
-| ----------------------------- | --------- | --------- | -------------------------------------------------------- |
-| `--color-bg`                   | `#eef2f0` | `#0a0f0d` | Page background                                          |
-| `--color-bg-raised`            | `#ffffff` | `#101715` | Cards, panels, the header bar, table rows                |
-| `--color-bg-inset`              | `#e3e9e6` | `#060a08` | Recessed surfaces: inputs, hover rows, series-row blocks |
-| `--color-graticule`             | `#c7d2cd` | `#1c2a24` | The `.graticule` grid lines                              |
-| `--color-ink`                    | `#16211c` | `#dfeee6` | Primary text                                              |
-| `--color-ink-muted`              | `#3f5148` | `#8fac9f` | Secondary text: hints, descriptions, muted labels        |
-| `--color-border`                  | `#b9c4bf` | `#24352d` | Static dividers, card borders                             |
-| `--color-border-interactive`      | `#5b6b63` | `#5a7469` | Borders on inputs, buttons, toggles -- anything clickable |
-| `--color-accent`                   | `#0f6b3c` | `#3ddc84` | Primary action, "armed"/"ok" status, active nav underline |
-| `--color-accent-contrast`          | `#ffffff` | `#06150c` | Text/icons on an accent-filled surface                    |
-| `--color-warn`                      | `#7a5200` | `#e8a33d` | "Unarmed" token status dot; `.form-field__warning` (soft, non-blocking field warnings); the schedule picker's cron-lock note |
-| `--color-danger`                    | `#a3271f` | `#ff6b5e` | Errors, "unarmed"/"down" status, destructive actions       |
-| `--color-backdrop`                   | `rgb(22 33 28 / 45%)` | `rgb(2 6 4 / 65%)` | The token dialog's `::backdrop`         |
+| Token                        | Light                 | Dark               | Role                                                                                                                         |
+| ---------------------------- | --------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--color-bg`                 | `#eef2f0`             | `#0a0f0d`          | Page background                                                                                                              |
+| `--color-bg-raised`          | `#ffffff`             | `#101715`          | Cards, panels, the header bar, table rows                                                                                    |
+| `--color-bg-inset`           | `#e3e9e6`             | `#060a08`          | Recessed surfaces: inputs, hover rows, series-row blocks                                                                     |
+| `--color-graticule`          | `#c7d2cd`             | `#1c2a24`          | The `.graticule` grid lines                                                                                                  |
+| `--color-ink`                | `#16211c`             | `#dfeee6`          | Primary text                                                                                                                 |
+| `--color-ink-muted`          | `#3f5148`             | `#8fac9f`          | Secondary text: hints, descriptions, muted labels                                                                            |
+| `--color-border`             | `#b9c4bf`             | `#24352d`          | Static dividers, card borders                                                                                                |
+| `--color-border-interactive` | `#5b6b63`             | `#5a7469`          | Borders on inputs, buttons, toggles -- anything clickable                                                                    |
+| `--color-accent`             | `#0f6b3c`             | `#3ddc84`          | Primary action, "armed"/"ok" status, active nav underline                                                                    |
+| `--color-accent-contrast`    | `#ffffff`             | `#06150c`          | Text/icons on an accent-filled surface                                                                                       |
+| `--color-warn`               | `#7a5200`             | `#e8a33d`          | "Unarmed" token status dot; `.form-field__warning` (soft, non-blocking field warnings); the schedule picker's cron-lock note |
+| `--color-danger`             | `#a3271f`             | `#ff6b5e`          | Errors, "unarmed"/"down" status, destructive actions                                                                         |
+| `--color-backdrop`           | `rgb(22 33 28 / 45%)` | `rgb(2 6 4 / 65%)` | The token dialog's `::backdrop`                                                                                              |
 
 `::selection`, the focus ring (`:focus-visible`), and the scrollbar
 (`scrollbar-color` plus a WebKit `::-webkit-scrollbar*` fallback) are all
@@ -183,17 +183,17 @@ the WCAG section below.
 
 Added in the v0.5.0 foundation slice (spec §4), all on `:root`:
 
-| Token | Value | Role |
-| ----- | ----- | ---- |
-| `--z-bezel` / `--z-sticky` / `--z-popover` / `--z-dialog` | 10/20/30/40 | The z-scale; no ad hoc z-index values. Native `<dialog>` top layer sits above all of them for free. |
-| `--glow-accent` | 3px accent ring (color-mix 25%) | Names the armed-dot ring (status dots `armed`/`ok`). |
-| `--shadow-dialog` | the two-layer dialog shadow | The one deliberate shadow, now named. |
-| `--icon-size` | `1.125rem` | One size for every drawn icon; collapses the three drifted values (1rem/1.1rem/1.125rem). |
-| `--measure` | `68ch` | Prose line cap (page-head/section-head/empty-state text). |
-| `--content-max` | `76rem` | The page column cap. The v0.5.1 guide is the one sanctioned full-bleed exception. |
-| `--duration-slow` | `250ms` | Reserved for the largest disclosures. |
-| `--surface-warn` / `--surface-danger` | color-mix tints | See Colors above. |
-| `--sweep-trail` (v0.5.2) | accent color-mix: 38% light / 20% dark | The sweep cursor's phosphor-persistence peak. Light prints denser: the 20% wash that reads on dark glass disappears on paper. Decorative (the 2px rule carries the reading), so no contrast floor applies. |
+| Token                                                     | Value                                  | Role                                                                                                                                                                                                       |
+| --------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--z-bezel` / `--z-sticky` / `--z-popover` / `--z-dialog` | 10/20/30/40                            | The z-scale; no ad hoc z-index values. Native `<dialog>` top layer sits above all of them for free.                                                                                                        |
+| `--glow-accent`                                           | 3px accent ring (color-mix 25%)        | Names the armed-dot ring (status dots `armed`/`ok`).                                                                                                                                                       |
+| `--shadow-dialog`                                         | the two-layer dialog shadow            | The one deliberate shadow, now named.                                                                                                                                                                      |
+| `--icon-size`                                             | `1.125rem`                             | One size for every drawn icon; collapses the three drifted values (1rem/1.1rem/1.125rem).                                                                                                                  |
+| `--measure`                                               | `68ch`                                 | Prose line cap (page-head/section-head/empty-state text).                                                                                                                                                  |
+| `--content-max`                                           | `76rem`                                | The page column cap. The v0.5.1 guide is the one sanctioned full-bleed exception.                                                                                                                          |
+| `--duration-slow`                                         | `250ms`                                | Reserved for the largest disclosures.                                                                                                                                                                      |
+| `--surface-warn` / `--surface-danger`                     | color-mix tints                        | See Colors above.                                                                                                                                                                                          |
+| `--sweep-trail` (v0.5.2)                                  | accent color-mix: 38% light / 20% dark | The sweep cursor's phosphor-persistence peak. Light prints denser: the 20% wash that reads on dark glass disappears on paper. Decorative (the 2px rule carries the reading), so no contrast floor applies. |
 
 `--div` is load-bearing since v0.5.1: it IS the guide's 30-minute column
 width, so graticule lines, ruler cells, and slot boundaries coincide.
@@ -208,7 +208,8 @@ below for why an inline `style` attribute silently fails.
 ## The guide grid (v0.5.1, full-week since v0.5.3)
 
 The Guide (`/`, `web/layouts/index.html` + `web/assets/ts/pages/guide.ts`
-+ `web/assets/ts/runtime/grid.ts`) renders the EPG as home -- a FULL
+
+- `web/assets/ts/runtime/grid.ts`) renders the EPG as home -- a FULL
 WEEK per page since v0.5.3 (spec §3.1, second amendment). Its geometry
 contract comes from the measured pre-slice spike (spec §9) and is
 binding:
@@ -383,15 +384,15 @@ Liberation Mono) ending in generic `monospace`. Base line-height is
 use `--leading-tight` (1.2). There is no separate serif/display face --
 size, weight, and letter-spacing carry hierarchy instead.
 
-| Token          | Size      | Used for                                                        |
-| -------------- | --------- | ----------------------------------------------------------------- |
-| `--text-xs`     | `0.75rem`  | Labels, legends, table headers, badges, hints -- almost always paired with `--tracking-label` and uppercase |
-| `--text-sm`      | `0.875rem` | Secondary body text, table cells, form hints/errors               |
-| `--text-base`     | `1rem`     | Default body text                                                  |
-| `--text-md`         | `1.125rem` | Panel/dialog headings (`.panel__head h2`)                          |
-| `--text-lg`           | `1.375rem` | Section headings (`.section-head h2`)                              |
-| `--text-xl`             | `1.75rem`  | Page headings (`.page-head h1`)                                    |
-| `--text-2xl`              | `2.25rem`  | The hero-panel's own `h1` (dashboard status card container)         |
+| Token         | Size       | Used for                                                                                                    |
+| ------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| `--text-xs`   | `0.75rem`  | Labels, legends, table headers, badges, hints -- almost always paired with `--tracking-label` and uppercase |
+| `--text-sm`   | `0.875rem` | Secondary body text, table cells, form hints/errors                                                         |
+| `--text-base` | `1rem`     | Default body text                                                                                           |
+| `--text-md`   | `1.125rem` | Panel/dialog headings (`.panel__head h2`)                                                                   |
+| `--text-lg`   | `1.375rem` | Section headings (`.section-head h2`)                                                                       |
+| `--text-xl`   | `1.75rem`  | Page headings (`.page-head h1`)                                                                             |
+| `--text-2xl`  | `2.25rem`  | The hero-panel's own `h1` (dashboard status card container)                                                 |
 
 `--tracking-label` (`0.06em`) plus `text-transform: uppercase` is the
 recurring "instrument legend" treatment: wordmark, nav links, button
@@ -650,12 +651,12 @@ too close to the floor).
 **Task 4 (dashboard: status card, history table, problem/skeleton/empty
 states):**
 
-| Pairing                                                    | Light    | Dark     |
-| ------------------------------------------------------------ | -------- | -------- |
-| `--color-danger` text on `--color-bg-inset` (`.problem__title`) | 5.95:1  | 7.13:1  |
-| `--color-ink-muted` on `--color-bg-raised` (detail text, empty-state, table `th`) | 8.46:1 | 7.42:1 |
-| `--color-ink` on `--color-bg-raised` (table body text)          | 16.56:1 | 15.15:1 |
-| `--color-border-interactive` on `--color-bg-raised` (table header rule, non-text) | 5.63:1 | 3.58:1 |
+| Pairing                                                                           | Light   | Dark    |
+| --------------------------------------------------------------------------------- | ------- | ------- |
+| `--color-danger` text on `--color-bg-inset` (`.problem__title`)                   | 5.95:1  | 7.13:1  |
+| `--color-ink-muted` on `--color-bg-raised` (detail text, empty-state, table `th`) | 8.46:1  | 7.42:1  |
+| `--color-ink` on `--color-bg-raised` (table body text)                            | 16.56:1 | 15.15:1 |
+| `--color-border-interactive` on `--color-bg-raised` (table header rule, non-text) | 5.63:1  | 3.58:1  |
 
 All text pairings clear the 4.5:1 AA floor by a wide margin in both
 palettes. The `.hero-panel` border itself (a decorative ~1px, ~1.5:1
@@ -678,14 +679,14 @@ button, and the tape/plate/telemetry text placements. Checked
 computationally (same throwaway-script convention; 8% mix light, 10%
 dark):
 
-| Pairing | Light | Dark |
-| ------- | ----- | ---- |
-| `--color-warn` on `--surface-warn` (warnings title) | 6.14:1 | 7.15:1 |
-| `--color-ink-muted` on `--surface-warn` (warnings list) | 7.51:1 | 6.30:1 |
-| `--color-danger` on `--surface-danger` (`.problem__title`) | 6.43:1 | 5.77:1 |
-| `--color-ink-muted` on `--surface-danger` (detail + REF lines) | 7.43:1 | 6.58:1 |
-| `--color-accent-contrast` on `--color-danger` (`.btn--danger`) | 7.32:1 | 6.71:1 |
-| `--color-ink` on `--color-bg-inset` (plate name) | 13.45:1 | 16.60:1 |
+| Pairing                                                          | Light          | Dark           |
+| ---------------------------------------------------------------- | -------------- | -------------- |
+| `--color-warn` on `--surface-warn` (warnings title)              | 6.14:1         | 7.15:1         |
+| `--color-ink-muted` on `--surface-warn` (warnings list)          | 7.51:1         | 6.30:1         |
+| `--color-danger` on `--surface-danger` (`.problem__title`)       | 6.43:1         | 5.77:1         |
+| `--color-ink-muted` on `--surface-danger` (detail + REF lines)   | 7.43:1         | 6.58:1         |
+| `--color-accent-contrast` on `--color-danger` (`.btn--danger`)   | 7.32:1         | 6.71:1         |
+| `--color-ink` on `--color-bg-inset` (plate name)                 | 13.45:1        | 16.60:1        |
 | `--color-ink` / `--color-ink-muted` on `--color-bg` (tape lines) | 14.66 / 7.49:1 | 16.11 / 7.88:1 |
 
 Every pairing clears WCAG AA's 4.5:1 text floor (worst case 5.77:1). The
@@ -696,13 +697,13 @@ already-verified Task 3/4 pairings.
 ghost hatching. Checked computationally (same throwaway-script
 convention):
 
-| Pairing | Light | Dark |
-| ------- | ----- | ---- |
-| `--color-ink-muted` on `--color-bg-inset` (slot meta line) | 6.88:1 | 8.13:1 |
-| `--color-ink` on the series tint (7% accent mix over bg-inset) | 12.20:1 | 15.09:1 |
-| `--color-ink-muted` on the series tint | 6.23:1 | 7.39:1 |
-| `--color-warn` on `--surface-warn` (ghost text, base surface) | 6.14:1 | 7.15:1 |
-| `--color-warn` on the 18% hatch stripe (ghost text, worst case) | 4.71:1 | 5.00:1 |
+| Pairing                                                         | Light   | Dark    |
+| --------------------------------------------------------------- | ------- | ------- |
+| `--color-ink-muted` on `--color-bg-inset` (slot meta line)      | 6.88:1  | 8.13:1  |
+| `--color-ink` on the series tint (7% accent mix over bg-inset)  | 12.20:1 | 15.09:1 |
+| `--color-ink-muted` on the series tint                          | 6.23:1  | 7.39:1  |
+| `--color-warn` on `--surface-warn` (ghost text, base surface)   | 6.14:1  | 7.15:1  |
+| `--color-warn` on the 18% hatch stripe (ghost text, worst case) | 4.71:1  | 5.00:1  |
 
 Every pairing clears the 4.5:1 AA floor; the ghost's worst case (text
 over a hatch stripe) is the tightest at 4.71:1 light. Ruler labels,
@@ -737,7 +738,7 @@ rules hold across every page (`web/assets/ts/pages/*.ts`,
 1. **Never `x-init` a method `Alpine.data()` already names `init()`.**
    Alpine auto-invokes a data object's own `init()` method as part of
    component initialization (documented behavior, not an assumption --
-   see https://alpinejs.dev/globals/alpine-data). An early build of the
+   see <https://alpinejs.dev/globals/alpine-data>). An early build of the
    dashboard page had `x-init="init()"` on the root element *in addition
    to* the component's own `init()` method, which ran `loadStatus()`/
    `loadHistory()` twice on every real page load (fixed in commit
@@ -773,10 +774,10 @@ table records what's pinned and its sha256, the same verification the
 Colors section above already applies to contrast pairings -- checked
 computationally, not eyeballed.
 
-| File | Version | Loaded on | sha256 |
-| ---- | ------- | --------- | ------ |
-| `alpine.min.js` | 3.16.3 | every page (`baseof.html`) | `e31d6d92aefd41979d3c66f994d3a6b77fafa5062aec67d13f3ec5099d70d5d6` |
-| `cronstrue.min.js` | 3.24.0 | blocks (`blocks/list.html`) | `f47fa32a8c38a0fd996ef386ffc8c97694e483742a3efc3e3d70d147112b8bd5` |
+| File               | Version | Loaded on                   | sha256                                                             |
+| ------------------ | ------- | --------------------------- | ------------------------------------------------------------------ |
+| `alpine.min.js`    | 3.16.3  | every page (`baseof.html`)  | `e31d6d92aefd41979d3c66f994d3a6b77fafa5062aec67d13f3ec5099d70d5d6` |
+| `cronstrue.min.js` | 3.24.0  | blocks (`blocks/list.html`) | `f47fa32a8c38a0fd996ef386ffc8c97694e483742a3efc3e3d70d147112b8bd5` |
 
 `cronstrue.min.js` is the npm package's standalone UMD build
 (`dist/cronstrue.min.js` from the `cronstrue` tarball), English locale
@@ -808,7 +809,7 @@ wordmark's `.wordmark__mark` brand icon (`baseof.html`).
 Every UI response (`internal/api/ui.go`'s `newUIHandler`, spec Decision 6
 in `docs/superpowers/specs/2026-08-28-web-ui-design.md`) carries:
 
-```
+```txt
 Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'
 ```
 

@@ -107,14 +107,14 @@ internal/api/middleware/    # auth, request-id, logging, recovery
 
 All routes under `/api/v1`, bearer-token auth unless noted.
 
-| Area | Endpoints | Notes |
-|---|---|---|
-| Blocks | `GET/POST /blocks`, `GET/PUT/DELETE /blocks/{id}` | CUE-validated writes; `enabled` toggle |
-| Schedule | `POST /generate` (dry-run, returns plan), `POST /apply`, `GET /schedule`, `GET /history` | mirrors existing CLI semantics |
-| Series state | `GET /state/series`, `PATCH /state/series/{id}` | adjust cursor / start episode / skips |
-| Integrations | `GET /channels` (Tunarr), `GET /status` | Tunarr connectivity/version/health; never credentials |
-| Import/export | `POST /blocks/import` (YAML, `dry_run` flag), `GET /blocks/export` (YAML) | GitOps escape hatch |
-| System | `GET /healthz`, `GET /readyz`, `GET /metrics`, `GET /openapi.json` | unauthenticated |
+| Area          | Endpoints                                                                                | Notes                                                 |
+| ------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Blocks        | `GET/POST /blocks`, `GET/PUT/DELETE /blocks/{id}`                                        | CUE-validated writes; `enabled` toggle                |
+| Schedule      | `POST /generate` (dry-run, returns plan), `POST /apply`, `GET /schedule`, `GET /history` | mirrors existing CLI semantics                        |
+| Series state  | `GET /state/series`, `PATCH /state/series/{id}`                                          | adjust cursor / start episode / skips                 |
+| Integrations  | `GET /channels` (Tunarr), `GET /status`                                                  | Tunarr connectivity/version/health; never credentials |
+| Import/export | `POST /blocks/import` (YAML, `dry_run` flag), `GET /blocks/export` (YAML)                | GitOps escape hatch                                   |
+| System        | `GET /healthz`, `GET /readyz`, `GET /metrics`, `GET /openapi.json`                       | unauthenticated                                       |
 
 ### Persistence
 

@@ -26,10 +26,10 @@ Every color pairing was checked computationally against the WCAG relative-lumina
 
 Every third-party script is vendored into `web/assets/vendor/`, pinned to an exact version, loaded via a plain `<script defer>` from the UI's own origin — no CDN:
 
-| File | Version | Purpose |
-| --- | --- | --- |
-| `alpine.min.js` | 3.16.3 | Interactivity, loaded on every page |
-| `cronstrue.min.js` | 3.24.0 | Plain-language cron readback in the blocks editor's [schedule picker](web-ui-guide.md#schedule-picker) |
+| File               | Version | Purpose                                                                                                |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------------ |
+| `alpine.min.js`    | 3.16.3  | Interactivity, loaded on every page                                                                    |
+| `cronstrue.min.js` | 3.24.0  | Plain-language cron readback in the blocks editor's [schedule picker](web-ui-guide.md#schedule-picker) |
 
 ## Content-Security-Policy
 

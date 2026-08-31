@@ -22,13 +22,13 @@ docker run -d --name schedularr \
 
 The image's default `CMD` is `serve --config /etc/schedularr/config.yaml` (`ENTRYPOINT ["schedularr"]`, so `docker run ... schedularr:tag <args>` replaces it with another subcommand instead). Point the mounted config's `database` and `scheduler_file` keys at paths under `/data` explicitly — both resolve relative to the process's working directory, not the config file's location. The container runs as a non-root `schedularr` user (uid 1001), exposes `8484` (`api.listen`'s default), and its `HEALTHCHECK` polls `GET /healthz` on that port.
 
-| Build arg | Default | Purpose |
-| --- | --- | --- |
-| `VERSION` | `dev` | Stamped via `-ldflags -X .../cmd.Version=...`; reported by `GET /api/v1/status` |
-| `GO_VERSION` | `1.27` | `golang:${GO_VERSION}-alpine` build stage |
-| `NODE_VERSION` | `22` | `node:${NODE_VERSION}-alpine` TypeScript stage |
-| `ALPINE_VERSION` | `3.20` | Hugo-fetch and final runtime stage |
-| `HUGO_VERSION` | `0.165.0` | Pinned Hugo release, downloaded and sha256-verified in-stage |
+| Build arg        | Default   | Purpose                                                                         |
+| ---------------- | --------- | ------------------------------------------------------------------------------- |
+| `VERSION`        | `dev`     | Stamped via `-ldflags -X .../cmd.Version=...`; reported by `GET /api/v1/status` |
+| `GO_VERSION`     | `1.27`    | `golang:${GO_VERSION}-alpine` build stage                                       |
+| `NODE_VERSION`   | `22`      | `node:${NODE_VERSION}-alpine` TypeScript stage                                  |
+| `ALPINE_VERSION` | `3.20`    | Hugo-fetch and final runtime stage                                              |
+| `HUGO_VERSION`   | `0.165.0` | Pinned Hugo release, downloaded and sha256-verified in-stage                    |
 
 Pre-built images publish to GHCR on tagged releases:
 
@@ -77,12 +77,12 @@ api: # the `serve` command's HTTP server
 
 There is no `metrics_port` config key: `schedularr serve` exposes Prometheus metrics at `GET /metrics` on the same listener as everything else (`--listen`/`api.listen`, default `:8484`).
 
-| Config key | Env var | Default | Description |
-| --- | --- | --- | --- |
-| `api.listen` | — | `:8484` | Same as `--listen`; the flag wins when explicitly passed |
-| `api.token` | `SCHEDULARR_API_TOKEN` | `""` | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set |
-| `api.insecure_no_auth` | — | `false` | Same as `--insecure-no-auth`; either source turning it on disables auth |
-| `cron_interval` | — | `6h` | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` — it governs the cron loop, not the HTTP server. Each tick's apply window is derived from it (floor(interval/24h)+1 days) so the pushed lineup always outlasts the gap between ticks |
+| Config key             | Env var                | Default | Description                                                                                                                                                                                                                                                                            |
+| ---------------------- | ---------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.listen`           | —                      | `:8484` | Same as `--listen`; the flag wins when explicitly passed                                                                                                                                                                                                                               |
+| `api.token`            | `SCHEDULARR_API_TOKEN` | `""`    | Bearer token required on `/api/v1/*`. The env var always wins over this key when both are set                                                                                                                                                                                          |
+| `api.insecure_no_auth` | —                      | `false` | Same as `--insecure-no-auth`; either source turning it on disables auth                                                                                                                                                                                                                |
+| `cron_interval`        | —                      | `6h`    | Same as `--interval`/`-i`; the flag wins when explicitly passed. Top-level key, not under `api.*` — it governs the cron loop, not the HTTP server. Each tick's apply window is derived from it (floor(interval/24h)+1 days) so the pushed lineup always outlasts the gap between ticks |
 
 `schedularr serve` refuses to start if the effective token is empty (or shorter than 32 characters) and `--insecure-no-auth`/`api.insecure_no_auth` is not set.
 

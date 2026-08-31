@@ -16,16 +16,16 @@ Schedularr generates and applies TV channel schedules for Tunarr. Scheduling rul
 
 ## Features
 
-| Feature | Description |
-| --- | --- |
-| **Tunarr integration** | Reads channels and library content from Tunarr, pushes schedules back |
-| **Content filtering** | Regex title matching, genre/rating filters, year ranges, duration constraints |
-| **Cron scheduling** | Standard cron expressions for recurring blocks, plus a Simple-mode picker in the web UI |
-| **Series blocks** | Sequential episode progression per show, with season/episode state persisted |
-| **HTTP API** | Blocks CRUD, generate/apply, history, series state, channels, status |
-| **Web UI** | Dashboard, blocks editor, schedule preview, series-state panel |
-| **Dry run** | `generate` without `--apply` previews a schedule without pushing it to Tunarr |
-| **Priority system** | Resolves overlapping blocks by configurable priority |
+| Feature                | Description                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| **Tunarr integration** | Reads channels and library content from Tunarr, pushes schedules back                   |
+| **Content filtering**  | Regex title matching, genre/rating filters, year ranges, duration constraints           |
+| **Cron scheduling**    | Standard cron expressions for recurring blocks, plus a Simple-mode picker in the web UI |
+| **Series blocks**      | Sequential episode progression per show, with season/episode state persisted            |
+| **HTTP API**           | Blocks CRUD, generate/apply, history, series state, channels, status                    |
+| **Web UI**             | Dashboard, blocks editor, schedule preview, series-state panel                          |
+| **Dry run**            | `generate` without `--apply` previews a schedule without pushing it to Tunarr           |
+| **Priority system**    | Resolves overlapping blocks by configurable priority                                    |
 
 ## Quickstart
 

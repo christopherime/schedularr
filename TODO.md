@@ -43,15 +43,16 @@ This document identifies opportunities to reduce custom code complexity through 
 **Status: COMPLETED**
 
 **Results:**
+
 - 2 of 3 candidate areas successfully refactored
 - Actual code reduction: ~90 lines (68 lines in cronbuilder + 42 lines in cache = 110 lines removed, ~20 lines added)
 - Third task (map helpers) evaluated and determined not worth implementing
 
-| Task | Priority | Status | Impact |
-|------|----------|--------|--------|
-| Cron description | High | Completed | -46 lines |
-| Cache wrapper | Medium | Completed | -42 lines |
-| Map helpers | Low | Not implemented | N/A |
+| Task             | Priority | Status          | Impact    |
+| ---------------- | -------- | --------------- | --------- |
+| Cron description | High     | Completed       | -46 lines |
+| Cache wrapper    | Medium   | Completed       | -42 lines |
+| Map helpers      | Low      | Not implemented | N/A       |
 
 ---
 
@@ -62,18 +63,22 @@ This document identifies opportunities to reduce custom code complexity through 
 **Actual Impact**: ~46 lines of code reduction (247 -> 203 lines)
 
 ### Current State
+
 The `internal/cronbuilder/cronbuilder.go` file contains 246 lines of custom code for generating human-readable descriptions of cron expressions. The custom `Describe()` method and supporting functions (`describeMinute`, `describeHour`, `describeDayOfMonth`, `describeMonth`, `describeDayOfWeek`) implement basic cron-to-text conversion.
 
 Current implementation limitations:
+
 - Only handles simple patterns (wildcards, step values, single values)
 - Limited range handling (only "1-5" for weekdays)
 - No locale support
 - Basic output format ("at minute X", "at hour Y")
 
 ### Proposed Change
+
 Replace the custom `Describe()` method with `github.com/lnquy/cron` ([https://github.com/lnquy/cron](https://github.com/lnquy/cron)).
 
 ### Rationale
+
 - **Battle-tested implementation**: Ported from cron-expression-descriptor (C#) via cRonstrue (JS), used across multiple language ecosystems
 - **Comprehensive pattern support**: Handles all cron special characters (`* / , - ? L W #`) and 5/6/7-field expressions
 - **Multi-locale support**: 26+ languages available (useful for future internationalization)
@@ -81,21 +86,25 @@ Replace the custom `Describe()` method with `github.com/lnquy/cron` ([https://gi
 - **MIT licensed**: Compatible with project license
 
 ### Alternatives Considered
+
 - **jsuar/go-cron-descriptor**: English-only, fewer GitHub stars (less community validation)
 - **g-lib/cron-descriptor**: Less documentation, smaller community
 - **Keep custom implementation**: Current code works but is limited and requires maintenance
 
 ### Affected Files
+
 - `/Users/christophe/schedularr/internal/cronbuilder/cronbuilder.go` (lines 160-228 can be replaced)
 - `/Users/christophe/schedularr/internal/cronbuilder/cronbuilder_test.go` (update tests for new library)
 
 ### Migration Notes
+
 - The `lnquy/cron` library was last updated in November 2020 (v1.1.1) but is functionally complete and stable
 - Keep the `Expression` struct and manipulation methods (`CycleNext`, `CyclePrev`, etc.) - only replace `Describe()`
 - Library returns descriptions without leading capital; may need to capitalize first character for consistency
 - Test edge cases: step expressions (`*/5`), ranges (`1-5`), and single values
 
 ### Code Example
+
 ```go
 // Before (custom implementation)
 func (e *Expression) Describe() string {
@@ -128,38 +137,45 @@ func (e *Expression) Describe() string {
 **Estimated Impact**: ~40 lines of code reduction
 
 ### Current State
+
 The `internal/cache/cache.go` file (95 lines) wraps `github.com/patrickmn/go-cache` but adds custom `copyValue()` logic (lines 59-88) to handle type assertions for cached values. This complexity exists because the wrapper tries to support generic type retrieval through an interface{} pointer.
 
 The `copyValue()` function handles specific types (`[]interface{}`, `map[string]interface{}`, `string`, `int`) with type assertions, but the fallback case (line 87) always returns `true` regardless of whether the copy succeeded.
 
 ### Proposed Change
+
 Simplify the cache wrapper by removing the `copyValue()` function and using `go-cache`'s native `Get()` return value directly. The calling code should handle type assertions.
 
 This is not a library replacement but rather a simplification of how the existing library is used.
 
 ### Rationale
+
 - **Reduces complexity**: The current `copyValue()` function doesn't properly handle all types and has unclear semantics
 - **Clearer API**: Callers can use type assertions directly, which is the idiomatic Go pattern
 - **Better error handling**: Current implementation silently fails on type mismatches
 - **Less maintenance**: Removes custom type-handling code that's prone to edge cases
 
 ### Alternatives Considered
+
 - **Replace with bluele/gcache**: Provides generics support, but `go-cache` is sufficient and already a dependency
 - **Use otter or other modern caches**: Overkill for current usage; `go-cache` has been stable since 2014
 - **Keep current implementation**: Works but adds unnecessary complexity
 
 ### Affected Files
+
 - `/Users/christophe/schedularr/internal/cache/cache.go` (simplify `Get` method, remove `copyValue`)
 - `/Users/christophe/schedularr/internal/cache/cache_test.go` (update tests for simplified API)
 - Callers of cache (likely in external API clients) - need to handle type assertions
 
 ### Migration Notes
+
 - Audit all cache callers to ensure they handle type assertions properly
 - Consider using Go generics (`Cache[T]`) if Go 1.18+ is the minimum version
 - The simplified API would return `(interface{}, bool)` like native `go-cache`
 - Update tests to verify type assertion behavior
 
 ### Code Example
+
 ```go
 // Before (complex wrapper)
 func (c *Cache) Get(key string, v interface{}) (bool, error) {
@@ -209,11 +225,13 @@ After evaluation, this refactoring was **not implemented** because:
 ### What Would Actually Work
 
 If code reduction is desired, consider:
+
 - Using generics to create type-safe map accessors (Go 1.18+)
 - Using `mapstructure` library for full struct unmarshaling
 - Keeping the current implementation (recommended - it's already clean)
 
 ### Original Rationale (Superseded)
+
 - ~~**Already a dependency**: `samber/lo` is already used in `internal/scheduler/filter.go`~~
 - ~~**Type-safe**: Generic functions provide compile-time type checking~~
 - ~~**Comprehensive utilities**: Includes `lo.ValueOr`, `lo.CoalesceOrEmpty`, map utilities~~
@@ -223,15 +241,19 @@ If code reduction is desired, consider:
 ## Not Recommended for Library Replacement
 
 ### HTTP Client (`internal/httpclient/`)
+
 **Reason**: Already uses `go-resty/resty/v2` which is well-maintained. The wrapper (208 lines) provides project-specific authentication handling and error types. This is appropriate custom code.
 
 ### SQLite Store (`internal/store/`)
+
 **Reason**: Already uses `jmoiron/sqlx` and `golang-migrate/migrate`. The custom code (264 lines in `sqlite.go`) is domain-specific persistence logic that cannot be replaced by a library.
 
 ### Scheduler Filter (`internal/scheduler/filter.go`)
+
 **Reason**: Already uses `samber/lo` for functional operations. The filtering logic (83 lines) is business logic specific to the application's needs.
 
 ### Schedule History (`internal/scheduler/history.go`)
+
 **Reason**: Simple in-memory tracking (80 lines) with domain-specific logic. A generic cache library would not simplify this code.
 
 ---

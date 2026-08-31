@@ -4,7 +4,7 @@ This directory contains sample data for testing Schedularr functionality.
 
 ## Directory Structure
 
-```
+```txt
 testdata/
 ├── configs/          # Sample configuration files
 │   ├── valid_config.yaml        # Valid application config
@@ -55,6 +55,7 @@ func TestProgramFiltering(t *testing.T) {
 ### Programs
 
 Program durations are in milliseconds:
+
 - 660000 ms = 11 minutes (typical half-length episode)
 - 1320000 ms = 22 minutes (typical sitcom episode)
 - 6960000 ms = 116 minutes (typical movie)

@@ -76,6 +76,7 @@ make e2e-down
 ### Tunarr not starting
 
 Check logs:
+
 ```bash
 docker logs schedularr-tunarr-e2e
 ```
@@ -83,6 +84,7 @@ docker logs schedularr-tunarr-e2e
 ### Port already in use
 
 If port 8000 is already in use, you can modify the port mapping in `docker-compose.yaml`:
+
 ```yaml
 ports:
   - "8001:8000"  # Change 8000 to 8001 or another free port
@@ -91,6 +93,7 @@ ports:
 ### Healthcheck failing
 
 The healthcheck verifies Tunarr is responding. If it fails:
+
 1. Check Tunarr logs
 2. Verify the `/api/version` endpoint is accessible
 3. Increase `start_period` in docker-compose.yaml if Tunarr takes longer to start
@@ -106,4 +109,3 @@ make e2e-clean
 # Or manually:
 docker-compose -f e2e/docker-compose.yaml down -v
 ```
-

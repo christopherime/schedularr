@@ -13,13 +13,13 @@ The API is served by `schedularr serve` — see the [CLI Reference](cli-referenc
 
 Every write path (`POST`/`PUT`) validates the block spec against the CUE scheduler schema before touching the store; every response body is `application/json` (or `application/problem+json` for errors).
 
-| Method | Path | Success | Error codes |
-| --- | --- | --- | --- |
-| GET | `/blocks` | 200 | — |
-| POST | `/blocks` | 201 | 400, 409 |
-| GET | `/blocks/{id}` | 200 | 404 |
-| PUT | `/blocks/{id}` | 200 | 400, 404, 409 |
-| DELETE | `/blocks/{id}` | 204 | 404 |
+| Method | Path           | Success | Error codes   |
+| ------ | -------------- | ------- | ------------- |
+| GET    | `/blocks`      | 200     | —             |
+| POST   | `/blocks`      | 201     | 400, 409      |
+| GET    | `/blocks/{id}` | 200     | 404           |
+| PUT    | `/blocks/{id}` | 200     | 400, 404, 409 |
+| DELETE | `/blocks/{id}` | 204     | 404           |
 
 - `POST`/`PUT` return `400` for a spec that fails CUE validation (e.g. a missing `cron` or a non-positive `duration`) or a malformed JSON body.
 - `POST` returns `409` for a duplicate block name; `PUT` returns `409` if the request body's `spec.name` differs from the existing block's name and collides with another block. A `PUT` whose `spec.name` differs from the current name without colliding renames the block.
@@ -30,10 +30,10 @@ Every write path (`POST`/`PUT`) validates the block spec against the CUE schedul
 
 Round-trips the same sqlite-backed blocks through the same YAML parse/render used for the on-disk `scheduler.yaml` bootstrap path. Both endpoints exchange raw YAML text, not JSON.
 
-| Method | Path | Success | Error codes |
-| --- | --- | --- | --- |
-| POST | `/blocks/import` | 200 | 400, 409, 413 |
-| GET | `/blocks/export` | 200 | — |
+| Method | Path             | Success | Error codes   |
+| ------ | ---------------- | ------- | ------------- |
+| POST   | `/blocks/import` | 200     | 400, 409, 413 |
+| GET    | `/blocks/export` | 200     | —             |
 
 - `POST /blocks/import` takes an `application/yaml` body (capped at 1MiB; an oversized body gets `413`) and an optional `?dry_run=true` query parameter (default `false`). The body is strictly decoded and CUE-validated, including duplicate block-name and empty-`show_title` rejection — any failure is `400` with the CUE detail included. Every parsed block's name is checked against every block already in the store; any collision is `409` (listing the colliding name(s)) with **zero writes**, even for the non-colliding blocks in the same batch. `dry_run=true` stops after that check and reports what would have been imported (`{imported, dry_run, names}`) without writing anything; otherwise every block is created with a fresh UUID and `enabled: true`.
 - `GET /blocks/export` renders every stored block's spec as YAML — **including disabled blocks**, since export doubles as a backup mechanism. The response has no `enabled` state of its own (that lives on the store record); re-importing an exported file creates every block as enabled.
@@ -42,11 +42,11 @@ Round-trips the same sqlite-backed blocks through the same YAML parse/render use
 
 Delegates to the same runner the CLI's `generate`/`generate --apply` uses, so the CLI and the API share one implementation: load the enabled blocks, fetch available Tunarr content, run the scheduling engine over a `days`-wide window starting now, and — only when applying — push the result to Tunarr per channel and commit pending state.
 
-| Method | Path | Success | Error codes |
-| --- | --- | --- | --- |
-| POST | `/generate` | 200 | 400, 502 |
-| POST | `/apply` | 200 | 400, 502 |
-| GET | `/schedule?days=N&channel_id=…` | 200 | 400, 502 |
+| Method | Path                            | Success | Error codes |
+| ------ | ------------------------------- | ------- | ----------- |
+| POST   | `/generate`                     | 200     | 400, 502    |
+| POST   | `/apply`                        | 200     | 400, 502    |
+| GET    | `/schedule?days=N&channel_id=…` | 200     | 400, 502    |
 
 - `POST /generate` and `POST /apply` share the same optional `GenerateRequest` body (`days`, `channel_id`); `GET /schedule` takes the same `days` and `channel_id` as query parameters (parity with the POST body — this is what the [web Guide's](web-ui-guide.md#the-guide) DAYS/SCOPE controls call). `days` defaults to `7` and is range-checked by the handler itself against `[1, 30]`, returning `400` outside that range (oapi-codegen's generated bindings don't enforce the OpenAPI schema's own default/minimum/maximum).
 - Every slot's `programs` array carries the typed `ScheduledProgram` shape — `title`, `duration_ms`, and a per-program `start_time` (the slot's start plus the cumulative durations of everything before it in the lineup) always present; `type`, `season`, and `episode` present only when the source program carries them. This replaced the untyped `additionalProperties: true` passthrough outright in v0.5.1 (no dual-shape transition, per the no-legacy policy); the same shape flows through `POST /generate`, `POST /apply`, and `GET /schedule` identically.
@@ -59,9 +59,9 @@ Delegates to the same runner the CLI's `generate`/`generate --apply` uses, so th
 
 Lists `schedule_history` rows, ordered by `scheduled_at` descending, scheduled within the last `days` days.
 
-| Method | Path | Success | Error codes |
-| --- | --- | --- | --- |
-| GET | `/history?days=N` | 200 | 400 |
+| Method | Path              | Success | Error codes |
+| ------ | ----------------- | ------- | ----------- |
+| GET    | `/history?days=N` | 200     | 400         |
 
 `days` defaults to `7`; the handler applies the default and range-checks against `[1, 90]` itself, returning `400` outside that range. `days` only has data to return as far back as `maintenance.history_retention` allows — see [Scheduling Concepts' history retention section](scheduling-concepts.md#schedule-history-and-retention).
 
@@ -69,10 +69,10 @@ Lists `schedule_history` rows, ordered by `scheduled_at` descending, scheduled w
 
 Lists and patches the per-show `series_state` tracking rows (current season/episode, completion, and the disabled flag the scheduler sets once a non-restarting series runs out of episodes).
 
-| Method | Path | Success | Error codes |
-| --- | --- | --- | --- |
-| GET | `/state/series` | 200 | — |
-| PATCH | `/state/series/{show_title}` | 200 | 400, 404 |
+| Method | Path                         | Success | Error codes |
+| ------ | ---------------------------- | ------- | ----------- |
+| GET    | `/state/series`              | 200     | —           |
+| PATCH  | `/state/series/{show_title}` | 200     | 400, 404    |
 
 - `PATCH` applies a partial update: only fields present in the request body (`current_season`, `current_episode`, `completed`, `disabled`) change, and a body with none of them set returns `400`, as does a malformed JSON body.
 - `PATCH` returns `404` for a `show_title` with no persisted `series_state` row — the store fabricates nothing for the API.
@@ -82,10 +82,10 @@ Lists and patches the per-show `series_state` tracking rows (current season/epis
 
 The Tunarr boundary: `ListChannels` proxies `GET /api/channels` on the configured Tunarr instance; `GetStatus` reports overall service health, probing Tunarr reachability the same way.
 
-| Method | Path | Success | Error codes |
-| --- | --- | --- | --- |
-| GET | `/channels` | 200 | 502 |
-| GET | `/status` | 200 | — |
+| Method | Path        | Success | Error codes |
+| ------ | ----------- | ------- | ----------- |
+| GET    | `/channels` | 200     | 502         |
+| GET    | `/status`   | 200     | —           |
 
 - `GET /channels` returns `502` (`title: "tunarr unreachable"`) both when Tunarr isn't configured (`detail: "tunarr not configured"`) and when the configured client's call fails (`detail` carries the wrapped connectivity error).
 - `GET /status` never returns a `5xx`. It always responds `200` with `version`, `tunarr_reachable` (a live probe), `tunarr_error` (set whenever `tunarr_reachable` is `false`), `blocks` (the current block count, omitted rather than failing the request if the count itself errors), `last_applied_at` (when the most recent apply pushed at least one lineup to Tunarr — planned pushes and stale-channel clears alike, sampled at push time; omitted when no apply has been recorded), and `next_cron_tick` (when `serve`'s cron loop will next generate and apply; omitted when no cron loop is running). The two timestamp fields feed the web UI's bezel telemetry strip.
@@ -94,10 +94,10 @@ The Tunarr boundary: `ListChannels` proxies `GET /api/channels` on the configure
 
 Exposes what Tunarr's synced library actually contains — shows and the distinct genre/rating values observed across it. Both endpoints share a 1h cache with schedule generation: a call that finds the cache already warm issues no Tunarr HTTP requests at all.
 
-| Method | Path | Success | Error codes |
-| --- | --- | --- | --- |
-| GET | `/media/shows` | 200 | 502 |
-| GET | `/media/meta` | 200 | 502 |
+| Method | Path           | Success | Error codes |
+| ------ | -------------- | ------- | ----------- |
+| GET    | `/media/shows` | 200     | 502         |
+| GET    | `/media/meta`  | 200     | 502         |
 
 `GET /media/shows` returns `[{title, episode_count}]`, one entry per distinct show, sorted by title. `GET /media/meta` returns `{genres, ratings}`: the distinct, sorted values seen across every fetched program. Both return `502` under the same conditions as `GET /channels`. An empty library with Tunarr reachable is a normal `200` with empty arrays, not an error.
 

@@ -190,6 +190,7 @@ v0.5.5 below).
   pending slice below shifts one more number down (draft & apply →
   v0.5.6, memory/`/history/` → v0.5.7, live link → v0.5.8, block power
   tools → v0.5.9, the desk → v0.5.10, polish → v0.5.11).
+
 > **Numbering convention (2026-08-31):** patch numbers kept being consumed
 > by operator-directed fixes (v0.5.2 polish, v0.5.4 brand, v0.5.5 security),
 > so pending slices are listed in THEME ORDER and get their number when they

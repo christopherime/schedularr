@@ -86,12 +86,12 @@ schedularr generate --apply --yes      # Apply to Tunarr (--yes is mandatory; th
 schedularr generate --verbose          # Raise logging to debug
 ```
 
-| Flag | Description |
-| --- | --- |
-| `--apply` | Push the generated schedule to Tunarr (requires `--yes`) |
-| `--yes` | Required alongside `--apply`; there is no interactive confirmation |
-| `--dry-run` | Preview only, even if `--apply` is also set |
-| `--verbose`, `-v` | Raise logging to debug |
+| Flag              | Description                                                        |
+| ----------------- | ------------------------------------------------------------------ |
+| `--apply`         | Push the generated schedule to Tunarr (requires `--yes`)           |
+| `--yes`           | Required alongside `--apply`; there is no interactive confirmation |
+| `--dry-run`       | Preview only, even if `--apply` is also set                        |
+| `--verbose`, `-v` | Raise logging to debug                                             |
 
 ## Series state
 
@@ -127,11 +127,11 @@ schedularr serve --insecure-no-auth
 schedularr serve --interval 1h
 ```
 
-| Flag | Description |
-| --- | --- |
-| `--listen <addr>` | Address for the HTTP API server to listen on (default `:8484`) |
-| `--insecure-no-auth` | Skip bearer-token auth on `/api/v1/*` (local development only) |
-| `--interval`, `-i` | Interval between cron-driven schedule generate-and-apply cycles (default `6h`) |
+| Flag                 | Description                                                                    |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `--listen <addr>`    | Address for the HTTP API server to listen on (default `:8484`)                 |
+| `--insecure-no-auth` | Skip bearer-token auth on `/api/v1/*` (local development only)                 |
+| `--interval`, `-i`   | Interval between cron-driven schedule generate-and-apply cycles (default `6h`) |
 
 **Config keys:** `api.listen`, `api.token` (or `SCHEDULARR_API_TOKEN`, which always wins), `api.insecure_no_auth`, `cron_interval` — see the [Deployment config reference](deployment.md#configuration-reference).
 
