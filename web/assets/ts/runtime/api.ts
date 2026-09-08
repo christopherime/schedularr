@@ -154,17 +154,20 @@ async function parseBody<T>(res: Response): Promise<T> {
   return (await res.text()) as unknown as T;
 }
 
-// Reads never take this long against a same-LAN instance; writes get more
+// Reads never take this long against a same-LAN instance. Writes get more
 // headroom because /generate and /apply do real planning work against
-// Tunarr before they answer. The one sanctioned long read is the guide's
-// GET /schedule: it re-plans the full four-week window against Tunarr,
-// and the first call after a cold pod start (Tunarr itself waking, empty
-// caches) has been observed to take over a minute -- that call passes
-// LONG_GET_TIMEOUT_MS explicitly; every other read stays on the 15s
-// default.
+// Tunarr before they answer. The guide's GET /schedule and its draft
+// mode's POST /generate and POST /apply are the sanctioned long calls:
+// the first plan after a cold pod start (Tunarr itself waking, empty
+// caches) has been observed to exceed a minute, and an apply also pushes
+// every channel's lineup after planning -- a client-side abort mid-push
+// would leave a half-landed apply behind, so the guide passes
+// LONG_SEND_TIMEOUT_MS explicitly. Every other read stays on 15s and
+// every other write on 60s.
 const GET_TIMEOUT_MS = 15_000;
 export const LONG_GET_TIMEOUT_MS = 90_000;
 const SEND_TIMEOUT_MS = 60_000;
+export const LONG_SEND_TIMEOUT_MS = 120_000;
 
 async function request<T>(method: string, path: string, body: unknown, timeoutMs: number): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -232,15 +235,16 @@ const inflightMutations = new Map<string, Promise<unknown>>();
 /**
  * Send a non-GET request (POST/PUT/PATCH/DELETE). body is JSON-encoded
  * when provided; the decoded response body is returned as T (undefined
- * for a 204).
+ * for a 204). timeoutMs is the write tier -- omit it everywhere except
+ * the guide's draft preview/apply (LONG_SEND_TIMEOUT_MS).
  */
-export function apiSend<T>(method: string, path: string, body?: unknown): Promise<T> {
+export function apiSend<T>(method: string, path: string, body?: unknown, timeoutMs: number = SEND_TIMEOUT_MS): Promise<T> {
   const key = `${method} ${path} ${body === undefined ? "" : JSON.stringify(body)}`;
   const existing = inflightMutations.get(key);
   if (existing) {
     return existing as Promise<T>;
   }
-  const p = request<T>(method, path, body, SEND_TIMEOUT_MS).finally(() => {
+  const p = request<T>(method, path, body, timeoutMs).finally(() => {
     inflightMutations.delete(key);
   });
   inflightMutations.set(key, p);

@@ -5,6 +5,9 @@
 // (el.style.setProperty) -- the CSP's style-src 'self' silently drops
 // inline style="..." attributes, and grid-column line numbers set via the
 // CSSOM are not inline attributes (see DESIGN.md, Content-Security-Policy).
+// In draft mode (spec §3.3) every slot carries a verdict
+// (`GuideSlot.draft`) that renders as `data-draft` plus a text chip; the
+// diff itself lives in runtime/draft.ts.
 //
 // Since the v0.5.3 full-week reframe (spec §3.1, second amendment) the
 // sheet renders SEVEN consecutive days as one continuous horizontal
@@ -244,6 +247,13 @@ export interface GuideProgram {
   startMs: number;
 }
 
+/** A slot's verdict in draft mode (spec §3.3), computed client-side by
+ * runtime/draft.ts against the committed reading: new / changed / same
+ * inside the draft window, removed (in the reading, not in the draft),
+ * beyond (a reading slot past the draft horizon, shown plain). Undefined
+ * in committed mode and on ghosts. */
+export type DraftVerdict = "new" | "changed" | "same" | "removed" | "beyond";
+
 /** One renderable slot (a planned slot or a NO SIGNAL ghost). */
 export interface GuideSlot {
   kind: "slot" | "ghost";
@@ -257,6 +267,8 @@ export interface GuideSlot {
   programs: GuideProgram[];
   /** ghost only: the winning block's name. */
   lostTo?: string;
+  /** draft mode only: the diff verdict. */
+  draft?: DraftVerdict;
 }
 
 /** One channel row of the sheet: plate + its slots (ghosts included),
@@ -268,8 +280,8 @@ export interface GuideRow {
 }
 
 /** What ghost resolution needs from a BlockRecord -- the Warning itself
- * carries only block names + occurrence_start until v0.5.5 (memory) adds
- * channel_id/duration_minutes to the wire shape. */
+ * carries only block names + occurrence_start until the Memory slice
+ * adds channel_id/duration_minutes to the wire shape. */
 export interface GhostBlockInfo {
   channelId: string;
   durationMinutes: number;
@@ -285,8 +297,8 @@ export interface WarningShape {
  * Places a current-plan warning as a NO SIGNAL ghost at its
  * would-have-aired time. INTERIM (v0.5.1): the Warning wire shape carries
  * only block names and occurrence_start -- duration and channel arrive on
- * the contract in v0.5.5 -- so both are resolved client-side from the
- * losing block's spec (GET /blocks). When the losing block can't be
+ * the contract in the Memory slice -- so both are resolved client-side
+ * from the losing block's spec (GET /blocks). When the losing block can't be
  * resolved (blocks fetch failed, block deleted between plan and render),
  * the winner's channel places the ghost (a conflict is always
  * same-channel) and the duration falls back to one division (30 min);
@@ -408,13 +420,18 @@ export interface GridCallbacks {
    * the page flips the opener's aria-expanded while its inspector is
    * open. Absent on surfaces with no inspector (the /kit/ fixtures). */
   inspectorId?: string;
+  /** Draft mode entered from a committed grid already on the glass: new
+   * and changed slots take the 200ms draw-in (motion inventory item 3).
+   * Never set on an initial load; CSS suppresses it under reduced
+   * motion. */
+  drawIn?: boolean;
 }
 
 export interface GridHandle {
   /** Repositions the now-line (CSSOM --now-min, week-relative) and
    * refreshes the is-past / is-on-air classes on every piece. Driven by
    * the guide page's local 60s timer (heartbeat skew correction arrives
-   * with SSE in v0.5.6). */
+   * with the SSE live-link slice). */
   updateNow(nowMs: number): void;
   /** The x pixel offset of "now" inside the scroll viewport, or null
    * when now is outside the rendered week -- the auto-scroll target on
@@ -469,6 +486,22 @@ function slotAriaLabel(slot: GuideSlot): string {
   return `${slot.blockName}, ${slotTimeRange(slot)}, ${plural(slot.programs.length, "program")}`;
 }
 
+/** The aria-label prefix for a verdict that changes something -- same,
+ * beyond, and committed-mode slots get none (SC 1.4.1: the verdict chip
+ * is the visible text; this is its spoken twin). */
+export function draftAriaPrefix(v: DraftVerdict | undefined): string {
+  if (v === "new" || v === "changed" || v === "removed") return `Draft ${v} — `;
+  return "";
+}
+
+/** The visible verdict chip (`NEW` / `CHANGED` / `REMOVED`); null
+ * otherwise. Text carries the fact -- the accent edge and the removed
+ * hatch are secondary scan aids. */
+function verdictChip(v: DraftVerdict | undefined): HTMLElement | null {
+  if (v !== "new" && v !== "changed" && v !== "removed") return null;
+  return el("span", "guide-slot__verdict", v.toUpperCase());
+}
+
 interface PieceOptions {
   edges: SegmentEdges;
   /** The widest piece carries the visible face; the others mirror the
@@ -486,13 +519,15 @@ function buildSlotPiece(slot: GuideSlot, span: SlotSpan, opts: PieceOptions, cb:
   btn.type = "button";
   btn.tabIndex = -1;
   btn.dataset.type = slot.blockType;
+  if (slot.draft) btn.dataset.draft = slot.draft;
+  if (cb.drawIn && (slot.draft === "new" || slot.draft === "changed")) btn.classList.add("guide-slot--drawin");
   const { cutLeft, cutRight, joinLeft, joinRight } = opts.edges;
   if (cutLeft) btn.dataset.cut = cutRight ? "both" : "left";
   else if (cutRight) btn.dataset.cut = "right";
   if (joinLeft) btn.dataset.join = joinRight ? "both" : "left";
   else if (joinRight) btn.dataset.join = "right";
   btn.style.setProperty("grid-column", gridColumn(span));
-  const base = slotAriaLabel(slot);
+  const base = draftAriaPrefix(slot.draft) + slotAriaLabel(slot);
   btn.setAttribute("aria-label", opts.labeled ? base : `${base}, continues across midnight`);
   if (cb.inspectorId) {
     btn.setAttribute("aria-controls", cb.inspectorId);
@@ -502,6 +537,8 @@ function buildSlotPiece(slot: GuideSlot, span: SlotSpan, opts: PieceOptions, cb:
     btn.appendChild(el("span", "guide-slot__name", "NO SIGNAL"));
     btn.appendChild(el("span", "guide-slot__meta", `LOST TO ${(slot.lostTo ?? "").toUpperCase()}`));
   } else {
+    const chip = verdictChip(slot.draft);
+    if (chip) btn.appendChild(chip);
     btn.appendChild(el("span", "guide-slot__name", slot.blockName));
     btn.appendChild(el("span", "guide-slot__meta", slotMeta(slot)));
     // Series faces list their content (spec §3.1): the block name stays
@@ -586,14 +623,16 @@ export function renderGuideWeek(
     plateCell.appendChild(plateEl(row.plate));
     rowEl.appendChild(plateCell);
 
-    // A channel with any ghost gets the two-lane template on EVERY
-    // segment, so the lane pitch stays uniform across the week band.
-    const hasGhost = row.slots.some((s) => s.kind === "ghost");
+    // A channel with any ghost OR any removed draft slot gets the
+    // two-lane template on EVERY segment -- removed slots live in lane 2
+    // next to the ghosts, so a replacement never paints over what it
+    // replaces.
+    const hasLane2 = row.slots.some((s) => s.kind === "ghost" || s.draft === "removed");
     const segEls: HTMLElement[] = [];
     for (let k = 0; k < dayCount; k++) {
       let cls = "guide-track";
       if (k > 0) cls += " guide-track--newday";
-      if (hasGhost) cls += " guide-track--lanes";
+      if (hasLane2) cls += " guide-track--lanes";
       const seg = el("div", cls);
       segEls.push(seg);
       rowEl.appendChild(seg);
@@ -715,7 +754,7 @@ export function renderGuideWeek(
     for (const track of tracks) {
       for (const p of track) {
         const past = p.slot.endMs <= nowMs;
-        const onAir = p.slot.startMs <= nowMs && nowMs < p.slot.endMs;
+        const onAir = p.slot.draft !== "removed" && p.slot.startMs <= nowMs && nowMs < p.slot.endMs;
         for (const piece of p.pieces) {
           piece.classList.toggle("is-past", past);
           piece.classList.toggle("is-on-air", onAir);
@@ -789,11 +828,13 @@ export function renderRundown(
       const btn = el("button", slot.kind === "ghost" ? "rundown-slot rundown-slot--ghost" : "rundown-slot");
       btn.type = "button";
       btn.dataset.type = slot.blockType;
+      if (slot.draft) btn.dataset.draft = slot.draft;
       btn.setAttribute(
         "aria-label",
-        continuation
-          ? `${slotAriaLabel(slot)} (continued from the previous day, until ${formatClock(slot.endMs)})`
-          : slotAriaLabel(slot),
+        draftAriaPrefix(slot.draft) +
+          (continuation
+            ? `${slotAriaLabel(slot)} (continued from the previous day, until ${formatClock(slot.endMs)})`
+            : slotAriaLabel(slot)),
       );
       if (cb.inspectorId) {
         btn.setAttribute("aria-controls", cb.inspectorId);
@@ -807,6 +848,8 @@ export function renderRundown(
         body.appendChild(el("span", "guide-slot__name", "NO SIGNAL"));
         body.appendChild(el("span", "guide-slot__meta", `LOST TO ${(slot.lostTo ?? "").toUpperCase()}`));
       } else {
+        const chip = verdictChip(slot.draft);
+        if (chip) body.appendChild(chip);
         body.appendChild(el("span", "guide-slot__name", slot.blockName));
         const meta = [`${slot.programs.length} PROG`];
         if (slot.blockType !== "") meta.push(slot.blockType.toUpperCase());
@@ -830,7 +873,10 @@ export function renderRundown(
   function updateNow(nowMs: number): void {
     for (const p of entries) {
       p.primary.classList.toggle("is-past", p.slot.endMs <= nowMs);
-      p.primary.classList.toggle("is-on-air", p.slot.startMs <= nowMs && nowMs < p.slot.endMs);
+      p.primary.classList.toggle(
+        "is-on-air",
+        p.slot.draft !== "removed" && p.slot.startMs <= nowMs && nowMs < p.slot.endMs,
+      );
     }
     nowRule.remove();
     const today = lists.find((l) => nowMs >= l.dayStartMs && nowMs < l.dayEndMs);
