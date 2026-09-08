@@ -16,7 +16,8 @@ station-lingo terminology, any-media scheduling, and `/series` becoming
 `/history`. Their design lives
 in the v1.0 product-intake spec
 (`docs/superpowers/specs/2026-08-30-v1-station-terminology-media-history-design.md`),
-which also carries the Open Questions those streams still owe an answer to.
+which also carries the Open Questions — answered by the operator on
+2026-09-08 (its §5).
 
 ## Where things stand (v0.2.x)
 
@@ -99,8 +100,10 @@ missing today) → media-kind criterion + `/media/movies`. The ordered movie
   It round-trips through the OpenAPI `Filter` schema, the CUE schema, and
   `internal/api/blocks.go`, and `matchesFilter` has no branch for it, so
   a block with `tags:` set behaves exactly as if the field were absent.
-  `docs/scheduling-concepts.md` currently documents it as working
-  AND-logic; that line is a factual error until this ships.
+  `docs/scheduling-concepts.md` says so. Operator directive (2026-09-08,
+  Q7): implement the criterion now — the operator-managed tag store and
+  the `matchesFilter` branch — ahead of the metadata enrichment, and
+  correct the doc in the same change.
 - **Media-kind criterion.** `Program.Type` (`movie`, `episode`, …) is
   never consulted, so "movies only" can only be approximated with a
   duration floor. Add `kinds` to the criteria object, and a
@@ -233,7 +236,10 @@ v0.5.5 below).
   `/dashboard/` are both deleted here; nav becomes `GUIDE · BLOCKS ·
   HISTORY`. The industry models this as one record in two states — a
   traffic log of what is scheduled, an as-run log of what aired — which
-  is the operator's "one searchable place" verbatim.
+  is the operator's "one searchable place" verbatim. The retention knob
+  splits per table here (history, snapshots, apply runs — Q10,
+  2026-09-08), in the same migration, while the config schema is still
+  breakable.
 - **Then — Live link (SSE): pending.** Unchanged in scope.
 - **Then — Block power tools: pending.** Unchanged in scope.
 - **Then — History desk power tools: pending.** Was "the series desk";
@@ -247,8 +253,9 @@ v0.5.5 below).
   `MAX(...)` into `app_meta` so a deletion cannot lower it, and the
   deletion path must be one transaction across state, snapshots, and
   history. A removal that intersects a currently-on-air occurrence is the
-  one case that changes what is playing right now — the spec proposes
-  refusing it.
+  one case that changes what is playing right now — the operator
+  confirmed (2026-09-08, Q9): refuse it with a 409 naming when it becomes
+  safe; aired snapshots lose only the removed title's key (Q5).
 - **Last — Polish pass: pending.** Unchanged in scope.
 
 Headline surfaces across the train:
@@ -288,10 +295,13 @@ sequence concept is authored once under its final name.
 - **`type: "series"` → `type: "sequence"`** (operator-chosen, fixed).
   Aligns with Tunarr's own "sequential" slot mode and its shared
   iterator, which is the same mechanic as Schedularr's cursor.
-- **`type: "filter"` → a criteria-programming word.** "Filter" names a
-  mechanism, not programming. Candidates are ranked in the intake spec
-  (`rotation` recommended, from radio automation's category/rotation
-  vocabulary); the operator picks before this slice starts.
+- **`type: "filter"` → `type: "selection"`** (operator-chosen
+  2026-09-08, Q1). "Filter" names a mechanism, not programming;
+  `selection` matches the operator's own phrasing. The criteria object
+  renames with it (Q3): `filter:` → `criteria:` and
+  `fallback.filler_filter` → `fallback.filler_criteria`, so the word
+  leaves the vocabulary entirely. UI and docs always say "sequence
+  block", never the bare noun (Q11).
 - **Blast radius, all in one change** (no aliases, no dual acceptance,
   per the no-legacy policy): the OpenAPI schemas and both generated
   artifacts, the CUE schemas, ~400 Go identifiers, the `series_state` and

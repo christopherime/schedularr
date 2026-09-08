@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **v1.0 intake Open Questions answered** (2026-09-08, recorded in the
+  intake spec's §5; the v0.5 spec's §3.1 `Arm draft` amendment confirmed):
+  `selection` replaces `filter` and the criteria object renames with it,
+  one `/history/` page, scrub-the-key deletions, enriched genres with a raw
+  fallback, the tags criterion implemented next, a stable `list_id` for
+  movie sequences, 409 on on-air deletions, retention split per table,
+  always "sequence block". `docs/roadmap.md`, `TODO.md`, `.ai/AGENTS.md`,
+  and `docs/scheduling-concepts.md` follow.
+
 ## [0.5.6] - 2026-09-08
 
 ### Added

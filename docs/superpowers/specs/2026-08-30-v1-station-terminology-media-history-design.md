@@ -581,7 +581,22 @@ word "polish".
 
 ---
 
-## 5. Open Questions for the Operator
+## 5. Open Questions for the Operator — ANSWERED 2026-09-08
+
+The operator confirmed: **Q1** `selection` (not `rotation`) replaces
+`type: "filter"`. **Q2** moot — the 2026-08-31 numbering convention
+(pending slices are numbered when they ship) settled it. **Q3** the field
+renames too: `filter:` → `criteria:` and `fallback.filler_filter` →
+`fallback.filler_criteria`. **Q4** one `/history/` page absorbing `/log/`.
+**Q5** scrub the title's key out of aired snapshots. **Q6** enriched genres
+with a raw fallback. **Q7** implement the tags criterion now, against
+operator-typed tags, ahead of the metadata enrichment. **Q8** a stable
+`list_id` minted at block create. **Q9** refuse (409) a removal that
+intersects the on-air occurrence. **Q10** split retention per table now,
+while the config schema is still breakable. **Q11** always "sequence
+block", never the bare noun. The original questions follow for context.
+
+### Original questions
 
 **Q1 — The `filter` block-type replacement.** Ranked in §1.4:
 `rotation` (recommended — real radio-automation term, contrasts cleanly with

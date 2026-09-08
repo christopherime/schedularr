@@ -17,19 +17,22 @@
 
 Three operator-directed product streams, designed in
 `docs/superpowers/specs/2026-08-30-v1-station-terminology-media-history-design.md`
-and slotted into `docs/roadmap.md`. Each is blocked on the Open Questions
-at the end of that spec (Q1–Q11) — nothing starts before the operator
-answers them.
+and slotted into `docs/roadmap.md`. The Open Questions at the end of that
+spec (Q1–Q11) were answered by the operator on 2026-09-08 (recorded in
+its §5); nothing blocks these streams now.
 
 - **Station lingo (→ v0.6.0).** "Block" validated against broadcast
   sources and kept; `type: "series"` → `"sequence"` (fixed); `type:
-  "filter"` → a criteria-programming word (`rotation` recommended, Q1).
+  "filter"` → `"selection"` (chosen at Q1); the criteria object renames
+  with it, `filter:` → `criteria:` (Q3); UI and docs always say "sequence
+  block" (Q11).
   Hard rename across OpenAPI + generated code, CUE, `scheduler.yaml`,
   `blocks.spec_json`, two DB tables, the web UI, and the docs — must land
   before the v0.9.0 freeze.
 - **Any Tunarr media kind (→ v0.4.x, then v0.6.1).** Movies already reach
   the candidate pool; the gaps are the criteria — no media-kind field,
-  `filter.tags` accepted but never evaluated, raw genres, no
+  `filter.tags` accepted but never evaluated (Q7: implement it next,
+  ahead of enrichment), raw genres (Q6: enriched with raw fallback), no
   `/media/movies`. Converges with the v0.4 metadata theme (movie lookups,
   enrichment store, normalized genres/ratings, tags), with ordered movie
   sequences as a Sequence variant at v0.6.1.
@@ -37,7 +40,9 @@ answers them.
   page absorbing the planned `/log/`: TRACKED sequences, AS-RUN airings,
   apply RUNS. Adds remove-from-history and range cleanup, which need the
   plan-sequence floor moved into `app_meta` and a transactional delete
-  path first — see the spec's I1–I5 invariant audit.
+  path first — see the spec's I1–I5 invariant audit. Answered: scrub the
+  title's key (Q5), refuse on-air deletions with a 409 (Q9), split
+  retention per table (Q10).
 
 ## Library Adoption Analysis Summary
 

@@ -306,11 +306,11 @@ See `TODO.md` for the full backlog. Key themes:
 
 - **Next:** `/series` → `/history` page (merge tracked sequences, AS-RUN airings, apply runs)
 - **Deferred from v0.5.6:** the diff baseline is the operator's last reading rather than Tunarr's lineup; the apply window is capped at 7 days until retention is re-keyed on `occurrence_start`; `guide.ts` wants a draft-controller/rendering split; the apply mutex ignores `ctx`
-- **v0.6.0:** Station terminology rename (filter→rotation, series→sequence)
+- **v0.6.0:** Station terminology rename (filter→selection with `filter:`→`criteria:`, series→sequence)
 - **v0.6.1:** Any Tunarr media kind support (movies, tags, media-kind criteria)
 - **Deferred issues:** Transactional Engine.Commit, channel-scoped series_state, overflow slots desync
 
-Open questions (Q1–Q11) in `docs/superpowers/specs/2026-08-30-v1-station-terminology-media-history-design.md` block the v1.0 streams.
+The intake spec's Open Questions (Q1–Q11) were answered on 2026-09-08 (its §5); the v1.0 streams are unblocked.
 
 ## Key Files
 
