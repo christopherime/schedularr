@@ -1227,7 +1227,7 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 
 	// Filter out recently scheduled programs to prevent repetition
 	originalCount := len(candidates)
-	candidates = e.filterByHistory(candidates, block.ChannelID)
+	candidates = e.filterByHistory(candidates, block.ChannelID, occurrenceStart)
 
 	if len(candidates) < originalCount {
 		e.logger.Debug("filtered out recently scheduled programs",
@@ -1782,7 +1782,7 @@ func findEpisode(programs []tunarr.Program, title string, season, episode int) *
 // start time -- the identity PlanBlock's idempotence check looks
 // (block.Name, occurrenceStart) up by.
 func (e *Engine) recordHistory(programs []tunarr.Program, channelID, blockName string, scheduledAt, occurrenceStart time.Time) {
-	e.history.RecordPrograms(programs, channelID, blockName, scheduledAt)
+	e.history.RecordPrograms(programs, channelID, blockName, scheduledAt, occurrenceStart)
 	e.pendingHistory = append(e.pendingHistory, makeHistoryEntries(programs, channelID, blockName, scheduledAt, occurrenceStart)...)
 }
 
@@ -1822,14 +1822,21 @@ func makeHistoryEntries(programs []tunarr.Program, channelID, blockName string, 
 	return entries
 }
 
-func (e *Engine) filterByHistory(programs []tunarr.Program, channelID string) []tunarr.Program {
+// filterByHistory drops candidates that already went out on channelID
+// recently. occurrenceStart is the occurrence being planned: the
+// in-memory tracker only counts occurrences that air before it, so the
+// surviving candidate set is a function of the occurrence rather than of
+// how far ahead the caller asked the engine to plan (see
+// ScheduleHistory.WasRecentlyScheduled). The persisted check needs no
+// such bound -- it only sees earlier applies' commits.
+func (e *Engine) filterByHistory(programs []tunarr.Program, channelID string, occurrenceStart time.Time) []tunarr.Program {
 	filtered := make([]tunarr.Program, 0, len(programs))
 	window := e.history.Window()
 	ctx := context.Background()
 
 	for _, program := range programs {
 		programID := program.GetID()
-		if e.history.WasRecentlyScheduled(programID, channelID) {
+		if e.history.WasRecentlyScheduled(programID, channelID, occurrenceStart) {
 			continue
 		}
 		if e.store != nil {

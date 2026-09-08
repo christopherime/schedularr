@@ -27,7 +27,9 @@ Each block's `type` field (`filter` or `series`) defaults to `filter` and can be
 
 Applies filter criteria to available programs, in AND logic across criteria (a program must match every specified criterion). Matching content is checked against schedule history to avoid recent repeats, shuffled, and greedily selected to fill the block's duration.
 
-Since v0.5.6 that shuffle is **deterministic per (block, occurrence)**: the candidates (and any filler) are put in a total order and then shuffled with a seed derived from the block and the occurrence's start, so re-planning the same occurrence from the same library and history yields the same lineup. A dry run and the apply that follows it therefore schedule the same content, so the plan the operator previewed is the plan that lands. Variety across occurrences is unaffected: the seed changes with each one.
+Since v0.5.6 that shuffle is **deterministic per (block, occurrence)**: the candidates (and any filler) are put in a total order and then shuffled with a seed derived from the block and the occurrence's start, so re-planning the same occurrence against the same library and the same committed history yields the same lineup. A dry run and the apply that follows it therefore schedule the same content, so the plan the operator previewed is the plan that lands. Variety across occurrences is unaffected: the seed changes with each one.
+
+The recency check behind that shuffle counts only occurrences that air **earlier** than the one being planned. A single run fills its own in-memory history as it goes, block by block, so a mid-window occurrence would otherwise be filtered against occurrences that have not aired yet — and how many of those exist depends on how far ahead the caller asked the engine to plan. Bounding the check by air time is what lets a 7-day plan and a 28-day plan schedule the shared days identically, which is the whole basis of the [Guide's draft diff](web-ui-guide.md#draft-apply): without it, an untouched draft reads `CHANGED` on any channel where two filter blocks share a content pool.
 
 ```yaml
 filter:

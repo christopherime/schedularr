@@ -85,6 +85,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   candidate set, and history, so the plan the operator previewed is the
   plan that lands. Variety across occurrences is unchanged: the seed
   still varies per occurrence.
+- **A run's own later occurrences no longer filter an earlier one's
+  candidates** (`internal/scheduler/history.go`,
+  `internal/scheduler/engine.go`): the in-memory recency check now counts
+  only occurrences that air before the one being planned. A run fills
+  that tracker as it goes, block by block, so a mid-window occurrence
+  used to be filtered against occurrences the run had generated but that
+  had not aired yet — a set whose size follows the requested window. A
+  7-day plan and a 28-day plan therefore chose different lineups for the
+  same day, and the Guide's draft read `CHANGED` on slots nobody had
+  touched wherever two filter blocks on one channel drew from the same
+  pool.
 - **Applies are serialized** (`internal/service/schedule.go`): the serve
   cron tick and a UI apply share one `Runner`, and both push lineups and
   commit engine state. `Runner.Run` now takes a mutex on the applying

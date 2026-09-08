@@ -2456,7 +2456,7 @@ func TestFilterByHistory(t *testing.T) {
 		{ID: "p3", Title: "New Show", Duration: 1800000, Type: "episode"},
 	}
 
-	filtered := engine.filterByHistory(availablePrograms, "channel-1")
+	filtered := engine.filterByHistory(availablePrograms, "channel-1", time.Now())
 
 	// p1 should be filtered out (aired 3 days ago, within 7 day window)
 	// p2 should be included (aired 10 days ago, outside 7 day window)
@@ -3514,4 +3514,65 @@ func TestPlanFilterBlock_DeterministicPerOccurrence(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, programIDs(first), programIDs(other),
 		"two occurrences a day apart planned the identical lineup")
+}
+
+// TestGenerateForTimeRange_LineupsAreWindowIndependent pins the same
+// contract one level up, where the Guide actually reads it: the 7-day
+// draft it arms and the 28-day reading it diffs that draft against must
+// plan the occurrences they share identically, or an unedited draft
+// prints CHANGED on slots nobody touched.
+//
+// Two daily filter blocks on one channel drawing from one pool is the
+// case that used to break it: the run plans block by block, so by the
+// time Beta's day-3 occurrence is planned the in-memory dedup tracker
+// already holds every Alpha occurrence the run generated -- 7 days'
+// worth or 28, depending only on what the caller asked for. Bounding
+// that check to occurrences that air earlier is what makes the two
+// agree.
+func TestGenerateForTimeRange_LineupsAreWindowIndependent(t *testing.T) {
+	programs := make([]tunarr.Program, 0, 30)
+	for i := range 30 {
+		programs = append(programs, tunarr.Program{
+			ID:       fmt.Sprintf("prog-%02d", i),
+			Title:    fmt.Sprintf("Program %02d", i),
+			Type:     "movie",
+			Duration: 30 * 60 * 1000,
+			Genres:   []tunarr.Genre{{Name: "Comedy"}},
+		})
+	}
+	blocks := []Block{
+		{ID: "blk-alpha", Name: "Alpha", ChannelID: "ch-1", Cron: "0 8 * * *", Duration: 120, Type: BlockTypeFilter, Filter: Filter{Genres: []string{"Comedy"}}},
+		{ID: "blk-beta", Name: "Beta", ChannelID: "ch-1", Cron: "0 12 * * *", Duration: 120, Type: BlockTypeFilter, Filter: Filter{Genres: []string{"Comedy"}}},
+	}
+	start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+
+	planDays := func(days int) map[string][]ScheduledSlot {
+		// A fresh engine (and store) each time: this is the dry run the
+		// Guide sends, not a replay of anything committed.
+		engine := NewEngineWithOptions(context.Background(), nil, blocks, NewMockStateStore(), EngineOptions{Location: time.UTC})
+		schedule, _, err := engine.GenerateForTimeRange(start, start.AddDate(0, 0, days), programs)
+		require.NoError(t, err)
+		return schedule
+	}
+
+	draft := planDays(7)
+	reading := planDays(28)
+
+	type occKey struct {
+		block string
+		start time.Time
+	}
+	longLineups := make(map[occKey][]string, len(reading["ch-1"]))
+	for _, slot := range reading["ch-1"] {
+		longLineups[occKey{slot.Block.Name, slot.StartTime}] = programIDs(slot.Programs)
+	}
+
+	require.Len(t, draft["ch-1"], 14, "expected two daily blocks over seven days")
+	for _, slot := range draft["ch-1"] {
+		key := occKey{slot.Block.Name, slot.StartTime}
+		want, ok := longLineups[key]
+		require.True(t, ok, "the 28-day plan is missing %s at %s", key.block, key.start)
+		assert.Equal(t, want, programIDs(slot.Programs),
+			"%s at %s planned differently for a 7-day window than for a 28-day one", key.block, key.start)
+	}
 }
