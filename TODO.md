@@ -425,6 +425,31 @@ here blocks the release; each item names the gap and why it was left.
   starts after it — a real future conflict the diff cannot express,
   since the draft never planned past the horizon to compare against.
 
+- **Arm-press focus handoff fires for pointer presses too** (final
+  re-review, minor). Chromium/Edge focus a `<button>` on mousedown, so the
+  keyboard-oriented handoff in `guide.ts`'s `preview()` also moves a mouse
+  user's focus when the Arm button disables; and a FAILED preview undoes
+  the handoff (mode flips to `off`, the bar hides, focus lands on body).
+  Fix candidate: gate the handoff on `:focus-visible` / a keyboard flag,
+  and re-run `focusArmSoon()` on the preview failure path.
+- **One vacuous assertion in `web/tests/guide.test.ts`** (~line 587): the
+  `sessionStore.get(READING_STORAGE_KEY) === undefined` check passes with
+  or without `dropStoredReading()` because the harness never seeds the
+  store — seed it, then assert the drop.
+- **`/kit/` fixture comment names the wrong order** for the three draft
+  problem blocks (the live guide renders `Draft failed` above the bar and
+  the two apply problems below it).
+- **Filter-block planning is window-independent but still block-order
+  dependent inside one run** (final fix wave, `b7a4e36`): the in-run
+  recency check now counts only occurrences that air earlier, so a 7-day
+  draft and a 28-day reading agree; but blocks are planned in name order,
+  so the first block's mid-window occurrence never sees the second block's
+  earlier ones. Stable across runs (the Guide's diff is sound); a fully
+  order-free plan needs occurrences planned in global chronological order
+  across blocks — a larger engine change.
+- **`internal/store/sqlite_test.go` fails `gofmt -l`** (pre-existing on
+  main; `make lint` passes regardless) — one-line `gofmt -w` commit.
+
 ## Deferred (v0.5.1 Guide review)
 
 Recorded from the v0.5.1 Guide fix round (2026-08-30). Neither blocks
