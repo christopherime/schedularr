@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1838,4 +1839,103 @@ func TestRunner_Run_Apply_ScopedClearRespectsChannelScope(t *testing.T) {
 	applied, err = st.ListAppliedChannels(ctx)
 	require.NoError(t, err)
 	require.NotContains(t, applied, "channel-9")
+}
+
+// newSlowFakeTunarr is a minimal fake Tunarr server for
+// TestRunner_Run_SerializesApplies: its channel-programming handler
+// sleeps for delay and tracks in-flight requests in current/maxSeen, so a
+// test can prove two concurrent applies never push to Tunarr at the same
+// time. It only implements the endpoints Run's apply path needs
+// (media-sources, programs/search, and the bare/programming channel
+// routes) -- see newFakeTunarrWithSeasons above for the fuller fake this
+// mirrors.
+func newSlowFakeTunarr(t *testing.T, programs []tunarr.Program, delay time.Duration, current, maxSeen *atomic.Int32) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/media-sources", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]tunarr.MediaSource{})
+	})
+	mux.HandleFunc("/api/programs/search", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tunarr.ProgramSearchResponse{
+			Results:    programs,
+			Page:       1,
+			TotalPages: 1,
+			TotalHits:  len(programs),
+		})
+	})
+	mux.HandleFunc("/api/channels/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/programming") {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			n := current.Add(1)
+			for {
+				m := maxSeen.Load()
+				if n <= m || maxSeen.CompareAndSwap(m, n) {
+					break
+				}
+			}
+			time.Sleep(delay)
+			current.Add(-1)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			id := strings.TrimPrefix(r.URL.Path, "/api/channels/")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": id, "name": "Fake Channel", "startTime": 0,
+				"fallback": []any{}, "programCount": 0, "transcoding": map[string]any{}, "sessions": []any{},
+			})
+		case http.MethodPut:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+// TestRunner_Run_SerializesApplies pins Runner.applyMu's contract: the
+// serve cron tick and a UI-triggered apply share one Runner, and the
+// guide's draft mode is about to make an API apply routine alongside the
+// cron loop -- letting the two interleave was an accepted single-writer
+// assumption this makes it easy to violate. Two Run(Apply: true) calls
+// launched concurrently against the same Runner must never have their
+// channel-programming pushes in flight at the same time.
+func TestRunner_Run_SerializesApplies(t *testing.T) {
+	var current, maxSeen atomic.Int32
+	server := newSlowFakeTunarr(t, canonicalPrograms(), 30*time.Millisecond, &current, &maxSeen)
+	r, _ := newTestRunner(t, server.URL)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := r.Run(context.Background(), Options{Days: 1, Apply: true})
+			errs[i] = err
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "Run call %d must not fail", i)
+	}
+	assert.Equal(t, int32(1), maxSeen.Load(),
+		"applyMu must serialize applies: the maximum observed in-flight channel-programming request must be 1")
 }

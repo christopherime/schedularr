@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/christopherime/schedularr/internal/cache"
@@ -93,6 +94,12 @@ type Runner struct {
 	// inside a block's on-air window instead of depending on whatever the
 	// real wall clock happens to be when the test runs.
 	now func() time.Time
+	// applyMu serializes applying Runs: the serve cron tick and a UI
+	// apply share one Runner and both push lineups and Commit engine
+	// state; letting them interleave was an accepted single-writer
+	// assumption that the guide's draft mode makes routine to violate.
+	// Dry runs never take it.
+	applyMu sync.Mutex
 }
 
 var _ ScheduleRunner = (*Runner)(nil)
@@ -189,6 +196,11 @@ func ActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error
 // Run never calls -- so rejecting it would mean guessing at "known
 // channels" from a source Run doesn't otherwise consult.
 func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
+	if o.Apply {
+		r.applyMu.Lock()
+		defer r.applyMu.Unlock()
+	}
+
 	blocks, err := ActiveBlocks(ctx, r.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load scheduling blocks: %w", err)

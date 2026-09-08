@@ -1241,9 +1241,17 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	maxOverflowMs := int64(block.MaxDurationOverflowMinutes) * time.Minute.Milliseconds()
 	allowedDurationWithOverflow := targetDuration + maxOverflowMs
 
-	// Simple random shuffle and fill
-	// #nosec G404 - content shuffle for programming variety, not a security-sensitive value
-	rand.Shuffle(len(candidates), func(i, j int) {
+	// Deterministic per occurrence (draft-mode contract, v0.5.6): sort
+	// the candidates by program ID so the library's arrival order cannot
+	// leak in, then shuffle with the occurrence-seeded rng series
+	// planning already uses. A dry run (GET /schedule, POST /generate)
+	// and the apply that follows it therefore pick the SAME lineup for
+	// the same block, occurrence, candidates, and history -- the plan the
+	// operator previewed is the plan that lands. Variety still comes
+	// from the seed varying per occurrence.
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].GetID() < candidates[j].GetID() })
+	rng := occurrenceRand(block.ID, occurrenceStart)
+	shuffleWith(rng, len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
 
@@ -1263,12 +1271,11 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 
 	// Check if we should add filler content
 	if block.Filler.Enabled && gapMinutes >= block.Filler.MinGapTime {
-		// nil rng: a filter block's content (this included) is frozen
-		// verbatim after its first commit, never re-derived (see
-		// PlanBlock's doc comment), so filler non-determinism here can't
-		// break apply-idempotence the way it can for a re-derived series
-		// occurrence -- global math/rand is fine.
-		fillerPrograms, err := e.getFiller(block, gapDuration, nil)
+		// The occurrence-seeded rng, not nil/global: filler must be as
+		// reproducible as the main lineup for a previewed plan to equal
+		// the applied one (the first-commit freeze still applies after
+		// apply; this makes the dry runs before it agree too).
+		fillerPrograms, err := e.getFiller(block, gapDuration, rng)
 		if err != nil {
 			e.logger.Warn("failed to get filler for block",
 				"block_name", block.Name,

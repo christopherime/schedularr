@@ -3415,3 +3415,77 @@ func TestPlanBlock_ProvenanceStampNeverMovesBackward(t *testing.T) {
 	assert.Equal(t, futureStamp, state.CursorPlanSeq,
 		"a real plan must never lower an already-higher cursor provenance stamp")
 }
+
+// equalIDs reports whether two program lists carry the same program IDs
+// in the same order -- the comparison
+// TestPlanFilterBlock_DeterministicPerOccurrence needs to prove two
+// separately-run plans picked the identical lineup.
+func equalIDs(a, b []tunarr.Program) bool {
+	idsA, idsB := programIDs(a), programIDs(b)
+	if len(idsA) != len(idsB) {
+		return false
+	}
+	for i := range idsA {
+		if idsA[i] != idsB[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestPlanFilterBlock_DeterministicPerOccurrence pins the draft-mode
+// contract: a filter occurrence's lineup is a pure function of (block,
+// occurrence start, candidates) -- a dry run and the apply that follows
+// it pick the same programs, whatever order the library arrived in.
+func TestPlanFilterBlock_DeterministicPerOccurrence(t *testing.T) {
+	programs := make([]tunarr.Program, 0, 40)
+	for i := 0; i < 40; i++ {
+		programs = append(programs, tunarr.Program{
+			ID:       fmt.Sprintf("prog-%02d", i),
+			Title:    fmt.Sprintf("Program %02d", i),
+			Type:     "movie",
+			Duration: 30 * 60 * 1000,
+			Genres:   []tunarr.Genre{{Name: "Comedy"}},
+		})
+	}
+	block := Block{ID: "blk-1", Name: "Comedy Hour", ChannelID: "ch-1", Duration: 120, Type: BlockTypeFilter, Filter: Filter{Genres: []string{"Comedy"}}}
+	occ := time.Date(2026, 9, 10, 21, 0, 0, 0, time.UTC)
+
+	newEngine := func() *Engine {
+		return NewEngineWithOptions(context.Background(), nil, []Block{block}, NewMockStateStore(), EngineOptions{})
+	}
+	first, err := newEngine().planFilterBlock(block, programs, occ)
+	if err != nil {
+		t.Fatalf("first plan: %v", err)
+	}
+	second, err := newEngine().planFilterBlock(block, programs, occ)
+	if err != nil {
+		t.Fatalf("second plan: %v", err)
+	}
+	if !equalIDs(first, second) {
+		t.Fatalf("same inputs planned different lineups:\n%v\n%v", programIDs(first), programIDs(second))
+	}
+
+	// Library order must not matter: the same catalog reversed plans the
+	// same lineup.
+	reversed := make([]tunarr.Program, len(programs))
+	for i, p := range programs {
+		reversed[len(programs)-1-i] = p
+	}
+	third, err := newEngine().planFilterBlock(block, reversed, occ)
+	if err != nil {
+		t.Fatalf("reversed plan: %v", err)
+	}
+	if !equalIDs(first, third) {
+		t.Fatalf("library order changed the lineup:\n%v\n%v", programIDs(first), programIDs(third))
+	}
+
+	// A different occurrence of the same block still varies.
+	other, err := newEngine().planFilterBlock(block, programs, occ.Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("other occurrence: %v", err)
+	}
+	if equalIDs(first, other) {
+		t.Fatalf("two occurrences a day apart planned the identical lineup %v", programIDs(first))
+	}
+}
