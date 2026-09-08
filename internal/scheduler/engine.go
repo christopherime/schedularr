@@ -165,6 +165,24 @@ func shuffleWith(rng *rand.Rand, n int, swap func(i, j int)) {
 	rand.Shuffle(n, swap)
 }
 
+// sortPrograms puts a program list in a TOTAL order -- id, then title,
+// then duration -- so a seeded shuffle over it is reproducible whatever
+// order the library or the filler list arrived in. Id alone is not
+// enough: Tunarr can hand back programs with no id at all, and equal
+// keys leave sort.Slice free to keep the arrival order it was given.
+func sortPrograms(programs []tunarr.Program) {
+	sort.Slice(programs, func(i, j int) bool {
+		a, b := &programs[i], &programs[j]
+		if a.GetID() != b.GetID() {
+			return a.GetID() < b.GetID()
+		}
+		if a.Title != b.Title {
+			return a.Title < b.Title
+		}
+		return a.GetDurationMs() < b.GetDurationMs()
+	})
+}
+
 // EngineOptions contains optional configuration for the scheduling engine.
 type EngineOptions struct {
 	// HistoryWindow bounds both the in-memory dedup check (filterByHistory)
@@ -1241,15 +1259,15 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 	maxOverflowMs := int64(block.MaxDurationOverflowMinutes) * time.Minute.Milliseconds()
 	allowedDurationWithOverflow := targetDuration + maxOverflowMs
 
-	// Deterministic per occurrence (draft-mode contract, v0.5.6): sort
-	// the candidates by program ID so the library's arrival order cannot
+	// Deterministic per occurrence (draft-mode contract, v0.5.6): put the
+	// candidates in a total order so the library's arrival order cannot
 	// leak in, then shuffle with the occurrence-seeded rng series
 	// planning already uses. A dry run (GET /schedule, POST /generate)
 	// and the apply that follows it therefore pick the SAME lineup for
 	// the same block, occurrence, candidates, and history -- the plan the
 	// operator previewed is the plan that lands. Variety still comes
 	// from the seed varying per occurrence.
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].GetID() < candidates[j].GetID() })
+	sortPrograms(candidates)
 	rng := occurrenceRand(block.ID, occurrenceStart)
 	shuffleWith(rng, len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
@@ -1274,7 +1292,9 @@ func (e *Engine) planFilterBlock(block Block, availablePrograms []tunarr.Program
 		// The occurrence-seeded rng, not nil/global: filler must be as
 		// reproducible as the main lineup for a previewed plan to equal
 		// the applied one (the first-commit freeze still applies after
-		// apply; this makes the dry runs before it agree too).
+		// apply; this makes the dry runs before it agree too). getFiller
+		// sorts the fetched list the same way, so the filler list's
+		// arrival order cannot leak in either.
 		fillerPrograms, err := e.getFiller(block, gapDuration, rng)
 		if err != nil {
 			e.logger.Warn("failed to get filler for block",
@@ -1869,7 +1889,11 @@ func (e *Engine) getFiller(block Block, remainingDuration int64, rng *rand.Rand)
 		}
 	}
 
-	// Shuffle filler content for variety
+	// Shuffle filler content for variety -- over a total order, never
+	// over Tunarr's response order, so the same occurrence re-planned
+	// picks the same filler (see sortPrograms and planFilterBlock's
+	// determinism comment).
+	sortPrograms(fillerContent)
 	shuffleWith(rng, len(fillerContent), func(i, j int) {
 		fillerContent[i], fillerContent[j] = fillerContent[j], fillerContent[i]
 	})

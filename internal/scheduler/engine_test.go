@@ -2508,6 +2508,42 @@ func TestGetFiller_Success(t *testing.T) {
 	assert.LessOrEqual(t, totalDuration, int64(1800000), "Filler duration exceeds requested")
 }
 
+// TestGetFiller_DeterministicAcrossResponseOrder pins the other half of
+// the draft-mode contract: the filler a previewed plan showed is the
+// filler the apply pushes, whatever order Tunarr handed the filler list
+// back in. The occurrence-seeded shuffle alone cannot promise that -- it
+// permutes whatever order the response carried -- so getFiller sorts the
+// fetched list first.
+func TestGetFiller_DeterministicAcrossResponseOrder(t *testing.T) {
+	fillerContent := []tunarr.Program{
+		{ID: "f1", Title: "Filler 1", Duration: 300000, Type: "track"},
+		{ID: "f2", Title: "Filler 2", Duration: 300000, Type: "track"},
+		{ID: "f3", Title: "Filler 3", Duration: 300000, Type: "track"},
+		{ID: "f4", Title: "Filler 4", Duration: 300000, Type: "track"},
+	}
+	reversed := []tunarr.Program{fillerContent[3], fillerContent[2], fillerContent[1], fillerContent[0]}
+
+	block := Block{ID: "blk-filler", Filler: FillerConfig{FillerListID: "filler-1"}}
+	occ := time.Date(2026, 9, 10, 21, 0, 0, 0, time.UTC)
+	// 15 minutes of gap over four 5-minute fillers: three are picked, so
+	// which one is left out is decided by the order they were shuffled in.
+	planFiller := func(programs []tunarr.Program) []string {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(programs))
+		}))
+		defer server.Close()
+		engine := NewEngine(tunarr.NewClient(tunarr.Config{URL: server.URL}), []Block{}, NewMockStateStore(), slog.Default(), time.UTC)
+		filler, err := engine.getFiller(block, 900000, occurrenceRand(block.ID, occ))
+		require.NoError(t, err)
+		return programIDs(filler)
+	}
+
+	first := planFiller(fillerContent)
+	require.Len(t, first, 3)
+	assert.Equal(t, first, planFiller(reversed), "Tunarr's response order changed the filler lineup")
+}
+
 func TestGetFiller_NoFillerListID(t *testing.T) {
 	client := tunarr.NewClient(tunarr.Config{URL: "http://localhost:8000"})
 	store := NewMockStateStore()
@@ -3416,30 +3452,13 @@ func TestPlanBlock_ProvenanceStampNeverMovesBackward(t *testing.T) {
 		"a real plan must never lower an already-higher cursor provenance stamp")
 }
 
-// equalIDs reports whether two program lists carry the same program IDs
-// in the same order -- the comparison
-// TestPlanFilterBlock_DeterministicPerOccurrence needs to prove two
-// separately-run plans picked the identical lineup.
-func equalIDs(a, b []tunarr.Program) bool {
-	idsA, idsB := programIDs(a), programIDs(b)
-	if len(idsA) != len(idsB) {
-		return false
-	}
-	for i := range idsA {
-		if idsA[i] != idsB[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // TestPlanFilterBlock_DeterministicPerOccurrence pins the draft-mode
 // contract: a filter occurrence's lineup is a pure function of (block,
 // occurrence start, candidates) -- a dry run and the apply that follows
 // it pick the same programs, whatever order the library arrived in.
 func TestPlanFilterBlock_DeterministicPerOccurrence(t *testing.T) {
 	programs := make([]tunarr.Program, 0, 40)
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		programs = append(programs, tunarr.Program{
 			ID:       fmt.Sprintf("prog-%02d", i),
 			Title:    fmt.Sprintf("Program %02d", i),
@@ -3455,16 +3474,10 @@ func TestPlanFilterBlock_DeterministicPerOccurrence(t *testing.T) {
 		return NewEngineWithOptions(context.Background(), nil, []Block{block}, NewMockStateStore(), EngineOptions{})
 	}
 	first, err := newEngine().planFilterBlock(block, programs, occ)
-	if err != nil {
-		t.Fatalf("first plan: %v", err)
-	}
+	require.NoError(t, err)
 	second, err := newEngine().planFilterBlock(block, programs, occ)
-	if err != nil {
-		t.Fatalf("second plan: %v", err)
-	}
-	if !equalIDs(first, second) {
-		t.Fatalf("same inputs planned different lineups:\n%v\n%v", programIDs(first), programIDs(second))
-	}
+	require.NoError(t, err)
+	require.Equal(t, programIDs(first), programIDs(second), "the same inputs planned different lineups")
 
 	// Library order must not matter: the same catalog reversed plans the
 	// same lineup.
@@ -3473,19 +3486,32 @@ func TestPlanFilterBlock_DeterministicPerOccurrence(t *testing.T) {
 		reversed[len(programs)-1-i] = p
 	}
 	third, err := newEngine().planFilterBlock(block, reversed, occ)
-	if err != nil {
-		t.Fatalf("reversed plan: %v", err)
+	require.NoError(t, err)
+	assert.Equal(t, programIDs(first), programIDs(third), "library order changed the lineup")
+
+	// Programs with no id are a real Tunarr shape, and sorting on GetID()
+	// alone leaves two of them in whatever order the library sent: the
+	// title tiebreak is what makes the sort a TOTAL order.
+	idless := []tunarr.Program{
+		{Title: "Zulu Matinee", Type: "movie", Duration: 30 * 60 * 1000, Genres: []tunarr.Genre{{Name: "Comedy"}}},
+		{Title: "Alpha Matinee", Type: "movie", Duration: 30 * 60 * 1000, Genres: []tunarr.Genre{{Name: "Comedy"}}},
 	}
-	if !equalIDs(first, third) {
-		t.Fatalf("library order changed the lineup:\n%v\n%v", programIDs(first), programIDs(third))
+	titles := func(programs []tunarr.Program) []string {
+		out := make([]string, 0, len(programs))
+		for _, p := range programs {
+			out = append(out, p.Title)
+		}
+		return out
 	}
+	forward, err := newEngine().planFilterBlock(block, idless, occ)
+	require.NoError(t, err)
+	backward, err := newEngine().planFilterBlock(block, []tunarr.Program{idless[1], idless[0]}, occ)
+	require.NoError(t, err)
+	assert.Equal(t, titles(forward), titles(backward), "two id-less candidates planned in library arrival order")
 
 	// A different occurrence of the same block still varies.
 	other, err := newEngine().planFilterBlock(block, programs, occ.Add(24*time.Hour))
-	if err != nil {
-		t.Fatalf("other occurrence: %v", err)
-	}
-	if equalIDs(first, other) {
-		t.Fatalf("two occurrences a day apart planned the identical lineup %v", programIDs(first))
-	}
+	require.NoError(t, err)
+	assert.NotEqual(t, programIDs(first), programIDs(other),
+		"two occurrences a day apart planned the identical lineup")
 }
