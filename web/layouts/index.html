@@ -1,47 +1,68 @@
 {{ define "main" }}
 {{- /*
-  The Guide (spec §3.1, full-week grid) -- the EPG grid as home. The
-  grid + mobile rundown DOM is built in TS (runtime/grid.ts); Alpine
-  here drives ONLY the toolbar (SCOPE / week pager / rundown channel
-  picker) and the slot inspector (§3.2). The client fetches the whole
+  The Guide (spec §3.1, full-week grid) -- the EPG grid as home, and the
+  one surface that plans and applies (§3.3). The grid + mobile rundown
+  DOM is built in TS (runtime/grid.ts); Alpine here drives ONLY the
+  toolbar (SCOPE / arm / week pager / rundown channel picker), the draft
+  bar, and the slot inspector (§3.2). The client fetches the whole
   plannable window once (days=28) and the ‹/› pager walks it in week
   pages client-side. Full-bleed: content/_index.md sets full_bleed, the
   one sanctioned --content-max exception. CSP discipline: zero inline
   style attributes anywhere below -- all geometry is CSSOM-set classes.
+  Escape closes the inspector, but never over the confirm dialog: the
+  native <dialog> owns Escape while it is open.
 */ -}}
-<div x-data="guide" class="guide" @keydown.escape.window="closeInspector()">
+<div x-data="guide" class="guide" @keydown.escape.window="if (!$refs.confirmDialog.open) closeInspector()">
   <div class="guide-chrome">
     <div class="page-head">
       <h1>Guide</h1>
       <p>
         The planned programme across every channel — what airs, what
-        didn't, and why. Slots re-plan live from your blocks; click one
-        for its rundown.
+        didn't, and why. Change the scope or arm a draft to preview the
+        next 7 days on the grid, then apply it to Tunarr.
       </p>
     </div>
 
     {{ partial "ui/tape.html" . }}
 
     {{- /* The guide's async states, announced: one visually-hidden
-           role="status" line covering loading / loaded / unreachable
-           (present from first paint so live-region updates register). */}}
+           role="status" line covering loading / loaded / drafting /
+           applying / applied / unreachable (present from first paint so
+           live-region updates register). */}}
     <p class="visually-hidden" role="status" x-text="statusLine"></p>
 
-    {{- /* SCOPE stays ENABLED during a reload -- disabling the focused
-           control would blur it and strand keyboard focus on body.
-           requestReload() latches a change that lands mid-flight and
-           re-fires it when the flight lands. (The DAYS control died
-           with the full-week reframe: the guide always fetches the
-           whole 28-day window and pages it by week.) */}}
+    {{- /* SCOPE is a DRAFT control (§3.3): the reading stays every
+           channel, and changing the scope drafts it instead of
+           re-fetching. Both controls stay ENABLED while a flight is in
+           the air -- disabling the focused control would blur it and
+           strand keyboard focus on body -- and requestDraft() latches a
+           change that lands mid-flight, re-firing when it lands. (The
+           DAYS control died with the full-week reframe: the guide always
+           fetches the whole 28-day window and pages it by week.) */}}
     <div class="guide-toolbar" role="group" aria-label="Plan controls">
       <div class="form-field guide-toolbar__scope">
         <label for="guide-scope">Scope</label>
         {{ partial "ui/channel-select.html" (dict
           "id" "guide-scope"
           "model" "controls.channelId"
-          "change" "requestReload()"
+          "change" "requestDraft()"
           "emptyOption" "All channels"
           "placeholder" "Leave blank for all channels") }}
+      </div>
+      {{- /* The one on-page draft entry on mobile, where SCOPE hides:
+             never disabled by a load (a press then latches), so it can
+             always take focus back after an apply or a discard. */}}
+      <div class="form-field guide-toolbar__arm">
+        <span class="form-field__label-spacer" aria-hidden="true"></span>
+        <button
+          type="button"
+          class="btn btn--ghost"
+          id="guide-arm"
+          :disabled="draft.mode === 'previewing' || draft.mode === 'applying'"
+          @click="requestDraft()"
+          aria-describedby="guide-arm-hint"
+        >Arm draft</button>
+        <p class="form-field__hint" id="guide-arm-hint">Plan the next 7 days for this scope as a draft you can apply to Tunarr.</p>
       </div>
       <div class="form-field guide-toolbar__rundown-scope">
         <label for="guide-rundown-channel">Channel</label>
@@ -57,6 +78,45 @@
       </div>
     </div>
 
+    {{- /* The draft bar and its problems live in the TOP chrome, not
+           beside the grid: a draft must be armable and discardable in
+           every grid state, the empty reading included. */}}
+    <template x-if="draft.previewError">
+      {{ partial "ui/problem.html" (dict "label" "Draft failed" "bind" "draft.previewError" "retry" "requestDraft()") }}
+    </template>
+
+    <div
+      class="guide-draftbar"
+      id="guide-draftbar"
+      role="region"
+      aria-label="Draft"
+      :aria-busy="draft.mode === 'previewing' || draft.mode === 'applying'"
+      x-show="draft.mode !== 'off'"
+      x-cloak
+    >
+      <p class="guide-draftbar__line" x-text="draftBarLine()"></p>
+      <div class="guide-draftbar__actions">
+        <button type="button" class="btn btn--ghost btn--sm" :disabled="draft.mode === 'applying'" @click="discardDraft()">Discard</button>
+        <button
+          type="button"
+          class="btn btn--primary btn--sm"
+          :disabled="!canApply()"
+          :aria-busy="draft.mode === 'applying'"
+          @click="requestApply()"
+          x-text="draft.mode === 'applying' ? 'Applying…' : 'Apply'"
+        ></button>
+      </div>
+    </div>
+
+    {{- /* A client-side abort says so: the apply may have landed in
+           part, so the recovery is a fresh draft, never a blind retry
+           of the same push. */}}
+    <template x-if="draft.applyError && draft.applyTimedOut">
+      {{ partial "ui/problem.html" (dict "label" "Apply timed out — it may have partially landed" "bind" "draft.applyError" "retry" "requestDraft()" "retryLabel" "Re-draft") }}
+    </template>
+    <template x-if="draft.applyError && !draft.applyTimedOut">
+      {{ partial "ui/problem.html" (dict "label" "Apply failed" "bind" "draft.applyError" "retry" "requestApply()" "retryDisabled" "!canApply()") }}
+    </template>
   </div>
 
   {{- /* The guide's pre-grid states (skeleton / NO SIGNAL / empty) sit
@@ -95,7 +155,7 @@
       </section>
     </template>
 
-    <template x-if="!loading && !problem && plan && !hasAnySlots() && !hasBlocks()">
+    <template x-if="!loading && !problem && draft.mode === 'off' && !hasAnySlots() && !hasBlocks()">
       {{ partial "ui/empty.html" (dict
         "legend" "No programme"
         "text" "Nothing is scheduled because no blocks exist yet. Create one on Blocks and it appears here on its cron."
@@ -103,16 +163,28 @@
         "actionHref" "/blocks/") }}
     </template>
 
-    <template x-if="!loading && !problem && plan && !hasAnySlots() && hasBlocks()">
+    <template x-if="!loading && !problem && draft.mode === 'off' && !hasAnySlots() && hasBlocks()">
       {{ partial "ui/empty.html" (dict
         "legend" "No match"
-        "text" "No block airs inside the next four weeks for this scope — clear the SCOPE, or check that the blocks for this channel are enabled."
+        "text" "No block airs inside the next four weeks. Check that your blocks are enabled and that their crons fire when you expect."
+        "actionLabel" "Review blocks"
+        "actionHref" "/blocks/") }}
+    </template>
+
+    {{- /* A draft that schedules nothing is not "nothing to do":
+           applying it pushes an empty lineup to every channel
+           Schedularr last applied in the scope, so the state says so
+           rather than reading as an error. */}}
+    <template x-if="!loading && draftOnGlass() && !hasAnySlots()">
+      {{ partial "ui/empty.html" (dict
+        "legend" "Nothing drafted"
+        "text" "This draft schedules nothing for the scope. Applying pushes an empty lineup to any channel Schedularr last applied in it — discard, or review the blocks for this channel."
         "actionLabel" "Review blocks"
         "actionHref" "/blocks/") }}
     </template>
   </div>
 
-  <div class="guide-body" x-show="!loading && !problem && plan && hasAnySlots()" x-cloak>
+  <div class="guide-body" x-show="!loading && !problem && hasAnySlots()" x-cloak>
     <div class="guide-main">
       <div class="guide-chrome">
         {{- /* Week pager (spec §3.1, full-week amendment): navigation
@@ -184,6 +256,10 @@
             </button>
           </div>
           <div class="panel__body">
+            {{- /* The chip's long form: what the draft does to this
+                   slot, always named against the reading it was
+                   measured from. */}}
+            <p class="guide-inspector__verdict-line" x-show="inspector.slot.draft" x-text="inspectorVerdictLine()"></p>
             <template x-if="inspector.slot.kind === 'ghost'">
               <div class="guide-inspector__verdict">
                 <p class="guide-inspector__verdict-title">Conflict — occurrence dropped</p>
@@ -255,6 +331,17 @@
       </template>
     </aside>
   </div>
+
+  {{- /* The one confirm idiom (spec §4). It stays OPEN while the apply
+         is in flight -- the confirm button carries aria-busy and every
+         dismissal is guarded -- so focus never lands on body mid-push. */}}
+  {{ partial "ui/confirm.html" (dict
+    "title" "applyConfirmTitle()"
+    "body" "applyConfirmBody()"
+    "confirmText" "draft.mode === 'applying' ? 'Applying…' : 'Confirm Apply'"
+    "confirm" "confirmApply()"
+    "cancel" "cancelApply()"
+    "busy" "draft.mode === 'applying'") }}
 </div>
 {{ end }}
 

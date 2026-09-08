@@ -1,24 +1,61 @@
 // The Guide ("/"): the EPG grid as home (spec §3.1 + §3.2, full-week
-// grid since v0.5.3). Auto-loads GET /schedule on open -- the manual
-// Generate click is dead for reading; the old Schedule page still owns
-// preview/apply until v0.5.4 absorbs it as the guide's draft mode.
+// grid since v0.5.3) and, since the draft slice, the one surface that
+// plans and applies (spec §3.3). Two plans can be on the glass:
+//
+//   READING -- GET /schedule?days=28, ALL channels, auto-loaded on open
+//              and re-fetched after every apply. Committed mode shows
+//              it; SCOPE never narrows it.
+//   DRAFT   -- POST /generate for a SCOPE over DRAFT_DAYS, armed for
+//              apply and rendered as a diff overlay on the same grid
+//              (runtime/draft.ts computes the verdicts and the copy).
+//
+// Armed-signature discipline (spec §3.3): APPLY sends exactly
+// draftRequestBody(draft.signature) -- the body the preview on the glass
+// was built from -- never one rebuilt from the live controls. A SCOPE
+// change replaces the draft (re-preview), and nothing else can change
+// the request, so the rule holds by construction.
+//
+// Honesty boundary: nothing on the client knows Tunarr's current
+// lineup. Every verdict and every count is "vs the reading taken HH:MM"
+// and the copy says so; answering "what does Tunarr hold right now"
+// needs the enriched history of the Memory slice.
 //
 // Division of labor (spec non-negotiable): the grid + rundown DOM is
 // built in TS by runtime/grid.ts from the typed plan; Alpine drives ONLY
-// the toolbar (SCOPE / week pager / mobile channel picker) and the slot
-// inspector. The client fetches the FULL plannable window once
-// (days=28, the API's practical max) per load/scope-change and pages
-// four weeks client-side -- the ‹/› week pager never re-plans; only a
-// SCOPE change re-fetches (draft mode arrives in v0.5.4).
+// the toolbar (SCOPE / arm / week pager / mobile channel picker), the
+// draft bar, and the slot inspector. The client fetches the FULL
+// plannable window once (days=28, the API's practical max) per load and
+// pages four weeks client-side -- the ‹/› week pager never re-plans and
+// never touches the draft; only arming does.
 //
 // The now-line advances on a local 60s timer (browser clock); heartbeat
-// skew correction arrives with SSE in v0.5.6.
-import { LONG_GET_TIMEOUT_MS, apiGet, apiPath, onReauth } from "../runtime/api.ts";
+// skew correction arrives with the SSE live-link slice.
+import { ApiError, LONG_GET_TIMEOUT_MS, LONG_SEND_TIMEOUT_MS, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiResponse } from "../runtime/api.ts";
 import { channelHint as channelHintText, channelLabel, channelOrder, channelPlate, loadChannels } from "../runtime/channels.ts";
-import type { Channel } from "../runtime/channels.ts";
+import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { cronReadback } from "../runtime/cron.ts";
-import { toProblemView } from "../runtime/errors.ts";
+import {
+  DRAFT_DAYS,
+  READING_STORAGE_KEY,
+  appliedTapeLine,
+  applyConfirmBody,
+  applyConfirmTitle,
+  applyingLine,
+  diffRows,
+  draftBarLine,
+  draftRequestBody,
+  draftScopeFromSearch,
+  draftVerdictLine,
+  draftingLine,
+  parseStoredReading,
+  planChannelCount,
+  planSlotCount,
+  rowsFromStored,
+  serializeReading,
+} from "../runtime/draft.ts";
+import type { DiffCounts, DraftSignature } from "../runtime/draft.ts";
+import { problemLine, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { durationLabel, formatClock, ordinal, plural, sxxeyy } from "../runtime/format.ts";
 import {
@@ -34,17 +71,17 @@ import {
 } from "../runtime/grid.ts";
 import type { GhostBlockInfo, GridHandle, GuideRow, GuideSlot, RundownHandle } from "../runtime/grid.ts";
 import { initShell } from "../runtime/shell.ts";
+import { printTape } from "../runtime/tape.ts";
 import type { components } from "../gen/types";
 
 initShell();
 
 type PlanResult = ApiResponse<"getSchedule", 200>;
+type Status = ApiResponse<"getStatus", 200>;
 type BlockRecord = components["schemas"]["BlockRecord"];
 
-// The one plan window the guide ever asks for (spec §3.1, full-week
-// amendment): the API's practical max, fetched once per load/
-// scope-change and paged client-side as four 7-day week chunks (plus
-// the trailing partial calendar day a mid-day fetch spills into).
+/** The reading fetched by the guide (spec §3.1): the whole 28-day
+ * window, ALL channels, paged client-side. Drafts plan DRAFT_DAYS of it. */
 const FETCH_DAYS = 28;
 
 // The honest first-load line: GET /schedule re-plans the full window
@@ -52,6 +89,13 @@ const FETCH_DAYS = 28;
 // itself waking) can genuinely take this long -- the request runs on
 // the 90s LONG_GET_TIMEOUT_MS tier, so say so instead of looking hung.
 const LOADING_LINE = "Loading programme guide — first load after a restart can take a minute";
+
+// Stand-ins for a draft with no counts or no rows yet: the bar is
+// hidden then, but Alpine still evaluates its bindings, so they read as
+// "no changes" rather than throwing -- and sharing one empty array keeps
+// the identity-keyed diff memo from thrashing.
+const NO_COUNTS: DiffCounts = { new: 0, changed: 0, same: 0, removed: 0 };
+const NO_ROWS: GuideRow[] = [];
 
 declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
@@ -61,6 +105,8 @@ declare const Alpine: {
 // blocks.ts uses for $nextTick).
 interface WithMagics {
   $nextTick(cb: () => void): void;
+  $refs: { confirmDialog: HTMLDialogElement };
+  $root: HTMLElement;
 }
 
 // Same double-init defense as every page: Alpine auto-invokes init().
@@ -81,18 +127,152 @@ interface RowsProjection {
   dropped: number;
 }
 
-// projection() memo: the GuideSlot graph is identical for a given
-// (plan, blocksByName, channels) triple, but one render pass asks for
-// it several times (renderAll, the rundown, the Alpine x-for over
-// rundownChannels) -- ~60-90k throwaway allocations per pass at scale.
-// Keyed on reference identity; reload()/loadChannels() replace all
-// three objects wholesale, which is the only way they change.
+// projectPlan() memo: the GuideSlot graph is identical for a given
+// (plan, blocksByName, channels) triple, but a plan is projected again
+// whenever late enrichment lands -- ~60-90k throwaway allocations per
+// pass at scale. Keyed on reference identity; reload(), preview() and
+// loadChannels() replace those objects wholesale, which is the only way
+// they change.
 let rowsMemo: {
   plan: object;
   blocks: object;
   channels: object;
   value: RowsProjection;
 } | null = null;
+
+interface DiffResult {
+  rows: GuideRow[];
+  counts: DiffCounts;
+}
+
+// draftDiff() memo: rows() is the hot getter (renderAll, the rundown,
+// the Alpine x-for over rundownChannels, every empty-state guard), and
+// in draft mode each read would otherwise re-diff two whole plans.
+// Keyed on the identity of the two row sets and the channel cache (the
+// row order depends on it) -- all three are replaced wholesale.
+let diffMemo: {
+  reading: object;
+  draft: object;
+  channels: object;
+  value: DiffResult;
+} | null = null;
+
+type DraftMode = "off" | "previewing" | "armed" | "applying";
+
+interface DraftState {
+  mode: DraftMode;
+  signature: DraftSignature | null;
+  plan: PlanResult | null;
+  rows: GuideRow[] | null;
+  dropped: number;
+  /** When the draft request was sent: the diff cutoff and horizon start. */
+  requestedAt: number;
+  counts: DiffCounts | null;
+  previewError: ProblemView | null;
+  applyError: ProblemView | null;
+  /** A client-side abort (status 0): the apply may have partially landed. */
+  applyTimedOut: boolean;
+  /** Any apply failure: the reading may no longer match Tunarr, so
+   * DISCARD re-fetches instead of restoring it. */
+  applyFailed: boolean;
+  /** In-flight guard: a preview that lands after a newer one started is
+   * dropped on the floor. */
+  seq: number;
+  /** A SCOPE change or Arm press that landed during a reload, preview,
+   * or apply -- re-fired once the flight lands. */
+  pendingScope: boolean;
+}
+
+function emptyDraft(seq = 0): DraftState {
+  return {
+    mode: "off",
+    signature: null,
+    plan: null,
+    rows: null,
+    dropped: 0,
+    requestedAt: 0,
+    counts: null,
+    previewError: null,
+    applyError: null,
+    applyTimedOut: false,
+    applyFailed: false,
+    seq,
+    pendingScope: false,
+  };
+}
+
+/** Mirrors the reading for the Blocks round trip (save -> PREVIEW ON
+ * GUIDE): the diff baseline the operator last saw, per tab. */
+function storeReading(requestedAt: number, rows: GuideRow[]): void {
+  try {
+    const raw = serializeReading(requestedAt, rows);
+    if (raw !== null) window.sessionStorage.setItem(READING_STORAGE_KEY, raw);
+  } catch {
+    // Quota or a privacy lockdown: the mirror is a convenience for the
+    // Blocks round trip, never load-bearing.
+  }
+}
+
+function readStoredReading(nowMs: number, lastAppliedAt: string | null) {
+  try {
+    return parseStoredReading(window.sessionStorage.getItem(READING_STORAGE_KEY), nowMs, lastAppliedAt);
+  } catch {
+    return null;
+  }
+}
+
+/** The arming control is the guide's focus anchor: it is present in
+ * every state and never disabled by loading, so leaving draft mode
+ * (apply, discard, apply failure) always has somewhere to land. */
+function focusArm(): void {
+  document.getElementById("guide-arm")?.focus();
+}
+
+/** Marks a container as carrying a draft: the dimmed `same` slots, the
+ * removed lane, and the viewport's wider chrome budget all key off it. */
+function setDraftFlag(el: HTMLElement | null, on: boolean): void {
+  if (!el) return;
+  if (on) el.dataset.draft = "";
+  else delete el.dataset.draft;
+}
+
+/** A channel plate as one line of text: "CH 04 · HORROR", or the name
+ * alone when the channel carries no number (an unresolved id shortens
+ * to its own name). */
+function plateText(plate: PlateParts): string {
+  return plate.ch ? `${plate.ch} · ${plate.name}` : plate.name;
+}
+
+/** The SCOPE readout every line of draft copy names: "" is the whole
+ * station, anything else is that channel's plate text. */
+export function scopeLabelText(channelId: string, channels: Channel[]): string {
+  return channelId === "" ? "ALL channels" : plateText(channelPlate(channelId, channels));
+}
+
+/** Diffed rows in channel order. diffRows returns the draft's channels
+ * first and the reading-only ones after, so a channel the draft dropped
+ * entirely (an all-removed row) would otherwise sink to the bottom of
+ * the sheet instead of holding its place -- the committed projection
+ * sorts by exactly this comparator. */
+export function orderRows(rows: GuideRow[], channels: Channel[]): GuideRow[] {
+  return [...rows].sort((a, b) => channelOrder(a.channelId, b.channelId, channels));
+}
+
+/** BlockRecords by name -- inspector enrichment (id for the editor
+ * deep-link, enabled state) and ghost placement (see runtime/grid.ts's
+ * resolveGhost). The catch is attached up front so a failure that lands
+ * while the plan is still in flight degrades silently instead of
+ * surfacing as an unhandled rejection: links fall back to /blocks/,
+ * ghosts to the winner's channel. */
+function loadBlockIndex(): Promise<Record<string, BlockRecord>> {
+  return apiGet<BlockRecord[]>(apiPath("/blocks"))
+    .catch((): BlockRecord[] | null => null)
+    .then((blocks) => {
+      const byName: Record<string, BlockRecord> = {};
+      for (const b of blocks ?? []) byName[b.name] = b;
+      return byName;
+    });
+}
 
 interface InspectorState {
   open: boolean;
@@ -107,20 +287,26 @@ interface GuideState {
   channels: Channel[];
 
   loading: boolean;
-  /** Latches a SCOPE change that lands while a reload is already in
-   * flight -- the flight finishes, then re-fires with the latest
-   * control values (the controls stay enabled and keep focus). */
-  reloadPending: boolean;
   /** The visually-hidden role="status" line: announces the guide's
-   * async states (loading / loaded / unreachable) to screen readers. */
+   * async states (loading / loaded / drafting / applied / unreachable)
+   * to screen readers. */
   statusLine: string;
   problem: ProblemView | null;
+  /** The reading's wire plan -- null while a restored reading is the
+   * baseline, so nothing may read it as "a reading is on the glass". */
   plan: PlanResult | null;
-  /** BlockRecords by name -- inspector enrichment (id for the editor
-   * deep-link, enabled state) and interim ghost placement (see
-   * runtime/grid.ts's resolveGhost). Degrades silently when the fetch
-   * fails: links fall back to /blocks/, ghosts to the winner's channel. */
+  /** The reading's projected rows: what committed mode renders and what
+   * every draft is diffed against. */
+  readingRows: GuideRow[];
+  /** When the reading's request was sent -- the clock every verdict is
+   * measured against ("vs reading 21:02"). */
+  readingRequestedAt: number;
+  /** The reading came from the sessionStorage mirror, not the server:
+   * it seeds the diff only, and leaving draft mode re-fetches. */
+  readingRestored: boolean;
   blocksByName: Record<string, BlockRecord>;
+
+  draft: DraftState;
 
   /** The loaded window: local midnight of day 0 + how many calendar
    * days it touches (a trailing partial day included -- see
@@ -138,15 +324,31 @@ interface GuideState {
   init(): void;
   loadChannels(): Promise<void>;
   reload(): Promise<void>;
-  requestReload(): void;
+  openWithDraft(scope: string): Promise<void>;
+  reproject(): void;
   channelLabel(c: Channel): string;
   channelHint(): string;
+
+  requestDraft(): void;
+  preview(): Promise<void>;
+  draftOnGlass(): boolean;
+  draftDiff(): DiffResult;
+  draftBarLine(): string;
+  scopeLabelFor(channelId: string): string;
+  scopeLabel(): string;
+  canApply(): boolean;
+  requestApply(): void;
+  confirmApply(): Promise<void>;
+  cancelApply(force?: boolean): void;
+  discardDraft(): void;
+  applyConfirmTitle(): string;
+  applyConfirmBody(): string;
 
   weekPages(): number;
   weekLabel(): string;
   pageWeek(delta: number, navEl?: HTMLButtonElement): void;
 
-  projection(): RowsProjection;
+  projectPlan(plan: PlanResult): RowsProjection;
   rows(): GuideRow[];
   droppedWarnings(): number;
   droppedLegendLine(): string;
@@ -154,7 +356,7 @@ interface GuideState {
   rundownChannels(): { id: string; label: string }[];
   hasAnySlots(): boolean;
   hasBlocks(): boolean;
-  renderAll(): void;
+  renderAll(opts?: { drawIn?: boolean; settle?: boolean }): void;
   renderRundownOnly(): void;
   tick(): void;
 
@@ -163,9 +365,10 @@ interface GuideState {
   inspectorBlock(): BlockRecord | null;
   inspectorEditHref(): string;
   winnerEditHref(): string;
+  inspectorVerdictLine(): string;
   inspectorTimeRange(): string;
   inspectorDuration(): string;
-  inspectorPlate(): { ch: string | null; name: string };
+  inspectorPlate(): PlateParts;
   inspectorCron(): string;
   inspectorCronReadback(): string | null;
   inspectorPriority(): string;
@@ -186,11 +389,15 @@ document.addEventListener("alpine:init", () => {
       channels: [],
 
       loading: true,
-      reloadPending: false,
       statusLine: LOADING_LINE,
       problem: null,
       plan: null,
+      readingRows: [],
+      readingRequestedAt: 0,
+      readingRestored: false,
       blocksByName: {},
+
+      draft: emptyDraft(),
 
       windowStartMs: localDayStart(Date.now()),
       loadedDays: FETCH_DAYS,
@@ -203,10 +410,15 @@ document.addEventListener("alpine:init", () => {
         if (started) return;
         started = true;
         void this.loadChannels();
-        void this.reload();
+        // ?draft=<id|all> is an arrival from a block save's PREVIEW ON
+        // GUIDE: draft that scope at once instead of opening committed.
+        const scope = draftScopeFromSearch(window.location.search);
+        if (scope === null) void this.reload();
+        else void this.openWithDraft(scope);
         onReauth(() => {
           if (this.channelsError) void this.loadChannels();
           if (this.problem) void this.reload();
+          if (this.draft.previewError) void this.preview();
         });
         // The sweep's minute advance: a discrete step on a local 60s
         // timer, not an animation loop (motion inventory item 1).
@@ -225,15 +437,19 @@ document.addEventListener("alpine:init", () => {
         } finally {
           this.channelsLoading = false;
         }
-        // Plates resolve lazily: if the plan landed before the channel
-        // list, re-render so UUID fallbacks become names.
-        if (this.plan) this.renderAll();
+        // Plates resolve lazily: if a plan landed before the channel
+        // list, re-project so UUID fallbacks become names.
+        this.reproject();
       },
 
       // One load = plan + blocks, in parallel. The plan is load-bearing
       // (its failure IS the NO SIGNAL state); the blocks fetch only
       // enriches (inspector deep-links, ghost placement) and degrades
       // silently, matching the blocks editor's media-fetch convention.
+      //
+      // The reading is ALWAYS every channel and the whole window: SCOPE
+      // is a draft control, so narrowing the reading would leave the
+      // rest of the station unreadable while a draft is armed.
       async reload() {
         // A re-render is the closer here, not Esc/X: never return focus
         // to a slot node the reload is about to hide or discard.
@@ -241,18 +457,17 @@ document.addEventListener("alpine:init", () => {
         this.loading = true;
         this.problem = null;
         this.statusLine = LOADING_LINE;
-        const channelId = this.controls.channelId.trim();
+        // Stamped BEFORE the send: every verdict is "vs the reading
+        // taken at HH:MM", and that clock is when it was asked for.
+        const requestedAt = Date.now();
         // The whole plannable window in one request, on the long read
         // tier (a cold-pod first plan can exceed a minute); the week
         // pager then works entirely client-side.
         const planPromise = apiGet<PlanResult>(
-          apiPath("/schedule", undefined, { days: FETCH_DAYS, channel_id: channelId === "" ? undefined : channelId }),
+          apiPath("/schedule", undefined, { days: FETCH_DAYS }),
           LONG_GET_TIMEOUT_MS,
         );
-        // The catch is attached up front: a blocks failure that lands
-        // while the plan is still in flight must degrade silently, not
-        // surface as an unhandled rejection.
-        const blocksPromise = apiGet<BlockRecord[]>(apiPath("/blocks")).catch((): BlockRecord[] | null => null);
+        const blocksPromise = loadBlockIndex();
         try {
           this.plan = await planPromise;
           const landedAt = Date.now();
@@ -266,13 +481,17 @@ document.addEventListener("alpine:init", () => {
           this.problem = toProblemView(err);
           this.plan = null;
         }
-        const blocks = await blocksPromise;
-        const byName: Record<string, BlockRecord> = {};
-        for (const b of blocks ?? []) byName[b.name] = b;
-        this.blocksByName = byName;
+        this.blocksByName = await blocksPromise;
         this.loading = false;
         if (this.plan) {
-          const { rows, dropped } = this.projection();
+          const { rows, dropped } = this.projectPlan(this.plan);
+          this.readingRows = rows;
+          this.readingRequestedAt = requestedAt;
+          this.readingRestored = false;
+          // Mirrored on EVERY landing, an empty plan included: the
+          // Blocks round trip diffs against what the operator last saw,
+          // and "nothing scheduled" is a reading like any other.
+          storeReading(requestedAt, rows);
           const programCount = rows.reduce(
             (n, r) => n + r.slots.reduce((m, s) => (s.kind === "slot" ? m + s.programs.length : m), 0),
             0,
@@ -284,24 +503,68 @@ document.addEventListener("alpine:init", () => {
         } else {
           this.statusLine = "Guide unavailable — Tunarr unreachable";
         }
-        // A SCOPE change that landed mid-flight re-fires now with the
-        // latest control values (x-model already holds them).
-        if (this.reloadPending) {
-          this.reloadPending = false;
-          void this.reload();
+        // A SCOPE change or Arm press that landed mid-flight fires now,
+        // against the reading this load just put on the glass.
+        if (this.draft.pendingScope) {
+          this.draft.pendingScope = false;
+          void this.preview();
         }
       },
 
-      // SCOPE change entry point. The control stays ENABLED during a
-      // reload (disabling the focused control would blur it and dump
-      // keyboard focus on document.body); a change landing mid-flight
-      // is latched and re-fired once the flight lands.
-      requestReload() {
-        if (this.loading) {
-          this.reloadPending = true;
+      // Arrival from a block save's PREVIEW ON GUIDE (/?draft=<id|all>).
+      // The param is consumed immediately so a refresh is a plain guide
+      // load. The reading mirrored before the round trip seeds the diff
+      // -- but it is NEVER rendered as the committed reading: a stale
+      // baseline may not pass as current, so every path out of draft
+      // mode from here re-fetches (see discardDraft / preview's catch).
+      async openWithDraft(scope) {
+        window.history.replaceState(null, "", "/");
+        this.controls.channelId = scope;
+        // A reading older than the server's last apply is not what the
+        // operator would be diffing against -- /status dates it.
+        const status = await apiGet<Status>(apiPath("/status")).catch((): Status | null => null);
+        const stored = readStoredReading(Date.now(), status?.last_applied_at ?? null);
+        if (!stored) {
+          await this.reload();
+          await this.preview();
           return;
         }
-        void this.reload();
+        this.readingRows = rowsFromStored(stored, (id) => channelPlate(id, this.channels));
+        this.readingRequestedAt = stored.requestedAt;
+        this.plan = null;
+        this.readingRestored = true;
+        this.loading = false;
+        // The blocks index is enrichment on this path too (inspector
+        // deep-links, and the ghosts of the draft that follows).
+        void loadBlockIndex().then((byName) => {
+          this.blocksByName = byName;
+          this.reproject();
+        });
+        await this.preview();
+      },
+
+      // Late-landing enrichment (channels, blocks) changes projected
+      // rows: re-project whatever plans are held, then redraw.
+      reproject() {
+        if (this.plan) {
+          const projected = this.projectPlan(this.plan);
+          this.readingRows = projected.rows;
+        } else if (this.readingRestored) {
+          // A restored reading has no plan to re-project: re-plate its
+          // rows so late channel names replace the raw ids.
+          this.readingRows = this.readingRows.map((r) => ({ ...r, plate: channelPlate(r.channelId, this.channels) }));
+        }
+        if (this.draft.plan) {
+          const projected = this.projectPlan(this.draft.plan);
+          this.draft.rows = projected.rows;
+          this.draft.dropped = projected.dropped;
+        }
+        // Nothing is on the glass while the reading is still in flight,
+        // and a RESTORED reading is never painted as the committed grid
+        // -- it seeds the diff; the draft that follows is what gets
+        // drawn.
+        if (this.loading || (this.readingRestored && !this.draftOnGlass())) return;
+        this.renderAll();
       },
 
       channelLabel,
@@ -313,6 +576,229 @@ document.addEventListener("alpine:init", () => {
           this.channels,
           "enter a channel ID manually, or leave blank for all channels",
         );
+      },
+
+      // The two draft entry points (SCOPE change, Arm press) come here.
+      // Neither control is ever disabled by a load in flight -- that
+      // would blur the focused control and strand keyboard focus on
+      // body -- so a press during one is latched and re-fired when the
+      // flight lands, with whatever SCOPE holds by then.
+      requestDraft() {
+        if (this.loading || this.draft.mode === "previewing" || this.draft.mode === "applying") {
+          this.draft.pendingScope = true;
+          return;
+        }
+        void this.preview();
+      },
+
+      // POST /generate for the current SCOPE over the draft window, on
+      // the long send tier (a cold re-plan against Tunarr outruns the
+      // default). The signature captured here IS what APPLY sends.
+      async preview() {
+        const signature: DraftSignature = { days: DRAFT_DAYS, channelId: this.controls.channelId.trim() };
+        const requestedAt = Date.now();
+        const seq = ++this.draft.seq;
+        // The draw-in is a state change, never an entrance: it plays
+        // only when the draft replaces a sheet ALREADY DRAWN (a SCOPE
+        // change or an Arm press). gridHandle is the honest test --
+        // a ?draft arrival off a restored reading has drawn nothing
+        // yet, and animating there would be an entrance.
+        const wasGridOnGlass =
+          gridHandle !== null && !this.loading && !this.problem && this.rows().length > 0;
+        this.draft.mode = "previewing";
+        this.draft.previewError = null;
+        this.draft.applyError = null;
+        this.draft.applyTimedOut = false;
+        this.statusLine = draftingLine(this.scopeLabelFor(signature.channelId));
+        try {
+          const result = await apiSend<PlanResult>(
+            "POST",
+            apiPath("/generate"),
+            draftRequestBody(signature),
+            LONG_SEND_TIMEOUT_MS,
+          );
+          if (seq !== this.draft.seq) return;
+          const projected = this.projectPlan(result);
+          this.draft.plan = result;
+          this.draft.rows = projected.rows;
+          this.draft.dropped = projected.dropped;
+          this.draft.signature = signature;
+          this.draft.requestedAt = requestedAt;
+          // The draft's own window becomes the grid's: the reading's
+          // later weeks stay pageable and render as `beyond`.
+          this.windowStartMs = localDayStart(requestedAt);
+          this.loadedDays = windowDayCount(requestedAt, FETCH_DAYS);
+          this.weekPage = 0;
+          this.draft.mode = "armed";
+          this.draft.counts = this.draftDiff().counts;
+          this.statusLine = this.draftBarLine();
+          this.closeInspector(false);
+          this.renderAll({ drawIn: wasGridOnGlass });
+        } catch (err) {
+          if (seq !== this.draft.seq) return;
+          this.draft.previewError = toProblemView(err);
+          this.draft.mode = "off";
+          this.draft.plan = null;
+          this.draft.rows = null;
+          this.draft.counts = null;
+          this.statusLine = `Draft failed — ${problemLine(this.draft.previewError)}`;
+          // Committed mode needs a reading to fall back to, and a
+          // restored one may not pass as current.
+          if (this.readingRestored) void this.reload();
+          else this.renderAll();
+        } finally {
+          if (seq === this.draft.seq && this.draft.pendingScope && this.draft.mode !== "previewing") {
+            this.draft.pendingScope = false;
+            void this.preview();
+          }
+        }
+      },
+
+      draftOnGlass() {
+        return this.draft.rows !== null && this.draft.mode !== "off";
+      },
+
+      draftDiff() {
+        const readingRows = this.readingRows;
+        const draftRows = this.draft.rows ?? NO_ROWS;
+        if (
+          diffMemo &&
+          diffMemo.reading === readingRows &&
+          diffMemo.draft === draftRows &&
+          diffMemo.channels === this.channels
+        ) {
+          return diffMemo.value;
+        }
+        const { rows, counts } = diffRows(readingRows, draftRows, {
+          requestedAt: this.draft.requestedAt,
+          scopeChannelId: this.draft.signature?.channelId ?? "",
+        });
+        const value = { rows: orderRows(rows, this.channels), counts };
+        diffMemo = { reading: readingRows, draft: draftRows, channels: this.channels, value };
+        return value;
+      },
+
+      // The draft bar's one line, per state. (draftBarLine, draftingLine
+      // and applyingLine below are runtime/draft.ts's copy functions,
+      // not these methods -- every line of draft copy lives there.)
+      draftBarLine() {
+        const plan = this.draft.plan;
+        if (this.draft.mode === "previewing" || !plan) return draftingLine(this.scopeLabel());
+        const slots = planSlotCount(plan);
+        const channels = planChannelCount(plan);
+        if (this.draft.mode === "applying") return applyingLine(slots, channels);
+        return draftBarLine({
+          slots,
+          channels,
+          counts: this.draft.counts ?? NO_COUNTS,
+          dropped: this.draft.dropped,
+          readingRequestedAt: this.readingRequestedAt,
+        });
+      },
+
+      scopeLabelFor(channelId) {
+        return scopeLabelText(channelId, this.channels);
+      },
+
+      // Armed copy names the scope the draft was PLANNED for, not
+      // whatever SCOPE holds now -- the same armed-signature rule the
+      // request body follows.
+      scopeLabel() {
+        const signature = this.draft.signature;
+        const armed = this.draft.mode === "armed" || this.draft.mode === "applying";
+        return this.scopeLabelFor(armed && signature ? signature.channelId : this.controls.channelId.trim());
+      },
+
+      canApply() {
+        return this.draft.mode === "armed" && this.draft.plan !== null && this.draft.signature !== null;
+      },
+
+      requestApply() {
+        if (!this.canApply()) return;
+        this.$refs.confirmDialog.showModal();
+      },
+
+      // Sends the SAME body the preview sent (draftRequestBody over the
+      // armed signature), never a body built from the live controls: the
+      // applied scope must match what the dialog just named.
+      async confirmApply() {
+        const sig = this.draft.signature;
+        const plan = this.draft.plan;
+        if (!sig || !plan || this.draft.mode !== "armed") {
+          this.cancelApply();
+          return;
+        }
+        this.draft.mode = "applying";
+        this.draft.applyError = null;
+        this.draft.applyTimedOut = false;
+        this.statusLine = applyingLine(planSlotCount(plan), planChannelCount(plan));
+        try {
+          const result = await apiSend<PlanResult>("POST", apiPath("/apply"), draftRequestBody(sig), LONG_SEND_TIMEOUT_MS);
+          this.cancelApply(true);
+          const slots = planSlotCount(result);
+          const channels = planChannelCount(result);
+          printTape(appliedTapeLine(slots, channels));
+          this.statusLine = `Applied — ${plural(slots, "slot")} across ${plural(channels, "channel")}; re-reading the guide`;
+          this.draft = emptyDraft(this.draft.seq);
+          this.controls.channelId = "";
+          this.closeInspector(false);
+          focusArm();
+          // The reading is always re-fetched after an apply: the server
+          // now replays what it just committed, and a merge of the old
+          // reading with the applied scope would carry two ages.
+          void this.reload();
+        } catch (err) {
+          this.cancelApply(true);
+          this.draft.mode = "armed";
+          this.draft.applyError = toProblemView(err);
+          this.draft.applyTimedOut = err instanceof ApiError && err.status === 0;
+          this.draft.applyFailed = true;
+          this.statusLine = `Apply failed — ${problemLine(this.draft.applyError)}`;
+          focusArm();
+        }
+      },
+
+      // State-level guard, not just the dialog's :disabled/backdrop
+      // checks: refuses to close while an apply is in flight. The two
+      // closes confirmApply() itself performs pass force -- both happen
+      // deliberately while the mode is still "applying".
+      cancelApply(force = false) {
+        if (this.draft.mode === "applying" && !force) return;
+        this.$refs.confirmDialog.close();
+      },
+
+      // Back to committed mode. A restored baseline (or a reading an
+      // apply may have invalidated) is re-fetched rather than restored;
+      // anything else is already on the client, so the committed sheet
+      // just fades back in.
+      discardDraft() {
+        const refetch = this.readingRestored || this.draft.applyFailed;
+        this.draft = emptyDraft(this.draft.seq);
+        this.controls.channelId = "";
+        this.closeInspector(false);
+        focusArm();
+        if (refetch) {
+          void this.reload();
+          return;
+        }
+        this.renderAll({ settle: true });
+        this.statusLine = "Draft discarded — reading restored";
+      },
+
+      applyConfirmTitle() {
+        return applyConfirmTitle(this.scopeLabel());
+      },
+
+      applyConfirmBody() {
+        const plan = this.draft.plan;
+        if (!plan) return "";
+        return applyConfirmBody({
+          slots: planSlotCount(plan),
+          channels: planChannelCount(plan),
+          counts: this.draft.counts ?? NO_COUNTS,
+          scopeLabel: this.scopeLabel(),
+          readingRequestedAt: this.readingRequestedAt,
+        });
       },
 
       weekPages() {
@@ -328,8 +814,9 @@ document.addEventListener("alpine:init", () => {
       },
 
       // ‹/›: page whole weeks, clamped to the window -- entirely
-      // client-side, never a re-plan. The grid and the mobile rundown
-      // re-render to the new page together.
+      // client-side, never a re-plan and never a change to the draft.
+      // The grid and the mobile rundown re-render to the new page
+      // together.
       pageWeek(delta, navEl) {
         const next = Math.min(this.weekPages() - 1, Math.max(0, this.weekPage + delta));
         if (next === this.weekPage) return;
@@ -350,22 +837,17 @@ document.addEventListener("alpine:init", () => {
         });
       },
 
-      // The full renderable model: one row per planned channel, plate
-      // resolved from the channel cache, slots + ghosts sorted by
-      // start; plus the count of warnings that could not be placed as
-      // ghosts. Memoized on (plan, blocksByName, channels) identity.
-      projection() {
-        if (!this.plan) return { rows: [], dropped: 0 };
-        if (
-          rowsMemo &&
-          rowsMemo.plan === this.plan &&
-          rowsMemo.blocks === this.blocksByName &&
-          rowsMemo.channels === this.channels
-        ) {
+      // The full renderable model for ONE plan (the reading or a draft):
+      // one row per planned channel, plate resolved from the channel
+      // cache, slots + ghosts sorted by start; plus the count of
+      // warnings that could not be placed as ghosts. Memoized on (plan,
+      // blocksByName, channels) identity.
+      projectPlan(plan) {
+        if (rowsMemo && rowsMemo.plan === plan && rowsMemo.blocks === this.blocksByName && rowsMemo.channels === this.channels) {
           return rowsMemo.value;
         }
         const rowsByChannel = new Map<string, GuideSlot[]>();
-        for (const [channelId, slots] of Object.entries(this.plan.channels)) {
+        for (const [channelId, slots] of Object.entries(plan.channels)) {
           const list: GuideSlot[] = [];
           for (const s of slots) {
             const startMs = s.start_time ? Date.parse(s.start_time) : NaN;
@@ -403,7 +885,7 @@ document.addEventListener("alpine:init", () => {
           ghostLookup.set(name, { channelId: b.spec.channel_id, durationMinutes: b.spec.duration });
         }
         let dropped = 0;
-        for (const w of this.plan.warnings ?? []) {
+        for (const w of plan.warnings ?? []) {
           const ghost = resolveGhost(w, ghostLookup);
           const list = ghost ? rowsByChannel.get(ghost.channelId) : undefined;
           if (ghost && list) list.push(ghost);
@@ -417,16 +899,19 @@ document.addEventListener("alpine:init", () => {
           }))
           .sort((a, b) => channelOrder(a.channelId, b.channelId, this.channels));
         const value = { rows, dropped };
-        rowsMemo = { plan: this.plan, blocks: this.blocksByName, channels: this.channels, value };
+        rowsMemo = { plan, blocks: this.blocksByName, channels: this.channels, value };
         return value;
       },
 
+      // What the grid renders: the committed reading, or -- while a
+      // draft is on the glass -- the reading diffed against it.
       rows() {
-        return this.projection().rows;
+        return this.draftOnGlass() ? this.draftDiff().rows : this.readingRows;
       },
 
       droppedWarnings() {
-        return this.projection().dropped;
+        if (this.draftOnGlass()) return this.draft.dropped;
+        return this.plan ? this.projectPlan(this.plan).dropped : 0;
       },
 
       droppedLegendLine() {
@@ -440,16 +925,11 @@ document.addEventListener("alpine:init", () => {
       },
 
       rundownChannels() {
-        return this.rows().map((r) => ({
-          id: r.channelId,
-          label: r.plate.ch ? `${r.plate.ch} · ${r.plate.name}` : r.plate.name,
-        }));
+        return this.rows().map((r) => ({ id: r.channelId, label: plateText(r.plate) }));
       },
 
       hasAnySlots() {
-        if (!this.plan) return false;
-        if (Object.values(this.plan.channels).some((slots) => slots.length > 0)) return true;
-        return (this.plan.warnings ?? []).length > 0;
+        return this.rows().some((r) => r.slots.length > 0);
       },
 
       hasBlocks() {
@@ -461,18 +941,27 @@ document.addEventListener("alpine:init", () => {
       // rendering before Alpine applies the display change would measure
       // a display:none element (clientWidth 0) and the auto-scroll would
       // silently no-op.
-      renderAll() {
+      renderAll(opts = {}) {
         this.$nextTick(() => {
           const viewport = document.getElementById("guide-viewport");
           if (!viewport) return;
+          // The whole page reads as drafting: the root widens the
+          // viewport's chrome budget for the bar, the scrollers dim
+          // their unchanged slots.
+          setDraftFlag(this.$root, this.draftOnGlass());
+          setDraftFlag(viewport, this.draftOnGlass());
           const rows = this.rows();
           const { startDay, days } = weekChunk(this.weekPage, this.loadedDays);
           const weekStartMs = addDays(this.windowStartMs, startDay);
           gridHandle = renderGuideWeek(viewport, rows, weekStartMs, Math.max(1, days), {
             onOpen: (slot, el) => this.openInspector(slot, el),
             inspectorId: "guide-inspector",
+            drawIn: opts.drawIn,
           });
           gridHandle.updateNow(Date.now());
+          // The committed sheet fading back after a discard that had
+          // nothing to re-fetch (motion inventory item 3's other half).
+          if (opts.settle) viewport.querySelector(".guide-sheet")?.classList.add("guide-sheet--settle");
           // Auto-scroll target: the sweep cursor when this week page
           // contains now (parked a third of the viewport in so the next
           // hours are visible); any other page opens at its start.
@@ -497,6 +986,7 @@ document.addEventListener("alpine:init", () => {
       renderRundownOnly() {
         const rundownEl = document.getElementById("guide-rundown");
         if (!rundownEl) return;
+        setDraftFlag(rundownEl, this.draftOnGlass());
         const row = this.rundownRow();
         if (row) this.rundownChannelId = row.channelId;
         // The rundown pages with the SAME week pager as the grid: its
@@ -542,9 +1032,9 @@ document.addEventListener("alpine:init", () => {
       },
 
       // Esc/X close with focus returned to the slot that opened it.
-      // A re-render closer (pageWeek/reload) passes returnFocus=false:
-      // the return slot is about to be discarded, and focusing a dying
-      // node strands keyboard focus on document.body.
+      // A re-render closer (pageWeek/reload/preview) passes
+      // returnFocus=false: the return slot is about to be discarded, and
+      // focusing a dying node strands keyboard focus on document.body.
       closeInspector(returnFocus = true) {
         if (!this.inspector.open) return;
         this.inspector.open = false;
@@ -572,6 +1062,15 @@ document.addEventListener("alpine:init", () => {
         const name = this.inspector.slot?.lostTo;
         const record = name ? this.blocksByName[name] : undefined;
         return record ? `/blocks/?edit=${encodeURIComponent(record.id)}` : "/blocks/";
+      },
+
+      // The draft verdict in one sentence, always naming the reading it
+      // is measured against -- the chip's spoken long form.
+      inspectorVerdictLine() {
+        const slot = this.inspector.slot;
+        if (!slot?.draft) return "";
+        const now = Date.now();
+        return draftVerdictLine(slot.draft, this.readingRequestedAt, slot.startMs <= now && now < slot.endMs);
       },
 
       inspectorTimeRange() {
@@ -640,9 +1139,9 @@ document.addEventListener("alpine:init", () => {
         }));
       },
 
+      // (problemLine below is runtime/errors.ts's, not this method.)
       problemLine() {
-        if (!this.problem) return "";
-        return this.problem.detail ? `${this.problem.title}: ${this.problem.detail}` : this.problem.title;
+        return this.problem ? problemLine(this.problem) : "";
       },
 
       programCountLabel() {

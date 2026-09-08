@@ -17,6 +17,7 @@ type GlobalStub = { document: unknown; window: unknown; cronstrue: unknown };
 (globalThis as unknown as GlobalStub).document = {
   addEventListener() {},
   getElementById: () => null,
+  querySelector: () => null,
 };
 (globalThis as unknown as GlobalStub).window = { setInterval: () => 0 };
 

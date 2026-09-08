@@ -231,4 +231,17 @@ export function initShell(): void {
     }
     window.setInterval(() => void poll(), POLL_INTERVAL_MS);
   });
+
+  // The draft bar (guide) sticks under the bezel, whose height varies as
+  // its rows wrap: publish it as a root custom property via CSSOM (the
+  // CSP forbids inline styles, not CSSOM writes). ResizeObserver is
+  // universal in the supported browsers; guard anyway for the test stubs.
+  const bezel = document.querySelector<HTMLElement>(".bezel");
+  if (bezel && typeof ResizeObserver !== "undefined") {
+    const publish = (): void => {
+      document.documentElement.style.setProperty("--bezel-h", `${bezel.offsetHeight}px`);
+    };
+    publish();
+    new ResizeObserver(publish).observe(bezel);
+  }
 }
