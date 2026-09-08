@@ -843,12 +843,12 @@ dialog.panel .panel__body {
 
 /* Reserved, not currently consumed: every shipped .hero-panel (dashboard,
    the guide's NO SIGNAL, 404) uses a visually-hidden <h2> for its
-   accessible name, never
-   a visible <h1> -- same "declared but unused" precedent as --color-warn's
-   own note above before this task gave it a consumer. Kept (not deleted)
-   as a documented reservation: a future page that does add a visible <h1>
-   inside a .hero-panel should know it renders at 36px, bigger than the
-   page-level .page-head h1 (--text-xl, 28px), before reaching for it. */
+   accessible name, never a visible <h1> -- same "declared but unused"
+   precedent as --color-warn's own note above before this task gave it a
+   consumer. Kept (not deleted) as a documented reservation: a future
+   page that does add a visible <h1> inside a .hero-panel should know it
+   renders at 36px, bigger than the page-level .page-head h1
+   (--text-xl, 28px), before reaching for it. */
 .hero-panel h1 {
   margin: 0 0 var(--space-3);
   font-size: var(--text-2xl);
@@ -2533,12 +2533,18 @@ dialog.panel .panel__body {
 /* Scoped through the rundown's own draft flag so this outranks the
    later .rundown-slot.is-past / .is-on-air rules: a removed row that has
    already ended must not dim, and must never carry the on-air stroke --
-   the grid twin above re-asserts exactly the same two. */
+   the grid twin above re-asserts exactly the same two.
+
+   The edge is the row's own idiom, the inset stroke .is-on-air uses,
+   not the grid slot's dashed border: .rundown-slot sets `border: none`,
+   so naming only a color and a style would leave the width at the
+   initial `medium` and frame the row in 3px dashes, with the list's own
+   .rundown-item border-top still winning the top edge. Replacing the
+   stroke rather than clearing it is also what keeps a removed row that
+   is airing right now from reading as on air. */
 .guide-rundown[data-draft] .rundown-slot[data-draft="removed"] {
   opacity: 1;
-  box-shadow: none;
-  border-color: var(--color-danger);
-  border-style: dashed;
+  box-shadow: inset var(--border-width-thick) 0 0 var(--color-danger);
   color: var(--color-danger);
   background:
     repeating-linear-gradient(
@@ -2582,12 +2588,18 @@ dialog.panel .panel__body {
   }
 }
 
+/* backwards, not both: `both` holds the last keyframe forever, and this
+   one is a clip-path. A clip-path clips the OUTLINE and the box-shadow
+   too, so a drawn-in slot would lose its :focus-visible ring and, when
+   it is the slot on air, its accent glow until the next full render.
+   inset(0) and the base clip-path are the same picture, so ending on
+   the base value costs no flash. */
 .guide-slot--drawin {
-  animation: guide-drawin var(--duration-slow) var(--ease-out) both;
+  animation: guide-drawin var(--duration-slow) var(--ease-out) backwards;
 }
 
 .guide-sheet--settle {
-  animation: guide-settle var(--duration-slow) var(--ease-out) both;
+  animation: guide-settle var(--duration-slow) var(--ease-out) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3209,7 +3221,14 @@ dialog.panel .panel__body {
     border-left-width: var(--border-width-thick);
   }
 
-  [data-draft="removed"] {
+  .guide-slot[data-draft="removed"] {
     border-style: dashed;
+  }
+
+  /* The rundown row's stroke is a box-shadow, and forced-colors drops
+     shadows: restate it as the left border .is-on-air uses there, dashed
+     so the two edges stay tellable apart without color. */
+  .rundown-slot[data-draft="removed"] {
+    border-left: var(--border-width-thick) dashed;
   }
 }

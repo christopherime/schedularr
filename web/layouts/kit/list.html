@@ -187,7 +187,8 @@
         CHANGED, REMOVED, or SAME. Text always carries it — a chip on
         every changed slot, never color alone. A removed slot moves to
         the second lane beside the ghosts so it never gets painted over
-        by what replaces it; SAME dims to keep the diff the point.
+        by what replaces it; SAME dims to keep the diff the point. Under
+        the bar states are the three failures the draft zone can show.
       </p>
     </div>
     <div class="kit-stack">
@@ -212,6 +213,15 @@
           <button type="button" class="btn btn--primary btn--sm" aria-busy="true" disabled>Applying…</button>
         </div>
       </div>
+      {{- /* The three ways a draft ends badly, in the draft zone's own
+             order: a preview that never landed (the grid keeps showing
+             the reading), an apply that failed (the draft stays armed,
+             so Retry re-opens the confirm), and an aborted apply that
+             may have landed in part — which offers Re-draft instead,
+             because re-sending the same push is not a safe recovery. */}}
+      {{ partial "ui/problem.html" (dict "label" "Draft failed" "bind" "problem" "retry" "tapeDemo()") }}
+      {{ partial "ui/problem.html" (dict "label" "Apply failed" "bind" "problem" "retry" "tapeDemo()") }}
+      {{ partial "ui/problem.html" (dict "label" "Apply timed out — it may have partially landed" "bind" "problemBare" "retry" "tapeDemo()" "retryLabel" "Re-draft") }}
     </div>
     <div class="guide kit-guide" data-draft>
       <div class="guide-viewport" id="kit-draft-viewport" data-draft aria-label="Fixture draft grid"></div>
@@ -241,7 +251,7 @@
   <section class="kit-section" aria-labelledby="kit-guide-empty-title">
     <div class="section-head">
       <h2 id="kit-guide-empty-title">Guide teaching empty states</h2>
-      <p>No blocks at all vs. nothing inside the window/scope — the guide distinguishes the two.</p>
+      <p>No blocks at all, nothing airing inside the window, and a draft that plans nothing — the guide distinguishes all three.</p>
     </div>
     <div class="kit-stack">
       {{ partial "ui/empty.html" (dict
@@ -251,7 +261,15 @@
         "actionHref" "/blocks/") }}
       {{ partial "ui/empty.html" (dict
         "legend" "No match"
-        "text" "No block airs inside the next four weeks for this scope — clear the SCOPE, or check that the blocks for this channel are enabled."
+        "text" "No block airs inside the next four weeks. Check that your blocks are enabled and that their crons fire when you expect."
+        "actionLabel" "Review blocks"
+        "actionHref" "/blocks/") }}
+      {{- /* A draft that plans nothing is not an error: applying it
+             clears every channel in the scope, and the copy names that
+             before the operator presses Apply. */}}
+      {{ partial "ui/empty.html" (dict
+        "legend" "Nothing drafted"
+        "text" "This draft schedules nothing for the scope. Applying pushes an empty lineup to any channel Schedularr last applied in it — discard, or review the blocks for this channel."
         "actionLabel" "Review blocks"
         "actionHref" "/blocks/") }}
     </div>

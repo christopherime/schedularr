@@ -409,16 +409,27 @@ binding:
     `.guide-rundown[data-draft] .rundown-slot[data-draft="removed"]` so
     specificity beats the later `.is-past` / `.is-on-air` rules: a
     removed row that already ended must not dim, and must never carry
-    the on-air stroke.
+    the on-air stroke. Its edge is a danger `box-shadow: inset` rather
+    than the grid slot's dashed border -- `.rundown-slot` sets
+    `border: none`, so a border-color/-style pair alone would resolve to
+    the initial `medium` width and frame the row in 3px dashes under the
+    list's own 1px separator. Replacing `.is-on-air`'s inset stroke is
+    also what drops it.
   - **Motion**: the trace draw-in (`clip-path` inset over
     `--duration-slow`) plays only when a draft replaces a sheet ALREADY
     drawn -- a SCOPE change or an Arm press -- never as an entrance on a
     first load or a `?draft` arrival; the settle is the committed sheet
-    fading back after a discard. Reduced motion drops both and the data
-    still lands. Under `forced-colors` the bar's tinted ground and the
-    removed hatch drop out, so the armed edge becomes a `Highlight`
-    stroke, the verdict edges keep their width, and removed slots keep
-    the dashed border -- chip and strikethrough already carry the fact.
+    fading back after a discard. Both fill `backwards`, never `both`: a
+    held `clip-path` clips the outline and the box-shadow with the box,
+    which would cost a drawn-in slot its focus ring and an on-air one
+    its glow for as long as the sheet lived. Reduced motion drops both
+    animations and the data still lands. Under `forced-colors` the bar's
+    tinted ground and the removed hatch drop out, so the armed edge
+    becomes a `Highlight` stroke, the verdict edges keep their width,
+    the removed grid slot keeps its dashed border, and the removed
+    rundown row restates its stroke as a dashed `border-left` (shadows
+    do not survive forced colors) -- chip and strikethrough already
+    carry the fact.
   - **The reading mirror**: every landed reading is mirrored to
     `sessionStorage` (`schedularr_guide_reading`, per tab, skipped above
     2M characters) so a Blocks round trip (save → `PREVIEW ON GUIDE`
@@ -478,8 +489,8 @@ padding that steps down to `--space-5 --space-4 --space-7` under a single
 `640px` breakpoint -- the only breakpoint value used anywhere in the
 file. Responsiveness is structural, not fluid: no `clamp()` typography,
 and wide content (the history/blocks/series tables) scrolls on its own
-axis via `.table-wrap { overflow-x: auto }` rather than letting
-the page scroll horizontally.
+axis via `.table-wrap { overflow-x: auto }` rather than letting the page
+scroll horizontally.
 
 `.form-grid` (`display: grid; grid-template-columns: repeat(auto-fit,
 minmax(12rem, 1fr))`) is the one reusable multi-column layout primitive,
@@ -616,8 +627,8 @@ shape.
 - **`.hero-panel` + `.graticule`** -- the bordered "instrument surface"
   primitive (Task 3's landing placeholder), reused as-is by the
   dashboard's status card, the guide's NO SIGNAL blackout, and the 404
-  page's own "No Signal" readout. `.graticule` is a repeating-gradient grid
-  background, applied wherever a surface needs the literal
+  page's own "No Signal" readout. `.graticule` is a repeating-gradient
+  grid background, applied wherever a surface needs the literal
   measurement-grid texture.
 - **`.badge`** -- the blocks list's type indicator (`Filter`/`Series`);
   text carries the fact, `data-type="series"` adds an accent tint as a
