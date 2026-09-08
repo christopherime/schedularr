@@ -77,10 +77,23 @@
         </select>
       </div>
     </div>
+  </div>
 
-    {{- /* The draft bar and its problems live in the TOP chrome, not
-           beside the grid: a draft must be armable and discardable in
-           every grid state, the empty reading included. */}}
+  {{- /* The draft zone: the bar and its problems, above the grid rather
+         than beside it -- a draft must be armable and discardable in
+         every grid state, the empty reading included. Its own child of
+         .guide, not part of the chrome above: sticky is bounded by the
+         containing block, and the chrome's box ends right under the
+         bar, so APPLY and DISCARD scrolled off with it -- worst on
+         mobile, where the long rundown scrolls the page and this bar
+         is the only way to apply. Hidden outright when no draft is
+         armed and no problem is up: an empty sticky box must not
+         reserve a strip under the bezel. */}}
+  <div
+    class="guide-draftzone"
+    x-show="draft.mode !== 'off' || draft.previewError !== null || draft.applyError !== null"
+    x-cloak
+  >
     <template x-if="draft.previewError">
       {{ partial "ui/problem.html" (dict "label" "Draft failed" "bind" "draft.previewError" "retry" "requestDraft()") }}
     </template>

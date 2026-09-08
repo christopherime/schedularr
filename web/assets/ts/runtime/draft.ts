@@ -230,12 +230,47 @@ export function serializeReading(requestedAt: number, rows: GuideRow[]): string 
   return raw.length > READING_MAX_CHARS ? null : raw;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** A program as stored: title and durationMs are required (the rundown
+ * prints them and lineupSignature keys on them); season and episode are
+ * optional everywhere they are read. */
+function isStoredProgram(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const { title, durationMs } = value as { title?: unknown; durationMs?: unknown };
+  return typeof title === "string" && isFiniteNumber(durationMs);
+}
+
+/** A slot as stored. startMs/endMs are the geometry: a non-finite or
+ * inverted pair would place a box of NaN width. */
+function isStoredSlot(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const { blockName, blockType, cron, priority, startMs, endMs, programs } = value as Record<string, unknown>;
+  if (typeof blockName !== "string" || typeof blockType !== "string" || typeof cron !== "string") return false;
+  if (typeof priority !== "number") return false;
+  if (!isFiniteNumber(startMs) || !isFiniteNumber(endMs) || startMs >= endMs) return false;
+  return Array.isArray(programs) && programs.every(isStoredProgram);
+}
+
+function isStoredRow(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const { channelId, slots } = value as { channelId?: unknown; slots?: unknown };
+  return typeof channelId === "string" && Array.isArray(slots) && slots.every(isStoredSlot);
+}
+
 /**
  * null for anything missing, malformed, older than READING_MAX_AGE_MS,
  * or taken before the server's last apply (lastAppliedAt =
  * Status.last_applied_at) -- a reading from before an apply is not what
  * the operator would be diffing against. An unparseable stamp does not
  * invalidate (the server simply has not recorded one).
+ *
+ * Malformed is checked ELEMENTWISE, not just at the envelope: this
+ * payload survives a deploy in the operator's tab, so a reading an
+ * older build wrote must be rejected outright rather than reaching the
+ * grid's geometry as NaN.
  */
 export function parseStoredReading(raw: string | null, nowMs: number, lastAppliedAt?: string | null): StoredReading | null {
   if (raw === null) return null;
@@ -247,8 +282,8 @@ export function parseStoredReading(raw: string | null, nowMs: number, lastApplie
   }
   if (typeof parsed !== "object" || parsed === null) return null;
   const { requestedAt, rows } = parsed as { requestedAt?: unknown; rows?: unknown };
-  if (typeof requestedAt !== "number" || !Number.isFinite(requestedAt)) return null;
-  if (!Array.isArray(rows)) return null;
+  if (!isFiniteNumber(requestedAt)) return null;
+  if (!Array.isArray(rows) || !rows.every(isStoredRow)) return null;
   if (nowMs - requestedAt > READING_MAX_AGE_MS) return null;
   if (lastAppliedAt) {
     const applied = Date.parse(lastAppliedAt);

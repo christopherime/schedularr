@@ -1939,15 +1939,28 @@ dialog.panel .panel__body {
   text-transform: uppercase;
 }
 
-/* The draft bar (spec §3.3): the armed control, sticky under the bezel
-   (--bezel-h is published by runtime/shell.ts via CSSOM) so APPLY and
-   DISCARD stay reachable while the page scrolls. The accent edge names
-   "armed" the way the token dot's glow does; while drafting or applying
-   ([aria-busy]) it quiets to the interactive border. */
-.guide-draftbar {
+/* The draft zone (spec §3.3): the bar and its problems, on the page
+   column but on their OWN child of .guide -- sticky is bounded by the
+   containing block, and the chrome above ends right under the bar, so
+   sticking it in there pinned nothing. Under the bezel (--bezel-h is
+   published by runtime/shell.ts via CSSOM) the zone keeps APPLY and
+   DISCARD reachable for the whole scroll, which is the only way to
+   apply on mobile, where the long rundown scrolls the page. The zone is
+   x-show'd away when no draft is armed and no problem is up: an empty
+   sticky box must not reserve a strip under the bezel. */
+.guide-draftzone {
   position: sticky;
   top: var(--bezel-h, 4.5rem);
   z-index: var(--z-sticky);
+  max-width: var(--content-max);
+  margin-inline: auto;
+  padding-inline: var(--space-5);
+}
+
+/* The armed control itself. The accent edge names "armed" the way the
+   token dot's glow does; while drafting or applying ([aria-busy]) it
+   quiets to the interactive border. */
+.guide-draftbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2522,7 +2535,13 @@ dialog.panel .panel__body {
     var(--surface-danger);
 }
 
-.rundown-slot[data-draft="removed"] {
+/* Scoped through the rundown's own draft flag so this outranks the
+   later .rundown-slot.is-past / .is-on-air rules: a removed row that has
+   already ended must not dim, and must never carry the on-air stroke --
+   the grid twin above re-asserts exactly the same two. */
+.guide-rundown[data-draft] .rundown-slot[data-draft="removed"] {
+  opacity: 1;
+  box-shadow: none;
   border-color: var(--color-danger);
   border-style: dashed;
   color: var(--color-danger);
@@ -3023,7 +3042,8 @@ dialog.panel .panel__body {
     padding: var(--space-5) 0 var(--space-7);
   }
 
-  .guide-chrome {
+  .guide-chrome,
+  .guide-draftzone {
     padding-inline: var(--space-4);
   }
 

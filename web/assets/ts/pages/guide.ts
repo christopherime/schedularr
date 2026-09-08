@@ -127,12 +127,17 @@ interface RowsProjection {
   dropped: number;
 }
 
-// projectPlan() memo: the GuideSlot graph is identical for a given
-// (plan, blocksByName, channels) triple, but a plan is projected again
-// whenever late enrichment lands -- ~60-90k throwaway allocations per
-// pass at scale. Keyed on reference identity; reload(), preview() and
-// loadChannels() replace those objects wholesale, which is the only way
-// they change.
+// projectPlan() memo: ONE slot, holding the last (plan, blocksByName,
+// channels) triple it projected. The GuideSlot graph is identical for a
+// given triple, so what this saves is the SAME plan projected again --
+// droppedWarnings() re-reads the reading's projection on every Alpine
+// evaluation, and that projection is ~60-90k allocations at scale. It
+// does not span two plans: reproject() projects the reading and then the
+// draft, and in draft mode they evict each other. That is fine -- both
+// results are kept on the component (readingRows, draft.rows), and
+// reproject() only runs when late enrichment forces a redraw anyway.
+// Keyed on reference identity; reload(), preview() and loadChannels()
+// replace those objects wholesale, which is the only way they change.
 let rowsMemo: {
   plan: object;
   blocks: object;
@@ -532,7 +537,13 @@ document.addEventListener("alpine:init", () => {
         this.readingRequestedAt = stored.requestedAt;
         this.plan = null;
         this.readingRestored = true;
-        this.loading = false;
+        // `loading` deliberately STAYS true: a restored reading is never
+        // painted as the committed grid, so until the draft lands there
+        // is nothing to put on the glass. The skeleton and its honest
+        // first-load note hold the frame instead of an empty stage --
+        // the draft bar sits above both and already reads DRAFTING….
+        // preview() clears the flag when the draft lands; its failure
+        // path reloads, and reload() owns the flag from there.
         // The blocks index is enrichment on this path too (inspector
         // deep-links, and the ghosts of the draft that follows).
         void loadBlockIndex().then((byName) => {
@@ -644,6 +655,10 @@ document.addEventListener("alpine:init", () => {
           this.draft.counts = this.draftDiff().counts;
           this.statusLine = this.draftBarLine();
           this.closeInspector(false);
+          // A ?draft arrival left the skeleton up for exactly this
+          // moment (see openWithDraft): the draft that just landed is
+          // what replaces it.
+          this.loading = false;
           this.renderAll({ drawIn: wasGridOnGlass });
         } catch (err) {
           if (seq !== this.draft.seq) return;

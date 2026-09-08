@@ -250,6 +250,42 @@ test("a stored reading older than the last apply is not a baseline", () => {
   assert.ok(parseStoredReading(raw, at(13), null));
 });
 
+test("parseStoredReading rejects rows, slots and programs of the wrong shape", () => {
+  // A payload written by another build must never reach the geometry as
+  // NaN, so every row, slot and program is checked elementwise.
+  const storedSlot = {
+    blockName: "Night",
+    blockType: "filter",
+    cron: "0 21 * * *",
+    priority: 50,
+    startMs: at(21),
+    endMs: at(22),
+    programs: [prog("E1", 60, 1, 1)],
+  };
+  const payload = (slots: unknown[]) => JSON.stringify({ requestedAt: at(12), rows: [{ channelId: "c1", slots }] });
+
+  assert.ok(parseStoredReading(payload([storedSlot]), at(13)), "a well-formed payload still parses");
+  assert.equal(parseStoredReading(payload([{ ...storedSlot, startMs: "21:00" }]), at(13)), null, "a non-numeric startMs");
+  assert.equal(parseStoredReading(payload([{ ...storedSlot, programs: undefined }]), at(13)), null, "a slot with no programs array");
+  assert.equal(parseStoredReading(payload([{ ...storedSlot, blockName: 7 }]), at(13)), null, "a non-string blockName");
+  assert.equal(
+    parseStoredReading(payload([{ ...storedSlot, startMs: at(22), endMs: at(21) }]), at(13)),
+    null,
+    "a slot that ends before it starts",
+  );
+  assert.equal(
+    parseStoredReading(payload([{ ...storedSlot, programs: [{ title: "E1" }] }]), at(13)),
+    null,
+    "a program with no durationMs",
+  );
+  assert.equal(parseStoredReading(JSON.stringify({ requestedAt: at(12), rows: ["c1"] }), at(13)), null, "a row that is not an object");
+  assert.equal(
+    parseStoredReading(JSON.stringify({ requestedAt: at(12), rows: [{ channelId: "c1" }] }), at(13)),
+    null,
+    "a row with no slots array",
+  );
+});
+
 test("serializeReading refuses a payload over READING_MAX_CHARS", () => {
   const programs = [];
   for (let i = 0; i < 30_000; i++) programs.push(prog(`Program ${i} with a fairly long title to inflate the payload`, 1));

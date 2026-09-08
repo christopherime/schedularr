@@ -199,6 +199,21 @@ function fixtureDraftRows(): GuideRow[] {
   ];
 }
 
+/** Mounts one gallery viewport through the SHIPPING renderer and parks
+ * its scroller on the sweep cursor, exactly as the guide page does. No-op
+ * when the section is not on the page. */
+function mountGuideViewport(id: string, rows: GuideRow[], drawIn?: boolean): void {
+  const viewport = document.getElementById(id);
+  if (!viewport) return;
+  const handle = renderGuideWeek(viewport, rows, localDayStart(Date.now()), KIT_GUIDE_DAYS, {
+    onOpen: (slot) => printTape(`Inspector would open — ${slot.blockName}`),
+    drawIn,
+  });
+  handle.updateNow(Date.now());
+  const nowX = handle.nowOffsetPx(Date.now());
+  if (nowX !== null) viewport.scrollLeft = Math.max(0, nowX - viewport.clientWidth / 3);
+}
+
 interface KitState {
   channels: Channel[];
   problem: ProblemView;
@@ -253,26 +268,11 @@ document.addEventListener("alpine:init", () => {
         // Fixture-only component: nothing to fetch. The guide grid is the
         // one section that renders through real runtime code
         // (runtime/grid.ts) rather than static markup -- the gallery must
-        // exercise what ships.
-        const viewport = document.getElementById("kit-guide-viewport");
-        if (viewport) {
-          const handle = renderGuideWeek(viewport, fixtureGuideRows(), localDayStart(Date.now()), KIT_GUIDE_DAYS, {
-            onOpen: (slot) => printTape(`Inspector would open — ${slot.blockName}`),
-          });
-          handle.updateNow(Date.now());
-          const nowX = handle.nowOffsetPx(Date.now());
-          if (nowX !== null) viewport.scrollLeft = Math.max(0, nowX - viewport.clientWidth / 3);
-        }
-        const draftViewport = document.getElementById("kit-draft-viewport");
-        if (draftViewport) {
-          const handle = renderGuideWeek(draftViewport, fixtureDraftRows(), localDayStart(Date.now()), KIT_GUIDE_DAYS, {
-            onOpen: (slot) => printTape(`Inspector would open — ${slot.blockName}`),
-            drawIn: false,
-          });
-          handle.updateNow(Date.now());
-          const nowX = handle.nowOffsetPx(Date.now());
-          if (nowX !== null) draftViewport.scrollLeft = Math.max(0, nowX - draftViewport.clientWidth / 3);
-        }
+        // exercise what ships. The draft band never draws in: the gallery
+        // has no committed grid for a draft to replace, so the animation
+        // would be an entrance.
+        mountGuideViewport("kit-guide-viewport", fixtureGuideRows());
+        mountGuideViewport("kit-draft-viewport", fixtureDraftRows(), false);
       },
 
       plate(id) {

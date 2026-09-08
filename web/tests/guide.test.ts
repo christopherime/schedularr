@@ -42,11 +42,26 @@ const domListeners = new Map<string, () => void>();
   getElementById: (id: string) => (id === "guide-arm" ? armButton : null),
   querySelector: () => null,
 };
-(globalThis as unknown as GlobalStub).window = { setInterval: () => 0 };
+// The browser surfaces the component touches beyond fetch: the reading
+// mirror it restores a ?draft arrival's diff baseline from, and the
+// history entry that arrival consumes.
+const sessionStore = new Map<string, string>();
+(globalThis as unknown as GlobalStub).window = {
+  setInterval: () => 0,
+  location: { search: "" },
+  history: { replaceState: () => {} },
+  sessionStorage: {
+    getItem: (key: string) => sessionStore.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      sessionStore.set(key, value);
+    },
+  },
+};
 
 // Dynamic import so the global stubs above are in place before the
 // module's top-level registration code runs.
 const { orderRows, scopeLabelText } = await import("../assets/ts/pages/guide.ts");
+const { READING_STORAGE_KEY } = await import("../assets/ts/runtime/draft.ts");
 
 // ---- pure helpers ---------------------------------------------------------
 
@@ -99,6 +114,7 @@ interface GuideComponent {
   controls: { channelId: string };
   loading: boolean;
   readingRequestedAt: number;
+  readingRestored: boolean;
   draft: {
     mode: string;
     pendingScope: boolean;
@@ -113,6 +129,8 @@ interface GuideComponent {
   $root: unknown;
   reload: () => Promise<void>;
   preview: () => Promise<void>;
+  openWithDraft: (scope: string) => Promise<void>;
+  requestDraft: () => void;
   confirmApply: () => Promise<void>;
   discardDraft: () => void;
 }
@@ -186,6 +204,38 @@ function plan(): unknown {
     },
     warnings: [],
   };
+}
+
+/** A mirrored reading as the Blocks round trip left it in
+ * sessionStorage: one channel, one slot, taken a minute ago. */
+function storedReading(): string {
+  const startMs = Date.now() + 3_600_000;
+  return JSON.stringify({
+    requestedAt: Date.now() - 60_000,
+    rows: [
+      {
+        channelId: "ch-horror",
+        slots: [
+          {
+            blockName: "Late Night",
+            blockType: "filter",
+            cron: "0 21 * * *",
+            priority: 50,
+            startMs,
+            endMs: startMs + 3_600_000,
+            programs: [{ title: "A Movie", durationMs: 3_600_000, startMs }],
+          },
+        ],
+      },
+    ],
+  });
+}
+
+/** Yields to the timer queue until `done` holds: the states these tests
+ * observe sit a few awaits deep inside apiGet. */
+async function until(done: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 50 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(done(), `${what} never arrived`);
 }
 
 // ---- draft state machine --------------------------------------------------
@@ -325,4 +375,62 @@ test("a failed apply drops the latch and leaves the draft armed", async () => {
   assert.equal(guide.$refs.confirmDialog.open, false);
   flush();
   assert.equal(armFocusCount, 1);
+});
+
+test("a ?draft arrival keeps the skeleton up until its first draft lands", async () => {
+  // The restored reading seeds the diff but is never painted as the
+  // committed grid, so until the draft lands there is nothing to show:
+  // the skeleton (with its honest first-load note) has to stay on the
+  // glass rather than an empty frame.
+  const guide = makeGuide();
+  sessionStore.set(READING_STORAGE_KEY, storedReading());
+  let land: (value: unknown) => void = () => {};
+  const inFlight = new Promise((resolve) => {
+    land = resolve;
+  });
+  fetchStub = (path) => {
+    if (path.includes("/status")) return Promise.resolve(jsonResponse({}));
+    if (path.includes("/blocks")) return Promise.resolve(jsonResponse([]));
+    return inFlight;
+  };
+
+  const arrival = guide.openWithDraft("ch-horror");
+  await until(() => guide.draft.mode === "previewing", "the first preview");
+  assert.equal(guide.readingRestored, true, "the mirrored reading seeds the diff");
+  assert.equal(guide.loading, true, "the skeleton must hold while the first draft is in the air");
+
+  land(jsonResponse(plan()));
+  await arrival;
+  assert.equal(guide.loading, false, "the draft landing is what replaces the skeleton");
+  assert.equal(guide.draft.mode, "armed");
+});
+
+test("an Arm press while the ?draft skeleton holds re-drafts exactly once", async () => {
+  // Both draft entry points latch while a flight is in the air, and the
+  // skeleton window is one: the latch must fire once when the first
+  // draft lands, not loop on it.
+  const guide = makeGuide();
+  sessionStore.set(READING_STORAGE_KEY, storedReading());
+  let land: (value: unknown) => void = () => {};
+  const inFlight = new Promise((resolve) => {
+    land = resolve;
+  });
+  let generates = 0;
+  fetchStub = (path) => {
+    if (path.includes("/status")) return Promise.resolve(jsonResponse({}));
+    if (path.includes("/blocks")) return Promise.resolve(jsonResponse([]));
+    generates += 1;
+    return inFlight;
+  };
+
+  const arrival = guide.openWithDraft("ch-horror");
+  await until(() => guide.draft.mode === "previewing", "the first preview");
+  guide.requestDraft();
+  assert.equal(guide.draft.pendingScope, true, "a press against the skeleton latches");
+
+  land(jsonResponse(plan()));
+  await arrival;
+  await until(() => generates === 2 && guide.draft.mode === "armed", "the latched re-draft");
+  await until(() => guide.draft.pendingScope === false, "the latch to clear");
+  assert.equal(generates, 2, "the latch must fire exactly once, never loop");
 });
