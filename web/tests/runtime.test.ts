@@ -8,7 +8,7 @@ import test from "node:test";
 const { ApiError, apiPath } = await import("../assets/ts/runtime/api.ts");
 const { describeError, toProblemView } = await import("../assets/ts/runtime/errors.ts");
 const { channelHint, channelLabel, channelOrder, channelPlate } = await import("../assets/ts/runtime/channels.ts");
-const { clampDays, durationLabel, formatClock, formatLocal, ordinal, pad2, plural, relativeTime, sxxeyy, untilTime } =
+const { durationLabel, formatClock, formatLocal, ordinal, pad2, plural, relativeTime, sxxeyy, untilTime } =
   await import("../assets/ts/runtime/format.ts");
 
 // ---- errors --------------------------------------------------------------
@@ -145,25 +145,6 @@ test("channelHint honors a caller-supplied manual-entry wording", () => {
     channelHint(false, null, [], blankMeansAll),
     "Tunarr returned no channels — enter a channel ID manually, or leave blank for all channels.",
   );
-});
-
-// ---- plan-days clamp (shared by guide + schedule) --------------------------
-
-test("clampDays clamps to the API's [1, 30] range", () => {
-  assert.equal(clampDays("7"), 7);
-  assert.equal(clampDays("1"), 1);
-  assert.equal(clampDays("30"), 30);
-  assert.equal(clampDays("0"), 1);
-  assert.equal(clampDays("-4"), 1);
-  assert.equal(clampDays("45"), 30);
-});
-
-test("clampDays defaults blank/non-finite input to 7 and rounds", () => {
-  assert.equal(clampDays(""), 7);
-  assert.equal(clampDays("  "), 7);
-  assert.equal(clampDays("abc"), 7);
-  assert.equal(clampDays("6.6"), 7);
-  assert.equal(clampDays("2.2"), 2);
 });
 
 test("ordinal handles the teens exception", () => {

@@ -48,7 +48,7 @@ declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
 };
 
-// Same double-init defense as dashboard.ts/blocks.ts/schedule.ts: Alpine.
+// Same double-init defense as dashboard.ts/blocks.ts/guide.ts: Alpine.
 // data()'s init() is auto-invoked, so nothing on this page also wires
 // x-init="init()" to it.
 let started = false;

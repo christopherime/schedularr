@@ -34,26 +34,6 @@ export function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-/**
- * Clamps free-text days input to the plan window's documented [1, 30]
- * range (api/openapi.yaml: GenerateRequest.days and GET /schedule's days
- * share the same bounds), defaulting to 7 (the schema's own default) for
- * blank/non-finite input. Used by the schedule page's DAYS control (the
- * guide has none since the full-week reframe -- it always fetches the
- * whole 28-day window). This is the client-side clamp half of the
- * contract; a value that somehow still slips out of range is caught by
- * the API's own 400.
- */
-export function clampDays(raw: string): number {
-  const trimmed = raw.trim();
-  // Blank input must take the schema default (7), not fall through
-  // Number("") === 0 into the 1-day clamp.
-  if (trimmed === "") return 7;
-  const n = Number(trimmed);
-  if (!Number.isFinite(n)) return 7;
-  return Math.min(30, Math.max(1, Math.round(n)));
-}
-
 /** "21:05" -- local wall-clock label for a millisecond timestamp. */
 export function formatClock(ms: number): string {
   const d = new Date(ms);
@@ -86,8 +66,8 @@ export function pad2(n: number): string {
  * Compact relative readout for the bezel telemetry strip, both directions:
  * "just now" / "5 min ago" / "3 h ago" / "2 d ago", and "in 5 min" /
  * "in 3 h" for future instants (next cron tick). Uses the browser clock
- * uncorrected -- heartbeat skew correction arrives with SSE (v0.5.6).
- * `now` is injectable for tests.
+ * uncorrected -- heartbeat skew correction arrives with the SSE live-link
+ * slice. `now` is injectable for tests.
  */
 export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
   if (!iso) return "—";

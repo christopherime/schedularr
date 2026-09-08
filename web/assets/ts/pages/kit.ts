@@ -262,7 +262,7 @@ document.addEventListener("alpine:init", () => {
       },
 
       // Same state-level guard convention as the real pages (blocks
-      // cancelDelete / schedule cancelApply): refuses to close while the
+      // cancelDelete / guide cancelApply): refuses to close while the
       // simulated action is in flight.
       cancelConfirm() {
         if (this.confirmBusy) return;

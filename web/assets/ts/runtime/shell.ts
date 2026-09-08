@@ -10,8 +10,8 @@
 //      page's failed loads (api.ts's onReauth).
 //   2. The bezel telemetry strip: TUNARR signal, LAST APPLY, and NEXT TICK
 //      readouts on every page, fed by a 60s GET /status poll (no SSE yet
-//      -- the LIVE/POLL/LINK legend arrives with the event stream in
-//      v0.5.8 and is deliberately absent rather than faked).
+//      -- the LIVE/POLL/LINK legend arrives with the SSE live-link slice's
+//      event stream and is deliberately absent rather than faked).
 import { apiGet, apiPath, broadcastReauth, onUnauthorized } from "./api.ts";
 import type { ApiResponse } from "./api.ts";
 import { invalidateChannels } from "./channels.ts";

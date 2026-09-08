@@ -1,7 +1,7 @@
 // The runtime's /channels cache: one shared, promise-cached fetch per page
 // load, consumed by every surface that names a channel -- the channel-select
 // partial's options, and the legend plates that replace raw UUIDs
-// (dashboard history, blocks list, schedule channel heads). A failed fetch
+// (dashboard history, blocks list, guide row plates). A failed fetch
 // clears the cache so a retry actually refetches.
 import { apiGet, apiPath } from "./api.ts";
 import type { ApiResponse } from "./api.ts";
@@ -30,13 +30,13 @@ export function invalidateChannels(): void {
 /**
  * The channel field's hint line (ui/channel-select's fallback messaging),
  * shared by every page with a channel picker -- previously written
- * near-verbatim three times (blocks, schedule, kit), which let the kit's
+ * near-verbatim three times (blocks, guide, kit), which let the kit's
  * copy drift from what ships. Select-vs-free-text is gated on "usable
  * options exist", not just "the call didn't error": a reachable Tunarr
  * with zero channels configured would otherwise render an unusable empty
  * <select>. Both cases fall back to the same free-text input, described
- * by `manualHint` (the schedule page adds "or leave blank for all
- * channels" to it; sentence punctuation is appended here).
+ * by `manualHint` (the guide adds "or leave blank for all channels" to
+ * it; sentence punctuation is appended here).
  */
 export function channelHint(
   loading: boolean,
@@ -88,8 +88,7 @@ export function channelPlate(id: string | null | undefined, channels: Channel[])
  * first (a section headed `CH 04 · HORROR` sorting on raw UUID looks
  * arbitrary), then name, then raw id as the final tiebreak. Channels the
  * cache can't resolve (or that carry no number) sort after numbered ones,
- * by name/id. Shared by the guide's row order and the schedule page's
- * section order. */
+ * by name/id. Drives the guide's row order. */
 export function channelOrder(aId: string, bId: string, channels: Channel[]): number {
   const a = channels.find((c) => c.id === aId);
   const b = channels.find((c) => c.id === bId);

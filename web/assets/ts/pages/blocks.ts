@@ -27,6 +27,7 @@ import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
 import { channelHint as channelHintText, channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { cronReadback } from "../runtime/cron.ts";
+import { draftHref } from "../runtime/draft.ts";
 import { describeError, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { pad2 } from "../runtime/format.ts";
@@ -1132,10 +1133,18 @@ document.addEventListener("alpine:init", () => {
             this.blocks = this.blocks.map((b) => (b.id === id ? rec : b));
           }
           this.closeEditor();
-          // Success is printed, not toasted: one tape line, no dismissal
-          // ceremony. The create→apply bridge line ("reaches Tunarr at
-          // <next_cron_tick>") arrives with the block power tools slice.
-          printTape(`Block saved — ${spec.name}`);
+          // Success is printed, not toasted. The one action is the
+          // create→apply bridge (spec §2 step 4): PREVIEW ON GUIDE opens
+          // the guide in draft mode scoped to this block's channel, diffed
+          // against the reading the operator last saw. The "reaches
+          // Tunarr at <next_cron_tick>" readout arrives with the block
+          // power tools slice.
+          printTape(`Block saved — ${spec.name}`, {
+            label: "Preview on guide",
+            run: () => {
+              window.location.href = draftHref(spec.channel_id);
+            },
+          });
         } catch (err) {
           if (err instanceof ApiError && err.status === 409) {
             // describeError, not err.detail alone: the store's own
@@ -1193,8 +1202,8 @@ document.addEventListener("alpine:init", () => {
         this.$refs.confirmDialog.showModal();
       },
 
-      // State-level re-entrancy guard, same convention as the schedule
-      // page's cancelApply: refuses to close while the delete is still in
+      // State-level re-entrancy guard, same convention as the guide's
+      // cancelApply: refuses to close while the delete is still in
       // flight unless performDelete itself forces it.
       cancelDelete(force = false) {
         if (this.pendingId && !force) return;

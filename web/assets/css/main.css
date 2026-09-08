@@ -385,7 +385,8 @@ p {
    TUNARR (coded-legend dot+text) plus LAST APPLY / NEXT TICK relative
    readouts, on every page -- the dashboard status card generalized into
    persistent chrome. Fed by runtime/shell.ts's 60s /status poll; the
-   LIVE/POLL/LINK legend is deliberately absent until SSE (v0.5.4). */
+   LIVE/POLL/LINK legend is deliberately absent until the SSE live-link
+   slice. */
 
 .telemetry {
   display: flex;
@@ -1094,37 +1095,6 @@ dialog.panel .panel__body {
   font-variant-numeric: tabular-nums;
 }
 
-/* -- schedule: conflict warnings --------------------------------------------
-   A dropped occurrence (conflict resolution: an overlapping occurrence on
-   the same channel lost to a higher- or equal-priority one) used to be
-   visible only in a server-side INFO log line. --color-warn, not
-   --color-danger: the preview/apply itself succeeded -- this is a "worth a
-   second look" nudge (same family as .form-field__warning), not a failure. */
-
-.schedule-warnings {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  border: var(--border-width) solid var(--color-warn);
-  border-radius: var(--radius-md);
-  /* Warn-tinted surface (color-mix token) -- see .problem's note. */
-  background: var(--surface-warn);
-}
-
-.schedule-warnings__title {
-  margin: 0;
-  font-weight: 700;
-  color: var(--color-warn);
-}
-
-.schedule-warnings__list {
-  margin: 0;
-  padding-left: var(--space-5);
-  font-size: var(--text-sm);
-  color: var(--color-ink-muted);
-}
-
 /* -- teaching empty state (ui/empty partial) -------------------------------
    Legend line, one sentence, one action -- an empty section teaches what
    fills it instead of presenting a bare shell. */
@@ -1624,103 +1594,10 @@ dialog.panel .panel__body {
   }
 }
 
-/* -- schedule: preview controls --------------------------------------------
-   Reuses .hero-panel/.graticule verbatim (Task 4's dashboard status card)
-   for the bordered instrument surface, and .form-grid/.form-field (Task 5's
-   block editor) for the days/channel fields -- only the actions row below
-   the fields, and the dry-run/applied status readout, are new here. */
-
-.schedule-controls__actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-  padding-top: var(--space-4);
-  border-top: var(--border-width) solid var(--color-border);
-}
-
-.schedule-controls__buttons {
-  display: flex;
-  gap: var(--space-2);
-}
-
-/* Same coded-legend status-dot vocabulary as the token/Tunarr indicators
-   above: "applied" reuses [data-state="ok"]'s existing green (a completed,
-   successful reading), "preview" deliberately adds no new dot color and
-   falls through to .status-dot's own default ink-muted background -- a
-   dry-run is a neutral reading, not a warning or an error. */
-.schedule-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-label);
-  color: var(--color-ink-muted);
-}
-
-.schedule-status__summary {
-  margin: var(--space-3) 0 0;
-  font-size: var(--text-sm);
-  color: var(--color-ink-muted);
-}
-
-/* -- schedule: per-channel plan sections ------------------------------------
-   Reuses .section-head (dashboard) and .table-wrap/.history-table (dashboard
-   history table, also reused verbatim by blocks-table) -- schedule-table
-   carries no layout rules of its own, matching blocks-table's precedent. */
-
-.schedule-channel {
-  margin-top: var(--space-7);
-}
-
-.schedule-channel:first-child {
-  margin-top: var(--space-6);
-}
-
-.schedule-programs summary {
-  cursor: pointer;
-  color: var(--color-ink);
-}
-
-.schedule-programs[open] summary {
-  margin-bottom: var(--space-2);
-}
-
-.schedule-programs ul {
-  margin: 0;
-  padding-left: var(--space-5);
-  font-size: var(--text-sm);
-  color: var(--color-ink-muted);
-}
-
-.schedule-programs li {
-  padding: var(--space-1) 0;
-}
-
-.schedule-programs__none {
-  font-size: var(--text-sm);
-  color: var(--color-ink-muted);
-}
-
-@media (max-width: 640px) {
-  .schedule-controls__actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .schedule-controls__buttons .btn {
-    flex: 1;
-  }
-}
-
 /* -- series: tracked-states table --------------------------------------------
    Reuses .table-wrap/.history-table verbatim (Task 4) -- same bordered
-   instrument-log look as blocks-table/schedule-table; series-table__show
-   only adds room for the row's own inline error under the show title. */
+   instrument-log look as blocks-table; series-table__show only adds room
+   for the row's own inline error under the show title. */
 
 /* On an inner div, never the td: display:flex on a td strips its
    table-cell display, so its bottom border floats at content height

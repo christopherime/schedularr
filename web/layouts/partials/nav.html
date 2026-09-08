@@ -1,20 +1,20 @@
 {{- /*
   Primary channel-select nav. Items are hardcoded (not derived from Hugo
   sections) because the nav is simple enough that deriving it from Hugo's
-  section tree would add indirection without buying anything -- four fixed
+  section tree would add indirection without buying anything -- three fixed
   destinations, known up front. Active state is server-rendered
   (aria-current, no JS) so it's correct even if a page's script fails to
   load.
 */ -}}
 {{- $current := .RelPermalink -}}
-{{- /* v0.5.1 IA: the Guide replaces the Dashboard as home; the old
-       dashboard survives on an unlinked /dashboard/ route until the Log
-       absorbs its history table (v0.5.5). Schedule keeps preview/apply
-       until v0.5.4 folds it into the guide's draft mode. */ -}}
+{{- /* IA since the draft & apply slice: the Guide is home and owns
+       preview/apply as its draft mode; the old dashboard survives on an
+       unlinked /dashboard/ route until the Memory slice's /history/
+       absorbs its table. Active state is server-rendered (aria-current,
+       no JS) so it's correct even if a page's script fails to load. */ -}}
 {{- $items := slice
   (dict "href" "/" "label" "Guide")
   (dict "href" "/blocks/" "label" "Blocks")
-  (dict "href" "/schedule/" "label" "Schedule")
   (dict "href" "/series/" "label" "Series")
 -}}
 <nav class="nav" aria-label="Primary">

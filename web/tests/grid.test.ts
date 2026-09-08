@@ -1,12 +1,11 @@
 // Unit tests for the guide grid's pure geometry (runtime/grid.ts):
 // time->quantum clamping (overnight spill included), slot->grid-column
 // mapping, day windowing, ghost placement, and the keyboard-nav picking
-// logic. The DAYS clamp itself (clampDays) is covered in runtime.test.ts
-// with the other format helpers, and grid.ts's draft-mode verdict helper
-// (draftAriaPrefix) is covered in draft.test.ts alongside the rest of
-// the draft model it renders. The geometry section of grid.ts never
-// touches the DOM, so no stubs are needed; all instants are built with
-// local-time Date constructors so the assertions hold in any timezone.
+// logic. grid.ts's draft-mode verdict helper (draftAriaPrefix) is covered
+// in draft.test.ts alongside the rest of the draft model it renders. The
+// geometry section of grid.ts never touches the DOM, so no stubs are
+// needed; all instants are built with local-time Date constructors so
+// the assertions hold in any timezone.
 import assert from "node:assert/strict";
 import test from "node:test";
 
