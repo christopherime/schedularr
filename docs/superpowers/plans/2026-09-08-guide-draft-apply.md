@@ -1798,6 +1798,25 @@ what the task text above says and what shipped instead.
   skeleton, the rundown's removed rule, the kit's mount tail) so that Task 6
   above documents shipped behavior. What stays
   deferred is in `TODO.md`'s "Deferred (v0.5.6 draft & apply)" section.
+- **The bar's `DROPPED` counts the RUN, not the grid.** Task 3 step 5
+  above wired the bar's `dropped` to `projectPlan(result).dropped`, which
+  is the count of warnings the grid could not place as ghosts. That made
+  the normal case -- occurrences lost to conflicts, all of them drawn in
+  the ghost lane -- print no `DROPPED` at all, against this plan's own
+  headline copy, `docs/web-ui-guide.md` and the design note. The final
+  wave switched it to `plan.warnings.length`; the unplaceable count keeps
+  the amber legend line above the grid, which is a statement about the
+  grid rather than about the run.
+- **The engine fix went one step past Task 1.** Determinism per (block,
+  occurrence) was not enough on its own: the in-memory recency check also
+  read the run's OWN not-yet-aired occurrences, a set whose size follows
+  the requested window, so a 7-day draft and the 28-day reading it is
+  diffed against planned the shared days differently wherever two filter
+  blocks on one channel drew from the same pool. The final wave bounded
+  that check to occurrences that air earlier
+  (`ScheduleHistory.WasRecentlyScheduled`), which is what makes the
+  Guide's `CHANGED` verdict mean something.
+
 - **The 7-day window is not a CLI default.** The `runtime/draft.ts`
   header specimen in Task 2 above credits `schedularr generate` for the
   number; that command registers no `--days` flag and plans a single day

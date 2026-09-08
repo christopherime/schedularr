@@ -29,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scope and the real counts, and an empty draft's confirm says what an
   empty apply means — it pushes an empty lineup to any channel
   Schedularr last applied in that scope. Every verdict, count, and line
-  of copy is worded "vs the reading taken at HH:MM": nothing on the
-  client knows Tunarr's current lineup, and the UI never claims
-  otherwise. Three entry points — SCOPE, a new `Arm draft` button (the
+  of copy is worded "vs the reading taken at HH:MM", because nothing on
+  the client knows Tunarr's current lineup. Three entry points — SCOPE,
+  a new `Arm draft` button (the
   on-page draft entry on mobile, where SCOPE hides; spec §3.1 amended),
   and `PREVIEW ON GUIDE`.
 - **`PREVIEW ON GUIDE` bridge** (`web/assets/ts/pages/blocks.ts`): a
@@ -107,8 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Schedule page and everything behind it**: `web/layouts/schedule/`,
   `web/content/schedule/`, `web/assets/ts/pages/schedule.ts`, the
-  `clampDays` helper and its tests, the page's CSS, its screenshot
-  (`docs/assets/screenshots/schedule.png`), and the `/kit/` warnings
+  `clampDays` helper and its tests, the page's CSS, both copies of its screenshot
+  (`docs/assets/screenshots/schedule.png` and
+  `assets/screenshots/schedule.png`), and the `/kit/` warnings
   fixture that only existed for it. Preview and apply live on the Guide;
   per the no-legacy policy there is no redirect stub (the 404 page
   carries the nav).
@@ -129,7 +130,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data-draft` is an attribute rather than a style), plus the WCAG
   contrast evidence for the new chip and hatch pairings.
 - `docs/scheduling-concepts.md` no longer says filter matching is
-  randomized; `docs/api-reference.md`, `docs/index.md`, `README.md`,
+  randomized, states the air-time bound that makes a plan independent of
+  the window it was asked for, and stops naming a `--days` flag
+  `schedularr generate` does not register; `docs/api-reference.md`, `docs/index.md`, `README.md`,
   `PRODUCT.md`, `CLAUDE.md`, `AGENTS.md`, and `.ai/AGENTS.md` follow the
   page list and the new capability; `docs/roadmap.md` records v0.5.6 as
   shipped and `TODO.md` carries what stays deferred; the v0.5 UI spec

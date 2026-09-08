@@ -410,6 +410,15 @@ here blocks the release; each item names the gap and why it was left.
   still runs to completion. A ctx-aware semaphore (acquire or fail on
   `ctx.Done()`) is the follow-up; the plain mutex was the shape the plan
   mandated.
+- **A pinned inspector can end up under the sticky draft bar.**
+  `.guide-draftzone` sticks at `--z-sticky`; `.guide-inspector` sticks at
+  `top: 4.5rem` with no `z-index` of its own, so on desktop widths
+  narrower than about `--content-max` + the inspector's 24rem rail the
+  bar can paint over the inspector's heading. Unconfirmed without a
+  browser: the inspector rarely reaches its sticky threshold, because the
+  draft viewport caps at `100dvh − 20rem`. The fix candidate is a top
+  offset below the bar on `.guide[data-draft] .guide-inspector`, and it
+  waits on a browser check rather than a guessed number.
 - **A draft slot crossing the 7-day horizon can overlap a `beyond`
   reading slot in lane 1.** A drafted occurrence that starts inside the
   horizon and runs past it shares grid space with the reading slot that

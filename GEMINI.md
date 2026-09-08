@@ -6,7 +6,7 @@
 
 The project allows for "Set It and Forget It" channel management, ensuring fresh content rotation without manual intervention. Tunarr is the sole integration; content availability filtering is driven entirely by Tunarr's own library data.
 
-There is no interactive UI: Schedularr is a CLI (one-shot commands like `generate`, `state`) plus, via `schedularr serve`, a long-lived process hosting an HTTP API and a cron scheduling loop. A former Bubble Tea TUI (`schedularr tui`, block-editing forms) was removed; blocks are now managed through the `/api/v1/blocks` HTTP API or `scheduler.yaml` first-run import.
+There is no interactive TUI. Schedularr is a CLI (one-shot commands like `generate`, `state`) plus, via `schedularr serve`, a long-lived process hosting an HTTP API, a web UI (Hugo + Alpine.js, embedded in the binary at `/`, whose Guide page drafts and applies schedules), and a cron scheduling loop. A former Bubble Tea TUI (`schedularr tui`, block-editing forms) was removed; blocks are now managed through the `/api/v1/blocks` HTTP API, the web UI, or the `scheduler.yaml` first-run import.
 
 ## Technology Stack
 

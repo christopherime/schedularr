@@ -4,7 +4,7 @@
 
 Cron-based content scheduling for [Tunarr](https://tunarr.com) TV channels. Generates and applies TV channel schedules from rule-based blocks (time slot + cron + channel + content filter), including series-based sequential episode progression. Runs as a CLI or as a long-lived `serve` process with HTTP API, web UI, and cron loop.
 
-Version: v0.5.5 (2026-08-31).
+Version: v0.5.6 (2026-09-08).
 
 ## Tech Stack
 

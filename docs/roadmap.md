@@ -217,8 +217,8 @@ v0.5.5 below).
   at `/?draft=<id|all>` and diffs against the reading mirrored in
   `sessionStorage` — ignored when older than 24h or older than the
   server's last apply. Every verdict and count is worded "vs the
-  reading taken at HH:MM": the client cannot see Tunarr's lineup, and
-  the copy never pretends otherwise. Engine-side, filter-block lineups
+  reading taken at HH:MM", the honest limit of a browser that cannot
+  query Tunarr's lineup. Engine-side, filter-block lineups
   became deterministic per (block, occurrence) so a dry run and the
   apply that follows plan the same content, and the Runner serializes
   applies so a cron tick and a UI apply cannot interleave.
