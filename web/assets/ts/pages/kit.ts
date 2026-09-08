@@ -143,6 +143,62 @@ function fixtureGuideRows(): GuideRow[] {
   ];
 }
 
+/**
+ * Draft-mode fixture (spec §3.3): the guide fixture's first row again,
+ * now carrying verdicts -- every state runtime/grid.ts renders in draft
+ * mode. SAME (Morning Creatures, already past by "now") dims behind the
+ * sweep; CHANGED and NEW (Matinee Massacre, Spooky Saturday Night) carry
+ * the accent edge and chip; REMOVED (Cancelled Cartoons) reserves into
+ * the second lane beside the ghost instead of painting over it; the
+ * ghost itself is untouched by the diff; BEYOND (Next Week Matinee, on
+ * the band's last day) renders plain -- a reading slot past the draft
+ * horizon.
+ */
+function fixtureDraftRows(): GuideRow[] {
+  const now = Date.now();
+  const hour = 3_600_000;
+  const dayStart = localDayStart(now);
+
+  const morningCreatures = fixtureSlot("fixture-0001", "Morning Creatures", "filter", now - 4 * hour, 120, 4);
+  morningCreatures.draft = "same";
+  const matineeMassacre = fixtureSlot("fixture-0001", "Matinee Massacre", "filter", now - 0.5 * hour, 90, 2);
+  matineeMassacre.draft = "changed";
+  const spookySaturdayNight = fixtureSlot("fixture-0001", "Spooky Saturday Night", "series", now + 2 * hour, 120, 4);
+  spookySaturdayNight.draft = "new";
+  const cancelledCartoons = fixtureSlot("fixture-0001", "Cancelled Cartoons", "filter", now + 5 * hour, 60, 2);
+  cancelledCartoons.draft = "removed";
+  // Day 2 of the truncated band: past the draft's horizon, shown plain.
+  const nextWeekMatinee = fixtureSlot(
+    "fixture-0001",
+    "Next Week Matinee",
+    "filter",
+    dayStart + (2 * 24 + 14) * hour,
+    90,
+    2,
+  );
+  nextWeekMatinee.draft = "beyond";
+  const ghost: GuideSlot = {
+    kind: "ghost",
+    channelId: "fixture-0001",
+    blockName: "Late Sitcom Loop",
+    blockType: "filter",
+    cron: "",
+    priority: 10,
+    startMs: now + 2 * hour,
+    endMs: now + 3 * hour,
+    programs: [],
+    lostTo: "Spooky Saturday Night",
+  };
+
+  return [
+    {
+      channelId: "fixture-0001",
+      plate: channelPlate("fixture-0001", fixtureChannels),
+      slots: [morningCreatures, matineeMassacre, spookySaturdayNight, cancelledCartoons, ghost, nextWeekMatinee],
+    },
+  ];
+}
+
 interface KitState {
   channels: Channel[];
   problem: ProblemView;
@@ -206,6 +262,16 @@ document.addEventListener("alpine:init", () => {
           handle.updateNow(Date.now());
           const nowX = handle.nowOffsetPx(Date.now());
           if (nowX !== null) viewport.scrollLeft = Math.max(0, nowX - viewport.clientWidth / 3);
+        }
+        const draftViewport = document.getElementById("kit-draft-viewport");
+        if (draftViewport) {
+          const handle = renderGuideWeek(draftViewport, fixtureDraftRows(), localDayStart(Date.now()), KIT_GUIDE_DAYS, {
+            onOpen: (slot) => printTape(`Inspector would open — ${slot.blockName}`),
+            drawIn: false,
+          });
+          handle.updateNow(Date.now());
+          const nowX = handle.nowOffsetPx(Date.now());
+          if (nowX !== null) draftViewport.scrollLeft = Math.max(0, nowX - draftViewport.clientWidth / 3);
         }
       },
 

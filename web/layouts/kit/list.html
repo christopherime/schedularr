@@ -179,6 +179,45 @@
     </div>
   </section>
 
+  <section class="kit-section" aria-labelledby="kit-draft-title">
+    <div class="section-head">
+      <h2 id="kit-draft-title">Guide draft mode</h2>
+      <p>
+        A verdict is the diff against the committed reading: NEW,
+        CHANGED, REMOVED, or SAME. Text always carries it — a chip on
+        every changed slot, never color alone. A removed slot moves to
+        the second lane beside the ghosts so it never gets painted over
+        by what replaces it; SAME dims to keep the diff the point.
+      </p>
+    </div>
+    <div class="kit-stack">
+      <div class="guide-draftbar" role="region" aria-label="Draft (fixture, armed)" aria-busy="false">
+        <p class="guide-draftbar__line">7-DAY DRAFT — 14 SLOTS ACROSS 3 CHANNELS · 2 NEW · 1 CHANGED · 1 REMOVED · 1 DROPPED · VS READING 21:02</p>
+        <div class="guide-draftbar__actions">
+          <button type="button" class="btn btn--ghost btn--sm">Discard</button>
+          <button type="button" class="btn btn--primary btn--sm" aria-busy="false">Apply</button>
+        </div>
+      </div>
+      <div class="guide-draftbar" role="region" aria-label="Draft (fixture, drafting)" aria-busy="true">
+        <p class="guide-draftbar__line">DRAFTING — PLANNING ALL CHANNELS AGAINST TUNARR…</p>
+        <div class="guide-draftbar__actions">
+          <button type="button" class="btn btn--ghost btn--sm">Discard</button>
+          <button type="button" class="btn btn--primary btn--sm" aria-busy="false" disabled>Apply</button>
+        </div>
+      </div>
+      <div class="guide-draftbar" role="region" aria-label="Draft (fixture, applying)" aria-busy="true">
+        <p class="guide-draftbar__line">APPLYING — 14 SLOTS ACROSS 3 CHANNELS…</p>
+        <div class="guide-draftbar__actions">
+          <button type="button" class="btn btn--ghost btn--sm" disabled>Discard</button>
+          <button type="button" class="btn btn--primary btn--sm" aria-busy="true" disabled>Applying…</button>
+        </div>
+      </div>
+    </div>
+    <div class="guide kit-guide" data-draft>
+      <div class="guide-viewport" id="kit-draft-viewport" data-draft aria-label="Fixture draft grid"></div>
+    </div>
+  </section>
+
   <section class="kit-section" aria-labelledby="kit-nosignal-title">
     <div class="section-head">
       <h2 id="kit-nosignal-title">Guide NO SIGNAL</h2>
