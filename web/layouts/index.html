@@ -33,10 +33,14 @@
 
     {{- /* SCOPE is a DRAFT control (§3.3): the reading stays every
            channel, and changing the scope drafts it instead of
-           re-fetching. Both controls stay ENABLED while a flight is in
-           the air -- disabling the focused control would blur it and
-           strand keyboard focus on body -- and requestDraft() latches a
-           change that lands mid-flight, re-firing when it lands. (The
+           re-fetching. SCOPE stays ENABLED through every flight --
+           disabling the control under the operator's finger would blur
+           it and strand keyboard focus on body. Arm draft below IS
+           disabled while a draft or an apply is in the air, so preview()
+           hands focus to the bar's Discard button when the press that
+           started the flight came from there (previewOrphansFocus in
+           guide.ts). Either way requestDraft() latches a change that
+           lands mid-flight and re-fires it when that flight lands. (The
            DAYS control died with the full-week reframe: the guide always
            fetches the whole 28-day window and pages it by week.) */}}
     <div class="guide-toolbar" role="group" aria-label="Plan controls">
@@ -109,7 +113,7 @@
     >
       <p class="guide-draftbar__line" x-text="draftBarLine()"></p>
       <div class="guide-draftbar__actions">
-        <button type="button" class="btn btn--ghost btn--sm" :disabled="draft.mode === 'applying'" @click="discardDraft()">Discard</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="guide-discard" :disabled="draft.mode === 'applying'" @click="discardDraft()">Discard</button>
         <button
           type="button"
           class="btn btn--primary btn--sm"

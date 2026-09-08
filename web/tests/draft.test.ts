@@ -278,6 +278,15 @@ test("parseStoredReading rejects rows, slots and programs of the wrong shape", (
     null,
     "a program with no durationMs",
   );
+  // The inspector clocks a program's own start: an absent startMs
+  // reaches formatClock as undefined and prints NaN:NaN.
+  assert.equal(
+    parseStoredReading(payload([{ ...storedSlot, programs: [{ title: "E1", durationMs: 60_000 }] }]), at(13)),
+    null,
+    "a program with no startMs",
+  );
+  // typeof NaN === "number", so the loose check let it through.
+  assert.equal(parseStoredReading(payload([{ ...storedSlot, priority: NaN }]), at(13)), null, "a NaN priority");
   assert.equal(parseStoredReading(JSON.stringify({ requestedAt: at(12), rows: ["c1"] }), at(13)), null, "a row that is not an object");
   assert.equal(
     parseStoredReading(JSON.stringify({ requestedAt: at(12), rows: [{ channelId: "c1" }] }), at(13)),

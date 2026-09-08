@@ -226,6 +226,16 @@ function readStoredReading(nowMs: number, lastAppliedAt: string | null) {
   }
 }
 
+/** Drops the mirror when the reading behind it is gone: a Blocks round
+ * trip must not restore a baseline this tab has already discarded. */
+function dropStoredReading(): void {
+  try {
+    window.sessionStorage.removeItem(READING_STORAGE_KEY);
+  } catch {
+    // Same privacy lockdown storeReading() tolerates.
+  }
+}
+
 /** Marks a container as carrying a draft: the dimmed `same` slots, the
  * removed lane, and the viewport's wider chrome budget all key off it. */
 function setDraftFlag(el: HTMLElement | null, on: boolean): void {
@@ -340,6 +350,8 @@ interface GuideState {
   cancelApply(force?: boolean): void;
   discardDraft(): void;
   focusArmSoon(): void;
+  previewOrphansFocus(): boolean;
+  focusDiscardSoon(): void;
   applyConfirmTitle(): string;
   applyConfirmBody(): string;
 
@@ -479,6 +491,17 @@ document.addEventListener("alpine:init", () => {
         } catch (err) {
           this.problem = toProblemView(err);
           this.plan = null;
+          // The reading this load was replacing goes with it. After an
+          // apply the old one is already stale -- the push it describes
+          // has landed -- so leaving it as the diff baseline would let
+          // the latch below arm a draft that dates its verdicts to a
+          // reading nobody can still see. Clearing the stamp is what
+          // holds preview()'s reading gate; NO SIGNAL's Retry is the
+          // recovery, here as on a failed first load.
+          this.readingRows = NO_ROWS;
+          this.readingRequestedAt = 0;
+          this.readingRestored = false;
+          dropStoredReading();
         }
         this.blocksByName = await blocksPromise;
         this.loading = false;
@@ -504,8 +527,9 @@ document.addEventListener("alpine:init", () => {
         }
         // A SCOPE change or Arm press that landed mid-flight fires now,
         // against the reading this load just put on the glass. A load
-        // that failed put none there: drop the latch rather than loop on
-        // preview()'s guard -- NO SIGNAL's Retry is the visible recovery.
+        // that failed leaves none there (the catch above clears the
+        // stamp): drop the latch rather than loop on preview()'s guard
+        // -- NO SIGNAL's Retry is the visible recovery.
         if (this.draft.pendingScope) {
           this.draft.pendingScope = false;
           if (this.readingRequestedAt !== 0) void this.preview();
@@ -628,11 +652,16 @@ document.addEventListener("alpine:init", () => {
         // yet, and animating there would be an entrance.
         const wasGridOnGlass =
           gridHandle !== null && !this.loading && !this.problem && this.rows().length > 0;
+        // Read BEFORE the mode flip: the two controls that start a
+        // preview are both about to leave the page under the operator's
+        // finger (see previewOrphansFocus).
+        const orphaned = this.previewOrphansFocus();
         this.draft.mode = "previewing";
         this.draft.previewError = null;
         this.draft.applyError = null;
         this.draft.applyTimedOut = false;
         this.statusLine = draftingLine(this.scopeLabelFor(signature.channelId));
+        if (orphaned) this.focusDiscardSoon();
         try {
           const result = await apiSend<PlanResult>(
             "POST",
@@ -718,7 +747,13 @@ document.addEventListener("alpine:init", () => {
           slots,
           channels,
           counts: this.draft.counts ?? NO_COUNTS,
-          dropped: this.draft.dropped,
+          // Every occurrence this run lost to a conflict, whether or not
+          // the grid could place a ghost for it: the bar reports the
+          // run, and an operator reading "1 DROPPED" wants the count of
+          // what the draft will not air. The narrower "could not be
+          // placed" count is the amber legend line's job (see
+          // droppedWarnings) -- that one is about the grid, not the run.
+          dropped: plan.warnings?.length ?? 0,
           readingRequestedAt: this.readingRequestedAt,
         });
       },
@@ -841,6 +876,32 @@ document.addEventListener("alpine:init", () => {
       focusArmSoon() {
         this.$nextTick(() => {
           document.getElementById("guide-arm")?.focus();
+        });
+      },
+
+      // True when the element the operator is on is about to leave the
+      // page because a preview is starting. Arm's :disabled flips with
+      // the mode, and a browser blurs an element it disables, so the
+      // keypress that armed the draft would drop focus on <body> for the
+      // whole flight -- up to 120 seconds, with nothing to hand it back
+      // when the draft lands. A Retry or Re-draft button inside a draft
+      // problem block goes the same way: preview() clears the error, and
+      // x-if removes the block the button lives in. SCOPE is not in this
+      // list -- it stays enabled and keeps focus by itself, which is
+      // exactly why the template never disables it.
+      previewOrphansFocus() {
+        const active = document.activeElement;
+        if (!active) return false;
+        return active.id === "guide-arm" || active.closest(".guide-draftzone .problem") !== null;
+      },
+
+      // Discard is the handoff: it is on the glass for every moment of
+      // DRAFTING, never disabled there, and it is the honest exit from
+      // the wait. Deferred a tick for the same reason focusArmSoon() is
+      // -- Alpine has not flushed the bar's x-show yet.
+      focusDiscardSoon() {
+        this.$nextTick(() => {
+          document.getElementById("guide-discard")?.focus();
         });
       },
 

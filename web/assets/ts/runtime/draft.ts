@@ -195,13 +195,20 @@ export interface StoredSlot {
   programs: GuideProgram[];
 }
 
+/** One channel's stored slots. Plates are not stored: they re-resolve
+ * from the live channel cache on restore. */
+export interface StoredRow {
+  channelId: string;
+  slots: StoredSlot[];
+}
+
 /** The committed reading, mirrored to sessionStorage so a Blocks-page
  * round trip (save -> PREVIEW ON GUIDE) can diff against what the
  * operator last saw. It seeds the diff baseline ONLY -- a restored
  * reading is never shown as current: DISCARD and apply re-fetch. */
 export interface StoredReading {
   requestedAt: number;
-  rows: { channelId: string; slots: StoredSlot[] }[];
+  rows: StoredRow[];
 }
 
 export const READING_STORAGE_KEY = "schedularr_guide_reading";
@@ -237,27 +244,34 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-/** A program as stored: title and durationMs are required (the rundown
- * prints them and lineupSignature keys on them); season and episode are
- * optional everywhere they are read. */
-function isStoredProgram(value: unknown): boolean {
+/** A program as stored. GuideProgram requires all three of title,
+ * durationMs and startMs: the rundown prints the title, lineupSignature
+ * keys on it and the duration, and the inspector clocks startMs -- an
+ * absent one reaches formatClock as undefined and prints NaN:NaN. The
+ * optional three are checked only when present. */
+function isStoredProgram(value: unknown): value is GuideProgram {
   if (typeof value !== "object" || value === null) return false;
-  const { title, durationMs } = value as { title?: unknown; durationMs?: unknown };
-  return typeof title === "string" && isFiniteNumber(durationMs);
+  const { title, type, season, episode, durationMs, startMs } = value as Record<string, unknown>;
+  if (typeof title !== "string" || !isFiniteNumber(durationMs) || !isFiniteNumber(startMs)) return false;
+  if (type !== undefined && typeof type !== "string") return false;
+  if (season !== undefined && !isFiniteNumber(season)) return false;
+  return episode === undefined || isFiniteNumber(episode);
 }
 
 /** A slot as stored. startMs/endMs are the geometry: a non-finite or
- * inverted pair would place a box of NaN width. */
-function isStoredSlot(value: unknown): boolean {
+ * inverted pair would place a box of NaN width. priority goes through
+ * isFiniteNumber too -- `typeof NaN === "number"`, and the inspector
+ * ranks on it. */
+function isStoredSlot(value: unknown): value is StoredSlot {
   if (typeof value !== "object" || value === null) return false;
   const { blockName, blockType, cron, priority, startMs, endMs, programs } = value as Record<string, unknown>;
   if (typeof blockName !== "string" || typeof blockType !== "string" || typeof cron !== "string") return false;
-  if (typeof priority !== "number") return false;
+  if (!isFiniteNumber(priority)) return false;
   if (!isFiniteNumber(startMs) || !isFiniteNumber(endMs) || startMs >= endMs) return false;
   return Array.isArray(programs) && programs.every(isStoredProgram);
 }
 
-function isStoredRow(value: unknown): boolean {
+function isStoredRow(value: unknown): value is StoredRow {
   if (typeof value !== "object" || value === null) return false;
   const { channelId, slots } = value as { channelId?: unknown; slots?: unknown };
   return typeof channelId === "string" && Array.isArray(slots) && slots.every(isStoredSlot);
@@ -292,7 +306,7 @@ export function parseStoredReading(raw: string | null, nowMs: number, lastApplie
     const applied = Date.parse(lastAppliedAt);
     if (!Number.isNaN(applied) && applied > requestedAt) return null;
   }
-  return { requestedAt, rows: rows as StoredReading["rows"] };
+  return { requestedAt, rows };
 }
 
 /** Rebuilds renderable rows from a stored reading, re-resolving plates

@@ -24,12 +24,31 @@ import type { GuideRow } from "../assets/ts/runtime/grid.ts";
 
 type GlobalStub = { document: unknown; window: unknown; Alpine?: unknown; fetch?: unknown };
 
-// The Arm button is the guide's focus anchor: count what lands on it.
+// The two focus anchors: Arm when draft mode ends, Discard while a
+// preview is in the air (Arm disables itself there). Count what lands on
+// each, and let a test say which one the operator is standing on.
 let armFocusCount = 0;
+let discardFocusCount = 0;
+let activeElement: { id: string; closest: (selector: string) => unknown } | null = null;
 const armButton = {
+  id: "guide-arm",
+  closest: () => null,
   focus() {
     armFocusCount += 1;
   },
+};
+const discardButton = {
+  id: "guide-discard",
+  closest: () => null,
+  focus() {
+    discardFocusCount += 1;
+  },
+};
+/** The Retry inside a draft problem block: no id, but it answers the
+ * selector preview() tests for. */
+const problemRetryButton = {
+  id: "",
+  closest: (selector: string) => (selector === ".guide-draftzone .problem" ? {} : null),
 };
 
 // The page registers its component from an alpine:init listener: keep
@@ -39,8 +58,14 @@ const domListeners = new Map<string, () => void>();
   addEventListener(name: string, cb: () => void) {
     domListeners.set(name, cb);
   },
-  getElementById: (id: string) => (id === "guide-arm" ? armButton : null),
+  getElementById: (id: string) => {
+    if (id === "guide-arm") return armButton;
+    return id === "guide-discard" ? discardButton : null;
+  },
   querySelector: () => null,
+  get activeElement() {
+    return activeElement;
+  },
 };
 // The browser surfaces the component touches beyond fetch: the reading
 // mirror it restores a ?draft arrival's diff baseline from, and the
@@ -54,6 +79,9 @@ const sessionStore = new Map<string, string>();
     getItem: (key: string) => sessionStore.get(key) ?? null,
     setItem: (key: string, value: string) => {
       sessionStore.set(key, value);
+    },
+    removeItem: (key: string) => {
+      sessionStore.delete(key);
     },
   },
 };
@@ -113,8 +141,11 @@ test("orderRows leaves its input untouched", () => {
 interface GuideComponent {
   controls: { channelId: string };
   loading: boolean;
+  problem: unknown;
   readingRequestedAt: number;
   readingRestored: boolean;
+  readingRows: unknown[];
+  blocksByName: Record<string, unknown>;
   draft: {
     mode: string;
     pendingScope: boolean;
@@ -131,8 +162,11 @@ interface GuideComponent {
   preview: () => Promise<void>;
   openWithDraft: (scope: string) => Promise<void>;
   requestDraft: () => void;
+  requestApply: () => void;
   confirmApply: () => Promise<void>;
   discardDraft: () => void;
+  draftBarLine: () => string;
+  droppedWarnings: () => number;
 }
 
 let factory: (() => unknown) | null = null;
@@ -153,9 +187,31 @@ function flush(): void {
   for (const cb of queued) cb();
 }
 
-type FetchStub = (path: string) => Promise<unknown>;
+/** One request as the component sent it. The body matters as much as
+ * the path: the armed-signature rule is that APPLY re-sends exactly what
+ * the preview was generated from, which is unobservable from the URL. */
+interface FetchCall {
+  path: string;
+  method: string;
+  body: string | null;
+}
+type FetchInit = { method?: string; body?: unknown };
+type FetchStub = (path: string, init?: FetchInit) => Promise<unknown>;
 let fetchStub: FetchStub = () => Promise.reject(new Error("no fetch stub installed"));
-(globalThis as unknown as GlobalStub).fetch = (path: string) => fetchStub(path);
+let fetchLog: FetchCall[] = [];
+(globalThis as unknown as GlobalStub).fetch = (path: string, init?: FetchInit) => {
+  fetchLog.push({
+    path,
+    method: init?.method ?? "GET",
+    body: typeof init?.body === "string" ? init.body : null,
+  });
+  return fetchStub(path, init);
+};
+
+/** Every logged request whose path contains `fragment`. */
+function calls(fragment: string): FetchCall[] {
+  return fetchLog.filter((c) => c.path.includes(fragment));
+}
 
 /** A JSON response as fetch would hand it back. */
 function jsonResponse(body: unknown, status = 200): unknown {
@@ -173,6 +229,10 @@ function makeGuide(): GuideComponent {
   const state = factory() as GuideComponent;
   renderQueue = [];
   armFocusCount = 0;
+  discardFocusCount = 0;
+  activeElement = null;
+  fetchLog = [];
+  sessionStore.clear();
   state.$nextTick = (cb) => {
     renderQueue.push(cb);
   };
@@ -203,6 +263,38 @@ function plan(): unknown {
       ],
     },
     warnings: [],
+  };
+}
+
+/** The same plan with two occurrences lost to conflicts, both of them
+ * placeable as ghosts once the block index below is on the component. */
+function planWithWarnings(): unknown {
+  const base = plan() as { warnings: unknown[] };
+  base.warnings = [
+    {
+      block_name: "Late Night",
+      blocking_block_name: "Prime Time",
+      occurrence_start: new Date(Date.now() + 86_400_000).toISOString(),
+    },
+    {
+      block_name: "Late Night",
+      blocking_block_name: "Prime Time",
+      occurrence_start: new Date(Date.now() + 172_800_000).toISOString(),
+    },
+  ];
+  return base;
+}
+
+/** The enrichment `GET /blocks` lands, keyed by name as loadBlockIndex
+ * keys it: without it no ghost can be placed. */
+function blockIndex(): Record<string, unknown> {
+  return {
+    "Late Night": {
+      id: "blk-1",
+      name: "Late Night",
+      enabled: true,
+      spec: { channel_id: "ch-horror", duration: 60 },
+    },
   };
 }
 
@@ -433,4 +525,132 @@ test("an Arm press while the ?draft skeleton holds re-drafts exactly once", asyn
   await until(() => generates === 2 && guide.draft.mode === "armed", "the latched re-draft");
   await until(() => guide.draft.pendingScope === false, "the latch to clear");
   assert.equal(generates, 2, "the latch must fire exactly once, never loop");
+});
+
+test("APPLY re-sends the body the preview was generated from", () => {
+  // The armed-signature rule (spec §3.3): the scope the confirm dialog
+  // named is the scope that lands, whatever SCOPE holds by the time the
+  // operator presses through. Only the request body can show it.
+  const guide = makeGuide();
+  guide.readingRequestedAt = Date.now();
+  guide.controls.channelId = "ch-horror";
+  fetchStub = (path) => Promise.resolve(jsonResponse(path.includes("/blocks") ? [] : plan()));
+  return guide
+    .preview()
+    .then(() => {
+      assert.equal(guide.draft.mode, "armed");
+      // SCOPE moves under the open dialog.
+      guide.controls.channelId = "ch-toons";
+      guide.requestApply();
+      return guide.confirmApply();
+    })
+    .then(() => {
+      const generate = calls("/generate");
+      const apply = calls("/apply");
+      assert.equal(generate.length, 1);
+      assert.equal(apply.length, 1);
+      assert.equal(apply[0].method, "POST");
+      assert.equal(apply[0].body, JSON.stringify({ days: 7, channel_id: "ch-horror" }));
+      assert.equal(apply[0].body, generate[0].body, "apply rebuilt the body from the live controls");
+      assert.equal(guide.controls.channelId, "", "SCOPE snaps back to all channels after an apply");
+    });
+});
+
+test("a failed post-apply re-read leaves no baseline behind", async () => {
+  // The applied-away reading describes a push that has landed: keeping
+  // it as the diff baseline would arm a draft dating its verdicts to a
+  // reading nobody can see, under a tape line that says APPLIED.
+  const guide = makeGuide();
+  guide.readingRequestedAt = Date.now() - 60_000;
+  guide.readingRows = [];
+  guide.draft.mode = "armed";
+  guide.draft.signature = { days: 7, channelId: "" };
+  guide.draft.plan = plan();
+  guide.draft.rows = [];
+  // A SCOPE change latched while the push was in the air.
+  guide.draft.pendingScope = true;
+  fetchStub = (path) => {
+    if (path.includes("/apply")) return Promise.resolve(jsonResponse(plan()));
+    if (path.includes("/blocks")) return Promise.resolve(jsonResponse([]));
+    return Promise.resolve(jsonResponse({ title: "tunarr unreachable", status: 502 }, 502));
+  };
+
+  await guide.confirmApply();
+  await until(() => guide.loading === false, "the post-apply re-read");
+
+  assert.notEqual(guide.problem, null, "the failed re-read is NO SIGNAL");
+  assert.equal(guide.readingRequestedAt, 0, "the applied-away reading may not stay as the baseline");
+  assert.deepEqual(guide.readingRows, []);
+  assert.equal(guide.readingRestored, false);
+  assert.equal(calls("/generate").length, 0, "no draft may be armed over a reading that is gone");
+  assert.equal(guide.draft.mode, "off");
+  assert.equal(guide.draft.pendingScope, false);
+  assert.equal(sessionStore.get(READING_STORAGE_KEY), undefined, "the mirror goes with the reading");
+});
+
+test("the bar's DROPPED counts every occurrence the run lost, placed or not", async () => {
+  // DROPPED reports the RUN: what the draft will not air. The amber
+  // legend line above the grid is the narrower count -- warnings the
+  // grid could not place as ghosts -- and these two must not be the
+  // same number.
+  const guide = makeGuide();
+  guide.readingRequestedAt = Date.now();
+  guide.blocksByName = blockIndex();
+  fetchStub = (path) => Promise.resolve(jsonResponse(path.includes("/blocks") ? [] : planWithWarnings()));
+
+  await guide.preview();
+
+  assert.equal(guide.draft.mode, "armed");
+  assert.match(guide.draftBarLine(), /2 dropped/, "the bar must count both lost occurrences");
+  assert.equal(guide.droppedWarnings(), 0, "both ghosts were placeable, so the legend line has nothing to say");
+});
+
+test("a preview started from a control it disables hands focus to Discard", async () => {
+  // Arm's :disabled flips with the mode and the browser blurs it, so the
+  // keypress that armed the draft would sit on <body> for the flight.
+  // Discard is on the glass and enabled for all of DRAFTING.
+  const guide = makeGuide();
+  guide.readingRequestedAt = Date.now();
+  activeElement = armButton;
+  let land: (value: unknown) => void = () => {};
+  const inFlight = new Promise((resolve) => {
+    land = resolve;
+  });
+  fetchStub = () => inFlight;
+
+  const flight = guide.preview();
+  assert.equal(guide.draft.mode, "previewing");
+  assert.equal(discardFocusCount, 0, "focus must not move before the bar paints");
+  flush();
+  assert.equal(discardFocusCount, 1);
+
+  land(jsonResponse(plan()));
+  await flight;
+});
+
+test("a preview started from a draft problem's Retry hands focus to Discard", async () => {
+  // preview() nulls the error, so x-if removes the block the button
+  // lives in -- the same stranding by a different route.
+  const guide = makeGuide();
+  guide.readingRequestedAt = Date.now();
+  activeElement = problemRetryButton;
+  fetchStub = () => Promise.resolve(jsonResponse(plan()));
+
+  await guide.preview();
+  flush();
+  assert.equal(discardFocusCount, 1);
+});
+
+test("a preview started from SCOPE leaves focus where it is", async () => {
+  // SCOPE is never disabled: it keeps its own focus, and moving it would
+  // take the operator off the control they are still using.
+  const guide = makeGuide();
+  guide.readingRequestedAt = Date.now();
+  activeElement = { id: "guide-scope", closest: () => null };
+  fetchStub = () => Promise.resolve(jsonResponse(plan()));
+
+  await guide.preview();
+  flush();
+  assert.equal(discardFocusCount, 0);
+  assert.equal(armFocusCount, 0);
 });
