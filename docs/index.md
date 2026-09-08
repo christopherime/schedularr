@@ -2,7 +2,7 @@
 
 Cron-based content scheduling for [Tunarr](https://tunarr.com) TV channels, driven by rule-based blocks and content filters.
 
-![Schedularr web UI walkthrough: dashboard, blocks editor, schedule preview, and series state](assets/demo.gif)
+![Schedularr web UI walkthrough: the programme guide, the blocks editor, and series state](assets/demo.gif)
 
 ## What it does
 
@@ -23,7 +23,7 @@ Schedularr generates and applies TV channel schedules for Tunarr. Scheduling rul
 | **Cron scheduling**    | Standard cron expressions for recurring blocks, plus a Simple-mode picker in the web UI |
 | **Series blocks**      | Sequential episode progression per show, with season/episode state persisted            |
 | **HTTP API**           | Blocks CRUD, generate/apply, history, series state, channels, status                    |
-| **Web UI**             | Dashboard, blocks editor, schedule preview, series-state panel                          |
+| **Web UI**             | Programme guide with draft & apply, blocks editor, series-state panel                   |
 | **Dry run**            | `generate` without `--apply` previews a schedule without pushing it to Tunarr           |
 | **Priority system**    | Resolves overlapping blocks by configurable priority                                    |
 
@@ -45,7 +45,7 @@ Open `http://<host>:8484/` and paste the token from `SCHEDULARR_API_TOKEN` into 
 ## Where to go next
 
 - [Getting Started](getting-started.md) — install from source or Docker, generate and validate config
-- [Web UI Guide](web-ui-guide.md) — dashboard, blocks editor, schedule preview, series state, token setup
+- [Web UI Guide](web-ui-guide.md) — the programme guide and its draft & apply mode, blocks editor, series state, token setup
 - [Scheduling Concepts](scheduling-concepts.md) — filter vs. series blocks, cron, series cursors, history retention
 - [CLI Reference](cli-reference.md) — every subcommand and flag
 - [API Reference](api-reference.md) — HTTP endpoints, or the live contract at `/openapi.json`

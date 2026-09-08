@@ -7,6 +7,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-09-08
+
+### Added
+
+- **Draft & apply on the Guide** (`web/layouts/index.html`,
+  `web/assets/ts/pages/guide.ts`, `web/assets/ts/runtime/draft.ts`,
+  `web/assets/css/main.css`): the Guide is now the one surface that
+  plans and applies. A **draft** is `POST /generate` for the toolbar's
+  SCOPE over the next 7 days, rendered as a diff overlay on the same
+  grid as the **reading** it already shows (`GET /schedule?days=28`,
+  always every channel, never narrowed by SCOPE) — `NEW` / `CHANGED`
+  text chips with an accent left edge, unchanged slots dimmed, removed
+  slots in the second lane under a dashed danger edge with the block
+  name struck through, and reading slots past the 7-day horizon plain
+  and uncounted. A sticky draft bar under the bezel carries the whole
+  readout (`7-DAY DRAFT — 14 SLOTS ACROSS 3 CHANNELS · 2 NEW · 1
+  CHANGED · 1 REMOVED · 1 DROPPED · VS READING 21:02`) with DISCARD and
+  APPLY; APPLY sends the exact body the preview was generated from (the
+  armed-signature rule) behind the shared confirm dialog naming the
+  scope and the real counts, and an empty draft's confirm says what an
+  empty apply means — it pushes an empty lineup to any channel
+  Schedularr last applied in that scope. Every verdict, count, and line
+  of copy is worded "vs the reading taken at HH:MM": nothing on the
+  client knows Tunarr's current lineup, and the UI never claims
+  otherwise. Three entry points — SCOPE, a new `Arm draft` button (the
+  on-page draft entry on mobile, where SCOPE hides; spec §3.1 amended),
+  and `PREVIEW ON GUIDE`.
+- **`PREVIEW ON GUIDE` bridge** (`web/assets/ts/pages/blocks.ts`): a
+  block save's tape line carries a `Preview on guide` action that opens
+  `/?draft=<channel|all>` and drafts that scope on arrival. The guide
+  mirrors each landed reading into `sessionStorage` (per tab) so the
+  round trip diffs against what the operator last saw instead of paying
+  for a fresh 28-day plan; the mirror is a diff baseline only — never
+  painted as the committed grid — and is ignored when older than 24
+  hours or older than the server's own `Status.last_applied_at`.
+- **`web/assets/ts/runtime/draft.ts`**: the draft model as pure
+  functions — the reading-vs-draft diff and its verdicts, the stored
+  reading codec, the `GenerateRequest` body for an armed signature, the
+  `?draft=` parameter, and every line of draft copy in one place.
+  Covered by `web/tests/draft.test.ts` (26 tests) plus
+  `web/tests/guide.test.ts` (14), which drives the page's draft state
+  machine through a Node harness.
+- **`/kit/` fixtures for draft mode** (`web/layouts/kit/list.html`): the
+  draft bar in its armed, drafting, and applying states, and a fixture
+  grid carrying all five verdicts (`same`, `changed`, `new`, `removed`,
+  `beyond`).
+- **`--bezel-h`** (`web/assets/ts/runtime/shell.ts`): the bezel's live
+  height, published on the root element from a `ResizeObserver` via
+  CSSOM, so the sticky draft zone pins under the real header at any wrap.
+
+### Changed
+
+- **SCOPE arms a draft instead of re-fetching the guide.** The reading
+  is always ALL channels and the full 28-day window; SCOPE is a draft
+  control only, and snaps back to All channels after a discard or a
+  successful apply.
+- **The guide re-fetches the reading after every successful apply**
+  instead of merging the applied scope into the old one, so no two rows
+  on the grid carry different timestamps.
+- **`apiSend` takes a timeout argument** (`web/assets/ts/runtime/api.ts`):
+  the draft's `POST /generate` and `POST /apply` run on the long send
+  tier, since a cold re-plan against Tunarr outruns the default.
+- **Nav is `GUIDE · BLOCKS · SERIES`** (`web/layouts/partials/nav.html`).
+- **Slice comments name themes, not numbers** across the web sources:
+  the ladder renumbered twice, so a comment pointing at "v0.5.6" for the
+  SSE work aged badly. They now name the slice.
+
+### Fixed
+
+- **Filter-block lineups are deterministic per (block, occurrence)**
+  (`internal/scheduler/engine.go`): candidates and filler are put in a
+  total order (ID, then title, then duration) and shuffled with the
+  occurrence-seeded RNG that series planning already used, instead of
+  being shuffled in library-arrival order. A dry run and the apply that
+  follows it now plan the same content for the same block, occurrence,
+  candidate set, and history, so the plan the operator previewed is the
+  plan that lands. Variety across occurrences is unchanged: the seed
+  still varies per occurrence.
+- **Applies are serialized** (`internal/service/schedule.go`): the serve
+  cron tick and a UI apply share one `Runner`, and both push lineups and
+  commit engine state. `Runner.Run` now takes a mutex on the applying
+  path (dry runs never take it), so the single-writer assumption the
+  engine was built on cannot be violated by an operator applying while a
+  tick runs.
+
+### Removed
+
+- **The Schedule page and everything behind it**: `web/layouts/schedule/`,
+  `web/content/schedule/`, `web/assets/ts/pages/schedule.ts`, the
+  `clampDays` helper and its tests, the page's CSS, its screenshot
+  (`docs/assets/screenshots/schedule.png`), and the `/kit/` warnings
+  fixture that only existed for it. Preview and apply live on the Guide;
+  per the no-legacy policy there is no redirect stub (the 404 page
+  carries the nav).
+
+### Documentation
+
+- `docs/web-ui-guide.md`: the Guide section gains a full "Draft & apply"
+  subsection (entry points, the honesty boundary, the 7-day window and
+  why, the bar's exact readout, verdicts and where removed slots render,
+  discard/apply/confirm semantics, failure and timeout copy, keyboard
+  and mobile reach, the `?draft=` arrival), and the Schedule page's
+  section is deleted with a note naming where each of its three views
+  now lives.
+- `web/DESIGN.md`: a "Draft mode (v0.5.6)" block in the guide-grid
+  section (the sticky draft zone and `--bezel-h`, the verdict
+  vocabulary, the removed lane, motion and forced-colors parity, the
+  reading mirror and its honesty boundary, and the note that
+  `data-draft` is an attribute rather than a style), plus the WCAG
+  contrast evidence for the new chip and hatch pairings.
+- `docs/scheduling-concepts.md` no longer says filter matching is
+  randomized; `docs/api-reference.md`, `docs/index.md`, `README.md`,
+  `PRODUCT.md`, `CLAUDE.md`, `AGENTS.md`, and `.ai/AGENTS.md` follow the
+  page list and the new capability; `docs/roadmap.md` records v0.5.6 as
+  shipped and `TODO.md` carries what stays deferred; the v0.5 UI spec
+  gains §3.1 and §3.3 amendment notes and a shipped-as-v0.5.6 line.
+
 ## [0.5.5] - 2026-08-31
 
 ### Security
@@ -1913,7 +2030,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/christopherime/schedularr/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/christopherime/schedularr/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/christopherime/schedularr/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/christopherime/schedularr/compare/v0.5.2...v0.5.3

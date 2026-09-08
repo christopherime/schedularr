@@ -62,9 +62,10 @@ assume one.
 v1 scope (full coverage, operator-selected in the design review):
 dashboard (Tunarr reachability, block count, version, recent history),
 blocks editor (list + create/edit/delete + enable/disable, filter-block
-and series-block forms), schedule preview + apply (dry-run per channel,
-then explicit-confirmation apply), series-state panel (per-show
-season/episode cursor, completed/disabled toggles).
+and series-block forms), the Guide's draft & apply mode (a seven-day dry
+run diffed onto the programme grid, then explicit-confirmation apply),
+series-state panel (per-show season/episode cursor, completed/disabled
+toggles).
 
 Explicit non-goals for v1: no live updates (WebSocket/SSE) — pages fetch
 on load and on user action; no user accounts, sessions, or CSRF (single

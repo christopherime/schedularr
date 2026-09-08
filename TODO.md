@@ -9,6 +9,9 @@
   number down. Numbers mark themes, not gates: a security patch is its own
   theme, never a rider on a feature slice. `docs/roadmap.md` carries the
   renumbered v0.5 train.
+- **v0.5.6 shipped as draft & apply on the Guide** (2026-09-08): the
+  Guide plans and applies, the Schedule page is gone, nav is
+  `GUIDE · BLOCKS · SERIES`. Memory/`/history/` is next.
 
 ## v1.0 product intake (2026-08-30)
 
@@ -358,6 +361,60 @@ scoped-out gap.
 - Pre-existing: a 48h+ block's fully-transited middle day shows a rundown continuation label "…until HH:MM" with no date, implying same-day end (grid.ts rundownDaySlots). Block duration is UNBOUNDED (CUE has no ceiling; engine doesn't clamp) — the grid handles N-day slots correctly, the rundown label doesn't.
 - No test exercises a 3+ segment (N>2 day) join/rundown case — add one alongside the label fix.
 - Cold-pod 90s /schedule fetch straddling local midnight can silently drop a sub-90s programming sliver at the window start (guide.ts landedAt anchor) — negligible probability; comment + fix candidate: anchor on request-send time.
+
+## Deferred (v0.5.6 draft & apply)
+
+Recorded at the close of the draft & apply slice (2026-09-08). Nothing
+here blocks the release; each item names the gap and why it was left.
+
+- **The diff baseline is the operator's last reading, not Tunarr's
+  lineup.** `REMOVED` means "in the reading taken at HH:MM, not in this
+  draft" — the bar, the confirm dialog, and the inspector all word it
+  that way, because nothing on the client can see what Tunarr holds. The
+  Memory slice's enriched history is what can make "removed" mean removed
+  from Tunarr.
+- **Retention prunes by WRITE time, so the apply window is capped at 7
+  days.** `Engine.Commit` prunes occurrence snapshots and
+  `schedule_history` by write time on every commit
+  (`maintenance.history_retention`), so any apply window wider than that
+  retention commits state the store forgets before it airs — the cron
+  loop then re-plans day-of from an already-advanced cursor and skips
+  episodes. Widening past 7 days (a 28-day apply matching the reading)
+  needs pruning re-keyed on `occurrence_start` first.
+- **The tape's `VIEW RUN` action and the bridge's `reaches Tunarr at`
+  readout are unbuilt.** Both need surfaces that do not exist yet: the
+  run link needs `/history/` (Memory), and the next-tick readout on the
+  block-save bridge belongs with the block power tools slice.
+- **Browser-clock skew can misclassify a slot that just ended.** The
+  diff's cutoff is `Date.now()` at request time, so a slot that ended
+  seconds before the draft was asked for reads as `REMOVED` on a
+  browser whose clock runs behind the server's. The SSE heartbeat's
+  skew correction fixes it for every clock-dependent surface at once.
+- **A removed slot and a ghost of a different block can overlap in lane
+  2.** Both render in the second lane at their own times; nothing
+  reserves separate rows. Visible only when a dropped occurrence and a
+  removed occurrence share a window on one channel.
+- **The guide screenshot predates draft mode.**
+  `docs/assets/screenshots/guide.png` shows committed mode only —
+  re-capture it with the demo assets, with a draft armed.
+- **`guide.ts` is ~1200 lines and wants a split.** Draft controller
+  versus rendering is the seam; do it before the SSE slice adds a live
+  layer to the same file.
+- **The draft state machine has no DOM-level coverage.**
+  `web/tests/guide.test.ts` drives the component through a Node harness
+  (transitions, latches, focus counts, the fetch log), but `x-show`,
+  real focus, and the sticky geometry need a browser harness the project
+  does not have.
+- **The Runner's apply mutex ignores `ctx`.** `service.Runner.applyMu`
+  serializes applies, but a queued apply whose client already timed out
+  still runs to completion. A ctx-aware semaphore (acquire or fail on
+  `ctx.Done()`) is the follow-up; the plain mutex was the shape the plan
+  mandated.
+- **A draft slot crossing the 7-day horizon can overlap a `beyond`
+  reading slot in lane 1.** A drafted occurrence that starts inside the
+  horizon and runs past it shares grid space with the reading slot that
+  starts after it — a real future conflict the diff cannot express,
+  since the draft never planned past the horizon to compare against.
 
 ## Deferred (v0.5.1 Guide review)
 

@@ -9,9 +9,11 @@ feature**: after it, `/api/v1`, the config schema, and the SQLite
 migration chain only change additively.
 
 Status: living document — reorder, drop, or promote items as reality
-dictates. Last shaped: 2026-08-30 (at v0.5.4), when three operator-directed
-product streams were slotted into the ladder — station-lingo terminology,
-any-media scheduling, and `/series` becoming `/history`. Their design lives
+dictates. Last shaped: 2026-09-08 (at v0.5.6), when draft & apply landed
+on the Guide and the standalone preview/apply page was deleted. The v1.0
+product streams below were slotted into the ladder on 2026-08-30 —
+station-lingo terminology, any-media scheduling, and `/series` becoming
+`/history`. Their design lives
 in the v1.0 product-intake spec
 (`docs/superpowers/specs/2026-08-30-v1-station-terminology-media-history-design.md`),
 which also carries the Open Questions those streams still owe an answer to.
@@ -142,16 +144,16 @@ v0.5.5 below).
   grid navigation, grid skeleton / NO SIGNAL / teaching empty states,
   mobile vertical rundown); nav became GUIDE · BLOCKS · SCHEDULE ·
   SERIES, with the old dashboard surviving unlinked at `/dashboard/`
-  until the Log absorbs it. The old Schedule page still owns
-  preview/apply.
+  until the Log absorbs it. Preview/apply still lived on its own page
+  (`schedule/list.html`) at that point.
 - **v0.5.2 — Live-UI polish + Guide week-pager reframe: SHIPPED
   (2026-08-30).** Inserted by operator directive after the live v0.5.1
   audit: the Dockerfile ships `web/static` (broken brand image/favicon
   fixed), one left rail for the guide, the `‹`/`›` week pager replacing
   the flat day-tab strip (spec §3.1 amended), series slot faces listing
   their programs, the quiet ground under short grids, and the
-  mobile/series/schedule/blocks polish items. Draft & apply and every
-  later slice shift one number down the ladder.
+  mobile/series/blocks polish items and the preview page's own. Draft &
+  apply and every later slice shift one number down the ladder.
 - **v0.5.3 — The Guide becomes a full-week grid: SHIPPED
   (2026-08-30).** Second operator-directed insertion (spec §3.1 amended
   again): each channel renders seven consecutive days as one continuous
@@ -196,7 +198,32 @@ v0.5.5 below).
 > so pending slices are listed in THEME ORDER and get their number when they
 > ship — no more ladder renumbering.
 
-- **Next — Draft & apply on the Guide: pending.** Unchanged in scope.
+- **v0.5.6 — Draft & apply on the Guide: SHIPPED (2026-09-08).** The
+  Guide became the one surface that plans and applies. A draft is
+  `POST /generate` for the toolbar's SCOPE over the next 7 days, painted
+  onto the same grid as a diff against the reading it already shows
+  (`GET /schedule?days=28`, always every channel): `NEW` / `CHANGED`
+  chips with an accent edge, unchanged slots dimmed, removed slots in
+  the ghost lane under a dashed danger edge and a struck-through name,
+  reading slots past the horizon plain and uncounted. A sticky draft bar
+  under the bezel carries the whole readout (`7-DAY DRAFT — 14 SLOTS
+  ACROSS 3 CHANNELS · 2 NEW · 1 CHANGED · 1 REMOVED · VS READING 21:02`)
+  with DISCARD and APPLY; apply sends the exact body the preview was
+  generated from — the armed-signature rule — behind the shared confirm
+  dialog naming the scope and the real counts, and an empty draft says
+  what an empty apply means. Three entry points: SCOPE, an `Arm draft`
+  button (the on-page entry on mobile, spec §3.1 amended), and
+  `PREVIEW ON GUIDE` on the Blocks page's save tape line, which arrives
+  at `/?draft=<id|all>` and diffs against the reading mirrored in
+  `sessionStorage` — ignored when older than 24h or older than the
+  server's last apply. Every verdict and count is worded "vs the
+  reading taken at HH:MM": the client cannot see Tunarr's lineup, and
+  the copy never pretends otherwise. Engine-side, filter-block lineups
+  became deterministic per (block, occurrence) so a dry run and the
+  apply that follows plan the same content, and the Runner serializes
+  applies so a cron tick and a UI apply cannot interleave.
+  `schedule/list.html`, `schedule.ts`, and their styles were deleted
+  outright; nav became `GUIDE · BLOCKS · SERIES`.
 - **Then — Memory, landing as `/history/`: pending.** The spec's Memory
   slice, amended by the operator's `/series` → `/history` directive: the
   apply-run persistence migration, `GET /applies`, the enriched

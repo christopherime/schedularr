@@ -14,7 +14,7 @@
 
 [Docs](https://christopherime.github.io/schedularr/) • [Quickstart](#quickstart) • [Features](#features)
 
-<img src="assets/demo.gif" alt="Schedularr web UI walkthrough: dashboard, blocks editor, schedule preview, and series state" width="800"/>
+<img src="assets/demo.gif" alt="Schedularr web UI walkthrough: the programme guide, the blocks editor, and series state" width="800"/>
 
 </div>
 

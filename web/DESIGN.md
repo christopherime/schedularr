@@ -175,9 +175,10 @@ either palette.
 `--surface-warn` / `--surface-danger` -- `color-mix(in srgb,
 var(--color-warn|danger) 8%, var(--color-bg-raised))`, overridden to a
 10% mix in the dark palette -- instead of plain `--color-bg-inset`. The
-`.problem` panel uses the danger surface, `.schedule-warnings` the warn
-surface. Contrast evidence for every text pairing on these surfaces is in
-the WCAG section below.
+`.problem` panel uses the danger surface; the warn surface carries the
+guide's conflict vocabulary (ghost slots, the drop legend, and the
+inspector's dropped-occurrence verdict). Contrast evidence for every
+text pairing on these surfaces is in the WCAG section below.
 
 ## Token deltas (v0.5.0 bench rebuild)
 
@@ -276,8 +277,9 @@ binding:
   now × 1440, plus the minutes into now's own day clamped to its 288
   columns -- DST days keep their clamped geometry) and is set once per
   minute via CSSOM by a local 60s timer (a discrete step, not an
-  animation loop; heartbeat skew correction arrives with SSE in v0.5.6).
-  It renders only on the week page containing now; other pages hide it.
+  animation loop; heartbeat skew correction arrives with the SSE
+  live-link slice). It renders only on the week page containing now;
+  other pages hide it.
   No scroll handler anywhere. The phosphor-persistence trail is a
   `::before` gradient riding the rule; reduced motion drops the trail
   and keeps the rule. Opening auto-scrolls to the sweep on that page (a
@@ -289,7 +291,7 @@ binding:
   block at its would-have-aired time, in an implicit second track lane
   under the slot that displaced it. Hatching never carries the fact
   alone -- the text label does (SC 1.4.1). INTERIM: the Warning wire
-  shape carries only names + `occurrence_start` until v0.5.5 (memory),
+  shape carries only names + `occurrence_start` until the Memory slice,
   so the ghost's channel and duration resolve client-side from the
   losing block's spec (`resolveGhost`, `runtime/grid.ts`).
 - **Slot states**: `.is-past` dims behind the sweep, `.is-on-air`
@@ -370,10 +372,77 @@ binding:
 - **Ruler mask edge (v0.5.2)**: `.guide-ruler__corner::after` casts a
   short bg-raised fade over the cell strip, so an hour label scrolling
   under the sticky corner dissolves instead of slicing mid-glyph.
+- **Draft mode (v0.5.6, spec §3.3)**: the Guide is also the surface
+  that plans and applies, so two plans can be on the glass -- the
+  READING (`GET /schedule?days=28`, always every channel, re-fetched
+  after every apply) and a DRAFT (`POST /generate` for the SCOPE over
+  `DRAFT_DAYS` = 7), rendered as a diff overlay on the same grid.
+  `runtime/draft.ts` computes the verdicts and holds every line of
+  draft copy; `pages/guide.ts` wires it.
+  - **The draft zone**: the bar and its problem blocks live in
+    `.guide-draftzone`, a direct child of the `.guide` root rather than
+    part of the chrome above -- sticky is bounded by the containing
+    block, and the chrome's box ends right under the bar, so APPLY and
+    DISCARD scrolled off with it (worst on mobile, where the long
+    rundown scrolls the page). The ZONE carries both the column
+    geometry (`--content-max`, `margin-inline: auto`, the page's inline
+    padding) and the pin, `top: var(--bezel-h, 4.5rem)`;
+    `.guide-draftbar` itself is unpositioned. `--bezel-h` is published
+    on the root element by `runtime/shell.ts` from a `ResizeObserver`
+    on the bezel, so the bar sits under the real header at any wrap.
+    The zone is `x-show`n away outright when no draft is armed and no
+    problem is up: an empty sticky box must not reserve a strip under
+    the bezel.
+  - **Verdict vocabulary**: `data-draft` on the slot carries
+    `new | changed | same | removed | beyond`. The text chip (`NEW` /
+    `CHANGED` / `REMOVED`) carries the fact (SC 1.4.1) and is spoken as
+    a `Draft <verdict> — ` aria-label prefix; the accent left edge is
+    the scan aid. `same` slots dim to `0.5` while a draft is on the
+    glass so the diff is the content; `beyond` (a reading slot starting
+    past the 7-day horizon) renders plain -- never a chip, never a
+    count, because the draft did not plan that far.
+  - **Removed slots take the second lane** (`grid-row: 2`, the ghost
+    lane) with a dashed `--color-danger` edge, the ghost hatch reversed
+    (-45°), the block name struck through, and NO on-air glow: a slot
+    the draft removes must not read as one that is airing. The
+    rundown's twin is scoped
+    `.guide-rundown[data-draft] .rundown-slot[data-draft="removed"]` so
+    specificity beats the later `.is-past` / `.is-on-air` rules: a
+    removed row that already ended must not dim, and must never carry
+    the on-air stroke.
+  - **Motion**: the trace draw-in (`clip-path` inset over
+    `--duration-slow`) plays only when a draft replaces a sheet ALREADY
+    drawn -- a SCOPE change or an Arm press -- never as an entrance on a
+    first load or a `?draft` arrival; the settle is the committed sheet
+    fading back after a discard. Reduced motion drops both and the data
+    still lands. Under `forced-colors` the bar's tinted ground and the
+    removed hatch drop out, so the armed edge becomes a `Highlight`
+    stroke, the verdict edges keep their width, and removed slots keep
+    the dashed border -- chip and strikethrough already carry the fact.
+  - **The reading mirror**: every landed reading is mirrored to
+    `sessionStorage` (`schedularr_guide_reading`, per tab, skipped above
+    2M characters) so a Blocks round trip (save → `PREVIEW ON GUIDE`
+    → `/?draft=…`) can diff against what the operator last saw instead
+    of paying for a fresh 28-day plan. It is a DIFF BASELINE ONLY: it is
+    never painted as the committed grid (the skeleton holds the frame
+    until the first draft lands), it is rejected when older than 24h or
+    older than `Status.last_applied_at`, and both DISCARD and apply
+    re-fetch.
+  - **The honesty boundary**: nothing on the client knows Tunarr's
+    current lineup, so the bar, the confirm dialog, and the inspector
+    each word their verdicts and counts "vs the reading taken at
+    HH:MM". No copy anywhere says a slot is in, or removed from,
+    Tunarr.
+  - **CSP**: `data-draft` is an ATTRIBUTE, not a style. The whole
+    overlay is painted by attribute selectors in `main.css`, so draft
+    mode adds no inline style anywhere; the one dynamic value
+    (`--bezel-h`) goes through `el.style.setProperty` like every other
+    geometry value in this system.
 - The grid and rundown DOM are built in TS from the typed plan
   (`renderGuideWeek` / `renderRundown`); Alpine drives ONLY the toolbar
-  (SCOPE + week pager + mobile channel picker -- the DAYS control died
-  with the full-week reframe) and the inspector.
+  (SCOPE + the `Arm draft` button + week pager + mobile channel picker
+  -- the DAYS control died with the full-week reframe), the draft bar,
+  and the inspector.
 
 ## Typography
 
@@ -408,8 +477,8 @@ centered (`margin-inline: auto`), with `--space-6 --space-5 --space-8`
 padding that steps down to `--space-5 --space-4 --space-7` under a single
 `640px` breakpoint -- the only breakpoint value used anywhere in the
 file. Responsiveness is structural, not fluid: no `clamp()` typography,
-and wide content (the history/blocks/schedule/series tables) scrolls on
-its own axis via `.table-wrap { overflow-x: auto }` rather than letting
+and wide content (the history/blocks/series tables) scrolls on its own
+axis via `.table-wrap { overflow-x: auto }` rather than letting
 the page scroll horizontally.
 
 `.form-grid` (`display: grid; grid-template-columns: repeat(auto-fit,
@@ -442,8 +511,8 @@ consumer default: the thesis is a machined instrument bezel, and a
 12-16px radius would read as a SaaS dashboard card instead. Border width
 is `--border-width` (`1px`) almost everywhere; `--border-width-thick`
 (`2px`) marks a few load-bearing rules -- the active nav link's bottom
-accent, the history/blocks/schedule/series table header's separator
-line, the focus ring.
+accent, the history/blocks/series table header's separator line, the
+focus ring.
 
 ## Hugo partials (`web/layouts/partials/ui/`) and the `/kit/` gallery
 
@@ -507,15 +576,15 @@ shape.
   appears without adjacent text naming the state. Two vocabularies share
   the same `data-state` attribute and the same two colors: the token
   panel's `armed`/`unarmed`, and every live reading's `ok`/`down`
-  (dashboard Tunarr signal, blocks/schedule/series channel fallbacks,
-  the 404 page's "No Signal"). `unknown` (the token trigger's initial
+  (dashboard Tunarr signal, blocks/series channel fallbacks, the 404
+  page's "No Signal"). `unknown` (the token trigger's initial
   state before JS runs) falls through to the base muted color.
 - **`.problem`** -- the inline API-error panel (`.problem__title` +
   `.problem__detail`), used identically on every page that fetches on
-  load: dashboard status/history, blocks list/editor, schedule
-  generate/apply, series list. Always rendered next to the section that
-  failed, with a `Retry`-equivalent action, per `PRODUCT.md`'s "No
-  silent failures."
+  load: dashboard status/history, blocks list/editor, the guide's
+  reading / draft / apply, series list. Always rendered next to the
+  section that failed, with a `Retry`-equivalent action, per
+  `PRODUCT.md`'s "No silent failures."
 - **`.skeleton-bar` / `.skeleton-row` / `.skeleton-stack`** -- a muted
   pulsing block (1.2s ease-in-out, frozen to static under
   `prefers-reduced-motion` via the global reset) for every page's
@@ -523,10 +592,9 @@ shape.
 - **`.table-wrap` + `.history-table`** -- the one table shape in the
   system, introduced on the dashboard (Task 4) and reused verbatim,
   unmodified, by blocks (`blocks-table__*` only adds cell-content
-  wrappers), schedule (`schedule-*`), and series
-  (`series-table__show`/`.series-cursor`). Bordered wrapper with its own
-  horizontal scroll, `--border-width-thick` header rule, tabular-nums on
-  numeric/timestamp columns.
+  wrappers) and series (`series-table__show`/`.series-cursor`). Bordered
+  wrapper with its own horizontal scroll, `--border-width-thick` header
+  rule, tabular-nums on numeric/timestamp columns.
 - **`.form-grid` / `.form-field` / `.checkbox-field`** -- the blocks
   editor's field system: auto-fit grid columns, uppercase `--text-xs`
   labels, `--color-bg-inset` inputs with an interactive border.
@@ -547,8 +615,8 @@ shape.
   modal isn't worth it.
 - **`.hero-panel` + `.graticule`** -- the bordered "instrument surface"
   primitive (Task 3's landing placeholder), reused as-is by the
-  dashboard's status card, the schedule controls panel, and the 404
-  page's "No Signal" readout. `.graticule` is a repeating-gradient grid
+  dashboard's status card, the guide's NO SIGNAL blackout, and the 404
+  page's own "No Signal" readout. `.graticule` is a repeating-gradient grid
   background, applied wherever a surface needs the literal
   measurement-grid texture.
 - **`.badge`** -- the blocks list's type indicator (`Filter`/`Series`);
@@ -576,7 +644,7 @@ shape.
 - **`.empty-state` width** (v0.5.2) -- the container spans the full
   content rail, matching the tables and panels it stands in for (the
   old `--measure` cap left it arbitrarily narrower than the hero above
-  it on the schedule page); only `.empty-state__text` keeps the measure.
+  it); only `.empty-state__text` keeps the measure.
 - **`.series-cursor`** (v0.5.2) -- baseline-aligned at a `--space-2`
   gap: the S/E prefixes share the text baseline of the input values and
   the Save label instead of floating centered against taller boxes.
@@ -710,6 +778,27 @@ over a hatch stripe) is the tightest at 4.71:1 light. Ruler labels,
 rundown rows, and the inspector reuse already-verified token pairings on
 `--color-bg-raised`.
 
+**v0.5.6 draft mode** introduced the verdict chip on both slot grounds
+and the removed slot's danger-on-hatch pairings. Checked computationally
+(same throwaway-script convention; the hatch stripe is a 14%
+`--color-danger` mix over `--surface-danger`, the worst case a chip can
+land on):
+
+| Pairing                                                         | Light  | Dark    |
+| --------------------------------------------------------------- | ------ | ------- |
+| `--color-accent` chip on `--color-bg-inset` (`NEW` / `CHANGED`) | 5.35:1 | 11.16:1 |
+| `--color-accent` chip on the series tint (7% accent mix)        | 4.85:1 | 10.15:1 |
+| `--color-danger` on `--surface-danger` (`REMOVED` chip + name)  | 6.43:1 | 5.77:1  |
+| `--color-danger` on the 14% removed hatch stripe (worst case)   | 5.13:1 | 4.64:1  |
+
+Every pairing clears the 4.5:1 AA text floor; the tightest is the danger
+chip over a hatch stripe in dark at 4.64:1. The draft bar's own line is
+`--color-ink` on an 8% accent mix over `--color-bg-raised` -- the same
+ink-on-raised pairing Task 4 verified, and the accent tint raises that
+ratio rather than lowering it. Dimmed `same` slots are not held to the
+floor: they carry no verdict, and their unmodified twins in committed
+mode are the verified pairing.
+
 ## TypeScript runtime and Alpine.js conventions
 
 **One bundle per page (v0.5.0).** The shared runtime
@@ -746,7 +835,7 @@ rules hold across every page (`web/assets/ts/pages/*.ts`,
    the method -- there is no `x-init` attribute anywhere in
    `web/layouts/` today.
 2. **Keep the `started`-guard as defense-in-depth, not as the fix.**
-   Every page component (`dashboard.ts`, `blocks.ts`, `schedule.ts`,
+   Every page component (`guide.ts`, `dashboard.ts`, `blocks.ts`,
    `series.ts`) still declares a module-level `let started = false;`
    and checks/sets it as the first two lines of `init()`. This is cheap
    insurance against a *future* accidental double-wire (someone
@@ -846,7 +935,7 @@ vs. `x-html` rule above: prefer a CSS class or a data-attribute selector
 over anything the CSP would have to special-case.
 
 Verified live (`schedularr serve`, `curl -sI`) on every route
-(`/`, `/blocks/`, `/schedule/`, `/series/`, and an unknown path's 404) --
+(`/`, `/blocks/`, `/series/`, and an unknown path's 404) --
 see `internal/api/router_test.go`'s `TestRouter_UIContentSecurityPolicyHeader`
 for the automated 200-and-404 assertion.
 

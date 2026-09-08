@@ -25,7 +25,9 @@ Each block's `type` field (`filter` or `series`) defaults to `filter` and can be
 
 ## Filter-based blocks
 
-Applies filter criteria to available programs, in AND logic across criteria (a program must match every specified criterion). Matching content is randomized, checked against schedule history to avoid recent repeats, and greedily selected to fill the block's duration.
+Applies filter criteria to available programs, in AND logic across criteria (a program must match every specified criterion). Matching content is checked against schedule history to avoid recent repeats, shuffled, and greedily selected to fill the block's duration.
+
+Since v0.5.6 that shuffle is **deterministic per (block, occurrence)**: the candidates (and any filler) are put in a total order and then shuffled with a seed derived from the block and the occurrence's start, so re-planning the same occurrence from the same library and history yields the same lineup. A dry run and the apply that follows it therefore schedule the same content, so the plan the operator previewed is the plan that lands. Variety across occurrences is unaffected: the seed changes with each one.
 
 ```yaml
 filter:
@@ -239,7 +241,7 @@ The [Web UI's blocks editor](web-ui-guide.md#schedule-picker) offers a Simple mo
 
 ## Priority and conflict resolution
 
-When multiple blocks schedule content for overlapping time periods, the higher `priority` value wins; the conflicting lower-priority block is discarded entirely. Every dropped occurrence is both logged server-side and reported in the API response's `warnings` array (`POST /generate` and `POST /apply`, see the [API Reference](api-reference.md#schedule)) — surfaced on the [Web UI's Schedule page](web-ui-guide.md#schedule-schedule) after every preview or apply, not just visible in a server log.
+When multiple blocks schedule content for overlapping time periods, the higher `priority` value wins; the conflicting lower-priority block is discarded entirely. Every dropped occurrence is both logged server-side and reported in the API response's `warnings` array (`POST /generate` and `POST /apply`, see the [API Reference](api-reference.md#schedule)) — surfaced on the [Guide](web-ui-guide.md#the-guide) as NO SIGNAL ghost slots at the time each would have aired, not just visible in a server log.
 
 ```text
 Block A: [10:00-12:00], priority 10
@@ -254,7 +256,7 @@ Suggested ranges: **1-10** low priority (filler, background programming), **11-5
 
 ## Channel ownership
 
-**Every channel Schedularr applies to is Schedularr's alone, for its entire timeline.** Applying a schedule (`--apply`, the cron loop, or `POST /schedule/apply`) doesn't layer content into gaps in whatever a channel already has — it replaces the channel's whole Tunarr lineup, off-hours included, every single time:
+**Every channel Schedularr applies to is Schedularr's alone, for its entire timeline.** Applying a schedule (`--apply`, the cron loop, or `POST /api/v1/apply`) doesn't layer content into gaps in whatever a channel already has — it replaces the channel's whole Tunarr lineup, off-hours included, every single time:
 
 - The apply window (`--days`, default 1) is fully covered end to end. Time your blocks don't schedule anything for isn't left alone — it's filled with **flex** (dead-air/offline) entries, so the pushed lineup always spans the entire window.
 - The channel's own playback clock (Tunarr's `channel.startTime`) is reset on every apply, anchored to the start of that window — so the flex-padded lineup actually plays back at the wall-clock times its blocks were scheduled for rather than wherever Tunarr's internal position happened to be — **unless** something is currently on air on that channel at apply time, in which case the anchor shifts back to that occurrence's own original start time instead. Anchoring at the window's own start in that case would otherwise make Tunarr replay the on-air occurrence from its beginning the moment the new lineup takes effect (or, worse, replace it outright); anchoring at its real start lets Tunarr's wall-clock playback formula resolve to the correct position partway through it instead.

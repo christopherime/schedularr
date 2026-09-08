@@ -1732,3 +1732,69 @@ git commit -m "docs: v0.5.6 — draft & apply on the Guide; Schedule page prose 
 - [ ] **Step 4:** `make web && make build`; write a temp config (copy `configs/config.yaml`, set `api.insecure_no_auth: true`, `database: /tmp/sdd-guide.db`, `tunarr.url: http://127.0.0.1:9`, `tunarr.api_key: x`, listen on `:18484`); start `./bin/schedularr serve --config <it>` in the background; verify with curl: `/` → 200 containing `guide-draftbar`, `id="guide-arm"`, `id="guide-scope"`; `/blocks/` → 200; `/series/` → 200; `/schedule/` → 404 and the body contains at least three `nav__link` anchors (the styled 404); `/kit/` → 404; `POST /api/v1/generate` with `{"days":7}` → 502 problem+json titled `schedule generation failed` (the draft error path's real payload); `GET /api/v1/schedule?days=28` → 502. Stop the server; delete the temp DB and config.
 - [ ] **Step 5:** `git status` clean; `git log --oneline main..HEAD` lists the six feature commits.
 - [ ] **Step 6:** Report the exact commands and outputs.
+
+---
+
+## Execution notes (2026-09-08)
+
+This plan is a record, so the deviations reviews ruled in during execution
+are listed here rather than left to contradict the code. Each line names
+what the task text above says and what shipped instead.
+
+- **DISCARD while DRAFTING cancels the in-flight preview.** Task 3's
+  contract said DISCARD keeps the sequence token; `discardDraft()` resets
+  with `emptyDraft(seq + 1)` instead, so a preview still in the air lands
+  on a stale token and is dropped. The literal contract let a draft the
+  operator had abandoned re-arm itself; DISCARD stays enabled while
+  DRAFTING because it is the only exit from a 120-second wait.
+- **Arming with no reading fetches a reading first.** The plan had a
+  `?draft` arrival without a stored reading `await reload()` and then
+  preview. `preview()` now refuses to plan while `readingRequestedAt` is
+  0 and latches instead, so a failed first load or NO SIGNAL cannot
+  produce a draft measured against a fabricated clock. NO SIGNAL's Retry
+  is the recovery.
+- **A SCOPE change or Arm press latched during an apply re-drafts ALL
+  channels.** It re-fires after the post-apply reading lands, by which
+  time SCOPE has snapped back to All channels. A FAILED apply keeps the
+  draft armed with its error and drops the latch, so the error stays
+  readable.
+- **A `?draft` arrival with a remembered reading keeps the skeleton.**
+  The plan cleared `loading` on arrival; the restored reading is a diff
+  baseline that may never be painted as the committed grid, so the
+  skeleton and its honest first-load note hold the frame until the first
+  draft lands.
+- **The remembered reading has a staleness guard.** `parseStoredReading`
+  rejects a mirror older than 24 hours or older than the server's
+  `Status.last_applied_at` (read from `/status` on arrival). It is only
+  ever a diff baseline: DISCARD from it, or any apply, re-fetches.
+- **The reading is re-fetched after every successful apply**, never
+  merged with the applied scope — one reading, one age.
+- **The draft bar lives in a sticky `.guide-draftzone` wrapper**, a
+  direct child of the `.guide` root, carrying the column geometry and
+  `top: var(--bezel-h)` (published by `runtime/shell.ts` through a
+  `ResizeObserver`). The bar itself is unpositioned. Sticky inside the
+  chrome pinned nothing: the chrome's box ends right under the bar.
+- **Removed slots render in the second lane** with a danger dashed edge,
+  a reversed hatch, a struck-through name, and no on-air glow. The
+  rundown's twin is scoped `.guide-rundown[data-draft]
+  .rundown-slot[data-draft="removed"]` so specificity beats the later
+  `.is-past` / `.is-on-air` rules.
+- **The "No match" empty state no longer says "clear the SCOPE"** —
+  SCOPE arms a draft rather than filtering the reading, so there is
+  nothing to clear. Its current copy and the "Nothing drafted" draft
+  empty state are in `web/layouts/index.html`.
+- **Filter-block lineups became deterministic per (block, occurrence)**
+  (Task 1, in scope by pre-flight ruling although the spec lists no
+  engine work for this slice): candidates and filler are sorted by ID,
+  title, then duration and shuffled with the occurrence-seeded RNG, so a
+  dry run and the apply that follows plan the same content.
+- **The `/kit/` draft fixtures carry no literal `aria-busy="false"`.**
+  Alpine removes a falsy `aria-busy` rather than writing "false", so a
+  static fixture asserting it would have misrepresented the shipped DOM.
+- **Task 8 was inserted before this task.** A controller-authored fix
+  batch landed the reviewers' fix-worthy minors from Tasks 1–5 (the
+  total-order sort and filler determinism, the draft zone's sticky
+  hoist, the stored-reading codec's elementwise validation, the held
+  skeleton, the rundown's removed rule, the kit's mount tail) so that Task 6
+  above documents shipped behavior. What stays
+  deferred is in `TODO.md`'s "Deferred (v0.5.6 draft & apply)" section.
