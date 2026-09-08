@@ -15,8 +15,11 @@
 // Why 7 days: the engine prunes occurrence snapshots and history by
 // write time on every commit (history_retention, 7 days by default), so
 // an apply wider than the retention window commits state the store
-// forgets before it airs. Seven days is the CLI default, the old
-// Schedule page's default, and the spec's confirmed default (§11 Q6).
+// forgets before it airs. Seven days is the API's own default for
+// POST /generate and /apply (GenerateRequest.days), the deleted preview
+// page's default, and the spec's confirmed default (§11 Q6) -- not a
+// CLI default: `schedularr generate` has no --days flag and plans one
+// day.
 import type { ApiRequestJSON } from "./api.ts";
 import type { PlateParts } from "./channels.ts";
 import { formatClock, plural } from "./format.ts";

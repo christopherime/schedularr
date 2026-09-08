@@ -1798,3 +1798,11 @@ what the task text above says and what shipped instead.
   skeleton, the rundown's removed rule, the kit's mount tail) so that Task 6
   above documents shipped behavior. What stays
   deferred is in `TODO.md`'s "Deferred (v0.5.6 draft & apply)" section.
+- **The 7-day window is not a CLI default.** The `runtime/draft.ts`
+  header specimen in Task 2 above credits `schedularr generate` for the
+  number; that command registers no `--days` flag and plans a single day
+  (`cmd/generate.go`). Seven is the HTTP API's default
+  (`GenerateRequest.days`, `defaultScheduleDays`), the spec's confirmed
+  default (§11 Q6), and the deleted preview page's default. Corrected in
+  the shipped header, `docs/web-ui-guide.md`, the spec's §3.3 amendment,
+  and the design note's ruling 2.

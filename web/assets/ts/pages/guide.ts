@@ -589,10 +589,11 @@ document.addEventListener("alpine:init", () => {
       },
 
       // The two draft entry points (SCOPE change, Arm press) come here.
-      // Neither control is ever disabled by a load in flight -- that
-      // would blur the focused control and strand keyboard focus on
-      // body -- so a press during one is latched and re-fired when the
-      // flight lands, with whatever SCOPE holds by then.
+      // SCOPE is never disabled -- that would blur the focused control
+      // and strand keyboard focus on body; the Arm button is disabled
+      // only while previewing or applying, never by a load. Either way
+      // a change or press landing mid-flight is latched here and
+      // re-fired when the flight lands, with whatever SCOPE holds then.
       requestDraft() {
         if (this.loading || this.draft.mode === "previewing" || this.draft.mode === "applying") {
           this.draft.pendingScope = true;
