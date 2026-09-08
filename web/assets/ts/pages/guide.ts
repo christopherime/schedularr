@@ -221,13 +221,6 @@ function readStoredReading(nowMs: number, lastAppliedAt: string | null) {
   }
 }
 
-/** The arming control is the guide's focus anchor: it is present in
- * every state and never disabled by loading, so leaving draft mode
- * (apply, discard, apply failure) always has somewhere to land. */
-function focusArm(): void {
-  document.getElementById("guide-arm")?.focus();
-}
-
 /** Marks a container as carrying a draft: the dimmed `same` slots, the
  * removed lane, and the viewport's wider chrome budget all key off it. */
 function setDraftFlag(el: HTMLElement | null, on: boolean): void {
@@ -341,6 +334,7 @@ interface GuideState {
   confirmApply(): Promise<void>;
   cancelApply(force?: boolean): void;
   discardDraft(): void;
+  focusArmSoon(): void;
   applyConfirmTitle(): string;
   applyConfirmBody(): string;
 
@@ -504,10 +498,12 @@ document.addEventListener("alpine:init", () => {
           this.statusLine = "Guide unavailable — Tunarr unreachable";
         }
         // A SCOPE change or Arm press that landed mid-flight fires now,
-        // against the reading this load just put on the glass.
+        // against the reading this load just put on the glass. A load
+        // that failed put none there: drop the latch rather than loop on
+        // preview()'s guard -- NO SIGNAL's Retry is the visible recovery.
         if (this.draft.pendingScope) {
           this.draft.pendingScope = false;
-          void this.preview();
+          if (this.readingRequestedAt !== 0) void this.preview();
         }
       },
 
@@ -525,8 +521,11 @@ document.addEventListener("alpine:init", () => {
         const status = await apiGet<Status>(apiPath("/status")).catch((): Status | null => null);
         const stored = readStoredReading(Date.now(), status?.last_applied_at ?? null);
         if (!stored) {
+          // The draft rides reload()'s latch: it fires the moment the
+          // reading lands, and stays unfired when the fetch fails --
+          // there is no honest diff without a reading.
+          this.draft.pendingScope = true;
           await this.reload();
-          await this.preview();
           return;
         }
         this.readingRows = rowsFromStored(stored, (id) => channelPlate(id, this.channels));
@@ -595,6 +594,18 @@ document.addEventListener("alpine:init", () => {
       // the long send tier (a cold re-plan against Tunarr outruns the
       // default). The signature captured here IS what APPLY sends.
       async preview() {
+        // The honesty boundary makes the reading load-bearing: every
+        // count and the bar's clock read "vs the reading taken HH:MM".
+        // With no reading behind it a draft could only name a fabricated
+        // one (the epoch), so ask for a reading first and let its
+        // landing fire the latch below. An EMPTY reading is still a
+        // reading -- this is the never-landed case alone (a failed first
+        // load, a ?draft arrival whose fetch failed).
+        if (this.readingRequestedAt === 0) {
+          this.draft.pendingScope = true;
+          if (!this.loading) void this.reload();
+          return;
+        }
         const signature: DraftSignature = { days: DRAFT_DAYS, channelId: this.controls.channelId.trim() };
         const requestedAt = Date.now();
         const seq = ++this.draft.seq;
@@ -739,10 +750,18 @@ document.addEventListener("alpine:init", () => {
           const channels = planChannelCount(result);
           printTape(appliedTapeLine(slots, channels));
           this.statusLine = `Applied — ${plural(slots, "slot")} across ${plural(channels, "channel")}; re-reading the guide`;
+          // A SCOPE change or Arm press latched during the push outlives
+          // the reset: the reload below fires it against the reading it
+          // is about to land, never against the one this apply just
+          // aged out. SCOPE itself has snapped back to All channels by
+          // then (the post-apply rule two lines down), so the re-fired
+          // draft plans the scope the control now shows.
+          const latched = this.draft.pendingScope;
           this.draft = emptyDraft(this.draft.seq);
+          this.draft.pendingScope = latched;
           this.controls.channelId = "";
           this.closeInspector(false);
-          focusArm();
+          this.focusArmSoon();
           // The reading is always re-fetched after an apply: the server
           // now replays what it just committed, and a merge of the old
           // reading with the applied scope would carry two ages.
@@ -754,7 +773,13 @@ document.addEventListener("alpine:init", () => {
           this.draft.applyTimedOut = err instanceof ApiError && err.status === 0;
           this.draft.applyFailed = true;
           this.statusLine = `Apply failed — ${problemLine(this.draft.applyError)}`;
-          focusArm();
+          // A latched SCOPE change is dropped here rather than fired: a
+          // fresh preview would clear the apply error the operator still
+          // has to read (an aborted push may have partially landed), and
+          // the bar keeps naming the scope the armed draft was planned
+          // for. Arming again drafts the new scope.
+          this.draft.pendingScope = false;
+          this.focusArmSoon();
         }
       },
 
@@ -773,16 +798,34 @@ document.addEventListener("alpine:init", () => {
       // just fades back in.
       discardDraft() {
         const refetch = this.readingRestored || this.draft.applyFailed;
-        this.draft = emptyDraft(this.draft.seq);
+        // The sequence bump IS the discard for a preview still in the
+        // air (Discard stays live while DRAFTING -- it is the only way
+        // out of a 120s wait): the flight lands on a stale token and is
+        // dropped, instead of arming a draft the operator abandoned for
+        // a scope the SCOPE control no longer shows.
+        this.draft = emptyDraft(this.draft.seq + 1);
         this.controls.channelId = "";
         this.closeInspector(false);
-        focusArm();
+        this.focusArmSoon();
         if (refetch) {
           void this.reload();
           return;
         }
         this.renderAll({ settle: true });
         this.statusLine = "Draft discarded — reading restored";
+      },
+
+      // The one focus anchor when draft mode ends (apply, apply failure,
+      // discard): the Arm button is present in every state and never
+      // disabled by loading. Deferred one tick -- Alpine flushes the
+      // :disabled binding the mode change just released on a queued
+      // microtask, and focus() on a still-disabled button is a silent
+      // no-op that strands the keyboard on <body>. Same idiom as
+      // blocks.ts's focusReturnSoon().
+      focusArmSoon() {
+        this.$nextTick(() => {
+          document.getElementById("guide-arm")?.focus();
+        });
       },
 
       applyConfirmTitle() {

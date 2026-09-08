@@ -137,7 +137,12 @@
       </div>
     </template>
 
-    <template x-if="!loading && problem">
+    {{- /* NO SIGNAL is the READING's state. A draft on the glass is
+           rendered from its own plan and stays applyable, so the panel
+           stands down while one is up (discarding brings it back) --
+           otherwise the grid below would be hidden under it and the
+           operator could apply a lineup they cannot see. */}}
+    <template x-if="!loading && problem && !draftOnGlass()">
       <section class="hero-panel graticule guide-nosignal" data-scan aria-labelledby="guide-nosignal-title">
         <h2 id="guide-nosignal-title" class="visually-hidden">No Signal</h2>
         <p class="status-line">
@@ -184,7 +189,7 @@
     </template>
   </div>
 
-  <div class="guide-body" x-show="!loading && !problem && hasAnySlots()" x-cloak>
+  <div class="guide-body" x-show="!loading && (!problem || draftOnGlass()) && hasAnySlots()" x-cloak>
     <div class="guide-main">
       <div class="guide-chrome">
         {{- /* Week pager (spec §3.1, full-week amendment): navigation
