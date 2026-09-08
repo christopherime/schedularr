@@ -659,7 +659,7 @@ p {
 /* --space-2 vertical padding (not --space-1): clears WCAG 2.5.8's 24x24
    CSS-px AA target-size floor without touching the --text-xs type
    choice -- this is the row-action button used on every dense table
-   (blocks/series/schedule), so the floor matters everywhere, not just
+   (blocks/series), so the floor matters everywhere, not just
    here. */
 .btn--sm {
   padding: var(--space-2) var(--space-3);
@@ -842,7 +842,8 @@ dialog.panel .panel__body {
 }
 
 /* Reserved, not currently consumed: every shipped .hero-panel (dashboard,
-   schedule, 404) uses a visually-hidden <h2> for its accessible name, never
+   the guide's NO SIGNAL, 404) uses a visually-hidden <h2> for its
+   accessible name, never
    a visible <h1> -- same "declared but unused" precedent as --color-warn's
    own note above before this task gave it a consumer. Kept (not deleted)
    as a documented reservation: a future page that does add a visible <h1>
@@ -1757,12 +1758,6 @@ dialog.panel .panel__body {
 
 .plate__name {
   color: var(--color-ink);
-}
-
-/* A plate standing in as a section heading (schedule channel heads)
-   scales up a step so it doesn't read as a stray chip. */
-.section-head .plate {
-  font-size: var(--text-sm);
 }
 
 /* -- event tape (ui/tape partial + runtime/tape.ts) -------------------------
