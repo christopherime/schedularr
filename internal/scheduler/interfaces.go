@@ -43,11 +43,14 @@ type StateStore interface {
 	// re-derived at all).
 	SaveOccurrenceSnapshot(ctx context.Context, blockID string, occurrenceStart time.Time, snapshot OccurrenceSnapshot) error
 	// CleanupOccurrenceSnapshots deletes snapshot rows for occurrences that
-	// started more than window before now -- mirrors
-	// CleanupScheduleHistory's retention window, since a snapshot for an
-	// occurrence outside the history retention window can never be
-	// re-derived (its schedule_history rows, if any, are gone too) and so
-	// serves no further purpose. Returns the number of rows deleted.
+	// started more than window before now. Since v0.5.7 window comes from
+	// its own config knob (maintenance.snapshot_retention,
+	// EngineOptions.SnapshotRetention) rather than the history window,
+	// though the default value is the same: a snapshot for an occurrence
+	// outside the SCHEDULE-HISTORY window can never be re-derived (its
+	// schedule_history rows, if any, are gone too), so setting snapshot
+	// retention longer than history retention keeps rows that serve no
+	// purpose. Returns the number of rows deleted.
 	CleanupOccurrenceSnapshots(ctx context.Context, window time.Duration) (int64, error)
 	// DeleteFutureOccurrenceSnapshots deletes every occurrence snapshot for
 	// blockID with occurrence_start > now. Used whenever a pending

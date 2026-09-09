@@ -2243,6 +2243,11 @@ func TestGenerateForTimeRange_ConflictResolution(t *testing.T) {
 	for _, w := range warnings {
 		assert.Equal(t, "Low Priority Block", w.BlockName)
 		assert.Equal(t, "High Priority Block", w.BlockingBlockName)
+		// The warning names where the dropped occurrence would have aired
+		// and for how long, so a persisted warning can be read back
+		// without re-deriving the block spec.
+		assert.Equal(t, "channel-1", w.ChannelID)
+		assert.Equal(t, 120, w.DurationMinutes)
 	}
 }
 
@@ -3575,4 +3580,49 @@ func TestGenerateForTimeRange_LineupsAreWindowIndependent(t *testing.T) {
 		assert.Equal(t, want, programIDs(slot.Programs),
 			"%s at %s planned differently for a 7-day window than for a 28-day one", key.block, key.start)
 	}
+}
+
+// TestEngine_Commit_StampsRunIDAndPrunesOnOwnKnobs pins the two v0.5.7
+// Commit changes: every schedule_history row it writes carries the apply
+// run that produced it (an empty RunID would make "which apply put this
+// on air" unanswerable), and occurrence snapshots prune on
+// maintenance.snapshot_retention rather than the history window they
+// used to share.
+func TestEngine_Commit_StampsRunIDAndPrunesOnOwnKnobs(t *testing.T) {
+	client := &tunarr.Client{}
+	store := NewMockStateStore()
+
+	blocks := []Block{{
+		Name:      "Morning Cartoons",
+		Type:      BlockTypeFilter,
+		Cron:      "0 6 * * *",
+		Duration:  60,
+		ChannelID: "channel-1",
+		Filter:    Filter{Genres: []string{"Animation"}},
+	}}
+
+	engine := NewEngineWithOptions(context.Background(), client, blocks, store, EngineOptions{
+		Logger:            slog.Default(),
+		Location:          time.UTC,
+		HistoryWindow:     168 * time.Hour,
+		SnapshotRetention: 48 * time.Hour,
+		RunID:             "run-abc",
+	})
+
+	start := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	programs := []tunarr.Program{
+		{ID: "p1", Title: "Toon", Genres: []tunarr.Genre{{Name: "Animation"}}, Duration: 1800000, Type: "episode"},
+	}
+
+	_, _, err := engine.GenerateForTimeRange(start, start.Add(24*time.Hour), programs)
+	require.NoError(t, err, "GenerateForTimeRange returned error")
+	require.NoError(t, engine.Commit(), "Commit returned error")
+
+	require.NotEmpty(t, store.History, "expected committed schedule history")
+	for _, entry := range store.History {
+		assert.Equal(t, "run-abc", entry.RunID, "entry %q must carry its apply run", entry.Title)
+	}
+
+	assert.Equal(t, 48*time.Hour, store.SnapshotCleanupWindow,
+		"snapshots prune on their own knob, not the history window")
 }

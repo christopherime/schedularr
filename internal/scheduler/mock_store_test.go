@@ -20,6 +20,10 @@ type MockStateStore struct {
 	// (e.g. for syncPostStates' operator-wins guard) by writing the entry
 	// directly instead of going through SaveOccurrenceSnapshot.
 	Snapshots map[occurrenceKey]OccurrenceSnapshot
+	// SnapshotCleanupWindow records the window the last
+	// CleanupOccurrenceSnapshots call was made with, so a test can pin
+	// that snapshots prune on their own knob rather than the history one.
+	SnapshotCleanupWindow time.Duration
 }
 
 // NewMockStateStore creates a new MockStateStore with initialized maps.
@@ -144,6 +148,7 @@ func (m *MockStateStore) SaveOccurrenceSnapshot(_ context.Context, blockID strin
 // prunes by RecordedAt (real wall-clock write time), not
 // occurrence_start -- see that field's doc comment.
 func (m *MockStateStore) CleanupOccurrenceSnapshots(_ context.Context, window time.Duration) (int64, error) {
+	m.SnapshotCleanupWindow = window
 	cutoff := time.Now().Add(-window)
 	removed := int64(0)
 	for key, snapshot := range m.Snapshots {

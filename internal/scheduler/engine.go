@@ -41,6 +41,14 @@ type Engine struct {
 	// lastPlanSeq backs nextPlanSeq -- see its doc comment.
 	lastPlanSeq int64
 	logger      *slog.Logger
+	// runID is the apply run this engine's Commit belongs to
+	// (store.ApplyRun.ID), stamped onto every schedule_history row Commit
+	// writes. Empty for a dry-run engine, which never Commits.
+	runID string
+	// snapshotRetention bounds Commit's CleanupOccurrenceSnapshots call.
+	// Defaults to the history window when unset -- the single-knob
+	// behavior it was split out of.
+	snapshotRetention time.Duration
 }
 
 // nextPlanSeq allocates the next plan-provenance sequence
@@ -108,6 +116,8 @@ type Warning struct {
 	BlockName         string    // the block whose occurrence was dropped
 	OccurrenceStart   time.Time // that occurrence's cron-computed start time
 	BlockingBlockName string    // the block whose occurrence it lost to
+	ChannelID         string    // the channel both occurrences contended for
+	DurationMinutes   int       // how long the dropped occurrence would have run
 }
 
 // occurrenceKey identifies one specific occurrence of a block -- the unit
@@ -194,8 +204,19 @@ type EngineOptions struct {
 	// history_retention is required to actually query a wider days range.
 	// Zero uses defaultHistoryWindow (7 days).
 	HistoryWindow time.Duration
-	Logger        *slog.Logger
-	Location      *time.Location
+	// SnapshotRetention bounds Commit's CleanupOccurrenceSnapshots call.
+	// Split from HistoryWindow in v0.5.7 (maintenance.snapshot_retention)
+	// so the two tables prune on their own clocks; zero falls back to the
+	// history window, which is what the single-knob behavior was.
+	SnapshotRetention time.Duration
+	// RunID is the apply run this engine's Commit belongs to
+	// (store.ApplyRun.ID). Stamped onto every schedule_history row Commit
+	// writes, so an aired programme can be traced back to the apply that
+	// put it there. Left empty by a dry-run caller: a dry run plans
+	// entries too, and they must not claim a run that never happened.
+	RunID    string
+	Logger   *slog.Logger
+	Location *time.Location
 }
 
 // defaultHistoryWindow is the schedule-history retention/dedup window used
@@ -234,6 +255,10 @@ func NewEngineWithOptions(ctx context.Context, client *tunarr.Client, blocks []B
 	if historyWindow == 0 {
 		historyWindow = defaultHistoryWindow
 	}
+	snapshotRetention := opts.SnapshotRetention
+	if snapshotRetention == 0 {
+		snapshotRetention = historyWindow
+	}
 	e := &Engine{
 		client:         client,
 		blocks:         blocks,
@@ -244,6 +269,9 @@ func NewEngineWithOptions(ctx context.Context, client *tunarr.Client, blocks []B
 		pendingStates:  make(map[string]*SeriesState),
 		pendingHistory: nil,
 		logger:         logger,
+
+		runID:             opts.RunID,
+		snapshotRetention: snapshotRetention,
 	}
 	if store != nil {
 		// Seed the plan-sequence floor from the store's high-water mark
@@ -487,6 +515,12 @@ func (e *Engine) Commit() error {
 		}
 	}
 	if len(e.pendingHistory) > 0 {
+		// Stamped here rather than at planning time: pendingHistory is
+		// built by the planner, which a dry run also runs, and only an
+		// apply has a run to claim.
+		for i := range e.pendingHistory {
+			e.pendingHistory[i].RunID = e.runID
+		}
 		if err := e.store.RecordScheduleHistory(ctx, e.pendingHistory); err != nil {
 			return fmt.Errorf("failed to record schedule history: %w", err)
 		}
@@ -497,6 +531,9 @@ func (e *Engine) Commit() error {
 		}
 	}
 	for _, rep := range e.pendingReplacements {
+		for i := range rep.entries {
+			rep.entries[i].RunID = e.runID
+		}
 		if err := e.store.ReplaceOccurrenceHistory(ctx, rep.blockName, rep.occurrenceStart, rep.entries); err != nil {
 			return fmt.Errorf("failed to replace occurrence history for block %q: %w", rep.blockName, err)
 		}
@@ -504,7 +541,7 @@ func (e *Engine) Commit() error {
 	if _, err := e.store.CleanupScheduleHistory(ctx, e.history.Window()); err != nil {
 		return fmt.Errorf("failed to cleanup schedule history: %w", err)
 	}
-	if _, err := e.store.CleanupOccurrenceSnapshots(ctx, e.history.Window()); err != nil {
+	if _, err := e.store.CleanupOccurrenceSnapshots(ctx, e.snapshotRetention); err != nil {
 		return fmt.Errorf("failed to cleanup occurrence snapshots: %w", err)
 	}
 	// Clear pending state after commit
@@ -576,6 +613,8 @@ func (e *Engine) resolveConflicts(slots []ScheduledSlot) (kept []ScheduledSlot, 
 			BlockName:         slot.Block.Name,
 			OccurrenceStart:   slot.StartTime,
 			BlockingBlockName: blocker.Block.Name,
+			ChannelID:         slot.Block.ChannelID,
+			DurationMinutes:   slot.Block.Duration,
 		})
 	}
 
