@@ -356,10 +356,10 @@ func TestStore_InvalidationCutoff_WidensPastStartToPastFinish(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	spec := scheduler.Block{Duration: 30, MaxDurationOverflowMinutes: 15} // 45min airing envelope
-	onAirStart := now.Add(-10 * time.Minute)                             // 10min into the nominal 30min: on air
-	overflowAirStart := now.Add(-40 * time.Minute)                       // past nominal 30min, inside the 45min envelope: still on air
-	finishedStart := now.Add(-2 * time.Hour)                             // well past even the overflow envelope
-	notYetStarted := now.Add(20 * time.Minute)                           // hasn't started yet
+	onAirStart := now.Add(-10 * time.Minute)                              // 10min into the nominal 30min: on air
+	overflowAirStart := now.Add(-40 * time.Minute)                        // past nominal 30min, inside the 45min envelope: still on air
+	finishedStart := now.Add(-2 * time.Hour)                              // well past even the overflow envelope
+	notYetStarted := now.Add(20 * time.Minute)                            // hasn't started yet
 
 	snapshot := scheduler.OccurrenceSnapshot{
 		PreStates: map[string]scheduler.SeriesStateSnapshot{"Show A": {CurrentSeason: 1, CurrentEpisode: 1}},
