@@ -112,7 +112,11 @@ func (h *Handlers) runSchedule(w http.ResponseWriter, r *http.Request, req sched
 		channelID = *req.channelID
 	}
 
-	result, err := h.d.Sched.Run(r.Context(), service.Options{Days: days, ChannelID: channelID, Apply: req.apply})
+	// Source is always SourceUI here: this HTTP surface is the web UI's,
+	// and the CLI never routes an apply through it.
+	result, err := h.d.Sched.Run(r.Context(), service.Options{
+		Days: days, ChannelID: channelID, Apply: req.apply, Source: service.SourceUI,
+	})
 	if err != nil {
 		h.writeScheduleRunnerError(w, r, req.op, err)
 		return

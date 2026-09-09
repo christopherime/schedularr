@@ -94,7 +94,7 @@ func newMediaTestRunner(t *testing.T, tunarrURL string) *Runner {
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: tunarrURL})
-	return NewRunner(st, client, discardLogger(), time.UTC, 0)
+	return NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 }
 
 // mediaTestPrograms seeds two shows (three "The Office" episodes, one

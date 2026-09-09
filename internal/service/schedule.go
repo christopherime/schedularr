@@ -28,6 +28,7 @@ import (
 	"github.com/christopherime/schedularr/internal/httpclient"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
+	"github.com/google/uuid"
 )
 
 // Options configures a single Run. Days is the number of 24h days ahead of
@@ -42,7 +43,22 @@ type Options struct {
 	Days      int
 	ChannelID string
 	Apply     bool
+	// Source attributes an apply to the surface that asked for it -- one
+	// of SourceUI, SourceCron, SourceCLI -- and is recorded on the run.
+	// Ignored on a dry run. An empty Source on an apply records
+	// store.ApplySourceUnknown: a missing label is a defect to notice in
+	// the history page's RUNS pane, never a reason to refuse to push a
+	// lineup.
+	Source string
 }
+
+// Sources an apply can be attributed to, mirrored from the store's
+// constants so callers outside internal/store name them in service terms.
+const (
+	SourceUI   = store.ApplySourceUI
+	SourceCron = store.ApplySourceCron
+	SourceCLI  = store.ApplySourceCLI
+)
 
 // Result is what Run produces: the generated (and, if Applied, pushed)
 // schedule, keyed by Tunarr channel ID. Warnings lists every occurrence
@@ -55,6 +71,10 @@ type Result struct {
 	Applied  bool
 	Channels map[string][]scheduler.ScheduledSlot
 	Warnings []scheduler.Warning
+	// RunID is the apply run this Run was recorded as
+	// (store.ApplyRun.ID), or "" on a dry run -- a dry run applies
+	// nothing, so it has no run to claim.
+	RunID string
 }
 
 // ScheduleRunner is the interface api.Deps.Sched depends on, so handler
@@ -87,6 +107,12 @@ type Runner struct {
 	loc           *time.Location
 	cache         *cache.Cache // nil if cache.New failed; fetch then always hits Tunarr
 	historyWindow time.Duration
+	// snapshotRetention and applyRunRetention are the other two
+	// per-table retention knobs (maintenance.snapshot_retention,
+	// maintenance.apply_run_retention). The first is forwarded to the
+	// engine; the second bounds this Runner's own apply-run pruning.
+	snapshotRetention time.Duration
+	applyRunRetention time.Duration
 	// now returns the current time -- defaults to time.Now (set by
 	// NewRunner) and is the sole clock Run reads. Tests in this package
 	// override it directly (an unexported field, same package) to pin
@@ -105,20 +131,42 @@ type Runner struct {
 var _ ScheduleRunner = (*Runner)(nil)
 
 // NewRunner builds a Runner backed by st and tc. l and loc default to
-// slog.Default() and time.Local respectively when nil, matching
-// scheduler.NewEngine's own nil-handling. historyWindow is forwarded
-// unchanged to every scheduler.Engine Run builds
-// (scheduler.EngineOptions.HistoryWindow) -- callers pass
-// config.MaintenanceHistoryRetention(cfg) here (see cmd/generate.go,
-// cmd/serve.go) so the engine's in-memory dedup window and its
-// Commit-time schedule_history pruning both honor the configured
-// maintenance.history_retention value instead of a hardcoded 7 days. Zero
-// falls back to scheduler's own default (7 days) -- see
-// scheduler.NewEngineWithOptions.
-func NewRunner(st *store.Store, tc *tunarr.Client, l *slog.Logger, loc *time.Location, historyWindow time.Duration) *Runner {
+// RunnerOptions carries a Runner's construction settings. A struct
+// rather than more parameters: NewRunner was already at the
+// five-argument lint ceiling before retention split per table.
+type RunnerOptions struct {
+	Logger   *slog.Logger
+	Location *time.Location
+	// HistoryRetention is forwarded unchanged to every scheduler.Engine
+	// Run builds (scheduler.EngineOptions.HistoryWindow) -- callers pass
+	// config.MaintenanceHistoryRetention(cfg) here (see cmd/generate.go,
+	// cmd/serve.go) so the engine's in-memory dedup window and its
+	// Commit-time schedule_history pruning both honor the configured
+	// maintenance.history_retention value instead of a hardcoded 7 days.
+	// Zero falls back to scheduler's own default (7 days) -- see
+	// scheduler.NewEngineWithOptions.
+	HistoryRetention time.Duration
+	// SnapshotRetention bounds occurrence-snapshot pruning
+	// (scheduler.EngineOptions.SnapshotRetention). Zero falls back to
+	// HistoryRetention, which is the single-knob behavior it was split
+	// out of.
+	SnapshotRetention time.Duration
+	// ApplyRunRetention bounds apply-run pruning, run after each
+	// successful apply. Zero disables it -- runs then accumulate until an
+	// operator prunes them, which is the honest behavior for an unset
+	// knob rather than silently picking a horizon.
+	ApplyRunRetention time.Duration
+}
+
+// NewRunner builds a Runner backed by st and tc. o.Logger and o.Location
+// default to slog.Default() and time.Local respectively when nil,
+// matching scheduler.NewEngine's own nil-handling.
+func NewRunner(st *store.Store, tc *tunarr.Client, o RunnerOptions) *Runner {
+	l := o.Logger
 	if l == nil {
 		l = slog.Default()
 	}
+	loc := o.Location
 	if loc == nil {
 		loc = time.Local
 	}
@@ -129,7 +177,13 @@ func NewRunner(st *store.Store, tc *tunarr.Client, l *slog.Logger, loc *time.Loc
 		c = nil
 	}
 
-	return &Runner{store: st, tunarr: tc, logger: l, loc: loc, cache: c, historyWindow: historyWindow, now: time.Now}
+	return &Runner{
+		store: st, tunarr: tc, logger: l, loc: loc, cache: c,
+		historyWindow:     o.HistoryRetention,
+		snapshotRetention: o.SnapshotRetention,
+		applyRunRetention: o.ApplyRunRetention,
+		now:               time.Now,
+	}
 }
 
 // ActiveBlocks returns the Spec of every enabled block in the store.
@@ -196,11 +250,97 @@ func ActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error
 // Run never calls -- so rejecting it would mean guessing at "known
 // channels" from a source Run doesn't otherwise consult.
 func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
-	if o.Apply {
-		r.applyMu.Lock()
-		defer r.applyMu.Unlock()
+	if !o.Apply {
+		return r.run(ctx, o, "")
 	}
 
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
+
+	runID := uuid.NewString()
+	started := r.now()
+	r.startApplyRun(ctx, runID, started, o)
+
+	res, err := r.run(ctx, o, runID)
+	r.finishApplyRun(ctx, runID, started, o, res, err)
+	if res != nil {
+		res.RunID = runID
+	}
+	return res, err
+}
+
+// startApplyRun writes this apply's in-flight record. Recording never
+// fails an apply: a store write that fails here is logged and dropped.
+// Losing the record of an apply is a reporting gap; refusing to schedule
+// because the reporting table is unhappy would be worse.
+func (r *Runner) startApplyRun(ctx context.Context, runID string, started time.Time, o Options) {
+	source := o.Source
+	if source == "" {
+		source = store.ApplySourceUnknown
+	}
+	if err := r.store.StartApplyRun(ctx, store.ApplyRun{
+		ID: runID, StartedAt: started, Source: source, Scope: o.ChannelID,
+		Days: o.Days, Status: store.ApplyStatusRunning,
+	}); err != nil {
+		r.logger.Warn("failed to record apply run start", "error", err, "run_id", runID)
+	}
+}
+
+// finishApplyRun finalizes this apply's record with its outcome, counts
+// and warnings, then prunes runs past their retention. Both writes are
+// best-effort for the same reason startApplyRun's is.
+func (r *Runner) finishApplyRun(ctx context.Context, runID string, started time.Time, o Options, res *Result, runErr error) {
+	finished := r.now()
+	source := o.Source
+	if source == "" {
+		source = store.ApplySourceUnknown
+	}
+	rec := store.ApplyRun{
+		ID: runID, StartedAt: started, FinishedAt: &finished,
+		Source: source, Scope: o.ChannelID, Days: o.Days,
+		Status: store.ApplyStatusOK,
+	}
+	if runErr != nil {
+		rec.Status = store.ApplyStatusError
+		rec.Error = runErr.Error()
+	}
+	if res != nil {
+		rec.ChannelCount = len(res.Channels)
+		for _, slots := range res.Channels {
+			rec.SlotCount += len(slots)
+		}
+		rec.Warnings = applyRunWarnings(runID, res.Warnings)
+	}
+
+	if err := r.store.FinishApplyRun(ctx, rec); err != nil {
+		r.logger.Warn("failed to record apply run outcome", "error", err, "run_id", runID)
+		return
+	}
+	if r.applyRunRetention > 0 && runErr == nil {
+		if _, err := r.store.CleanupApplyRuns(ctx, r.applyRunRetention); err != nil {
+			r.logger.Warn("failed to prune apply runs", "error", err)
+		}
+	}
+}
+
+// applyRunWarnings converts the engine's in-memory warnings into their
+// persisted form.
+func applyRunWarnings(runID string, warnings []scheduler.Warning) []store.ApplyRunWarning {
+	out := make([]store.ApplyRunWarning, 0, len(warnings))
+	for _, w := range warnings {
+		out = append(out, store.ApplyRunWarning{
+			RunID: runID, BlockName: w.BlockName, OccurrenceStart: w.OccurrenceStart,
+			BlockingBlockName: w.BlockingBlockName, ChannelID: w.ChannelID,
+			DurationMinutes: w.DurationMinutes,
+		})
+	}
+	return out
+}
+
+// run is Run's body, minus the apply serialization and run recording Run
+// wraps it in. runID is the apply run its Commit belongs to, empty on a
+// dry run.
+func (r *Runner) run(ctx context.Context, o Options, runID string) (*Result, error) {
 	blocks, err := ActiveBlocks(ctx, r.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load scheduling blocks: %w", err)
@@ -216,9 +356,11 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	}
 
 	engine := scheduler.NewEngineWithOptions(ctx, r.tunarr, blocks, r.store, scheduler.EngineOptions{
-		Logger:        r.logger,
-		Location:      r.loc,
-		HistoryWindow: r.historyWindow,
+		Logger:            r.logger,
+		Location:          r.loc,
+		HistoryWindow:     r.historyWindow,
+		SnapshotRetention: r.snapshotRetention,
+		RunID:             runID,
 	})
 
 	// Truncated to the whole minute because it does double duty as

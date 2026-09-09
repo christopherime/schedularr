@@ -297,7 +297,7 @@ func newTestRunner(t *testing.T, tunarrURL string) (*Runner, *store.Store) {
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: tunarrURL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 	return r, st
 }
 
@@ -388,7 +388,7 @@ func TestRunner_Run_ChannelIDNarrowsResultAndApply(t *testing.T) {
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	result, err := r.Run(ctx, Options{Days: 1, Apply: true, ChannelID: "channel-1"})
 	require.NoError(t, err)
@@ -495,7 +495,7 @@ func TestRunner_Run_ChannelScopedApply_LeavesOtherChannelStateUntouched(t *testi
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	result, err := r.Run(ctx, Options{Days: 1, Apply: true, ChannelID: "channel-1"})
 	require.NoError(t, err)
@@ -888,7 +888,7 @@ func TestRunner_Run_Apply_UsesConfiguredHistoryWindowForCleanup(t *testing.T) {
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
 	const thirtyDays = 30 * 24 * time.Hour
-	r := NewRunner(st, client, discardLogger(), time.UTC, thirtyDays)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC, HistoryRetention: thirtyDays})
 
 	_, err = r.Run(ctx, Options{Days: 1, Apply: true})
 	require.NoError(t, err)
@@ -1035,7 +1035,7 @@ func TestRunner_fetchAllProgramsViaSearch_FetchesEveryPage(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	got, err := r.fetchAllProgramsViaSearch(context.Background())
 	require.NoError(t, err)
@@ -1059,7 +1059,7 @@ func TestRunner_fetchLibraryPrograms_FetchesEveryPage(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	got := r.fetchTunarrContent(context.Background())
 	assert.Len(t, got, 250,
@@ -1113,7 +1113,7 @@ func TestRunner_Run_SeriesBlock_MatchesEpisodeFromNestedShowObject(t *testing.T)
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	result, err := r.Run(ctx, Options{Days: 1, Apply: false})
 	require.NoError(t, err)
@@ -1210,7 +1210,7 @@ func TestRunner_Run_SeriesBlock_MatchesEpisodeViaLiveShowAndSeasonJoin(t *testin
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	result, err := r.Run(ctx, Options{Days: 1, Apply: false})
 	require.NoError(t, err)
@@ -1260,7 +1260,7 @@ func TestRunner_fetchLibraryPrograms_JoinsShowAcrossPaginationBoundary(t *testin
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	got := r.fetchTunarrContent(context.Background())
 	require.Len(t, got, 251)
@@ -1337,7 +1337,7 @@ func TestRunner_hydrateSeasonNumbers(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	programs := []tunarr.Program{
 		{ID: "ep-1", Type: "episode", Title: "Ep 1", SeasonID: seasonID},
@@ -1382,7 +1382,7 @@ func TestRunner_resolveSeasonNumber_CachesAcrossCalls(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	number1, ok1 := r.resolveSeasonNumber(context.Background(), seasonID)
 	require.True(t, ok1)
@@ -1427,7 +1427,7 @@ func TestRunner_fetchSingleLibrary_SkipsInvalidProgramsAndLogsOnce(t *testing.T)
 
 	logger, logBuf := capturingLogger()
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, logger, time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: logger, Location: time.UTC})
 
 	got := r.fetchTunarrContent(context.Background())
 	require.Len(t, got, 2, "the fetch must succeed and keep the 2 valid entries, dropping only the unknown-type one")
@@ -1474,7 +1474,7 @@ func TestRunner_hydrateSeasonNumbers_LocalJoinAvoidsNetworkFallback(t *testing.T
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	programs := []tunarr.Program{
 		{UUID: seasonID, Type: "season", Title: "Season 1", Index: 4},
@@ -1507,7 +1507,7 @@ func TestRunner_hydrateSeasonNumbers_LocalJoinThenNetworkFallback(t *testing.T) 
 	t.Cleanup(func() { _ = st.Close() })
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	programs := []tunarr.Program{
 		{UUID: localSeasonID, Type: "season", Title: "Season 1", Index: 1},
@@ -1565,7 +1565,7 @@ func TestRunner_Run_Apply_IsIdempotentPerOccurrence(t *testing.T) {
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 	fixedNow := time.Now().UTC().Truncate(time.Hour).Add(10 * time.Minute)
 	r.now = func() time.Time { return fixedNow }
 
@@ -1656,7 +1656,7 @@ func TestRunner_Run_Apply_ImportedCursorSticks(t *testing.T) {
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 	fixedNow := time.Now().UTC().Truncate(time.Hour).Add(10 * time.Minute)
 	r.now = func() time.Time { return fixedNow }
 
@@ -1724,7 +1724,7 @@ func TestRunner_Run_Apply_ConflictDroppedOccurrence_DoesNotAdvanceCursor(t *test
 	}))
 
 	client := tunarr.NewClient(tunarr.Config{URL: server.URL})
-	r := NewRunner(st, client, discardLogger(), time.UTC, 0)
+	r := NewRunner(st, client, RunnerOptions{Logger: discardLogger(), Location: time.UTC})
 
 	result, err := r.Run(ctx, Options{Days: 1, Apply: true})
 	require.NoError(t, err)
@@ -1938,4 +1938,99 @@ func TestRunner_Run_SerializesApplies(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxSeen.Load(),
 		"applyMu must serialize applies: the maximum observed in-flight channel-programming request must be 1")
+}
+
+// TestRunner_Run_RecordsApplyRun pins the v0.5.7 memory contract: an
+// apply lands as a store.ApplyRun carrying its source, scope, counts and
+// outcome, and the run ID it was recorded under comes back on the Result
+// so the caller can link to it.
+func TestRunner_Run_RecordsApplyRun(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	r, st := newTestRunner(t, server.URL)
+	ctx := context.Background()
+
+	result, err := r.Run(ctx, Options{Days: 1, Apply: true, Source: SourceCron})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.RunID, "an apply reports the run it was recorded as")
+
+	runs, err := st.ListApplyRuns(ctx, time.Now().Add(-time.Hour), 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+
+	got := runs[0]
+	assert.Equal(t, result.RunID, got.ID)
+	assert.Equal(t, store.ApplySourceCron, got.Source)
+	assert.Equal(t, store.ApplyStatusOK, got.Status)
+	assert.Equal(t, 1, got.Days)
+	assert.Empty(t, got.Scope, "an unscoped apply records an empty scope, not a channel")
+	assert.Positive(t, got.SlotCount, "the run records how many slots it planned")
+	assert.Positive(t, got.ChannelCount)
+	require.NotNil(t, got.FinishedAt, "a completed run has a finish stamp")
+
+	// The history the same apply committed points back at it.
+	history, err := st.ListScheduleHistory(ctx, time.Time{})
+	require.NoError(t, err)
+	require.NotEmpty(t, history)
+	for _, entry := range history {
+		assert.Equal(t, result.RunID, entry.RunID,
+			"every committed row names the apply that put it there")
+	}
+}
+
+// TestRunner_Run_DryRunRecordsNothing: a dry run applies nothing, so it
+// has no run to claim.
+func TestRunner_Run_DryRunRecordsNothing(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	r, st := newTestRunner(t, server.URL)
+	ctx := context.Background()
+
+	result, err := r.Run(ctx, Options{Days: 1, Apply: false, Source: SourceUI})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.RunID, "a dry run reports no run ID")
+
+	runs, err := st.ListApplyRuns(ctx, time.Now().Add(-time.Hour), 10)
+	require.NoError(t, err)
+	assert.Empty(t, runs, "a dry run must not record an apply run")
+}
+
+// TestRunner_Run_UnlabelledApplyRecordsUnknown: a caller that forgot to
+// set Source still gets its lineup pushed -- the missing label surfaces
+// in the record instead of failing the apply.
+func TestRunner_Run_UnlabelledApplyRecordsUnknown(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	r, st := newTestRunner(t, server.URL)
+	ctx := context.Background()
+
+	_, err := r.Run(ctx, Options{Days: 1, Apply: true})
+	require.NoError(t, err)
+
+	runs, err := st.ListApplyRuns(ctx, time.Now().Add(-time.Hour), 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.ApplySourceUnknown, runs[0].Source)
+}
+
+// TestRunner_Run_RecordsFailedApply pins that a failed apply is still a
+// run: the record is written before anything is pushed, so an apply that
+// dies on the way to Tunarr leaves the operator an entry naming what went
+// wrong instead of silence.
+func TestRunner_Run_RecordsFailedApply(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	r, st := newTestRunner(t, server.URL)
+	// Take Tunarr away after the Runner is built: fetchPrograms then fails
+	// and Run returns before any lineup is pushed.
+	server.Close()
+
+	ctx := context.Background()
+	_, err := r.Run(ctx, Options{Days: 1, Apply: true, Source: SourceUI})
+	require.Error(t, err, "an unreachable Tunarr must fail the apply")
+
+	runs, err := st.ListApplyRuns(ctx, time.Now().Add(-time.Hour), 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 1, "a failed apply is still a run")
+	assert.Equal(t, store.ApplyStatusError, runs[0].Status)
+	assert.NotEmpty(t, runs[0].Error, "a failed run carries its error detail")
+	assert.Equal(t, store.ApplySourceUI, runs[0].Source)
 }

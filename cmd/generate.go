@@ -135,10 +135,16 @@ func ProcessSchedule(cfg *config.Config, applyFlag bool, dryRunFlag bool) error 
 		return fmt.Errorf("invalid timezone '%s' in app config: %w", timezone, err)
 	}
 
-	runner := service.NewRunner(st, client, logger, loc, config.MaintenanceHistoryRetention(cfg))
+	runner := service.NewRunner(st, client, service.RunnerOptions{
+		Logger:            logger,
+		Location:          loc,
+		HistoryRetention:  config.MaintenanceHistoryRetention(cfg),
+		SnapshotRetention: config.MaintenanceSnapshotRetention(cfg),
+		ApplyRunRetention: config.MaintenanceApplyRunRetention(cfg),
+	})
 
 	applyNow := applyFlag && !dryRunFlag
-	result, err := runner.Run(context.Background(), service.Options{Days: 1, Apply: applyNow})
+	result, err := runner.Run(context.Background(), service.Options{Days: 1, Apply: applyNow, Source: service.SourceCLI})
 	if err != nil {
 		return err
 	}
@@ -178,24 +184,43 @@ func checkApplyGate(applyFlag, dryRunFlag bool) error {
 	return nil
 }
 
-// runScheduleHistoryCleanup removes old schedule history entries based on retention policy.
+// runScheduleHistoryCleanup prunes the three tables that grow with time,
+// each on its own retention knob (v0.5.7). A zero knob skips that table
+// rather than pruning everything: an unset duration means "no policy
+// configured", never "keep nothing". Every failure is non-fatal and
+// reported -- cleanup is housekeeping, not part of the schedule.
 func runScheduleHistoryCleanup(cfg *config.Config, st *store.Store) {
-	retention := config.MaintenanceHistoryRetention(cfg)
-	if retention == 0 {
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	removed, err := st.CleanupScheduleHistory(ctx, retention)
-	if err != nil {
-		fmt.Printf("%s %v\n", warnStyle.Render("⚠ Schedule history cleanup failed (non-fatal):"), err)
-		return
+	if retention := config.MaintenanceHistoryRetention(cfg); retention > 0 {
+		removed, err := st.CleanupScheduleHistory(ctx, retention)
+		switch {
+		case err != nil:
+			fmt.Printf("%s %v\n", warnStyle.Render("⚠ Schedule history cleanup failed (non-fatal):"), err)
+		case removed > 0:
+			fmt.Printf("%s Cleaned up %d old schedule history entries\n", successStyle.Render("✓"), removed)
+		}
 	}
 
-	if removed > 0 {
-		fmt.Printf("%s Cleaned up %d old schedule history entries\n", successStyle.Render("✓"), removed)
+	if retention := config.MaintenanceSnapshotRetention(cfg); retention > 0 {
+		removed, err := st.CleanupOccurrenceSnapshots(ctx, retention)
+		switch {
+		case err != nil:
+			fmt.Printf("%s %v\n", warnStyle.Render("⚠ Occurrence snapshot cleanup failed (non-fatal):"), err)
+		case removed > 0:
+			fmt.Printf("%s Cleaned up %d old occurrence snapshots\n", successStyle.Render("✓"), removed)
+		}
+	}
+
+	if retention := config.MaintenanceApplyRunRetention(cfg); retention > 0 {
+		removed, err := st.CleanupApplyRuns(ctx, retention)
+		switch {
+		case err != nil:
+			fmt.Printf("%s %v\n", warnStyle.Render("⚠ Apply run cleanup failed (non-fatal):"), err)
+		case removed > 0:
+			fmt.Printf("%s Cleaned up %d old apply runs\n", successStyle.Render("✓"), removed)
+		}
 	}
 }
 

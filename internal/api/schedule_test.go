@@ -78,7 +78,7 @@ func TestGenerateSchedule_AlwaysDryRunRegardlessOfBody(t *testing.T) {
 	require.Equal(t, "application/json", w.Header().Get("Content-Type"))
 
 	require.True(t, fake.called)
-	assert.Equal(t, service.Options{Days: 5, ChannelID: "chan-1", Apply: false}, fake.lastOpts)
+	assert.Equal(t, service.Options{Days: 5, ChannelID: "chan-1", Apply: false, Source: service.SourceUI}, fake.lastOpts)
 
 	var got gen.PlanResult
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
@@ -92,7 +92,7 @@ func TestGenerateSchedule_EmptyBodyUsesDefaults(t *testing.T) {
 	w := doRequest(t, h, http.MethodPost, "/generate", nil)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	assert.Equal(t, service.Options{Days: defaultScheduleDays, ChannelID: "", Apply: false}, fake.lastOpts)
+	assert.Equal(t, service.Options{Days: defaultScheduleDays, ChannelID: "", Apply: false, Source: service.SourceUI}, fake.lastOpts)
 }
 
 func TestApplySchedule_RunsWithApplyTrue(t *testing.T) {
@@ -103,7 +103,7 @@ func TestApplySchedule_RunsWithApplyTrue(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	require.True(t, fake.called)
-	assert.Equal(t, service.Options{Days: 2, ChannelID: "", Apply: true}, fake.lastOpts)
+	assert.Equal(t, service.Options{Days: 2, ChannelID: "", Apply: true, Source: service.SourceUI}, fake.lastOpts)
 
 	var got gen.PlanResult
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
@@ -128,7 +128,7 @@ func TestGetSchedule_DaysQueryParam(t *testing.T) {
 	w := doRequest(t, h, http.MethodGet, "/schedule?days=3", nil)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	assert.Equal(t, service.Options{Days: 3, ChannelID: "", Apply: false}, fake.lastOpts)
+	assert.Equal(t, service.Options{Days: 3, ChannelID: "", Apply: false, Source: service.SourceUI}, fake.lastOpts)
 }
 
 // TestGetSchedule_ChannelIDQueryParam covers the v0.5.1 contract addition:
@@ -141,7 +141,7 @@ func TestGetSchedule_ChannelIDQueryParam(t *testing.T) {
 	w := doRequest(t, h, http.MethodGet, "/schedule?days=2&channel_id=chan-7", nil)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	assert.Equal(t, service.Options{Days: 2, ChannelID: "chan-7", Apply: false}, fake.lastOpts)
+	assert.Equal(t, service.Options{Days: 2, ChannelID: "chan-7", Apply: false, Source: service.SourceUI}, fake.lastOpts)
 }
 
 func TestGetSchedule_DefaultDays(t *testing.T) {

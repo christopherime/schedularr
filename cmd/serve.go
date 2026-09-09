@@ -142,13 +142,20 @@ func runServe(cmd *cobra.Command) error {
 	}
 
 	client := tunarr.NewClient(config.TunarrConfig(cfg))
-	// maintenance.history_retention governs both the engine's in-memory
-	// dedup window and how much schedule_history survives each apply's
-	// cleanup -- see service.NewRunner's doc comment. This is what makes
-	// GET /history?days=N (up to 90, api/openapi.yaml) actually return data
+	// Retention is per table (v0.5.7): history_retention governs both the
+	// engine's in-memory dedup window and how much schedule_history
+	// survives each apply's cleanup -- which is what makes GET
+	// /history?days=N (up to 90, api/openapi.yaml) actually return data
 	// beyond the engine's old hardcoded 7-day default when retention is
-	// configured wider.
-	runner := service.NewRunner(st, client, logger, loc, config.MaintenanceHistoryRetention(cfg))
+	// configured wider -- while snapshots and apply runs prune on their
+	// own clocks. See service.RunnerOptions' doc comments.
+	runner := service.NewRunner(st, client, service.RunnerOptions{
+		Logger:            logger,
+		Location:          loc,
+		HistoryRetention:  config.MaintenanceHistoryRetention(cfg),
+		SnapshotRetention: config.MaintenanceSnapshotRetention(cfg),
+		ApplyRunRetention: config.MaintenanceApplyRunRetention(cfg),
+	})
 
 	metrics.RegisterMetrics()
 
@@ -415,12 +422,14 @@ func setNextTick(t *nextTickTracker, at time.Time) {
 // runScheduleTick runs a single generate-and-apply cycle for the next
 // days' worth of schedule (applyWindowDays' result -- 1 for every sub-24h
 // interval, matching cmd/generate.go's ProcessSchedule call
-// service.Options{Days: 1, Apply: true}). A failure is logged and the
-// loop continues; it doesn't stop the server or retry early, matching the
-// old daemon's behavior of just waiting for the next tick.
+// service.Options{Days: 1, Apply: true, Source: service.SourceCLI}). A
+// failure is logged and the loop continues; it doesn't stop the server or
+// retry early, matching the old daemon's behavior of just waiting for the
+// next tick -- the failed apply is still recorded as a run, with its
+// error, so the history page can show it.
 func runScheduleTick(ctx context.Context, runner service.ScheduleRunner, days int, logger *slog.Logger) {
 	logger.Info("cron: running schedule generation")
-	if _, err := runner.Run(ctx, service.Options{Days: days, Apply: true}); err != nil {
+	if _, err := runner.Run(ctx, service.Options{Days: days, Apply: true, Source: service.SourceCron}); err != nil {
 		logger.Error("cron: schedule generation failed", "error", err)
 		return
 	}
