@@ -30,12 +30,14 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getBlock"];
+        /** @description Replaces the block's whole spec, so it requires `If-Match` to carry the `updated_at` the client last read. Without it two tabs editing one block silently discard the slower operator's work -- which the live link makes routine rather than theoretical, since both tabs now see each other's changes land. Use `PATCH` for a field-scoped write that cannot lose an unrelated edit. */
         put: operations["updateBlock"];
         post?: never;
         delete: operations["deleteBlock"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** @description Field-scoped write for toggles. Only fields present in the body change, so this cannot discard an unrelated edit the way a full-spec PUT can -- which is also why it needs no `If-Match`. */
+        patch: operations["patchBlock"];
         trace?: never;
     };
     "/blocks/import": {
@@ -336,6 +338,10 @@ export interface components {
             enabled: boolean;
             spec: components["schemas"]["BlockSpec"];
         };
+        /** @description Field-scoped block update. Absent fields are left unchanged; a body with no fields set is rejected. */
+        BlockPatch: {
+            enabled?: boolean;
+        };
         BlockRecord: {
             id: string;
             name: string;
@@ -591,7 +597,10 @@ export interface operations {
     updateBlock: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The block's current `updated_at`, as returned by GET, optionally quoted. A mismatch means someone else saved since this client last read, and the write is refused rather than discarding their edit. */
+                "If-Match": string;
+            };
             path: {
                 id: string;
             };
@@ -602,6 +611,7 @@ export interface operations {
             200: components["responses"]["BlockItem"];
             400: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+            412: components["responses"]["Problem"];
         };
     };
     deleteBlock: {
@@ -622,6 +632,26 @@ export interface operations {
                 };
                 content?: never;
             };
+            404: components["responses"]["Problem"];
+        };
+    };
+    patchBlock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlockPatch"];
+            };
+        };
+        responses: {
+            200: components["responses"]["BlockItem"];
+            400: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
         };
     };

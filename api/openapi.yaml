@@ -40,8 +40,47 @@ paths:
           $ref: "#/components/responses/Problem"
     put:
       operationId: updateBlock
+      description: >-
+        Replaces the block's whole spec, so it requires `If-Match` to
+        carry the `updated_at` the client last read. Without it two tabs
+        editing one block silently discard the slower operator's work --
+        which the live link makes routine rather than theoretical, since
+        both tabs now see each other's changes land. Use `PATCH` for a
+        field-scoped write that cannot lose an unrelated edit.
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          description: >-
+            The block's current `updated_at`, as returned by GET, optionally
+            quoted. A mismatch means someone else saved since this client
+            last read, and the write is refused rather than discarding
+            their edit.
       requestBody:
         $ref: "#/components/requestBodies/BlockWrite"
+      responses:
+        "200":
+          $ref: "#/components/responses/BlockItem"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: patchBlock
+      description: >-
+        Field-scoped write for toggles. Only fields present in the body
+        change, so this cannot discard an unrelated edit the way a
+        full-spec PUT can -- which is also why it needs no `If-Match`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockPatch"
       responses:
         "200":
           $ref: "#/components/responses/BlockItem"
@@ -493,6 +532,14 @@ components:
           default: true
         spec:
           $ref: "#/components/schemas/BlockSpec"
+    BlockPatch:
+      type: object
+      description: >-
+        Field-scoped block update. Absent fields are left unchanged; a
+        body with no fields set is rejected.
+      properties:
+        enabled:
+          type: boolean
     BlockRecord:
       type: object
       required: [id, name, enabled, spec, created_at, updated_at]

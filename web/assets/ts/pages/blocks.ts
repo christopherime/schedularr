@@ -1129,7 +1129,18 @@ document.addEventListener("alpine:init", () => {
           } else {
             const id = this.editor.editingId;
             if (!id) throw new Error("editor is in edit mode with no editingId set");
-            const rec = await apiSend<BlockRecord>("PUT", apiPath("/blocks/{id}", { id }), body);
+            // If-Match carries the updated_at this editor loaded, so a
+            // save is refused with 412 rather than discarding an edit
+            // another tab made in the meantime -- routine now that both
+            // tabs watch each other's changes land over the live link.
+            const loaded = this.blocks.find((b) => b.id === id);
+            const rec = await apiSend<BlockRecord>(
+              "PUT",
+              apiPath("/blocks/{id}", { id }),
+              body,
+              undefined,
+              loaded ? { "If-Match": loaded.updated_at } : undefined,
+            );
             this.blocks = this.blocks.map((b) => (b.id === id ? rec : b));
           }
           this.closeEditor();
@@ -1170,11 +1181,14 @@ document.addEventListener("alpine:init", () => {
         this.pendingId = block.id;
         this.blocksProblem = null;
         try {
-          const body: BlockWrite = { enabled: !block.enabled, spec: block.spec };
+          // PATCH, not PUT: a toggle that resent the whole spec would
+          // overwrite a spec edit made elsewhere since this list loaded.
+          // A field-scoped write has nothing to clobber, which is also
+          // why it needs no If-Match.
           const updated = await apiSend<BlockRecord>(
-            "PUT",
+            "PATCH",
             apiPath("/blocks/{id}", { id: block.id }),
-            body,
+            { enabled: !block.enabled },
           );
           this.blocks = this.blocks.map((b) => (b.id === block.id ? updated : b));
           printTape(`Block ${updated.enabled ? "enabled" : "disabled"} — ${updated.name}`);

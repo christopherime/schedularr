@@ -169,8 +169,14 @@ export const LONG_GET_TIMEOUT_MS = 90_000;
 const SEND_TIMEOUT_MS = 60_000;
 export const LONG_SEND_TIMEOUT_MS = 120_000;
 
-async function request<T>(method: string, path: string, body: unknown, timeoutMs: number): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+async function request<T>(
+  method: string,
+  path: string,
+  body: unknown,
+  timeoutMs: number,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
+  const headers: Record<string, string> = { Accept: "application/json", ...extraHeaders };
   // Hydration is memoized single-flight (token.ts): the first request of a
   // page load waits for the decrypt, every later one resolves immediately.
   const token = await loadToken();
@@ -238,13 +244,22 @@ const inflightMutations = new Map<string, Promise<unknown>>();
  * for a 204). timeoutMs is the write tier -- omit it everywhere except
  * the guide's draft preview/apply (LONG_SEND_TIMEOUT_MS).
  */
-export function apiSend<T>(method: string, path: string, body?: unknown, timeoutMs: number = SEND_TIMEOUT_MS): Promise<T> {
+export function apiSend<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  timeoutMs: number = SEND_TIMEOUT_MS,
+  // Request-specific headers. Currently only If-Match, which a full-spec
+  // PUT requires so a save cannot silently discard an edit another tab
+  // made since this one loaded (api/openapi.yaml, updateBlock).
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
   const key = `${method} ${path} ${body === undefined ? "" : JSON.stringify(body)}`;
   const existing = inflightMutations.get(key);
   if (existing) {
     return existing as Promise<T>;
   }
-  const p = request<T>(method, path, body, timeoutMs).finally(() => {
+  const p = request<T>(method, path, body, timeoutMs, extraHeaders).finally(() => {
     inflightMutations.delete(key);
   });
   inflightMutations.set(key, p);

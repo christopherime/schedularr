@@ -119,10 +119,14 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 // unseeded occurrence would read it, so it resumes where it left off
 // rather than re-airing its pilot; shows the seed does know keep
 // replaying the seed unchanged.
-func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string, params gen.UpdateBlockParams) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
 		h.writeBlockStoreError(w, r, "update_block_lookup", err)
+		return
+	}
+
+	if !h.checkIfMatch(w, r, params.IfMatch, existing.UpdatedAt) {
 		return
 	}
 
@@ -203,6 +207,89 @@ func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string
 
 	h.publishPlanInvalidated("block", id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// checkIfMatch enforces PUT's lost-update protection, returning false
+// when it has already written a problem response.
+//
+// PUT replaces a block's whole spec, so without this two tabs editing one
+// block silently discard the slower operator's work. The live link makes
+// that routine rather than theoretical: both tabs now watch each other's
+// changes land, so both are far likelier to be open at once.
+//
+// Compared as instants rather than strings: a client that round-trips
+// updated_at through JSON may re-render it equivalently but not
+// identically, and refusing a correct write over a formatting difference
+// would be its own bug. Surrounding quotes are accepted because callers
+// reasonably treat this as an entity-tag.
+func (h *Handlers) checkIfMatch(w http.ResponseWriter, r *http.Request, header string, current time.Time) bool {
+	raw := strings.Trim(strings.TrimSpace(header), `"`)
+	if raw == "" {
+		WriteProblem(w, r, http.StatusBadRequest, "missing If-Match",
+			"send the block's current updated_at as If-Match; GET the block to read it")
+		return false
+	}
+
+	want, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "malformed If-Match",
+			"If-Match must be the block's updated_at in RFC3339 format")
+		return false
+	}
+
+	if !current.Equal(want) {
+		WriteProblem(w, r, http.StatusPreconditionFailed, "block changed since you loaded it",
+			"someone else saved this block. Reload and re-apply your edit.")
+		return false
+	}
+	return true
+}
+
+// PatchBlock implements gen.ServerInterface.
+//
+// The field-scoped complement to UpdateBlock's full replacement: only
+// fields present in the body change, so a toggle cannot discard a spec
+// edit made in another tab. That is also why it takes no If-Match --
+// there is no unrelated state for it to clobber.
+//
+// A body with no fields set is a 400 rather than a silent no-op, matching
+// PatchSeriesState.
+func (h *Handlers) PatchBlock(w http.ResponseWriter, r *http.Request, id string) {
+	existing, err := h.d.Store.GetBlock(r.Context(), id)
+	if err != nil {
+		h.writeBlockStoreError(w, r, "patch_block_lookup", err)
+		return
+	}
+
+	var body gen.BlockPatch
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	if body.Enabled == nil {
+		WriteProblem(w, r, http.StatusBadRequest, "empty patch",
+			"at least one field (enabled) must be set")
+		return
+	}
+
+	// Re-enabling a block re-enters the shared-show policy check the same
+	// way a create or a full update does; disabling never can.
+	if *body.Enabled && !existing.Enabled &&
+		!h.checkSharedShowPolicies(w, r, []scheduler.Block{existing.Spec}, existing.ID) {
+		return
+	}
+	existing.Enabled = *body.Enabled
+
+	if err := h.d.Store.UpdateBlock(r.Context(), existing); err != nil {
+		h.writeBlockStoreError(w, r, "patch_block", err)
+		return
+	}
+
+	h.publishPlanInvalidated("block", existing.ID)
+	writeJSON(w, http.StatusOK, toGen(*existing))
 }
 
 // blockEnabled applies BlockWrite.Enabled's OpenAPI default (true) when the

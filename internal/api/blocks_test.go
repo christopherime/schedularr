@@ -58,6 +58,47 @@ func doRequest(t *testing.T, h http.Handler, method, path string, body any) *htt
 	return w
 }
 
+// doRequestWithHeaders is doRequest plus caller-supplied headers -- the
+// If-Match a PUT now requires, above all.
+func doRequestWithHeaders(t *testing.T, h http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var req *http.Request
+	if body != nil {
+		b, err := json.Marshal(body)
+		require.NoError(t, err)
+		req = httptest.NewRequest(method, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+// putBlock does what a real client does before a full-spec save: read
+// the block for its current updated_at, then send that back as If-Match.
+// A 404 on the read is passed through, so "update a block that isn't
+// there" still reaches the handler and still 404s.
+func putBlock(t *testing.T, h http.Handler, id string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
+	read := doRequest(t, h, http.MethodGet, "/blocks/"+id, nil)
+	if read.Code != http.StatusOK {
+		return doRequestWithHeaders(t, h, http.MethodPut, "/blocks/"+id, body,
+			map[string]string{"If-Match": time.Now().UTC().Format(time.RFC3339Nano)})
+	}
+
+	current := decodeBlockRecord(t, read)
+	return doRequestWithHeaders(t, h, http.MethodPut, "/blocks/"+id, body,
+		map[string]string{"If-Match": current.UpdatedAt.UTC().Format(time.RFC3339Nano)})
+}
+
 // filterBlockWrite builds a minimal, valid filter-block BlockWrite body.
 // It deliberately leaves Spec.Type nil (as a real client omitting the
 // optional "type" field would) to exercise fromGen's normalization.
@@ -279,7 +320,7 @@ func TestUpdateBlock_ChangesCronAndPersists(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 	created := decodeBlockRecord(t, w)
 
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, filterBlockWrite("evening-news", "0 19 * * *"))
+	wu := putBlock(t, h, created.Id, filterBlockWrite("evening-news", "0 19 * * *"))
 	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
 	updated := decodeBlockRecord(t, wu)
 	assert.Equal(t, "0 19 * * *", updated.Spec.Cron)
@@ -299,7 +340,7 @@ func TestUpdateBlock_RenameSucceeds(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 	created := decodeBlockRecord(t, w)
 
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, filterBlockWrite("new-name", "0 6 * * *"))
+	wu := putBlock(t, h, created.Id, filterBlockWrite("new-name", "0 6 * * *"))
 	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
 	updated := decodeBlockRecord(t, wu)
 	assert.Equal(t, "new-name", updated.Name)
@@ -323,7 +364,7 @@ func TestUpdateBlock_RenameCollision(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w2.Code)
 	second := decodeBlockRecord(t, w2)
 
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+second.Id, filterBlockWrite("block-one", "0 7 * * *"))
+	wu := putBlock(t, h, second.Id, filterBlockWrite("block-one", "0 7 * * *"))
 	require.Equal(t, http.StatusConflict, wu.Code, wu.Body.String())
 
 	p := decodeProblem(t, wu)
@@ -349,7 +390,7 @@ func TestUpdateBlock_OmittedEnabledDefaultsTrue(t *testing.T) {
 	created := decodeBlockRecord(t, w)
 	require.False(t, created.Enabled, "block should be created disabled")
 
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, filterBlockWrite("toggle-me", "0 6 * * *"))
+	wu := putBlock(t, h, created.Id, filterBlockWrite("toggle-me", "0 6 * * *"))
 	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
 	updated := decodeBlockRecord(t, wu)
 	assert.True(t, updated.Enabled, "PUT without enabled should default to true, per the full-replace contract")
@@ -364,7 +405,7 @@ func TestUpdateBlock_OmittedEnabledDefaultsTrue(t *testing.T) {
 func TestUpdateBlock_NotFound(t *testing.T) {
 	h := newTestServer(t)
 
-	w := doRequest(t, h, http.MethodPut, "/blocks/does-not-exist", filterBlockWrite("x", "0 6 * * *"))
+	w := putBlock(t, h, "does-not-exist", filterBlockWrite("x", "0 6 * * *"))
 	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
 
@@ -377,7 +418,7 @@ func TestUpdateBlock_InvalidSpec(t *testing.T) {
 
 	body := filterBlockWrite("to-update", "0 6 * * *")
 	body.Spec.Duration = 0
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, body)
+	wu := putBlock(t, h, created.Id, body)
 	require.Equal(t, http.StatusBadRequest, wu.Code, wu.Body.String())
 }
 
@@ -425,7 +466,7 @@ func TestUpdateBlock_PreservesOccurrenceSnapshots(t *testing.T) {
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, future, snapshot))
 	require.NoError(t, s.SaveOccurrenceSnapshot(ctx, created.Id, onAirStart, snapshot))
 
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWrite("weekend-marathon"))
+	wu := putBlock(t, h, created.Id, seriesBlockWrite("weekend-marathon"))
 	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
 
 	_, ok, err := s.GetOccurrenceSnapshot(ctx, created.Id, future)
@@ -508,7 +549,7 @@ func TestUpdateBlock_Reorder_PendingOccurrenceKeepsSameEpisodes(t *testing.T) {
 	require.Equal(t, []string{"alpha-e2", "beta-e2"}, planProgramIDs(first))
 
 	// The reorder, through the real handler.
-	wu := doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, blockWrite([]gen.SeriesConfig{
+	wu := putBlock(t, h, created.Id, blockWrite([]gen.SeriesConfig{
 		{ShowTitle: "Beta", EpisodesPerBlock: 1}, {ShowTitle: "Alpha", EpisodesPerBlock: 1},
 	}))
 	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
@@ -817,7 +858,7 @@ func TestCreateBlock_ContradictoryOnCompleteAllowedWhenOtherDisabled(t *testing.
 	// But re-ENABLING the first block now must be rejected: it would
 	// bring the contradiction live.
 	enable := seriesBlockWriteWithPolicy("first", "Shared Show", gen.Restart)
-	w = doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, enable)
+	w = putBlock(t, h, created.Id, enable)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "contradictory completion policy")
 }
@@ -833,7 +874,7 @@ func TestUpdateBlock_ChangingOwnSharedShowPolicySucceeds(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	created := decodeBlockRecord(t, w)
 
-	w = doRequest(t, h, http.MethodPut, "/blocks/"+created.Id, seriesBlockWriteWithPolicy("solo", "Solo Show", gen.Disable))
+	w = putBlock(t, h, created.Id, seriesBlockWriteWithPolicy("solo", "Solo Show", gen.Disable))
 	require.Equal(t, http.StatusOK, w.Code,
 		"changing a block's own policy must not conflict with the stored spec it replaces: %s", w.Body.String())
 }
@@ -856,6 +897,108 @@ func TestUpdateBlock_DisablingSkipsSharedShowPolicyCheck(t *testing.T) {
 	disabled := false
 	contradicting := seriesBlockWriteWithPolicy("other", "Shared Show", gen.Disable)
 	contradicting.Enabled = &disabled
-	w = doRequest(t, h, http.MethodPut, "/blocks/"+other.Id, contradicting)
+	w = putBlock(t, h, other.Id, contradicting)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// ---- lost-update protection ------------------------------------------------
+
+func seedOneBlock(t *testing.T, h http.Handler) gen.BlockRecord {
+	t.Helper()
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("guarded", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	return decodeBlockRecord(t, w)
+}
+
+func TestUpdateBlock_RefusesAPutWithNoIfMatch(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	w := doRequest(t, h, http.MethodPut, "/blocks/"+rec.Id, filterBlockWrite("guarded", "0 7 * * *"))
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+func TestUpdateBlock_412WhenSomeoneElseSavedFirst(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	// Two tabs read the same block; the first saves.
+	first := putBlock(t, h, rec.Id, filterBlockWrite("guarded", "0 7 * * *"))
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+
+	// The second still holds the stale updated_at it read at load.
+	stale := rec.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	second := doRequestWithHeaders(t, h, http.MethodPut, "/blocks/"+rec.Id,
+		filterBlockWrite("guarded", "0 8 * * *"), map[string]string{"If-Match": stale})
+
+	require.Equal(t, http.StatusPreconditionFailed, second.Code, second.Body.String())
+	assert.Contains(t, second.Body.String(), "Reload", "the problem says how to recover")
+
+	// The first tab's edit survived; the second's was refused, not merged.
+	read := doRequest(t, h, http.MethodGet, "/blocks/"+rec.Id, nil)
+	assert.Equal(t, "0 7 * * *", decodeBlockRecord(t, read).Spec.Cron)
+}
+
+func TestUpdateBlock_AcceptsAQuotedIfMatch(t *testing.T) {
+	// Callers reasonably treat this as an entity-tag and quote it.
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	w := doRequestWithHeaders(t, h, http.MethodPut, "/blocks/"+rec.Id,
+		filterBlockWrite("guarded", "0 9 * * *"),
+		map[string]string{"If-Match": `"` + rec.UpdatedAt.UTC().Format(time.RFC3339Nano) + `"`})
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestUpdateBlock_MalformedIfMatchIs400(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	w := doRequestWithHeaders(t, h, http.MethodPut, "/blocks/"+rec.Id,
+		filterBlockWrite("guarded", "0 9 * * *"),
+		map[string]string{"If-Match": "last tuesday"})
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// ---- field-scoped writes ---------------------------------------------------
+
+func TestPatchBlock_TogglesEnabledWithoutTouchingTheSpec(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+	require.True(t, rec.Enabled)
+
+	w := doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id, map[string]any{"enabled": false})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	got := decodeBlockRecord(t, w)
+	assert.False(t, got.Enabled)
+	assert.Equal(t, rec.Spec.Cron, got.Spec.Cron, "a toggle must not rewrite the spec")
+	assert.Equal(t, rec.Spec.Name, got.Spec.Name)
+}
+
+func TestPatchBlock_NeedsNoIfMatch(t *testing.T) {
+	// The point of the field-scoped write: it cannot clobber an unrelated
+	// edit, so it does not need the guard that protects one.
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	require.Equal(t, http.StatusOK,
+		putBlock(t, h, rec.Id, filterBlockWrite("guarded", "0 7 * * *")).Code)
+
+	w := doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id, map[string]any{"enabled": false})
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestPatchBlock_EmptyPatchIs400(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	w := doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id, map[string]any{})
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+func TestPatchBlock_UnknownIdIs404(t *testing.T) {
+	h := newTestServer(t)
+	w := doRequest(t, h, http.MethodPatch, "/blocks/does-not-exist", map[string]any{"enabled": false})
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
