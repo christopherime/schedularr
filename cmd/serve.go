@@ -150,6 +150,7 @@ func runServe(cmd *cobra.Command) error {
 	// beyond the engine's old hardcoded 7-day default when retention is
 	// configured wider -- while snapshots and apply runs prune on their
 	// own clocks. See service.RunnerOptions' doc comments.
+	//
 	// One hub for the process: the Runner announces completed applies on
 	// it, the API's mutating handlers announce their writes, and
 	// GET /events fans all of it out to every connected tab. Nothing in
@@ -196,6 +197,25 @@ func runServe(cmd *cobra.Command) error {
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Nothing else server-side notices Tunarr going away: between applies
+	// the only Tunarr calls are the ones a browser triggers. Without this
+	// the bezel's TUNARR reading could only change when something else
+	// happened to ask. Stops with the shutdown signal.
+	startTunarrProbe(sigCtx, probeDeps{
+		Hub:      hub,
+		Interval: defaultProbeInterval,
+		Logger:   logger,
+		Check: func(ctx context.Context) bool {
+			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+			defer cancel()
+			// The same definition of "reachable" GET /status reports, so
+			// the bezel cannot show two different answers depending on
+			// which one last spoke.
+			_, err := client.GetChannels(probeCtx)
+			return err == nil
+		},
+	})
 
 	logger.Info("api server listening", "address", ln.Addr().String())
 	return serveUntil(sigCtx, serveParams{
