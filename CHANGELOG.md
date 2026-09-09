@@ -7,17 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Documentation
-
-- **v1.0 intake Open Questions answered** (2026-09-08, recorded in the
-  intake spec's §5; the v0.5 spec's §3.1 `Arm draft` amendment confirmed):
-  `selection` replaces `filter` and the criteria object renames with it,
-  one `/history/` page, scrub-the-key deletions, enriched genres with a raw
-  fallback, the tags criterion implemented next, a stable `list_id` for
-  movie sequences, 409 on on-air deletions, retention split per table,
-  always "sequence block". `docs/roadmap.md`, `TODO.md`, `.ai/AGENTS.md`,
-  and `docs/scheduling-concepts.md` follow.
-
 ## [0.5.7] - 2026-09-09
 
 Memory: every apply becomes a durable record, the airing history stops
@@ -118,6 +107,17 @@ being UUID-headed, and one `/history/` page replaces `/series/` and
   tables.** It pruned only `schedule_history`; occurrence snapshots and
   apply runs are now pruned too, each on its own knob, each failure
   non-fatal and reported.
+
+### Documentation
+
+- **v1.0 intake Open Questions answered** (2026-09-08, recorded in the
+  intake spec's §5; the v0.5 spec's §3.1 `Arm draft` amendment confirmed):
+  `selection` replaces `filter` and the criteria object renames with it,
+  one `/history/` page, scrub-the-key deletions, enriched genres with a raw
+  fallback, the tags criterion implemented next, a stable `list_id` for
+  movie sequences, 409 on on-air deletions, retention split per table,
+  always "sequence block". `docs/roadmap.md`, `TODO.md`, `.ai/AGENTS.md`,
+  and `docs/scheduling-concepts.md` follow.
 
 ## [0.5.6] - 2026-09-08
 
@@ -2156,7 +2156,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/christopherime/schedularr/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/christopherime/schedularr/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/christopherime/schedularr/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/christopherime/schedularr/compare/v0.5.3...v0.5.4
