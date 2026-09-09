@@ -83,6 +83,19 @@ func MaintenanceHistoryRetention(cfg *Config) time.Duration {
 	return cfg.GetDuration("maintenance.history_retention")
 }
 
+// MaintenanceSnapshotRetention returns how long series occurrence
+// snapshots are kept. Split from history_retention in v0.5.7 so the two
+// tables prune on their own clocks.
+func MaintenanceSnapshotRetention(cfg *Config) time.Duration {
+	return cfg.GetDuration("maintenance.snapshot_retention")
+}
+
+// MaintenanceApplyRunRetention returns how long apply-run records and
+// their warnings are kept (default 90 days).
+func MaintenanceApplyRunRetention(cfg *Config) time.Duration {
+	return cfg.GetDuration("maintenance.apply_run_retention")
+}
+
 // APIListen returns the configured address for the `serve` command's HTTP
 // API server to listen on (host:port, or :port for all interfaces).
 func APIListen(cfg *Config) string {

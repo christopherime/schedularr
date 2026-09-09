@@ -16,10 +16,14 @@ scheduler_file: scheduler.yaml
 # outlasts the gap between ticks.
 cron_interval: 6h
 
-# how long schedule_history rows are kept -- also bounds how far back
-# GET /history?days=N can query (see README.md's History Endpoint section)
+# retention is per table: each one that grows with time prunes on its own
+# clock. history_retention also bounds how far back GET /history?days=N
+# can query, and apply_run_retention how far back GET /applies?days=N can
+# (see README.md's History Endpoint section)
 maintenance:
   history_retention: 168h
+  snapshot_retention: 168h
+  apply_run_retention: 2160h
   cleanup_enabled: true
 
 api:

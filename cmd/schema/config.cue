@@ -72,13 +72,31 @@ package schema
 	timezone: string | *"Local"
 }
 
-// MaintenanceConfig defines background maintenance task settings
+// MaintenanceConfig defines background maintenance task settings.
+//
+// Retention is per table (v0.5.7): each of the three tables that grows
+// with time is pruned on its own clock, because they answer different
+// questions over different horizons -- history and snapshots feed the
+// engine's replay and dedup machinery (a week is plenty), apply runs
+// feed the operator's "why didn't X air last Tuesday" (a quarter is not).
 #MaintenanceConfig: {
 	// How long to keep schedule history (e.g., "168h" for 7 days). Also
-	// governs how much of the persisted schedule_history table GET
-	// /history?days=N (api/openapi.yaml, 1..90) can actually return -- see
+	// governs the engine's in-memory recency-dedup window, and how much
+	// of the persisted schedule_history table GET /history?days=N
+	// (api/openapi.yaml, 1..90) can actually return -- see
 	// internal/service/schedule.go's NewRunner doc comment.
 	history_retention: string | *"168h"
+
+	// How long to keep series occurrence snapshots. A snapshot for an
+	// occurrence outside the SCHEDULE-HISTORY window can no longer be
+	// replayed (its schedule_history rows are gone), so setting this
+	// longer than history_retention keeps rows that serve no purpose.
+	snapshot_retention: string | *"168h"
+
+	// How long to keep apply-run records and their warnings. Defaults to
+	// 90 days: a run card is the only durable answer to "why didn't X
+	// air last Tuesday", and it cannot be backfilled.
+	apply_run_retention: string | *"2160h"
 
 	// Whether to enable automatic cleanup
 	cleanup_enabled: bool | *true

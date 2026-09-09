@@ -280,6 +280,16 @@ func TestMaintenanceConfig(t *testing.T) {
 	if retention.Hours() != 336 {
 		t.Errorf("Expected history retention 336h, got %v", retention)
 	}
+
+	// Retention split per table in v0.5.7: a config that sets only
+	// history_retention still gets the other two knobs at their defaults,
+	// so an existing deployment upgrades without editing anything.
+	if got := MaintenanceSnapshotRetention(cfg); got.Hours() != 168 {
+		t.Errorf("Expected snapshot retention 168h, got %v", got)
+	}
+	if got := MaintenanceApplyRunRetention(cfg); got.Hours() != 2160 {
+		t.Errorf("Expected apply run retention 2160h (90 days), got %v", got)
+	}
 }
 
 func TestAPIConfig_DefaultsWhenOmitted(t *testing.T) {
