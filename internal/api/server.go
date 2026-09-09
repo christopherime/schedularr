@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
+	"github.com/christopherime/schedularr/internal/events"
 	"github.com/christopherime/schedularr/internal/service"
 	"github.com/christopherime/schedularr/internal/store"
 )
@@ -22,6 +23,13 @@ type Deps struct {
 	// normal, expected state rather than a programming error, since a
 	// Schedularr deployment need not run Tunarr at all.
 	Tunarr TunarrAPI
+
+	// Events is the live-link broadcast hub behind GET /events, and the
+	// publisher every mutating handler notifies. A nil Hub means the live
+	// link is not wired: publishes are skipped and /events answers 503,
+	// which the client treats as a normal degraded state rather than an
+	// error -- nothing in the UI requires the stream.
+	Events *events.Hub
 
 	// Sched is the schedule-generation boundary used by GenerateSchedule,
 	// ApplySchedule, and GetSchedule (see schedule.go). Production wiring

@@ -134,6 +134,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent event stream of live changes
+         * @description A `text/event-stream` of change events, one connection per browser tab. Carries a `heartbeat` every 15 seconds whose `server_time` lets a client correct its own clock drift; the heartbeat also keeps bytes flowing so an intermediary proxy cannot buffer the connection into uselessness. Supports `Last-Event-ID` resume from a small in-memory ring buffer -- a resume point older than the ring replays only what survives, and the client refetches for the rest.
+         *     Event names: `heartbeat`, `apply.completed`, `plan.invalidated`, `status.changed`, `series.changed`.
+         *     Consumed by a hand-rolled fetch/ReadableStream reader, never by `EventSource`, which cannot send the Authorization header. A token-in-query alternative is permanently out of scope: it would leak the token into access logs.
+         *     Nothing in the UI requires this stream. Every page stays fully operable with a manual refresh when it is unavailable, which is also what the client's degradation ladder falls back to.
+         */
+        get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applies": {
         parameters: {
             query?: never;
@@ -746,6 +769,30 @@ export interface operations {
                     "application/json": components["schemas"]["HistoryEntry"][];
                 };
             };
+        };
+    };
+    streamEvents: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of the last event this client processed. */
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event stream, which does not complete while connected. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            503: components["responses"]["Problem"];
         };
     };
     listApplyRuns: {
