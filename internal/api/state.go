@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/christopherime/schedularr/internal/api/gen"
+	"github.com/christopherime/schedularr/internal/events"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
 )
@@ -116,6 +117,12 @@ func (h *Handlers) PatchSeriesState(w http.ResponseWriter, r *http.Request, show
 	if err := h.d.Store.InvalidateSeriesOccurrenceSnapshots(r.Context(), showTitle); err != nil {
 		h.logInternalError(r, "patch_series_state_invalidate_snapshots", err)
 	}
+
+	// Both, because a cursor write changes two things: the tracked row
+	// the History page shows, and every pending occurrence the guide has
+	// drawn from it.
+	h.publish(events.SeriesChanged, map[string]any{"show_title": showTitle})
+	h.publishPlanInvalidated("series", showTitle)
 
 	writeJSON(w, http.StatusOK, seriesStateToGen(*current))
 }

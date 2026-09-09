@@ -73,6 +73,7 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publishPlanInvalidated("block", rec.ID)
 	writeJSON(w, http.StatusCreated, toGen(*rec))
 }
 
@@ -162,6 +163,7 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	h.publishPlanInvalidated("block", existing.ID)
 	writeJSON(w, http.StatusOK, toGen(*existing))
 }
 
@@ -199,6 +201,7 @@ func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string
 		h.logInternalError(r, "delete_block_invalidate_snapshots", err)
 	}
 
+	h.publishPlanInvalidated("block", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

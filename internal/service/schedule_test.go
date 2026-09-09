@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/christopherime/schedularr/internal/events"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
@@ -2033,4 +2034,80 @@ func TestRunner_Run_RecordsFailedApply(t *testing.T) {
 	assert.Equal(t, store.ApplyStatusError, runs[0].Status)
 	assert.NotEmpty(t, runs[0].Error, "a failed run carries its error detail")
 	assert.Equal(t, store.ApplySourceUI, runs[0].Source)
+}
+
+// waitForEvent pulls one event off a hub subscription, failing the test
+// if none arrives in time.
+func waitForEvent(t *testing.T, sub <-chan events.Event, within time.Duration) events.Event {
+	t.Helper()
+	select {
+	case ev := <-sub:
+		return ev
+	case <-time.After(within):
+		t.Fatal("no event arrived")
+		return events.Event{}
+	}
+}
+
+// TestRunner_Run_PublishesApplyCompleted pins that an apply announces
+// itself on the live link, after its run record is written.
+func TestRunner_Run_PublishesApplyCompleted(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	r, st := newTestRunner(t, server.URL)
+
+	hub := events.NewHub(8)
+	r.events = hub
+	sub, cancel := hub.Subscribe(context.Background(), 0)
+	defer cancel()
+
+	res, err := r.Run(context.Background(), Options{Days: 1, Apply: true, Source: SourceCron})
+	require.NoError(t, err)
+
+	ev := waitForEvent(t, sub, 2*time.Second)
+	assert.Equal(t, events.ApplyCompleted, ev.Name)
+
+	data, ok := ev.Data.(map[string]any)
+	require.True(t, ok, "payload shape: %T", ev.Data)
+	assert.Equal(t, res.RunID, data["run_id"])
+	assert.Equal(t, store.ApplySourceCron, data["source"])
+	assert.Contains(t, data, "channel_ids")
+	assert.Contains(t, data, "applied_at")
+
+	// The run the event names is already readable -- the ordering rule.
+	runs, err := st.ListApplyRuns(context.Background(), time.Now().Add(-time.Hour), 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, data["run_id"], runs[0].ID)
+}
+
+// TestRunner_Run_DryRunPublishesNothing: a dry run applies nothing, so
+// there is nothing to announce.
+func TestRunner_Run_DryRunPublishesNothing(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	r, _ := newTestRunner(t, server.URL)
+
+	hub := events.NewHub(8)
+	r.events = hub
+	sub, cancel := hub.Subscribe(context.Background(), 0)
+	defer cancel()
+
+	_, err := r.Run(context.Background(), Options{Days: 1, Apply: false, Source: SourceUI})
+	require.NoError(t, err)
+
+	select {
+	case ev := <-sub:
+		t.Fatalf("a dry run published %s", ev.Name)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestRunner_Run_NilHubIsFine: the CLI builds a Runner with no live link
+// at all, and an apply must never depend on one.
+func TestRunner_Run_NilHubIsFine(t *testing.T) {
+	server, _ := newFakeTunarr(t, canonicalPrograms())
+	r, _ := newTestRunner(t, server.URL)
+	require.Nil(t, r.events, "newTestRunner wires no hub")
+
+	_, err := r.Run(context.Background(), Options{Days: 1, Apply: true, Source: SourceCLI})
+	require.NoError(t, err)
 }

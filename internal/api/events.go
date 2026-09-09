@@ -40,12 +40,21 @@ func (h *Handlers) StreamEvents(w http.ResponseWriter, r *http.Request, params g
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	// Checked BEFORE any header is written, so an unstreamable writer
+	// still gets a proper problem response -- flushing to find out would
+	// commit an empty 200 first.
+	if !supportsFlush(w) {
 		WriteProblem(w, r, http.StatusInternalServerError, "live link unavailable",
 			"the response writer does not support streaming")
 		return
 	}
+
+	// Flushes go through ResponseController rather than a direct
+	// http.Flusher assertion: the writer reaching this handler is wrapped
+	// by the logging middleware, and a plain assertion sees the wrapper
+	// rather than the socket. The controller unwraps through anything
+	// implementing Unwrap, so this keeps working as middleware is added.
+	rc := http.NewResponseController(w)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -55,7 +64,7 @@ func (h *Handlers) StreamEvents(w http.ResponseWriter, r *http.Request, params g
 	// must preserve this -- see docs/deployment.md's proxy requirement.
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	_ = rc.Flush()
 
 	ctx := r.Context()
 	ch, unsubscribe := h.d.Events.Subscribe(ctx, resumeFrom(params))
@@ -66,7 +75,7 @@ func (h *Handlers) StreamEvents(w http.ResponseWriter, r *http.Request, params g
 
 	// One heartbeat immediately, so a client knows it is connected -- and
 	// has its clock offset -- without waiting a full interval.
-	if !writeEvent(w, flusher, events.Event{Name: events.Heartbeat, Data: heartbeatData()}) {
+	if !writeEvent(w, rc, events.Event{Name: events.Heartbeat, Data: heartbeatData()}) {
 		return
 	}
 
@@ -78,11 +87,11 @@ func (h *Handlers) StreamEvents(w http.ResponseWriter, r *http.Request, params g
 			if !open {
 				return
 			}
-			if !writeEvent(w, flusher, ev) {
+			if !writeEvent(w, rc, ev) {
 				return
 			}
 		case <-ticker.C:
-			if !writeEvent(w, flusher, events.Event{Name: events.Heartbeat, Data: heartbeatData()}) {
+			if !writeEvent(w, rc, events.Event{Name: events.Heartbeat, Data: heartbeatData()}) {
 				return
 			}
 		}
@@ -105,6 +114,23 @@ func resumeFrom(params gen.StreamEventsParams) int64 {
 	return parsed
 }
 
+// supportsFlush reports whether w can flush, unwrapping through
+// middleware the way http.ResponseController does internally. A type
+// assertion alone answers for the outermost wrapper, which is how the
+// stream shipped broken once already.
+func supportsFlush(w http.ResponseWriter) bool {
+	for {
+		if _, ok := w.(http.Flusher); ok {
+			return true
+		}
+		unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return false
+		}
+		w = unwrapper.Unwrap()
+	}
+}
+
 func heartbeatData() map[string]any {
 	return map[string]any{"server_time": time.Now().UTC().Format(time.RFC3339Nano)}
 }
@@ -115,7 +141,7 @@ func heartbeatData() map[string]any {
 //
 // A payload that will not marshal is skipped rather than killing the
 // connection: one malformed event must not cost a tab its live link.
-func writeEvent(w http.ResponseWriter, flusher http.Flusher, ev events.Event) bool {
+func writeEvent(w http.ResponseWriter, rc *http.ResponseController, ev events.Event) bool {
 	payload, err := json.Marshal(ev.Data)
 	if err != nil {
 		return true
@@ -131,6 +157,26 @@ func writeEvent(w http.ResponseWriter, flusher http.Flusher, ev events.Event) bo
 	if _, err := w.Write([]byte(frame)); err != nil {
 		return false
 	}
-	flusher.Flush()
-	return true
+	return rc.Flush() == nil
+}
+
+// publish announces an event on the live-link hub, if one is wired. A
+// Handlers built without a hub (the CLI's, and every test that doesn't
+// need one) simply doesn't announce.
+//
+// Always called AFTER the write it announces has committed: a tab that
+// refetches on an event must never be able to outrun the data the event
+// describes.
+func (h *Handlers) publish(name string, data any) {
+	if h.d.Events == nil {
+		return
+	}
+	h.d.Events.Publish(name, data)
+}
+
+// publishPlanInvalidated announces that something the schedule is
+// derived from changed, so the guide should re-read it. reason is
+// "block" or "series"; id is the block's store id or the show title.
+func (h *Handlers) publishPlanInvalidated(reason, id string) {
+	h.publish(events.PlanInvalidated, map[string]any{"reason": reason, "id": id})
 }

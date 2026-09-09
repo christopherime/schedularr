@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/christopherime/schedularr/internal/cache"
+	"github.com/christopherime/schedularr/internal/events"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/httpclient"
 	"github.com/christopherime/schedularr/internal/scheduler"
@@ -113,6 +114,8 @@ type Runner struct {
 	// engine; the second bounds this Runner's own apply-run pruning.
 	snapshotRetention time.Duration
 	applyRunRetention time.Duration
+	// events is the live-link hub, or nil when this Runner has none.
+	events *events.Hub
 	// now returns the current time -- defaults to time.Now (set by
 	// NewRunner) and is the sole clock Run reads. Tests in this package
 	// override it directly (an unexported field, same package) to pin
@@ -155,6 +158,10 @@ type RunnerOptions struct {
 	// operator prunes them, which is the honest behavior for an unset
 	// knob rather than silently picking a horizon.
 	ApplyRunRetention time.Duration
+	// Events is the live-link hub this Runner announces completed applies
+	// on. Nil disables announcing entirely -- the CLI has no live link,
+	// and an apply must never depend on one.
+	Events *events.Hub
 }
 
 // NewRunner builds a Runner backed by st and tc. o.Logger and o.Location
@@ -181,6 +188,7 @@ func NewRunner(st *store.Store, tc *tunarr.Client, o RunnerOptions) *Runner {
 		historyWindow:     o.HistoryRetention,
 		snapshotRetention: o.SnapshotRetention,
 		applyRunRetention: o.ApplyRunRetention,
+		events:            o.Events,
 		now:               time.Now,
 	}
 }
@@ -319,11 +327,50 @@ func (r *Runner) finishApplyRun(ctx context.Context, rec store.ApplyRun, res *Re
 		r.logger.Warn("failed to record apply run outcome", "error", err, "run_id", rec.ID)
 		return
 	}
+
+	// Announced after the row is written, so a tab that refetches on this
+	// event cannot outrun the run it names. A failed apply is announced
+	// too: the guide should re-read either way, and the RUNS pane wants
+	// the card.
+	r.publish(events.ApplyCompleted, map[string]any{
+		"run_id":        rec.ID,
+		"source":        rec.Source,
+		"channel_ids":   channelIDs(res),
+		"slot_count":    rec.SlotCount,
+		"warning_count": len(rec.Warnings),
+		"applied_at":    finished.UTC().Format(time.RFC3339Nano),
+	})
 	if r.applyRunRetention > 0 && runErr == nil {
 		if _, err := r.store.CleanupApplyRuns(ctx, r.applyRunRetention); err != nil {
 			r.logger.Warn("failed to prune apply runs", "error", err)
 		}
 	}
+}
+
+// publish announces an event on the live-link hub, if this Runner has
+// one. A Runner built without a hub (the CLI) simply doesn't announce --
+// an apply must never depend on the live link.
+func (r *Runner) publish(name string, data any) {
+	if r.events == nil {
+		return
+	}
+	r.events.Publish(name, data)
+}
+
+// channelIDs lists the channels a run touched, for the guide's refetch
+// decision. Sorted, because a map iterated raw would reorder the payload
+// between two otherwise identical applies. Nil for a failed run: nothing
+// was pushed.
+func channelIDs(res *Result) []string {
+	if res == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(res.Channels))
+	for id := range res.Channels {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // applyRunWarnings converts the engine's in-memory warnings into their

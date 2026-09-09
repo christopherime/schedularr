@@ -32,6 +32,14 @@ func (rec *statusRecorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer's
+// optional interfaces through this wrapper -- Flush above all, without
+// which GET /events could not stream: an SSE handler that cannot flush
+// holds every frame until the connection closes.
+func (rec *statusRecorder) Unwrap() http.ResponseWriter {
+	return rec.ResponseWriter
+}
+
 // Logging returns middleware that logs one structured line per request to
 // l after the handler completes, with method, path, status, duration_ms,
 // and request_id keys. It should sit inside RequestID (so a request id is

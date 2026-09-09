@@ -18,6 +18,7 @@ import (
 	"github.com/christopherime/schedularr/internal/api"
 	"github.com/christopherime/schedularr/internal/blockio"
 	"github.com/christopherime/schedularr/internal/config"
+	"github.com/christopherime/schedularr/internal/events"
 	"github.com/christopherime/schedularr/internal/external/tunarr"
 	"github.com/christopherime/schedularr/internal/metrics"
 	"github.com/christopherime/schedularr/internal/service"
@@ -149,12 +150,20 @@ func runServe(cmd *cobra.Command) error {
 	// beyond the engine's old hardcoded 7-day default when retention is
 	// configured wider -- while snapshots and apply runs prune on their
 	// own clocks. See service.RunnerOptions' doc comments.
+	// One hub for the process: the Runner announces completed applies on
+	// it, the API's mutating handlers announce their writes, and
+	// GET /events fans all of it out to every connected tab. Nothing in
+	// the UI requires the stream -- a client that cannot reach it falls
+	// back to polling and stays fully operable.
+	hub := events.NewHub(eventSubscriberBuffer)
+
 	runner := service.NewRunner(st, client, service.RunnerOptions{
 		Logger:            logger,
 		Location:          loc,
 		HistoryRetention:  config.MaintenanceHistoryRetention(cfg),
 		SnapshotRetention: config.MaintenanceSnapshotRetention(cfg),
 		ApplyRunRetention: config.MaintenanceApplyRunRetention(cfg),
+		Events:            hub,
 	})
 
 	metrics.RegisterMetrics()
@@ -173,6 +182,7 @@ func runServe(cmd *cobra.Command) error {
 		api.Deps{
 			Store: st, Tunarr: client, Sched: runner, Media: runner,
 			Logger: logger, Version: Version, NextCronTick: tick.next,
+			Events: hub,
 		},
 	)
 	if err != nil {
@@ -427,6 +437,12 @@ func setNextTick(t *nextTickTracker, at time.Time) {
 // retry early, matching the old daemon's behavior of just waiting for the
 // next tick -- the failed apply is still recorded as a run, with its
 // error, so the history page can show it.
+// eventSubscriberBuffer is how many events one connected tab may fall
+// behind by before it starts losing them. A tab that overruns this
+// resumes from Last-Event-ID on its next reconnect; it never slows an
+// apply down (see events.Hub.Publish).
+const eventSubscriberBuffer = 32
+
 func runScheduleTick(ctx context.Context, runner service.ScheduleRunner, days int, logger *slog.Logger) {
 	logger.Info("cron: running schedule generation")
 	if _, err := runner.Run(ctx, service.Options{Days: days, Apply: true, Source: service.SourceCron}); err != nil {
