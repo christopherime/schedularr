@@ -108,3 +108,43 @@ func TestGetHistory_InternalErrorDoesNotLeakDetail(t *testing.T) {
 	w := doRequest(t, h, http.MethodGet, "/history", nil)
 	assertGenericInternalErrorProblem(t, w)
 }
+
+// TestGetHistory_ExposesTheStoredEnrichment pins the v0.5.7 contract
+// change: the enrichment schedule_history has always stored -- title,
+// type, duration, the occurrence's own start, playback order -- now
+// reaches the wire, along with the apply run that committed the row. The
+// history page shows programme names, not UUIDs.
+func TestGetHistory_ExposesTheStoredEnrichment(t *testing.T) {
+	h, s := newTestServerWithStore(t)
+	ctx := t.Context()
+
+	now := time.Now()
+	occurrenceStart := now.Add(-90 * time.Minute).Truncate(time.Second)
+	require.NoError(t, s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{{
+		ProgramID: "p-1", ChannelID: "ch-1", BlockName: "Morning Cartoons",
+		ScheduledAt: now.Add(-time.Hour), OccurrenceStart: occurrenceStart,
+		Sequence: 2, DurationMs: 1_800_000, Title: "The Pilot", Type: "episode",
+		RunID: "run-abc",
+	}}))
+
+	w := doRequest(t, h, http.MethodGet, "/history", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	list := decodeHistoryList(t, w)
+	require.Len(t, list, 1)
+	entry := list[0]
+
+	require.NotNil(t, entry.Title)
+	assert.Equal(t, "The Pilot", *entry.Title)
+	require.NotNil(t, entry.Type)
+	assert.Equal(t, "episode", *entry.Type)
+	require.NotNil(t, entry.Sequence)
+	assert.Equal(t, 2, *entry.Sequence)
+	require.NotNil(t, entry.DurationMs)
+	assert.InDelta(t, 1_800_000, *entry.DurationMs, 0.5)
+	require.NotNil(t, entry.RunId)
+	assert.Equal(t, "run-abc", *entry.RunId)
+	require.NotNil(t, entry.OccurrenceStart)
+	assert.WithinDuration(t, occurrenceStart, *entry.OccurrenceStart, time.Second,
+		"occurrence_start is the occurrence's own cron start, not the planning instant")
+}

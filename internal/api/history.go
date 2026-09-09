@@ -55,19 +55,36 @@ func (h *Handlers) GetHistory(w http.ResponseWriter, r *http.Request, params gen
 }
 
 // historyEntryToGen converts a scheduler.ScheduleHistoryEntry (the persisted
-// domain representation) into a gen.HistoryEntry (the API wire shape). All
-// four wire fields are pointers (OpenAPI marks them optional) but always
-// populated here since this only ever converts an already-persisted row.
+// domain representation) into a gen.HistoryEntry (the API wire shape). Every
+// wire field is a pointer (OpenAPI marks them optional) but always populated
+// here since this only ever converts an already-persisted row.
+//
+// Since v0.5.7 the enrichment the schedule_history table has stored all
+// along -- title, type, duration_ms, occurrence_start, sequence -- is
+// exposed too, along with run_id: the history page shows programme names
+// and the apply that put them on air, not UUIDs.
 func historyEntryToGen(e scheduler.ScheduleHistoryEntry) gen.HistoryEntry {
 	programID := e.ProgramID
 	channelID := e.ChannelID
 	blockName := e.BlockName
 	scheduledAt := e.ScheduledAt
+	occurrenceStart := e.OccurrenceStart
+	sequence := e.Sequence
+	durationMs := e.DurationMs
+	title := e.Title
+	kind := e.Type
+	runID := e.RunID
 
 	return gen.HistoryEntry{
-		ProgramId:   &programID,
-		ChannelId:   &channelID,
-		BlockName:   &blockName,
-		ScheduledAt: &scheduledAt,
+		ProgramId:       &programID,
+		ChannelId:       &channelID,
+		BlockName:       &blockName,
+		ScheduledAt:     &scheduledAt,
+		OccurrenceStart: &occurrenceStart,
+		Sequence:        &sequence,
+		DurationMs:      &durationMs,
+		Title:           &title,
+		Type:            &kind,
+		RunId:           &runID,
 	}
 }

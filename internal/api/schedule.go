@@ -169,15 +169,23 @@ func planResultToGen(result *service.Result) gen.PlanResult {
 	return plan
 }
 
-// warningToGen converts a scheduler.Warning into a gen.Warning.
+// warningToGen converts a scheduler.Warning into a gen.Warning. The
+// channel and duration carried since v0.5.7 let a caller say where the
+// dropped occurrence would have aired and for how long without
+// re-deriving the block spec -- the same enrichment the persisted
+// ApplyRunWarning carries.
 func warningToGen(w scheduler.Warning) gen.Warning {
 	blockName := w.BlockName
 	occurrenceStart := w.OccurrenceStart
 	blockingBlockName := w.BlockingBlockName
+	channelID := w.ChannelID
+	durationMinutes := w.DurationMinutes
 	return gen.Warning{
 		BlockName:         &blockName,
 		OccurrenceStart:   &occurrenceStart,
 		BlockingBlockName: &blockingBlockName,
+		ChannelId:         &channelID,
+		DurationMinutes:   &durationMinutes,
 	}
 }
 

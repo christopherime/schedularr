@@ -176,6 +176,40 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/HistoryEntry"
+  /applies:
+    get:
+      operationId: listApplyRuns
+      description: >-
+        Recorded applies, newest first. One row per apply -- UI, cron
+        loop, and CLI alike -- with the conflict warnings that apply
+        dropped. Runs cannot be backfilled: nothing exists from before
+        the migration that created the table.
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+            minimum: 1
+            maximum: 90
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: apply runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApplyRun"
+        "400":
+          $ref: "#/components/responses/Problem"
   /state/series:
     get:
       operationId: listSeriesState
@@ -523,6 +557,75 @@ components:
         blocking_block_name:
           type: string
           description: The block whose occurrence it lost to.
+        channel_id:
+          type: string
+          description: The channel both occurrences contended for.
+        duration_minutes:
+          type: integer
+          description: How long the dropped occurrence would have run.
+
+    ApplyRun:
+      type: object
+      required: [id, started_at, source, status]
+      description: >-
+        One recorded apply. Written before the apply pushes anything to
+        Tunarr and finalized afterwards, so a process that dies mid-apply
+        still leaves an entry -- which is why status can read "running"
+        on a row whose finished_at will never arrive.
+      properties:
+        id:
+          type: string
+          description: >-
+            The run's identifier, also stamped on the schedule_history
+            rows it committed (HistoryEntry.run_id).
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        source:
+          type: string
+          enum: [ui, cron, cli, unknown]
+        scope:
+          type: string
+          description: The channel ID the apply was narrowed to, or "" for every channel.
+        days:
+          type: integer
+        status:
+          type: string
+          enum: [running, ok, error]
+        channel_count:
+          type: integer
+        slot_count:
+          type: integer
+        error:
+          type: string
+          description: The failure detail on a run whose status is "error"; "" otherwise.
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplyRunWarning"
+
+    ApplyRunWarning:
+      type: object
+      description: >-
+        One occurrence this run planned a slot for and then dropped by
+        conflict resolution -- the persisted form of Warning.
+      properties:
+        block_name:
+          type: string
+        occurrence_start:
+          type: string
+          format: date-time
+        blocking_block_name:
+          type: string
+        channel_id:
+          type: string
+        duration_minutes:
+          type: integer
+
     PlanResult:
       type: object
       required: [applied, channels]
@@ -551,6 +654,33 @@ components:
         scheduled_at:
           type: string
           format: date-time
+          description: >-
+            The wall-clock instant planning happened -- the value the
+            days window is measured against, not the occurrence's own
+            start time (that is occurrence_start).
+        title:
+          type: string
+          description: The programme's title. Stored since the enrichment migration, exposed since v0.5.7.
+        type:
+          type: string
+          description: The Tunarr program type (e.g. episode, movie).
+        duration_ms:
+          type: number
+          format: double
+        occurrence_start:
+          type: string
+          format: date-time
+          description: >-
+            The block occurrence's own cron-computed start time -- the
+            identity half of the (block_name, occurrence_start) key.
+        sequence:
+          type: integer
+          description: Playback order within the occurrence.
+        run_id:
+          type: string
+          description: >-
+            The apply run that committed this row, or "" for rows written
+            before runs were recorded. Runs are not backfilled.
     SeriesState:
       type: object
       required: [show_title, current_season, current_episode]

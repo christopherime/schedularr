@@ -20,6 +20,51 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for ApplyRunSource.
+const (
+	Cli     ApplyRunSource = "cli"
+	Cron    ApplyRunSource = "cron"
+	Ui      ApplyRunSource = "ui"
+	Unknown ApplyRunSource = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ApplyRunSource enum.
+func (e ApplyRunSource) Valid() bool {
+	switch e {
+	case Cli:
+		return true
+	case Cron:
+		return true
+	case Ui:
+		return true
+	case Unknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApplyRunStatus.
+const (
+	Error   ApplyRunStatus = "error"
+	Ok      ApplyRunStatus = "ok"
+	Running ApplyRunStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ApplyRunStatus enum.
+func (e ApplyRunStatus) Valid() bool {
+	switch e {
+	case Error:
+		return true
+	case Ok:
+		return true
+	case Running:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BlockSpecType.
 const (
 	BlockSpecTypeFilter BlockSpecType = "filter"
@@ -75,6 +120,42 @@ func (e SeriesFallbackMode) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// ApplyRun One recorded apply. Written before the apply pushes anything to Tunarr and finalized afterwards, so a process that dies mid-apply still leaves an entry -- which is why status can read "running" on a row whose finished_at will never arrive.
+type ApplyRun struct {
+	ChannelCount *int `json:"channel_count,omitempty"`
+	Days         *int `json:"days,omitempty"`
+
+	// Error The failure detail on a run whose status is "error"; "" otherwise.
+	Error      *string    `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+
+	// Id The run's identifier, also stamped on the schedule_history rows it committed (HistoryEntry.run_id).
+	Id string `json:"id"`
+
+	// Scope The channel ID the apply was narrowed to, or "" for every channel.
+	Scope     *string            `json:"scope,omitempty"`
+	SlotCount *int               `json:"slot_count,omitempty"`
+	Source    ApplyRunSource     `json:"source"`
+	StartedAt time.Time          `json:"started_at"`
+	Status    ApplyRunStatus     `json:"status"`
+	Warnings  *[]ApplyRunWarning `json:"warnings,omitempty"`
+}
+
+// ApplyRunSource defines model for ApplyRun.Source.
+type ApplyRunSource string
+
+// ApplyRunStatus defines model for ApplyRun.Status.
+type ApplyRunStatus string
+
+// ApplyRunWarning One occurrence this run planned a slot for and then dropped by conflict resolution -- the persisted form of Warning.
+type ApplyRunWarning struct {
+	BlockName         *string    `json:"block_name,omitempty"`
+	BlockingBlockName *string    `json:"blocking_block_name,omitempty"`
+	ChannelId         *string    `json:"channel_id,omitempty"`
+	DurationMinutes   *int       `json:"duration_minutes,omitempty"`
+	OccurrenceStart   *time.Time `json:"occurrence_start,omitempty"`
 }
 
 // BlockRecord defines model for BlockRecord.
@@ -146,10 +227,28 @@ type GenerateRequest struct {
 
 // HistoryEntry defines model for HistoryEntry.
 type HistoryEntry struct {
-	BlockName   *string    `json:"block_name,omitempty"`
-	ChannelId   *string    `json:"channel_id,omitempty"`
-	ProgramId   *string    `json:"program_id,omitempty"`
+	BlockName  *string  `json:"block_name,omitempty"`
+	ChannelId  *string  `json:"channel_id,omitempty"`
+	DurationMs *float64 `json:"duration_ms,omitempty"`
+
+	// OccurrenceStart The block occurrence's own cron-computed start time -- the identity half of the (block_name, occurrence_start) key.
+	OccurrenceStart *time.Time `json:"occurrence_start,omitempty"`
+	ProgramId       *string    `json:"program_id,omitempty"`
+
+	// RunId The apply run that committed this row, or "" for rows written before runs were recorded. Runs are not backfilled.
+	RunId *string `json:"run_id,omitempty"`
+
+	// ScheduledAt The wall-clock instant planning happened -- the value the days window is measured against, not the occurrence's own start time (that is occurrence_start).
 	ScheduledAt *time.Time `json:"scheduled_at,omitempty"`
+
+	// Sequence Playback order within the occurrence.
+	Sequence *int `json:"sequence,omitempty"`
+
+	// Title The programme's title. Stored since the enrichment migration, exposed since v0.5.7.
+	Title *string `json:"title,omitempty"`
+
+	// Type The Tunarr program type (e.g. episode, movie).
+	Type *string `json:"type,omitempty"`
 }
 
 // ImportResult defines model for ImportResult.
@@ -277,6 +376,12 @@ type Warning struct {
 	// BlockingBlockName The block whose occurrence it lost to.
 	BlockingBlockName *string `json:"blocking_block_name,omitempty"`
 
+	// ChannelId The channel both occurrences contended for.
+	ChannelId *string `json:"channel_id,omitempty"`
+
+	// DurationMinutes How long the dropped occurrence would have run.
+	DurationMinutes *int `json:"duration_minutes,omitempty"`
+
 	// OccurrenceStart That occurrence's cron-computed start time.
 	OccurrenceStart *time.Time `json:"occurrence_start,omitempty"`
 }
@@ -286,6 +391,12 @@ type BlockItem = BlockRecord
 
 // BlockList defines model for BlockList.
 type BlockList = []BlockRecord
+
+// ListApplyRunsParams defines parameters for ListApplyRuns.
+type ListApplyRunsParams struct {
+	Days  *int `form:"days,omitempty" json:"days,omitempty"`
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // ImportBlocksParams defines parameters for ImportBlocks.
 type ImportBlocksParams struct {
@@ -322,6 +433,9 @@ type PatchSeriesStateJSONRequestBody = SeriesStatePatch
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+
+	// (GET /applies)
+	ListApplyRuns(w http.ResponseWriter, r *http.Request, params ListApplyRunsParams)
 
 	// (POST /apply)
 	ApplySchedule(w http.ResponseWriter, r *http.Request)
@@ -378,6 +492,11 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// (GET /applies)
+func (_ Unimplemented) ListApplyRuns(w http.ResponseWriter, r *http.Request, params ListApplyRunsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // (POST /apply)
 func (_ Unimplemented) ApplySchedule(w http.ResponseWriter, r *http.Request) {
@@ -472,6 +591,52 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListApplyRuns operation middleware
+func (siw *ServerInterfaceWrapper) ListApplyRuns(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListApplyRunsParams
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListApplyRuns(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ApplySchedule operation middleware
 func (siw *ServerInterfaceWrapper) ApplySchedule(w http.ResponseWriter, r *http.Request) {
@@ -976,6 +1141,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/history", wrapper.GetHistory)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/applies", wrapper.ListApplyRuns)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/state/series", wrapper.ListSeriesState)
 	})
 	r.Group(func(r chi.Router) {
@@ -1002,49 +1170,63 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

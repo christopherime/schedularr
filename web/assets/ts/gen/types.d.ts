@@ -134,6 +134,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Recorded applies, newest first. One row per apply -- UI, cron loop, and CLI alike -- with the conflict warnings that apply dropped. Runs cannot be backfilled: nothing exists from before the migration that created the table. */
+        get: operations["listApplyRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/state/series": {
         parameters: {
             query?: never;
@@ -352,6 +369,40 @@ export interface components {
             occurrence_start?: string;
             /** @description The block whose occurrence it lost to. */
             blocking_block_name?: string;
+            /** @description The channel both occurrences contended for. */
+            channel_id?: string;
+            /** @description How long the dropped occurrence would have run. */
+            duration_minutes?: number;
+        };
+        /** @description One recorded apply. Written before the apply pushes anything to Tunarr and finalized afterwards, so a process that dies mid-apply still leaves an entry -- which is why status can read "running" on a row whose finished_at will never arrive. */
+        ApplyRun: {
+            /** @description The run's identifier, also stamped on the schedule_history rows it committed (HistoryEntry.run_id). */
+            id: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** @enum {string} */
+            source: "ui" | "cron" | "cli" | "unknown";
+            /** @description The channel ID the apply was narrowed to, or "" for every channel. */
+            scope?: string;
+            days?: number;
+            /** @enum {string} */
+            status: "running" | "ok" | "error";
+            channel_count?: number;
+            slot_count?: number;
+            /** @description The failure detail on a run whose status is "error"; "" otherwise. */
+            error?: string;
+            warnings?: components["schemas"]["ApplyRunWarning"][];
+        };
+        /** @description One occurrence this run planned a slot for and then dropped by conflict resolution -- the persisted form of Warning. */
+        ApplyRunWarning: {
+            block_name?: string;
+            /** Format: date-time */
+            occurrence_start?: string;
+            blocking_block_name?: string;
+            channel_id?: string;
+            duration_minutes?: number;
         };
         PlanResult: {
             applied: boolean;
@@ -364,8 +415,26 @@ export interface components {
             program_id?: string;
             channel_id?: string;
             block_name?: string;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description The wall-clock instant planning happened -- the value the days window is measured against, not the occurrence's own start time (that is occurrence_start).
+             */
             scheduled_at?: string;
+            /** @description The programme's title. Stored since the enrichment migration, exposed since v0.5.7. */
+            title?: string;
+            /** @description The Tunarr program type (e.g. episode, movie). */
+            type?: string;
+            /** Format: double */
+            duration_ms?: number;
+            /**
+             * Format: date-time
+             * @description The block occurrence's own cron-computed start time -- the identity half of the (block_name, occurrence_start) key.
+             */
+            occurrence_start?: string;
+            /** @description Playback order within the occurrence. */
+            sequence?: number;
+            /** @description The apply run that committed this row, or "" for rows written before runs were recorded. Runs are not backfilled. */
+            run_id?: string;
         };
         SeriesState: {
             show_title: string;
@@ -677,6 +746,30 @@ export interface operations {
                     "application/json": components["schemas"]["HistoryEntry"][];
                 };
             };
+        };
+    };
+    listApplyRuns: {
+        parameters: {
+            query?: {
+                days?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description apply runs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRun"][];
+                };
+            };
+            400: components["responses"]["Problem"];
         };
     };
     listSeriesState: {
