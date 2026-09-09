@@ -72,7 +72,7 @@ The home page is a full EPG grid of the **current plan**, loaded automatically f
 
 - **Toolbar** — **SCOPE** (a channel picker, default all channels) and **Arm draft**. Neither re-reads the guide: the reading behind the grid is always every channel, and both controls plan a draft against it instead (see [Draft & apply](#draft-apply); a draft scoped to one channel diffs that channel's row alone). There is no DAYS control: the guide always fetches the whole plannable window (`days=28`) in one request and pages it client-side. The first load after a restart re-plans four weeks against a cold Tunarr and can take up to a minute — the loading state says so, and the request runs on a 90-second timeout instead of the usual 15.
 - **Week pager** (`‹ SUN 30 AUG – SAT 05 SEP ›`) — the only navigation: the chevrons page whole weeks across the loaded four-week window, entirely client-side (never a re-plan), and disable at the window's edges. The label between them names the visible week's calendar range. The window is `[fetch time, fetch time + 28×24h)`, so a load after midnight spills into a trailing partial calendar day — an honest one-day fifth page named by its single date. Today's day header carries a small accent dot. On the week containing now the guide opens scrolled to the sweep cursor; other weeks open at their start.
-- **Slots** — block name, time range, program count, and type on the face. A **series** slot also lists its programs on the face, one line each (`Bloody Mary · S01E05`), folding anything past three lines into `+N MORE`; slots narrower than 90 minutes keep the compact face. A cross-midnight slot shows its face once, on its wider piece (a 23:30→06:00 slot labels the morning side). Click (or Enter) opens the **inspector**: a right rail on desktop that compresses the grid (a bottom sheet on mobile) with the block name linking to its editor (`/blocks/?edit=<id>`), the channel plate, the time range with duration, the full **program rundown** (per-program start times and `SxxEyy` markers from the typed schedule shape), the cron with its plain-language readback, priority with its rank context (`50 · 2nd of 5` among the channel's enabled blocks), and enabled state. Series-type slots add a **Jump series cursor** action linking to the [Series page](#series-series) (the whole list — per-row anchors don't exist yet). Opening moves focus to the panel heading; Esc or the X closes it and returns focus to the slot.
+- **Slots** — block name, time range, program count, and type on the face. A **series** slot also lists its programs on the face, one line each (`Bloody Mary · S01E05`), folding anything past three lines into `+N MORE`; slots narrower than 90 minutes keep the compact face. A cross-midnight slot shows its face once, on its wider piece (a 23:30→06:00 slot labels the morning side). Click (or Enter) opens the **inspector**: a right rail on desktop that compresses the grid (a bottom sheet on mobile) with the block name linking to its editor (`/blocks/?edit=<id>`), the channel plate, the time range with duration, the full **program rundown** (per-program start times and `SxxEyy` markers from the typed schedule shape), the cron with its plain-language readback, priority with its rank context (`50 · 2nd of 5` among the channel's enabled blocks), and enabled state. Series-type slots add a **Jump to sequence cursor** action linking to the [History page's TRACKED pane](#history-history) (the whole list — per-row anchors don't exist yet). Opening moves focus to the panel heading; Esc or the X closes it and returns focus to the slot.
 - **NO SIGNAL ghosts** — every conflict warning in the current plan renders as an amber-hatched ghost slot at exactly the time it would have aired, labeled `NO SIGNAL — LOST TO <block>`, in a thin lane under the slot that displaced it. Its inspector states the verdict and links both blocks. When a warning can't be placed (the enriching `GET /blocks` call failed, or the block is gone), the guide pins an amber `N OCCURRENCES DROPPED BY CONFLICTS — PLACEMENT UNAVAILABLE` line above the grid instead of letting it vanish.
 - **Keyboard** — slots form a roving tab stop: Left/Right walk a channel's track across the whole week (a cross-midnight slot is a single stop), Up/Down jump across channels to the nearest slot by start time, Enter opens the inspector, Esc closes it.
 - **States** — loading is a week-shaped skeleton strip aligned to the divisions, with an honest note that a first load after a restart can take a minute. A failed plan (Tunarr unreachable) is an honest scanline **NO SIGNAL** blackout with a Retry — the guide re-plans live and never shows a cached lineup. An empty plan teaches: with no blocks at all it points at Blocks; with blocks that simply don't air in the window it says so. A draft that plans nothing gets its own state rather than an error — see below.
@@ -122,11 +122,7 @@ On success the tape prints `APPLIED — 14 SLOTS / 3 CHANNELS`, SCOPE snaps back
 
 **Arriving from a block save.** `PREVIEW ON GUIDE` lands on `/?draft=<channel|all>`, and the guide drops the parameter from the URL on arrival, so a refresh is a plain guide load. The guide mirrors every reading it loads into `sessionStorage` (per tab), and that mirror is the diff baseline for this round trip — a block save doesn't cost a fresh 28-day re-plan. The guide ignores a mirror older than 24 hours, or older than the server's own last apply (`Status.last_applied_at`, read on arrival). It stays a baseline and nothing more: the guide never paints it as the current reading, the loading skeleton holds the frame until the first draft lands, and any exit from draft mode re-fetches.
 
-**Where the retired preview page's three views went.** Its per-channel window list is the grid itself, slot by slot, with the inspector's rundown for the programs inside one slot; the same list for windows that have already aired arrives with `/history/`. Its DAYS control is gone by spec — the guide reads four weeks and drafts seven days. Its warnings list is the ghost lane, each dropped occurrence drawn at the time it would have aired, with the amber drop legend above the grid for the ones that can't be placed.
-
-### Dashboard (`/dashboard/`, temporary)
-
-The old dashboard left the navigation in v0.5.1: its status readouts live in the bezel telemetry strip on every page, and the Guide took home. The route survives **unlinked** at `/dashboard/` only for its Recent History table — reads `GET /api/v1/history?days=7` with channel legend plates — and is deleted outright when the History page absorbs history. Don't bookmark it.
+**Where the retired preview page's three views went.** Its per-channel window list is the grid itself, slot by slot, with the inspector's rundown for the programs inside one slot; the same list for windows that have already aired is the [History page's AS-RUN pane](#history-history). Its DAYS control is gone by spec — the guide reads four weeks and drafts seven days. Its warnings list is the ghost lane, each dropped occurrence drawn at the time it would have aired, with the amber drop legend above the grid for the ones that can't be placed.
 
 ### Blocks (`/blocks/`)
 
@@ -163,19 +159,43 @@ A **Filler** section (enabled, filler list ID, max filler time, min gap time) is
 
 **After a save** the tape prints `BLOCK SAVED — <name>` with a **Preview on guide** action: it opens the Guide drafting that block's channel (all channels when the block carries none), so the next question after "is this block right?" — what it does to the week — is one click away. See [Draft & apply](#draft-apply).
 
-### Series (`/series/`)
+### History (`/history/`)
 
-![Schedularr series state table with per-show season/episode cursors](assets/screenshots/series.png)
+![Schedularr history page on the RUNS pane, showing apply run cards with source badges and an expanded list of dropped occurrences](assets/screenshots/history.png)
 
-*Tracked series with inline season/episode cursor editing, run count, and status toggles.*
+*The RUNS pane: one card per apply, with the occurrences conflict resolution had to drop expanded inline.*
 
-Every persisted `series_state` row — the per-show season/episode cursor a series block advances as it airs — backed by `GET`/`PATCH /api/v1/state/series[/{show_title}]`. There is no create endpoint: a row exists only once a series block airs that show for the first time, so an empty result renders an explanatory empty state.
+One searchable record of what is tracked, what aired, and what each apply actually did. It replaced the old `/series/` and `/dashboard/` routes, which were deleted outright — there are no redirects, and a bookmark to either lands on the styled 404 page.
 
-**List** — show title, an inline SxxEyy cursor editor, run count, last aired (local time, or an em dash for a show that hasn't aired yet), and a **Completed**/**In Progress** toggle plus a **Disabled**/**Active** toggle.
+Three panes sit behind a band selector, and the open pane is the `?view=` query value (`tracked`, `asrun`, `runs`), so a link names what it opens — `/history/?view=asrun` goes straight to the airings. An unknown or missing value opens TRACKED. The band is a proper tab list: arrow keys move between panes, Home and End jump to the ends.
+
+The filter bar above the panes shows only the controls the visible pane honors. **Window** (1/7/30/90 days) is a server-side query on the AS-RUN and RUNS feeds, so changing it refetches; everything else filters what is already loaded.
+
+#### TRACKED
+
+Every persisted `series_state` row — the per-show season/episode cursor a sequence block advances as it airs — backed by `GET`/`PATCH /api/v1/state/series[/{show_title}]`. There is no create endpoint: a row exists only once a sequence block airs that show for the first time, so an empty result renders an explanatory empty state.
+
+**List** — show title, an inline SxxEyy cursor editor, run count, last aired (local time, or an em dash for a show that hasn't aired yet), and a **Completed**/**In Progress** toggle plus a **Disabled**/**Active** toggle. The toolbar's search narrows by title.
 
 **Cursor editing** — season and episode are two adjacent number inputs (`min="1"`) framed by `S`/`E` prefixes, independently editable inline in the same cell. **Save** stays disabled until the row is actually dirty and, on click, sends a true partial `PATCH`: only `current_season` and/or `current_episode` land in the body, and only when their parsed value actually differs from what was loaded. A season/episode value that isn't a whole number `>= 1` is rejected client-side with an inline message. Each toggle is its own single-field `PATCH` (`{"completed": true}` or `{"disabled": true}` alone).
 
 **Row vanishes mid-edit** — a save against a `show_title` whose `series_state` row was deleted or reset out from under the operator returns `404`. The row stays on screen with an inline error and a **Refresh list** action next to the show title, rather than a row that silently can never save again.
+
+#### AS-RUN
+
+What actually aired, from `GET /api/v1/history?days=N`, grouped by local day with the newest day first and each day's entries in air order. A row carries the local time, the channel legend plate, the program title, the block that scheduled it, and its duration — program names, not the UUIDs the old dashboard table showed. Channel, block, and title filters narrow the loaded window.
+
+The window is bounded by `maintenance.history_retention`, so a 90-day view can legitimately come back with seven days of rows. The empty state says so rather than implying the store lost something.
+
+#### RUNS
+
+Every apply — from this UI, the `serve` cron loop, or `schedularr generate --apply` — from `GET /api/v1/applies?days=N`. Each run is a card: timestamp, a source badge (`UI`/`CRON`/`CLI`), the outcome, and a summary line reading counts first (`18 SLOTS ACROSS 3 CHANNELS · 7 DAYS · ALL CHANNELS`). The **Source** filter narrows to one origin.
+
+A run that dropped occurrences carries them in an expandable list, each naming the block that lost its slot, the block it lost to, when it would have aired, on which channel, and for how long — which is what makes "why didn't X air last Tuesday" a filter rather than a dead end.
+
+**Reading an unfinished run.** The row is written before the apply pushes anything to Tunarr and finalized afterwards, so a card still reading **In flight** long after its timestamp means the process died mid-apply — its finish stamp will never arrive. A **Failed** card carries the error detail. Neither shows slot or channel counts, because those never landed; both report only the window and scope the apply attempted.
+
+**Runs are never backfilled.** Nothing exists from before the migration that created the table, and the empty state says so.
 
 ## See also
 

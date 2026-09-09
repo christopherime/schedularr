@@ -90,7 +90,7 @@ The project follows a standard Go project layout with a strong separation of con
 1. **Scheduling Engine (`internal/scheduler`):**
     - **Engine:** Orchestrates the planning process (`GenerateForTimeRange`, `PlanBlock`, `PlanSeriesBlock`).
     - **Filter:** Applies rules (genre, rating, year, duration, title, tags) to select content.
-    - **History:** Tracks recently played items to avoid repetition. The window defaults to 7 days but is configurable via `maintenance.history_retention` (threaded through `service.NewRunner` -> `scheduler.EngineOptions.HistoryWindow`); it also bounds how far back `GET /history?days=N` can return data.
+    - **History:** Tracks recently played items to avoid repetition. The window defaults to 7 days but is configurable via `maintenance.history_retention` (threaded through `service.RunnerOptions.HistoryRetention` -> `scheduler.EngineOptions.HistoryWindow`); it also bounds how far back `GET /history?days=N` can return data. Occurrence snapshots and apply runs prune on their own knobs (`maintenance.snapshot_retention`, `maintenance.apply_run_retention`).
 
 2. **State Store (`internal/store`):**
     - Uses SQLite to track series progression (`season`, `episode`), scheduling blocks, and schedule history.

@@ -11,7 +11,13 @@
   renumbered v0.5 train.
 - **v0.5.6 shipped as draft & apply on the Guide** (2026-09-08): the
   Guide plans and applies, the Schedule page is gone, nav is
-  `GUIDE · BLOCKS · SERIES`. Memory/`/history/` is next.
+  `GUIDE · BLOCKS · SERIES`.
+- **v0.5.7 shipped as Memory, landing at `/history/`** (2026-09-09):
+  apply runs are persisted and readable, history rows name the apply that
+  committed them, retention split per table, and one `/history/` page
+  with TRACKED / AS-RUN / RUNS panes replaced `/series/` and
+  `/dashboard/` outright. Nav is `GUIDE · BLOCKS · HISTORY`. Live link
+  (SSE) is next in theme order — see `docs/roadmap.md`.
 
 ## v1.0 product intake (2026-08-30)
 
@@ -366,6 +372,50 @@ scoped-out gap.
 - Pre-existing: a 48h+ block's fully-transited middle day shows a rundown continuation label "…until HH:MM" with no date, implying same-day end (grid.ts rundownDaySlots). Block duration is UNBOUNDED (CUE has no ceiling; engine doesn't clamp) — the grid handles N-day slots correctly, the rundown label doesn't.
 - No test exercises a 3+ segment (N>2 day) join/rundown case — add one alongside the label fix.
 - Cold-pod 90s /schedule fetch straddling local midnight can silently drop a sub-90s programming sliver at the window start (guide.ts landedAt anchor) — negligible probability; comment + fix candidate: anchor on request-send time.
+
+## Deferred (v0.5.7 memory / history)
+
+Recorded at the close of the Memory slice (2026-09-09). Nothing here
+blocks the release; each item names the gap and why it was left.
+
+- **Apply-run recording is best-effort, not transactional with the
+  apply.** `Runner.startApplyRun`/`finishApplyRun` log and continue when
+  the store write fails, so a database problem produces a reporting gap
+  rather than a refused apply. That is the right trade — refusing to
+  schedule because the reporting table is unhappy would be worse — but it
+  means the RUNS pane is not a guaranteed-complete ledger.
+- **A run left at `running` is never reaped.** A process killed
+  mid-apply leaves a row whose `finished_at` never arrives; the page
+  reports it as in flight and the docs say what that means. A startup
+  sweep that marks orphaned `running` rows as interrupted would be
+  honest, but needs a way to tell "this process's own in-flight run" from
+  "a previous process's corpse" — deferred rather than guessed at.
+- **`GET /applies` has no cursor.** It takes `days` and `limit` and
+  returns one page; at the 90-day default and a 6h cron cadence that is
+  ~360 runs, comfortably inside the 500 cap. A busier deployment would
+  silently see only the newest 500. Add keyset pagination when a real
+  deployment reaches it.
+- **The AS-RUN pane filters client-side.** Channel, block, and title
+  narrow rows already fetched for the window, so a 90-day window loads
+  every row before filtering. Server-side filter parameters on `GET
+  /history` are the fix if that window ever gets large.
+- **A history row carries no season/episode.** The wire has `title` and
+  `type` but not the cursor position, so an as-run row cannot show
+  `SxxEyy` without inventing it. Deliberately not shown; add the fields
+  to `schedule_history` if the operator wants the marker.
+- **The as-run block link goes to `/blocks/`, not to the block.** The
+  blocks page has no per-row anchor yet — the same limitation the guide
+  inspector's link already carries.
+- **The mobile TRACKED table still scrolls horizontally.** Inherited
+  unchanged from `/series/`: `.table-wrap` scrolls a six-column table
+  inside a 390px viewport. A card layout below the table breakpoint is a
+  polish-pass item, not a memory-slice one.
+- **`gosec` cannot run in the current toolchain.** It fails with
+  `internal error: package "strings" without types was imported from
+  "command-line-arguments"` against Go 1.27 — on a clean tree as well, so
+  it predates this slice. `make lint` reports it as a failed step;
+  golangci-lint, govulncheck, web-check and web-test all pass. Needs a
+  gosec upgrade.
 
 ## Deferred (v0.5.6 draft & apply)
 

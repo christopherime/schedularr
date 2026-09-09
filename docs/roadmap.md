@@ -227,19 +227,35 @@ v0.5.5 below).
   applies so a cron tick and a UI apply cannot interleave.
   `schedule/list.html`, `schedule.ts`, and their styles were deleted
   outright; nav became `GUIDE · BLOCKS · SERIES`.
-- **Then — Memory, landing as `/history/`: pending.** The spec's Memory
-  slice, amended by the operator's `/series` → `/history` directive: the
-  apply-run persistence migration, `GET /applies`, the enriched
-  `HistoryEntry` and extended `Warning` — but the page ships as
-  `/history/` rather than `/log/`, with three panes behind one filter
-  toolbar (TRACKED sequences, AS-RUN airings, apply RUNS). `/series/` and
-  `/dashboard/` are both deleted here; nav becomes `GUIDE · BLOCKS ·
-  HISTORY`. The industry models this as one record in two states — a
-  traffic log of what is scheduled, an as-run log of what aired — which
-  is the operator's "one searchable place" verbatim. The retention knob
-  splits per table here (history, snapshots, apply runs — Q10,
-  2026-09-08), in the same migration, while the config schema is still
-  breakable.
+- **v0.5.7 — Memory, landing as `/history/`: SHIPPED (2026-09-09).** The
+  spec's Memory slice, amended by the operator's `/series` → `/history`
+  directive. Engine-side, migration `000010` added `apply_runs` and
+  `apply_run_warnings` plus a `run_id` column on `schedule_history`:
+  every apply — UI, cron loop, and CLI alike — now writes its record
+  BEFORE it pushes anything to Tunarr and finalizes it afterwards, so a
+  process that dies mid-apply still leaves evidence and a failed apply is
+  still a run carrying its error. `Engine.Commit` stamps the run onto
+  every history row it writes, making "which apply put this on air" a
+  join rather than a guess. `Warning` gained the channel both occurrences
+  contended for and the duration the dropped one would have run, and
+  `GET /history` stopped being UUID-headed — the title, type, duration,
+  playback order and occurrence start it has stored since migration
+  `000003` all reach the wire. `GET /applies` reads the runs back.
+  Retention split per table (Q10, 2026-09-08): `history_retention` and
+  `snapshot_retention` at `168h`, `apply_run_retention` at `2160h`,
+  because a run card is the only durable answer to "why didn't X air last
+  Tuesday" and cannot be backfilled.
+  On the front end, `/history/` landed as one route with three panes
+  behind a band selector and one filter toolbar (TRACKED sequences,
+  AS-RUN airings, apply RUNS), deep-linkable as `?view=`. The industry
+  models this as one record in two states — a traffic log of what is
+  scheduled, an as-run log of what aired — which is the operator's "one
+  searchable place" verbatim. `/series/` and `/dashboard/` were deleted
+  outright, layouts, page TS, CSS and fixtures together, with no redirect
+  stubs; nav became `GUIDE · BLOCKS · HISTORY`.
+  **Deliberately left to the History desk slice:** `DELETE /history`,
+  per-title removal, the STORAGE strip, the `app_meta.max_plan_seq`
+  floor, bulk cursor operations, and YAML import/export on the page.
 - **Then — Live link (SSE): pending.** Unchanged in scope.
 - **Then — Block power tools: pending.** Unchanged in scope.
 - **Then — History desk power tools: pending.** Was "the series desk";

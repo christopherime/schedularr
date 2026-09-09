@@ -43,14 +43,14 @@ filter:
   tags: []string # ACCEPTED BUT NOT YET EVALUATED -- no matcher consumes tags today (operator directive 2026-09-08: implemented next, ahead of the metadata enrichment; see docs/roadmap.md)
 ```
 
-| Field                           | Example                                | Notes                                                            |
-| ------------------------------- | -------------------------------------- | ---------------------------------------------------------------- |
-| `title_pattern`                 | `"^Star"`, `"(Trek\|Wars)"`, `"\\d+$"` | Go regex                                                         |
-| `genres`                        | `["Action", "Adventure", "Sci-Fi"]`    | Matches any listed genre                                         |
-| `ratings`                       | `["PG", "PG-13", "TV-PG"]`             | TV: TV-Y…TV-MA; movie: G…NC-17; or NR/Unrated                    |
-| `year_from` / `year_to`         | `1980` / `1999`                        | Inclusive range                                                  |
-| `min_duration` / `max_duration` | `90` / `150`                           | Minutes; stored in Tunarr as milliseconds internally             |
-| `tags`                          | `["christmas", "family-favorite"]`     | Accepted, **not yet evaluated** — next, ahead of enrichment (Q7) |
+| Field                           | Example                                | Notes                                                            |          |
+| ------------------------------- | -------------------------------------- | ---------------------------------------------------------------- |          |
+| `title_pattern`                 | `"^Star"`, `"(Trek\                    | Wars)"`, `"\\d+$"`                                               | Go regex |
+| `genres`                        | `["Action", "Adventure", "Sci-Fi"]`    | Matches any listed genre                                         |          |
+| `ratings`                       | `["PG", "PG-13", "TV-PG"]`             | TV: TV-Y…TV-MA; movie: G…NC-17; or NR/Unrated                    |          |
+| `year_from` / `year_to`         | `1980` / `1999`                        | Inclusive range                                                  |          |
+| `min_duration` / `max_duration` | `90` / `150`                           | Minutes; stored in Tunarr as milliseconds internally             |          |
+| `tags`                          | `["christmas", "family-favorite"]`     | Accepted, **not yet evaluated** — next, ahead of enrichment (Q7) |          |
 
 **Example — Saturday night sci-fi marathon:**
 
@@ -135,7 +135,7 @@ fallback:
 
 ### State management
 
-Current season/episode, completion status, and run count persist per show in SQLite (`series_state` table), across restarts. State changes are pending in memory until the schedule applies successfully to Tunarr — commit on success, rollback (discard) on failure. See the [Web UI's Series page](web-ui-guide.md#series-series) for inline cursor editing, or `schedularr state` in the [CLI Reference](cli-reference.md#series-state) for the command-line equivalent.
+Current season/episode, completion status, and run count persist per show in SQLite (`series_state` table), across restarts. State changes are pending in memory until the schedule applies successfully to Tunarr — commit on success, rollback (discard) on failure. See the [Web UI's History page](web-ui-guide.md#history-history) for inline cursor editing, or `schedularr state` in the [CLI Reference](cli-reference.md#series-state) for the command-line equivalent.
 
 ### Idempotent apply and editing a block before it airs
 
@@ -276,7 +276,31 @@ Schedule history prevents content repetition. It's both an in-memory dedup check
 
 - **Window**: `maintenance.history_retention` (default `168h`, 7 days) — see the [Deployment config reference](deployment.md#configuration-reference).
 - **Before scheduling**: recently-played programs are excluded from candidates (in-memory check, then a `schedule_history` lookup).
-- **After scheduling**: program + timestamp recorded, both in-memory and, on `Engine.Commit()`, persisted.
+- **After scheduling**: program + timestamp recorded, both in-memory and, on `Engine.Commit()`, persisted. Each row also carries the `run_id` of the apply that committed it.
 - **Cleanup**: every successful apply deletes `schedule_history` rows older than the retention window.
 
 `GET /history?days=N` can only return data as far back as `history_retention` allows — `?days=90` needs `history_retention` set to at least `2160h` to actually have 90 days of persisted rows; the 7-day default limits queries to the last 7 days regardless of what `days` the caller requests.
+
+### Retention is per table
+
+Three tables grow with time, and each prunes on its own knob:
+
+| Table                               | Knob                              | Default           | What it bounds                                                 |
+|-------------------------------------|-----------------------------------|-------------------|----------------------------------------------------------------|
+| `schedule_history`                  | `maintenance.history_retention`   | `168h`            | The recency-dedup window and `GET /history?days=N`             |
+| `series_occurrence_snapshots`       | `maintenance.snapshot_retention`  | `168h`            | How long a not-yet-aired occurrence's cursor snapshot survives |
+| `apply_runs` + `apply_run_warnings` | `maintenance.apply_run_retention` | `2160h` (90 days) | `GET /applies?days=N`                                          |
+
+Setting `snapshot_retention` **longer** than `history_retention` keeps rows that serve no purpose: an occurrence outside the schedule-history window can never be replayed, because the `schedule_history` rows it would replay from are already gone.
+
+Apply runs default to a far longer horizon than the other two because they answer a different question. History and snapshots feed the engine's own replay and dedup machinery, where a week is ample; a run card is the operator's only durable answer to "why didn't X air last Tuesday", and it cannot be backfilled — nothing exists from before the migration that created the table.
+
+### Apply runs
+
+Every apply — from the web UI, the `serve` cron loop, or `schedularr generate --apply` — is recorded as a row in `apply_runs`, together with the conflict warnings that apply had to drop.
+
+- The row is written **before** the apply pushes anything to Tunarr, with status `running`, and finalized afterwards. A row still reading `running` means the process died mid-apply; that is information, not a defect to hide.
+- A **failed** apply is still a run, carrying its error detail.
+- Every `schedule_history` row the apply commits is stamped with that run's ID, so an aired program traces back to the apply that put it there. Rows written before this table existed carry an empty `run_id` — runs are never backfilled.
+
+Read them at `GET /api/v1/applies` (see the [API Reference](api-reference.md#apply-runs)) or on the web UI's [History page](web-ui-guide.md#history-history).

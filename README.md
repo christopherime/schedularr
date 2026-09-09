@@ -28,7 +28,7 @@ Schedularr generates and applies TV channel schedules for [Tunarr](https://tunar
 - **Content filtering** — regex title matching, genre/rating filters, year ranges, duration constraints
 - **Series blocks** — sequential episode progression per show, with season/episode state persisted
 - **Cron scheduling** — standard cron expressions, plus a Simple-mode picker in the web UI
-- **HTTP API + web UI** — blocks CRUD, generate/apply, history, series state, channels, status
+- **HTTP API + web UI** — blocks CRUD, generate/apply, airing history, apply runs, series state, channels, status
 - **Dry run** — `generate` without `--apply` previews a schedule without pushing it to Tunarr
 
 ## Quickstart

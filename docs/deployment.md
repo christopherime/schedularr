@@ -63,8 +63,10 @@ database: "schedularr.db" # SQLite database path (opened with _busy_timeout=5000
 # expect -shm/-wal sidecar files alongside it)
 scheduler_file: "scheduler.yaml" # First-run block import file -- see Scheduling Concepts
 
-maintenance:
-  history_retention: "168h" # How long schedule_history rows are kept; also bounds GET /history?days=N
+maintenance: # retention is per table -- each one prunes on its own clock
+  history_retention: "168h" # How long schedule_history rows are kept; also bounds GET /history?days=N and the engine's recency-dedup window
+  snapshot_retention: "168h" # How long series occurrence snapshots are kept
+  apply_run_retention: "2160h" # How long apply runs and their warnings are kept (90 days); bounds GET /applies?days=N
   cleanup_enabled: true
 
 cron_interval: "6h" # `serve`'s cron loop cadence; `serve --interval`/`-i` overrides it. The apply window scales with it (floor(interval/24h)+1 days), so >24h intervals stay safe

@@ -14,7 +14,7 @@ The API is served by `schedularr serve` — see the [CLI Reference](cli-referenc
 Every write path (`POST`/`PUT`) validates the block spec against the CUE scheduler schema before touching the store; every response body is `application/json` (or `application/problem+json` for errors).
 
 | Method | Path           | Success | Error codes   |
-| ------ | -------------- | ------- | ------------- |
+|--------|----------------|---------|---------------|
 | GET    | `/blocks`      | 200     | —             |
 | POST   | `/blocks`      | 201     | 400, 409      |
 | GET    | `/blocks/{id}` | 200     | 404           |
@@ -31,7 +31,7 @@ Every write path (`POST`/`PUT`) validates the block spec against the CUE schedul
 Round-trips the same sqlite-backed blocks through the same YAML parse/render used for the on-disk `scheduler.yaml` bootstrap path. Both endpoints exchange raw YAML text, not JSON.
 
 | Method | Path             | Success | Error codes   |
-| ------ | ---------------- | ------- | ------------- |
+|--------|------------------|---------|---------------|
 | POST   | `/blocks/import` | 200     | 400, 409, 413 |
 | GET    | `/blocks/export` | 200     | —             |
 
@@ -43,7 +43,7 @@ Round-trips the same sqlite-backed blocks through the same YAML parse/render use
 Delegates to the same runner the CLI's `generate`/`generate --apply` uses, so the CLI and the API share one implementation: load the enabled blocks, fetch available Tunarr content, run the scheduling engine over a `days`-wide window starting now, and — only when applying — push the result to Tunarr per channel and commit pending state.
 
 | Method | Path                            | Success | Error codes |
-| ------ | ------------------------------- | ------- | ----------- |
+|--------|---------------------------------|---------|-------------|
 | POST   | `/generate`                     | 200     | 400, 502    |
 | POST   | `/apply`                        | 200     | 400, 502    |
 | GET    | `/schedule?days=N&channel_id=…` | 200     | 400, 502    |
@@ -53,24 +53,60 @@ Delegates to the same runner the CLI's `generate`/`generate --apply` uses, so th
 - `POST /generate` always runs a dry run (`applied: false` in the response) regardless of the request body — it never mutates the store or Tunarr. Only `POST /apply` (`applied: true` on success) pushes anything.
 - `channel_id`, when set, restricts *which blocks get planned at all* — not just which channels appear in the response or get pushed. A channel-scoped `POST /apply` never touches Tunarr, schedule history, or series-cursor state for any other channel.
 - A failure (loading blocks, fetching Tunarr content, generating the schedule, or — on apply — pushing/committing) returns `502` (`title: "schedule generation failed"`) with a short, fixed detail; the underlying error is logged server-side only, never echoed in the response body.
-- The response's `warnings` array (present, non-empty only when at least one occurrence was dropped) lists every occurrence that was planned a time slot but then lost conflict resolution to an overlapping, higher- (or equal-, first-come-) priority occurrence on the same channel — `block_name`, `occurrence_start`, and `blocking_block_name` for each. Both `POST /generate` and `POST /apply` populate it identically (conflict resolution happens during generation either way, not only on apply); the [Guide's draft mode](web-ui-guide.md#draft-apply) surfaces them as NO SIGNAL ghost slots, drawn at the time each dropped occurrence would have aired.
+- The response's `warnings` array (present, non-empty only when at least one occurrence was dropped) lists every occurrence that was planned a time slot but then lost conflict resolution to an overlapping, higher- (or equal-, first-come-) priority occurrence on the same channel — `block_name`, `occurrence_start`, `blocking_block_name`, plus the `channel_id` both occurrences contended for and the `duration_minutes` the dropped one would have run, for each. Both `POST /generate` and `POST /apply` populate it identically (conflict resolution happens during generation either way, not only on apply); the [Guide's draft mode](web-ui-guide.md#draft-apply) surfaces them as NO SIGNAL ghost slots, drawn at the time each dropped occurrence would have aired.
 
 ## History
 
 Lists `schedule_history` rows, ordered by `scheduled_at` descending, scheduled within the last `days` days.
 
 | Method | Path              | Success | Error codes |
-| ------ | ----------------- | ------- | ----------- |
+|--------|-------------------|---------|-------------|
 | GET    | `/history?days=N` | 200     | 400         |
 
 `days` defaults to `7`; the handler applies the default and range-checks against `[1, 90]` itself, returning `400` outside that range. `days` only has data to return as far back as `maintenance.history_retention` allows — see [Scheduling Concepts' history retention section](scheduling-concepts.md#schedule-history-and-retention).
+
+Each entry carries the program's identity and the occurrence it belonged to:
+
+| Field                                    | Meaning                                                                                   |
+|------------------------------------------|-------------------------------------------------------------------------------------------|
+| `program_id`, `channel_id`, `block_name` | What was scheduled, where, and by which block                                             |
+| `scheduled_at`                           | The wall-clock instant planning happened — the value `days` is measured against           |
+| `occurrence_start`                       | The block occurrence's own cron-computed start time, **not** `scheduled_at`               |
+| `sequence`                               | Playback order within that occurrence                                                     |
+| `title`, `type`, `duration_ms`           | Enough to name and size the program without the live Tunarr catalog                       |
+| `run_id`                                 | The apply run that committed this row, or `""` for rows written before runs were recorded |
+
+## Apply runs
+
+Lists recorded applies, newest first — one row per apply, from the web UI, the `serve` cron loop, and the CLI alike, each with the conflict warnings that apply dropped.
+
+| Method | Path                      | Success | Error codes |
+|--------|---------------------------|---------|-------------|
+| GET    | `/applies?days=N&limit=M` | 200     | 400         |
+
+`days` defaults to `7` and is range-checked against `[1, 90]`; `limit` defaults to `100` and is range-checked against `[1, 500]`. Both return `400` outside their range. The window is bounded by `maintenance.apply_run_retention` (default 90 days).
+
+| Field                         | Meaning                                                                                                     |
+|-------------------------------|-------------------------------------------------------------------------------------------------------------|
+| `id`                          | The run's identifier, also stamped on the `schedule_history` rows it committed                              |
+| `started_at`                  | When the apply began — the value `days` is measured against                                                 |
+| `finished_at`                 | When it ended, or `null` while in flight                                                                    |
+| `source`                      | `ui`, `cron`, `cli`, or `unknown`                                                                           |
+| `scope`                       | The channel ID the apply was narrowed to, or `""` for every channel                                         |
+| `days`                        | The window the apply planned                                                                                |
+| `status`                      | `running`, `ok`, or `error`                                                                                 |
+| `channel_count`, `slot_count` | What the apply pushed; both `0` unless it succeeded                                                         |
+| `error`                       | The failure detail when `status` is `error`; `""` otherwise                                                 |
+| `warnings`                    | Always an array — `block_name`, `occurrence_start`, `blocking_block_name`, `channel_id`, `duration_minutes` |
+
+The row is written **before** the apply pushes anything to Tunarr and finalized afterwards, so a row still reading `running` long after its timestamp means the process died mid-apply: its `finished_at` will never arrive. A failed apply is still a run, carrying its error. Runs are never backfilled: nothing exists from before the migration that created the table.
 
 ## Series state
 
 Lists and patches the per-show `series_state` tracking rows (current season/episode, completion, and the disabled flag the scheduler sets once a non-restarting series runs out of episodes).
 
 | Method | Path                         | Success | Error codes |
-| ------ | ---------------------------- | ------- | ----------- |
+|--------|------------------------------|---------|-------------|
 | GET    | `/state/series`              | 200     | —           |
 | PATCH  | `/state/series/{show_title}` | 200     | 400, 404    |
 
@@ -83,7 +119,7 @@ Lists and patches the per-show `series_state` tracking rows (current season/epis
 The Tunarr boundary: `ListChannels` proxies `GET /api/channels` on the configured Tunarr instance; `GetStatus` reports overall service health, probing Tunarr reachability the same way.
 
 | Method | Path        | Success | Error codes |
-| ------ | ----------- | ------- | ----------- |
+|--------|-------------|---------|-------------|
 | GET    | `/channels` | 200     | 502         |
 | GET    | `/status`   | 200     | —           |
 
@@ -95,7 +131,7 @@ The Tunarr boundary: `ListChannels` proxies `GET /api/channels` on the configure
 Exposes what Tunarr's synced library actually contains — shows and the distinct genre/rating values observed across it. Both endpoints share a 1h cache with schedule generation: a call that finds the cache already warm issues no Tunarr HTTP requests at all.
 
 | Method | Path           | Success | Error codes |
-| ------ | -------------- | ------- | ----------- |
+|--------|----------------|---------|-------------|
 | GET    | `/media/shows` | 200     | 502         |
 | GET    | `/media/meta`  | 200     | 502         |
 

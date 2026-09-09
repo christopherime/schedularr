@@ -18,6 +18,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always "sequence block". `docs/roadmap.md`, `TODO.md`, `.ai/AGENTS.md`,
   and `docs/scheduling-concepts.md` follow.
 
+## [0.5.7] - 2026-09-09
+
+Memory: every apply becomes a durable record, the airing history stops
+being UUID-headed, and one `/history/` page replaces `/series/` and
+`/dashboard/`.
+
+### Added
+
+- **Apply runs are persisted** (migration `000010`, `internal/store/
+  applies.go`, `internal/service/schedule.go`): every apply — from the
+  web UI, the `serve` cron loop, and `schedularr generate --apply`
+  alike — writes an `apply_runs` row with its source, scope, window,
+  channel and slot counts, outcome, and the conflict warnings it had to
+  drop (`apply_run_warnings`). The row is written **before** the apply
+  pushes anything to Tunarr and finalized afterwards, so a process that
+  dies mid-apply still leaves evidence and a failed apply is still a run
+  carrying its error detail. Recording is best-effort: a store write
+  that fails is logged and dropped rather than failing the apply, since
+  losing the record of an apply is a reporting gap while refusing to
+  schedule over an unhappy reporting table would be worse.
+- **`GET /api/v1/applies`** (`internal/api/applies.go`, `api/
+  openapi.yaml`): reads recorded runs back, newest first, bounded by
+  `days` (1–90, default 7) and `limit` (1–500, default 100). Warnings
+  always serialize as an array, never `null`.
+- **`schedule_history.run_id`**: `Engine.Commit` stamps the apply run
+  onto every history row it writes, so an aired program traces back to
+  the apply that put it there. Stamped at commit rather than at planning
+  time — a dry run plans entries too, and they must not claim a run that
+  never happened. Rows written before this migration carry `""`; runs
+  are never backfilled.
+- **The `/history/` page** (`web/layouts/history/list.html`, `web/
+  assets/ts/pages/history.ts`): one searchable record behind a band
+  selector, deep-linkable as `/history/?view=<tracked|asrun|runs>`.
+  **TRACKED** carries the whole of the old series desk — the armed
+  cursor edit behind Save, the instant completed/disabled toggles, the
+  per-row 404 recovery — plus a title search. **AS-RUN** shows what
+  actually aired, grouped by local day, newest day first, with program
+  names rather than UUIDs, the channel plate, the block, and the
+  duration. **RUNS** shows each apply as a card with a source badge and
+  a counts-first summary, its dropped occurrences expandable inline,
+  each naming the block that lost its slot, the block it lost to, when
+  it would have aired, on which channel, and for how long. The filter
+  bar shows only the controls the visible pane honors.
+
+### Changed
+
+- **Retention is now per table** (`cmd/schema/config.cue`,
+  `internal/config/config.go`), answering the operator's Q10:
+  `maintenance.history_retention` (`168h`) and
+  `maintenance.snapshot_retention` (`168h`) prune their own tables, and
+  `maintenance.apply_run_retention` (`2160h`, 90 days) prunes apply runs
+  and their warnings. Apply runs get a far longer horizon because they
+  answer a different question — history and snapshots feed the engine's
+  replay and dedup machinery, where a week is ample, while a run card is
+  the only durable answer to "why didn't X air last Tuesday". An
+  existing `config.yaml` that sets only `history_retention` keeps
+  working and picks up the other two at their defaults.
+- **`GET /history` exposes the enrichment it has always stored**
+  (`internal/api/history.go`): `title`, `type`, `duration_ms`,
+  `occurrence_start`, `sequence`, and `run_id` now reach the wire. The
+  columns have existed since migration `000003`; only `program_id` was
+  ever readable.
+- **`Warning` names where and how long** (`internal/scheduler/
+  engine.go`): a dropped occurrence now reports the `channel_id` both
+  occurrences contended for and the `duration_minutes` it would have
+  run, so a persisted warning reads back without re-deriving the block
+  spec. `POST /generate` and `POST /apply` carry the same two fields.
+- **`service.NewRunner` takes a `RunnerOptions` struct** rather than
+  five positional arguments — it was already at the revive
+  argument-limit ceiling before retention split per table.
+- **`service.Options` gained `Source`**, so an apply is attributed to
+  the surface that asked for it. An unlabeled apply records `unknown`
+  rather than failing: a missing label is a defect to notice in the RUNS
+  pane, never a reason to refuse to push a lineup.
+- **Nav is `GUIDE · BLOCKS · HISTORY`.**
+
+### Removed
+
+- **The `/series/` page** (`web/layouts/series/list.html`,
+  `web/assets/ts/pages/series.ts`, `web/content/series/`): absorbed
+  whole by the History page's TRACKED pane. The `/api/v1/state/series`
+  endpoints are unchanged — only the UI route is gone.
+- **The `/dashboard/` route** (`web/layouts/dashboard/list.html`,
+  `web/assets/ts/pages/dashboard.ts`, `web/content/dashboard/`): it had
+  been unlinked since v0.5.1 and survived only for its Recent History
+  table, which the AS-RUN pane replaces. Its `.status-card__*` CSS went
+  with it.
+- No redirect stubs for either: a bookmark lands on the styled 404 page,
+  which carries the current nav.
+
+### Fixed
+
+- **Occurrence snapshots prune on their own knob.** `Engine.Commit`
+  passed the history window to `CleanupOccurrenceSnapshots`, so the two
+  tables could never diverge even though they answer to different
+  needs; it now passes `EngineOptions.SnapshotRetention`.
+- **`schedularr generate`'s maintenance cleanup prunes all three
+  tables.** It pruned only `schedule_history`; occurrence snapshots and
+  apply runs are now pruned too, each on its own knob, each failure
+  non-fatal and reported.
+
 ## [0.5.6] - 2026-09-08
 
 ### Added
