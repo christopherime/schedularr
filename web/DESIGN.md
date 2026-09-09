@@ -455,6 +455,64 @@ binding:
   -- the DAYS control died with the full-week reframe), the draft bar,
   and the inspector.
 
+## The history page (v0.5.7)
+
+`/history/` is the one searchable record. It replaced `/series/` and
+`/dashboard/`, which were deleted outright -- no redirect stubs; the
+404 page carries the nav. Nav became `GUIDE · BLOCKS · HISTORY`.
+
+**Why one page and not two.** The industry models this as one record in
+two states: a traffic log of what is scheduled and an as-run log of what
+aired. Two routes would force a guess about which one holds the answer,
+and both are backed by the same rows.
+
+- **The band selector** (`.band` / `.band__tab`) is an instrument's band
+  switch, not a pill group: flush tabs inside the same machined bezel as
+  every other bordered surface, the selected band lit by an accent rule
+  at its foot and a raised ground. The tab TEXT carries which pane is
+  open; the rule and the ground are the scan aid on top of it, the same
+  coded-legend rule the status dots follow. `role="tablist"` with roving
+  `tabindex`, arrow/Home/End keys, and `:focus-visible` pulled inside the
+  tab (`outline-offset: -3px`) because the tab itself is flush.
+- **Deep links.** The open pane is the `?view=` query value
+  (`tracked` / `asrun` / `runs`), rewritten with `replaceState` on every
+  switch -- the address bar always names what is on screen, and one
+  record's three panes are not three history entries to back through. An
+  unknown or absent value resolves to `tracked` rather than a blank page.
+- **The filter bar** (`.filter-bar`) reuses the `.form-field`
+  vocabulary; only the layout is its own. Controls the visible pane does
+  not honor are HIDDEN, not disabled: a dead control on an instrument
+  reads as a broken one. The window is a server-side query on both
+  feeds, so changing it refetches; every other control filters what is
+  already in hand.
+- **TRACKED** carries the whole of the old `/series/` page unchanged --
+  the armed cursor edit behind Save, the instant completed/disabled
+  toggles that print a tape line, the per-row 404 recovery.
+- **AS-RUN** renders inside the guide's own `.rundown-day` /
+  `.rundown-list` day grouping rather than a parallel list system, so
+  the two surfaces read as one instrument. Rows show local time, the
+  channel plate, the title, the block, and the duration -- programme
+  names, never the program UUID the old dashboard table showed.
+  Bucketing is by LOCAL day, newest day first, air order within: an
+  operator reads a station log in station time.
+- **RUNS** are cards where airings are rows, on purpose: a run is a
+  discrete event with an outcome to weigh, an airing is one line of a
+  log to scan. Status is a 1px border colour plus a tinted ground, never
+  a thick colored rail, and the outcome word beside the timestamp
+  carries the fact. Warnings expand in a native `<details>` -- keyboard
+  operable with no Alpine involved. Each warning line is a flex row of
+  discrete elements, because the minifier collapses the whitespace
+  between inline siblings and a sentence built from `x-text` spans would
+  otherwise read "Late Moviedropped for Evening News".
+- **Honesty in the copy.** Every empty state names the real limit: runs
+  are never backfilled, and each window is bounded by its own table's
+  retention knob, so a 90-day view can legitimately come back short. No
+  copy implies the store lost anything.
+- **A run that never finished** reports only what it attempted (window
+  and scope). Its slot and channel counts never landed, and printing
+  zeros would read as "applied nothing" rather than "never got that
+  far".
+
 ## Typography
 
 One family everywhere: `var(--font-mono)`, a `ui-monospace` stack with
@@ -809,6 +867,28 @@ ink-on-raised pairing Task 4 verified, and the accent tint raises that
 ratio rather than lowering it. Dimmed `same` slots are not held to the
 floor: they carry no verdict, and their unmodified twins in committed
 mode are the verified pairing.
+
+**v0.5.7 history** introduced the band selector, the run cards' status
+grounds, and the source badges. Checked computationally (same
+throwaway-script convention):
+
+| Pairing                                                            | Light   | Dark    |
+| ------------------------------------------------------------------ | ------- | ------- |
+| `--color-ink-muted` on `--color-bg-inset` (unselected band tab)    | 6.88:1  | 8.13:1  |
+| `--color-ink` on `--color-bg-raised` (selected band tab)           | 16.56:1 | 15.15:1 |
+| `--color-accent` on `--color-bg-raised` (selected band's rule, UI) | 6.59:1  | 10.19:1 |
+| `--color-ink-muted` on `--surface-danger` (failed run's summary)   | 7.43:1  | 6.58:1  |
+| `--color-ink-muted` on `--surface-warn` (in-flight run's summary)  | 7.51:1  | 6.30:1  |
+| `--color-danger` on `--surface-danger` (outcome word + error line) | 6.43:1  | 5.77:1  |
+| `--color-warn` on `--color-bg-raised` (warnings disclosure)        | 6.92:1  | 8.43:1  |
+| `--color-accent` on `--color-bg-raised` (`CRON` source badge)      | 6.59:1  | 10.19:1 |
+| `--color-warn` on `--color-bg-raised` (`CLI` source badge)         | 6.92:1  | 8.43:1  |
+
+Every pairing clears the 4.5:1 AA text floor (worst case 5.77:1); the
+band's accent rule is a non-text UI boundary and clears the 3:1 floor
+with room to spare. The as-run rows reuse the guide's already-verified
+`--color-ink-muted`-on-raised and plate pairings, since they render
+inside the same `.rundown-day` / `.rundown-list` idiom.
 
 ## TypeScript runtime and Alpine.js conventions
 

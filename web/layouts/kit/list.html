@@ -385,6 +385,133 @@
     "confirm" "performConfirm()"
     "cancel" "cancelConfirm()"
     "busy" "confirmBusy") }}
+
+  <section class="kit-section" aria-labelledby="kit-band-title">
+    <div class="section-head">
+      <h2 id="kit-band-title">Band selector</h2>
+      <p>The history page's pane switch. Static fixture: the live one is a tablist with roving tabindex and arrow-key navigation.</p>
+    </div>
+    <div class="band" role="tablist" aria-label="Band selector fixture">
+      <button type="button" role="tab" class="band__tab" aria-selected="false" tabindex="-1">Tracked</button>
+      <button type="button" role="tab" class="band__tab" aria-selected="false" tabindex="-1">As-Run</button>
+      <button type="button" role="tab" class="band__tab" aria-selected="true" tabindex="0">Runs</button>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-source-title">
+    <div class="section-head">
+      <h2 id="kit-source-title">Source badges</h2>
+      <p>Which surface asked for an apply. The badge text carries the fact; the tint is the scan aid on top of it.</p>
+    </div>
+    <div class="kit-row">
+      <span class="badge" data-source="ui">UI</span>
+      <span class="badge" data-source="cron">CRON</span>
+      <span class="badge" data-source="cli">CLI</span>
+      <span class="badge" data-source="unknown">UNKNOWN</span>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-run-title">
+    <div class="section-head">
+      <h2 id="kit-run-title">Run cards</h2>
+      <p>Applied, applied with dropped occurrences, in flight, and failed. A run that never finished reports what it attempted, not zero counts.</p>
+    </div>
+    <div class="run-list">
+      <article class="run-card graticule" data-status="ok">
+        <header class="run-card__head">
+          <span class="run-card__stamp">09/09/2026, 01:38 AM</span>
+          <span class="badge" data-source="ui">UI</span>
+          <span class="run-card__outcome">Applied</span>
+        </header>
+        <p class="run-card__summary">4 SLOTS ACROSS 1 CHANNEL · 7 DAYS · ALL CHANNELS</p>
+      </article>
+
+      <article class="run-card graticule" data-status="ok">
+        <header class="run-card__head">
+          <span class="run-card__stamp">09/09/2026, 07:18 AM</span>
+          <span class="badge" data-source="cron">CRON</span>
+          <span class="run-card__outcome">Applied</span>
+        </header>
+        <p class="run-card__summary">18 SLOTS ACROSS 3 CHANNELS · 7 DAYS · ALL CHANNELS</p>
+        <details class="run-card__warnings" open>
+          <summary>2 occurrences dropped</summary>
+          <ul class="warn-list">
+            <li class="warn-list__item">
+              <span class="warn-list__time">09/09/2026, 09:18 AM</span>
+              <span class="warn-list__text">
+                <a href="/blocks/">Late Movie</a>
+                <span>dropped for</span>
+                <a href="/blocks/">Evening News</a>
+                <span>2 h</span>
+              </span>
+              <span class="warn-list__plate"><span class="plate"><span class="plate__ch">CH 04</span><span class="plate__name">HORROR</span></span></span>
+            </li>
+            <li class="warn-list__item">
+              <span class="warn-list__time">09/09/2026, 10:18 AM</span>
+              <span class="warn-list__text">
+                <a href="/blocks/">Saturday Serial</a>
+                <span>dropped for</span>
+                <a href="/blocks/">Prime Block</a>
+                <span>45 min</span>
+              </span>
+              <span class="warn-list__plate"><span class="plate"><span class="plate__ch">CH 04</span><span class="plate__name">HORROR</span></span></span>
+            </li>
+          </ul>
+        </details>
+      </article>
+
+      <article class="run-card graticule" data-status="running">
+        <header class="run-card__head">
+          <span class="run-card__stamp">09/09/2026, 07:35 AM</span>
+          <span class="badge" data-source="ui">UI</span>
+          <span class="run-card__outcome">In flight</span>
+        </header>
+        <p class="run-card__summary">7 DAYS · ALL CHANNELS</p>
+      </article>
+
+      <article class="run-card graticule" data-status="error">
+        <header class="run-card__head">
+          <span class="run-card__stamp">09/08/2026, 05:38 AM</span>
+          <span class="badge" data-source="cli">CLI</span>
+          <span class="run-card__outcome">Failed</span>
+        </header>
+        <p class="run-card__summary">7 DAYS · SCOPED</p>
+        <p class="run-card__error" role="alert">failed to fetch programs: POST http://tunarr.local/api/programs/search failed: connection refused</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-airing-title">
+    <div class="section-head">
+      <h2 id="kit-airing-title">As-run airings</h2>
+      <p>One local day of the log, in air order — rendered inside the guide's own rundown day grouping.</p>
+    </div>
+    <section class="rundown-day">
+      <h3 class="rundown-day__head">Wednesday, September 9, 2026</h3>
+      <ul class="rundown-list">
+        <li class="rundown-item">
+          <div class="airing">
+            <span class="airing__time">00:08</span>
+            <span class="airing__plate"><span class="plate"><span class="plate__ch">CH 04</span><span class="plate__name">HORROR</span></span></span>
+            <span class="airing__body">
+              <span class="airing__title">Shadow</span>
+              <span class="airing__meta"><a class="airing__block" href="/blocks/">Late Night Horror</a><span>44 min</span></span>
+            </span>
+          </div>
+        </li>
+        <li class="rundown-item">
+          <div class="airing">
+            <span class="airing__time">01:38</span>
+            <span class="airing__plate"><span class="plate"><span class="plate__name">a1b2c3</span></span></span>
+            <span class="airing__body">
+              <span class="airing__title">—</span>
+              <span class="airing__meta"><a class="airing__block" href="/blocks/">Late Night Horror</a></span>
+            </span>
+          </div>
+        </li>
+      </ul>
+    </section>
+  </section>
 </div>
 {{ end }}
 {{ end }}

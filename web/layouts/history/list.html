@@ -1,0 +1,378 @@
+{{ define "main" }}
+{{- /*
+  History ("/history/") -- the one searchable record, absorbing the pages
+  that used to be /series/ and /dashboard/. Three panes behind one band
+  selector, because the industry models this as one record in two states:
+  a traffic log of what is scheduled and an as-run log of what aired.
+  Splitting them across routes would force the operator to guess which
+  one holds the answer.
+
+  The band selector is deep-linkable (/history/?view=asrun) and the
+  filter bar shows only the controls the visible pane actually honors --
+  a dead control on an instrument reads as a broken one.
+*/ -}}
+<div x-data="history">
+  <div class="page-head">
+    <h1>History</h1>
+    <p>
+      What is tracked, what aired, and what each apply actually did.
+      Every window here is bounded by its table's retention setting.
+    </p>
+  </div>
+
+  {{ partial "ui/tape.html" . }}
+
+  <div class="band" role="tablist" aria-label="History view">
+    <button
+      type="button" role="tab" id="band-tracked" class="band__tab"
+      aria-controls="pane-tracked"
+      :aria-selected="view === 'tracked'"
+      :tabindex="view === 'tracked' ? 0 : -1"
+      @click="select('tracked')" @keydown="onBandKey($event)"
+    >Tracked</button>
+    <button
+      type="button" role="tab" id="band-asrun" class="band__tab"
+      aria-controls="pane-asrun"
+      :aria-selected="view === 'asrun'"
+      :tabindex="view === 'asrun' ? 0 : -1"
+      @click="select('asrun')" @keydown="onBandKey($event)"
+    >As-Run</button>
+    <button
+      type="button" role="tab" id="band-runs" class="band__tab"
+      aria-controls="pane-runs"
+      :aria-selected="view === 'runs'"
+      :tabindex="view === 'runs' ? 0 : -1"
+      @click="select('runs')" @keydown="onBandKey($event)"
+    >Runs</button>
+  </div>
+
+  {{- /* Only the controls the visible pane actually honors are shown:
+         a dead control on an instrument reads as a broken one. The
+         window is a server-side query on both feeds, so changing it
+         refetches rather than filtering what is already in hand. */}}
+  <div class="filter-bar" role="group" aria-label="History filters">
+    <div class="form-field filter-bar__field" x-show="view !== 'tracked'">
+      <label for="filter-window">Window</label>
+      <select id="filter-window" x-model.number="days" @change="onWindowChange()">
+        <option value="1">1 day</option>
+        <option value="7">7 days</option>
+        <option value="30">30 days</option>
+        <option value="90">90 days</option>
+      </select>
+    </div>
+
+    <div class="form-field filter-bar__field" x-show="view === 'asrun'">
+      <label for="filter-channel">Channel</label>
+      <select id="filter-channel" x-model="channelId">
+        <option value="">All channels</option>
+        <template x-for="c in channels" :key="c.id">
+          <option :value="c.id" x-text="channelLabel(c)"></option>
+        </template>
+      </select>
+    </div>
+
+    <div class="form-field filter-bar__field" x-show="view === 'asrun'">
+      <label for="filter-block">Block</label>
+      <input id="filter-block" type="search" x-model="blockQuery" placeholder="Any block">
+    </div>
+
+    <div class="form-field filter-bar__field" x-show="view === 'runs'">
+      <label for="filter-source">Source</label>
+      <select id="filter-source" x-model="source">
+        <option value="">Any source</option>
+        <option value="ui">UI</option>
+        <option value="cron">Cron</option>
+        <option value="cli">CLI</option>
+      </select>
+    </div>
+
+    <div class="form-field filter-bar__field filter-bar__field--grow" x-show="view !== 'runs'">
+      <label for="filter-search" x-text="view === 'tracked' ? 'Show' : 'Title'"></label>
+      <input
+        id="filter-search" type="search" x-model="search"
+        :placeholder="view === 'tracked' ? 'Any tracked show' : 'Any title'"
+      >
+    </div>
+  </div>
+
+  {{/* ---- TRACKED --------------------------------------------------- */}}
+  <section
+    id="pane-tracked" role="tabpanel" aria-labelledby="band-tracked" tabindex="-1"
+    x-show="view === 'tracked'"
+  >
+    <div class="section-head">
+      <h2>Tracked sequences</h2>
+      <p>Per-show cursors that sequence blocks advance as they air.</p>
+    </div>
+
+    <template x-if="statesLoading">
+      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 3) }}
+    </template>
+
+    <template x-if="!statesLoading && statesError">
+      {{ partial "ui/problem.html" (dict "label" "Tracked sequences unavailable" "bind" "statesError" "retry" "loadStates()") }}
+    </template>
+
+    <template x-if="!statesLoading && !statesError && states.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No sequences tracked"
+        "text" "A show appears here once a sequence block airs it for the first time — create one on Blocks."
+        "actionLabel" "Open blocks"
+        "actionHref" "/blocks/") }}
+    </template>
+
+    <template x-if="!statesLoading && !statesError && states.length > 0 && visibleStates.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No match"
+        "text" "No tracked show matches that search. Clear it to see every sequence again."
+        "actionLabel" "Clear search"
+        "actionClick" "search = ''") }}
+    </template>
+
+    <template x-if="!statesLoading && !statesError && visibleStates.length > 0">
+      <div class="table-wrap">
+        <table class="history-table series-table">
+          <thead>
+            <tr>
+              <th scope="col">Show</th>
+              <th scope="col">Cursor</th>
+              <th scope="col">Runs</th>
+              <th scope="col">Last Aired</th>
+              <th scope="col">Completed</th>
+              <th scope="col">Disabled</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="state in visibleStates" :key="state.show_title">
+              <tr>
+                {{- /* The flex stack lives on an inner div, never the td:
+                       display:flex on a td strips its table-cell display,
+                       so its border-bottom floats at content height
+                       instead of the row edge (the divider-drift bug). */}}
+                <td>
+                  <div class="series-table__show">
+                    <span x-text="state.show_title"></span>
+                    <p class="form-field__error" x-show="rowErrors[state.show_title]" role="alert">
+                      <span x-text="rowErrors[state.show_title]"></span>
+                      <template x-if="rowNotFound[state.show_title]">
+                        <button type="button" class="btn btn--ghost btn--sm" @click="loadStates()">Refresh List</button>
+                      </template>
+                    </p>
+                  </div>
+                </td>
+                <td>
+                  <div
+                    class="series-cursor"
+                    role="group"
+                    :aria-label="'Season and episode cursor, currently ' + cursorLabel(state.current_season, state.current_episode)"
+                  >
+                    <span class="series-cursor__prefix" aria-hidden="true">S</span>
+                    <input
+                      type="number"
+                      min="1"
+                      class="series-cursor__input"
+                      aria-label="Season"
+                      x-model="drafts[state.show_title].season"
+                      :aria-invalid="fieldErrors[state.show_title] ? 'true' : null"
+                      :aria-describedby="fieldErrors[state.show_title] ? 'season-episode-error-' + state.show_title : null"
+                      :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
+                    >
+                    <span class="series-cursor__prefix" aria-hidden="true">E</span>
+                    <input
+                      type="number"
+                      min="1"
+                      class="series-cursor__input"
+                      aria-label="Episode"
+                      x-model="drafts[state.show_title].episode"
+                      :aria-invalid="fieldErrors[state.show_title] ? 'true' : null"
+                      :aria-describedby="fieldErrors[state.show_title] ? 'season-episode-error-' + state.show_title : null"
+                      :disabled="pending[state.show_title] || rowNotFound[state.show_title]"
+                    >
+                    <button
+                      type="button"
+                      class="btn btn--ghost btn--sm"
+                      :disabled="!rowDirty(state) || pending[state.show_title] || rowNotFound[state.show_title]"
+                      :aria-busy="pending[state.show_title]"
+                      @click="saveCursor(state)"
+                      x-text="pending[state.show_title] ? 'Saving…' : 'Save'"
+                    ></button>
+                  </div>
+                  <p
+                    class="form-field__error"
+                    :id="'season-episode-error-' + state.show_title"
+                    x-show="fieldErrors[state.show_title]"
+                    x-text="fieldErrors[state.show_title]"
+                    role="alert"
+                  ></p>
+                </td>
+                <td class="num" x-text="runsLabel(state.run_count)"></td>
+                <td x-text="formatLocal(state.last_aired)"></td>
+                <td>
+                  {{ partial "ui/toggle.html" (dict
+                    "checked" "!!state.completed"
+                    "disabled" "pending[state.show_title] || rowNotFound[state.show_title]"
+                    "click" "toggleCompleted(state)"
+                    "on" "Completed"
+                    "off" "In Progress") }}
+                </td>
+                <td>
+                  {{ partial "ui/toggle.html" (dict
+                    "checked" "!!state.disabled"
+                    "disabled" "pending[state.show_title] || rowNotFound[state.show_title]"
+                    "click" "toggleDisabled(state)"
+                    "on" "Disabled"
+                    "off" "Active") }}
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </template>
+  </section>
+
+  {{/* ---- AS-RUN ---------------------------------------------------- */}}
+  <section
+    id="pane-asrun" role="tabpanel" aria-labelledby="band-asrun" tabindex="-1"
+    x-show="view === 'asrun'"
+  >
+    <div class="section-head">
+      <h2>As-run airings</h2>
+      <p x-text="asRunCaption"></p>
+    </div>
+
+    <template x-if="historyLoading">
+      {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 4) }}
+    </template>
+
+    <template x-if="!historyLoading && historyError">
+      {{ partial "ui/problem.html" (dict "label" "Airings unavailable" "bind" "historyError" "retry" "loadHistory()") }}
+    </template>
+
+    <template x-if="!historyLoading && !historyError && history.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No trace"
+        "text" "Nothing has aired in this window. History is pruned to maintenance.history_retention, so a wider window can still come back empty."
+        "actionLabel" "Set up blocks"
+        "actionHref" "/blocks/") }}
+    </template>
+
+    <template x-if="!historyLoading && !historyError && history.length > 0 && dayGroups.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No match"
+        "text" "Nothing in this window matches those filters."
+        "actionLabel" "Clear filters"
+        "actionClick" "clearFilters()") }}
+    </template>
+
+    <template x-if="!historyLoading && !historyError && dayGroups.length > 0">
+      <div>
+        <template x-for="group in dayGroups" :key="group.day">
+          <section class="rundown-day">
+            <h3 class="rundown-day__head" x-text="group.heading"></h3>
+            <ul class="rundown-list">
+              <template x-for="entry in group.entries" :key="entry.key">
+                <li class="rundown-item">
+                  <div class="airing">
+                    <span class="airing__time" x-text="entry.clock"></span>
+                    <span class="airing__plate">{{ partial "ui/plate.html" (dict "expr" "plate(entry.channel_id)") }}</span>
+                    <span class="airing__body">
+                      <span class="airing__title" x-text="entry.label"></span>
+                      <span class="airing__meta">
+                        <a class="airing__block" href="/blocks/" x-text="entry.block_name ?? '—'"></a>
+                        <span x-show="entry.duration" x-text="entry.duration"></span>
+                      </span>
+                    </span>
+                  </div>
+                </li>
+              </template>
+            </ul>
+          </section>
+        </template>
+      </div>
+    </template>
+  </section>
+
+  {{/* ---- RUNS ------------------------------------------------------ */}}
+  <section
+    id="pane-runs" role="tabpanel" aria-labelledby="band-runs" tabindex="-1"
+    x-show="view === 'runs'"
+  >
+    <div class="section-head">
+      <h2>Apply runs</h2>
+      <p>Every apply — from this UI, the cron loop, or the CLI — with the occurrences it had to drop.</p>
+    </div>
+
+    <template x-if="runsLoading">
+      {{ partial "ui/skeleton.html" (dict "variant" "row" "widths" (slice "lg" "md" "sm")) }}
+    </template>
+
+    <template x-if="!runsLoading && runsError">
+      {{ partial "ui/problem.html" (dict "label" "Apply runs unavailable" "bind" "runsError" "retry" "loadRuns()") }}
+    </template>
+
+    <template x-if="!runsLoading && !runsError && runs.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No runs recorded"
+        "text" "An apply lands here whether it came from this page, the cron loop, or the CLI. Runs are never backfilled, so nothing exists from before this feature shipped."
+        "actionLabel" "Open the guide"
+        "actionHref" "/") }}
+    </template>
+
+    <template x-if="!runsLoading && !runsError && runs.length > 0 && visibleRuns.length === 0">
+      {{ partial "ui/empty.html" (dict
+        "legend" "No match"
+        "text" "No run in this window came from that source."
+        "actionLabel" "Any source"
+        "actionClick" "source = ''") }}
+    </template>
+
+    <template x-if="!runsLoading && !runsError && visibleRuns.length > 0">
+      <div class="run-list">
+        <template x-for="run in visibleRuns" :key="run.id">
+          <article class="run-card graticule" :data-status="run.status">
+            <header class="run-card__head">
+              <span class="run-card__stamp" x-text="formatLocal(run.started_at)"></span>
+              <span class="badge" :data-source="run.source" x-text="run.source.toUpperCase()"></span>
+              <span class="run-card__outcome" x-text="outcomeLabel(run)"></span>
+            </header>
+
+            <p class="run-card__summary" x-text="runSummary(run)"></p>
+
+            <p class="run-card__error" x-show="run.status === 'error' && run.error" role="alert">
+              <span x-text="run.error"></span>
+            </p>
+
+            <details class="run-card__warnings" x-show="warningsOf(run).length > 0">
+              <summary x-text="warningsLabel(run)"></summary>
+              <ul class="warn-list">
+                <template x-for="(w, i) in warningsOf(run)" :key="i">
+                  {{- /* Every fragment is its own element inside a
+                         flex row: the minifier collapses the whitespace
+                         between inline siblings, so words separated only
+                         by source newlines run together in the built
+                         page. The gap is structural, not typed. */}}
+                  <li class="warn-list__item">
+                    <span class="warn-list__time" x-text="formatLocal(w.occurrence_start)"></span>
+                    <span class="warn-list__text">
+                      <a href="/blocks/" x-text="w.block_name"></a>
+                      <span>dropped for</span>
+                      <a href="/blocks/" x-text="w.blocking_block_name"></a>
+                      <span x-show="w.duration_minutes" x-text="durationLabel(w.duration_minutes ?? 0)"></span>
+                    </span>
+                    <span class="warn-list__plate" x-show="w.channel_id">{{ partial "ui/plate.html" (dict "expr" "plate(w.channel_id)") }}</span>
+                  </li>
+                </template>
+              </ul>
+            </details>
+          </article>
+        </template>
+      </div>
+    </template>
+  </section>
+</div>
+{{ end }}
+
+{{ define "page_js" }}
+{{ partial "ui/page-js.html" (dict "entry" "ts/pages/history.ts" "target" "js/history.js") }}
+{{ end }}

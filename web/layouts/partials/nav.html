@@ -7,15 +7,16 @@
   load.
 */ -}}
 {{- $current := .RelPermalink -}}
-{{- /* IA since the draft & apply slice: the Guide is home and owns
-       preview/apply as its draft mode; the old dashboard survives on an
-       unlinked /dashboard/ route until the Memory slice's /history/
-       absorbs its table. Active state is server-rendered (aria-current,
+{{- /* IA since the Memory slice: the Guide is home and owns
+       preview/apply as its draft mode; History is the one searchable
+       record -- tracked sequences, as-run airings and apply runs behind
+       one band selector. /series/ and /dashboard/ were deleted with it,
+       no redirect stubs. Active state is server-rendered (aria-current,
        no JS) so it's correct even if a page's script fails to load. */ -}}
 {{- $items := slice
   (dict "href" "/" "label" "Guide")
   (dict "href" "/blocks/" "label" "Blocks")
-  (dict "href" "/series/" "label" "Series")
+  (dict "href" "/history/" "label" "History")
 -}}
 <nav class="nav" aria-label="Primary">
   {{- range $items }}

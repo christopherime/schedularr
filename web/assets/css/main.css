@@ -900,23 +900,10 @@ dialog.panel .panel__body {
   }
 }
 
-/* -- dashboard: status card ------------------------------------------------
-   Content wrapper only -- chrome (border/radius/background/graticule) comes
-   from .hero-panel/.graticule above. status-card__grid is .hero-panel__meta
-   with the top rule removed: the card *is* the readout, there's no lede
-   paragraph pushing it down. */
-
-.status-card__grid {
-  margin: 0;
-  padding: 0;
-  border-top: none;
-}
-
-.status-card__tunarr {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
+/* The status dot's own text line -- the coded-legend pairing that keeps
+   color from carrying a fact alone. The .status-card__* wrappers that
+   used to sit here went with the /dashboard/ route the History page
+   replaced; this survives on /kit/ and the bezel. */
 
 .status-line {
   display: inline-flex;
@@ -924,16 +911,7 @@ dialog.panel .panel__body {
   gap: var(--space-2);
 }
 
-/* Deliberately muted, not --color-danger: the brief is explicit that a
-   down Tunarr is a legitimate instrument reading, not an error toast. The
-   status-dot above already carries the severity signal; this line is the
-   reading's own text, same tone as any other secondary value on the page. */
-.status-card__tunarr-detail {
-  font-size: var(--text-sm);
-  color: var(--color-ink-muted);
-}
-
-/* -- dashboard: section head (sits below the page-level h1) --------------- */
+/* -- section head (sits below the page-level h1) -------------------------- */
 
 .section-head {
   margin-bottom: var(--space-4);
@@ -3230,5 +3208,285 @@ dialog.panel .panel__body {
      so the two edges stay tellable apart without color. */
   .rundown-slot[data-draft="removed"] {
     border-left: var(--border-width-thick) dashed;
+  }
+}
+
+/* == history: band selector, filter bar, as-run rows, run cards ============
+   The one searchable record, absorbing the /series/ and /dashboard/ routes.
+   Three panes behind a band selector -- an instrument's band switch, not a
+   pill group: the same machined bezel the rest of the panel uses, with the
+   selected band lit by an accent rule at its foot rather than a filled
+   capsule. The tab text carries the fact; the rule and the raised surface
+   are the scan aid on top of it (coded-legend rule). */
+
+.band {
+  display: flex;
+  gap: 0;
+  margin-bottom: var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-inset);
+  overflow: hidden;
+}
+
+.band__tab {
+  flex: 1;
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  background: transparent;
+  border: none;
+  border-bottom: var(--border-width-thick) solid transparent;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) ease-out,
+    background-color var(--duration-fast) ease-out;
+}
+
+.band__tab:not(:first-child) {
+  border-left: var(--border-width) solid var(--color-border);
+}
+
+.band__tab:hover {
+  color: var(--color-ink);
+}
+
+.band__tab[aria-selected="true"] {
+  color: var(--color-ink);
+  background: var(--color-bg-raised);
+  border-bottom-color: var(--color-accent);
+}
+
+/* The band is the page's primary control: its focus ring must read even
+   though the tab itself is a flush, borderless surface. */
+.band__tab:focus-visible {
+  outline-offset: -3px;
+}
+
+/* -- filter bar ---------------------------------------------------------
+   Reuses the .form-field vocabulary rather than a parallel one; only the
+   layout is the bar's own. Controls the visible pane does not honor are
+   hidden, not disabled -- a dead control on an instrument reads as broken. */
+
+.filter-bar {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.filter-bar__field {
+  min-width: 10rem;
+}
+
+.filter-bar__field--grow {
+  flex: 1;
+  min-width: 14rem;
+}
+
+/* -- as-run airing row --------------------------------------------------
+   Sits inside the guide's own .rundown-day/.rundown-list day grouping --
+   the same "a day of the log, in air order" idiom, so the two surfaces
+   read as one instrument rather than two takes on a list. */
+
+.airing {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.airing__time {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.airing__plate {
+  flex-shrink: 0;
+}
+
+.airing__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.airing__title {
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.airing__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+/* -- run cards ----------------------------------------------------------
+   A run is a card and an airing is a row on purpose: a run is a discrete
+   event with an outcome to weigh, an airing is one line of a log to scan.
+   The status edge is a 1px border color change, not a thick colored rail;
+   the outcome word next to the timestamp carries the fact. */
+
+.run-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.run-card {
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+}
+
+.run-card[data-status="error"] {
+  border-color: var(--color-danger);
+  background: var(--surface-danger);
+}
+
+.run-card[data-status="running"] {
+  border-color: var(--color-warn);
+  background: var(--surface-warn);
+}
+
+.run-card__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.run-card__stamp {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-card__outcome {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.run-card[data-status="error"] .run-card__outcome {
+  color: var(--color-danger);
+}
+
+/* The summary reads in the draft bar's register -- counts first, spaced
+   with the same middot -- because it answers the same question that bar
+   does: what did this apply actually move. */
+.run-card__summary {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-muted);
+}
+
+.run-card__error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+
+.run-card__warnings {
+  margin-top: var(--space-3);
+}
+
+.run-card__warnings > summary {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-warn);
+  cursor: pointer;
+}
+
+.run-card__warnings > summary:focus-visible {
+  outline: var(--border-width-thick) solid var(--color-border-interactive);
+  outline-offset: 2px;
+}
+
+.warn-list {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.warn-list__item {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  background: var(--color-bg-inset);
+  border-radius: var(--radius-sm);
+}
+
+.warn-list__time {
+  flex-shrink: 0;
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Flex, not inline text: the minifier collapses the whitespace between
+   inline siblings, so a sentence assembled from x-text spans would read
+   "Late Moviedropped for Evening News". The gap puts the spacing in the
+   layout instead of in the source's newlines. */
+.warn-list__text {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Source badges extend the existing .badge component rather than forking
+   it: the badge's own text already reads "UI"/"CRON"/"CLI", so the tint
+   is the scan aid, never the fact. */
+.badge[data-source="cron"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.badge[data-source="cli"] {
+  color: var(--color-warn);
+  border-color: var(--color-warn);
+}
+
+@media (max-width: 640px) {
+  /* Three uppercase band labels stop fitting one line well before this;
+     the labels themselves are short enough to stack tighter instead. */
+  .band__tab {
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .airing {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .run-card__outcome {
+    margin-left: 0;
   }
 }
