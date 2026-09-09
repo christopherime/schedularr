@@ -40,6 +40,13 @@ type ScheduleHistoryEntry struct {
 	DurationMs      float64   `db:"duration_ms"`
 	Title           string    `db:"title"`
 	Type            string    `db:"type"`
+	// RunID is the apply run (store.ApplyRun.ID) that committed this row,
+	// or "" for rows written before apply runs were recorded (v0.5.7) --
+	// runs cannot be backfilled, so an empty RunID means "unknown apply",
+	// not "no apply". Stamped by Engine.Commit from EngineOptions.RunID,
+	// never by the planner: a dry run produces entries too, and they must
+	// not claim a run that never happened.
+	RunID string `db:"run_id"`
 }
 
 // ScheduleHistory tracks what content has been scheduled to prevent repetition

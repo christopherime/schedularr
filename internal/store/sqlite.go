@@ -190,8 +190,8 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 
 	for _, entry := range entries {
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type)
-			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type)`, entry); err != nil {
+			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type, run_id)
+			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type, :run_id)`, entry); err != nil {
 			return fmt.Errorf("failed to insert schedule history: %w", err)
 		}
 	}
@@ -210,7 +210,7 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 func (s *Store) ListScheduleHistory(ctx context.Context, since time.Time) ([]scheduler.ScheduleHistoryEntry, error) {
 	var entries []scheduler.ScheduleHistoryEntry
 	err := s.db.SelectContext(ctx, &entries, `
-		SELECT program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type
+		SELECT program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type, run_id
 		FROM schedule_history
 		WHERE scheduled_at >= ?
 		ORDER BY scheduled_at DESC`, since)
@@ -487,8 +487,8 @@ func (s *Store) ReplaceOccurrenceHistory(ctx context.Context, blockName string, 
 
 	for _, entry := range entries {
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type)
-			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type)`, entry); err != nil {
+			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type, run_id)
+			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type, :run_id)`, entry); err != nil {
 			return fmt.Errorf("failed to insert replacement schedule history for block %q at %s: %w", blockName, occurrenceStart, err)
 		}
 	}
