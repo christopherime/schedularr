@@ -61,7 +61,7 @@ func (h *Handlers) GetHistory(w http.ResponseWriter, r *http.Request, params gen
 //
 // Since v0.5.7 the enrichment the schedule_history table has stored all
 // along -- title, type, duration_ms, occurrence_start, sequence -- is
-// exposed too, along with run_id: the history page shows programme names
+// exposed too, along with run_id: the history page shows program names
 // and the apply that put them on air, not UUIDs.
 func historyEntryToGen(e scheduler.ScheduleHistoryEntry) gen.HistoryEntry {
 	programID := e.ProgramID

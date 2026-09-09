@@ -211,7 +211,7 @@ type EngineOptions struct {
 	SnapshotRetention time.Duration
 	// RunID is the apply run this engine's Commit belongs to
 	// (store.ApplyRun.ID). Stamped onto every schedule_history row Commit
-	// writes, so an aired programme can be traced back to the apply that
+	// writes, so an aired program can be traced back to the apply that
 	// put it there. Left empty by a dry-run caller: a dry run plans
 	// entries too, and they must not claim a run that never happened.
 	RunID    string

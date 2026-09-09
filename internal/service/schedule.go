@@ -130,7 +130,6 @@ type Runner struct {
 
 var _ ScheduleRunner = (*Runner)(nil)
 
-// NewRunner builds a Runner backed by st and tc. l and loc default to
 // RunnerOptions carries a Runner's construction settings. A struct
 // rather than more parameters: NewRunner was already at the
 // five-argument lint ceiling before retention split per table.
@@ -257,49 +256,53 @@ func (r *Runner) Run(ctx context.Context, o Options) (*Result, error) {
 	r.applyMu.Lock()
 	defer r.applyMu.Unlock()
 
-	runID := uuid.NewString()
-	started := r.now()
-	r.startApplyRun(ctx, runID, started, o)
+	rec := r.newApplyRun(o)
+	r.startApplyRun(ctx, rec)
 
-	res, err := r.run(ctx, o, runID)
-	r.finishApplyRun(ctx, runID, started, o, res, err)
+	res, err := r.run(ctx, o, rec.ID)
+	r.finishApplyRun(ctx, rec, res, err)
 	if res != nil {
-		res.RunID = runID
+		res.RunID = rec.ID
 	}
 	return res, err
+}
+
+// newApplyRun mints this apply's record: everything known before the
+// work starts. An empty Options.Source records ApplySourceUnknown -- a
+// missing label is a defect to notice in the history page's RUNS pane,
+// never a reason to refuse to push a lineup.
+func (r *Runner) newApplyRun(o Options) store.ApplyRun {
+	source := o.Source
+	if source == "" {
+		source = store.ApplySourceUnknown
+	}
+	return store.ApplyRun{
+		ID:        uuid.NewString(),
+		StartedAt: r.now(),
+		Source:    source,
+		Scope:     o.ChannelID,
+		Days:      o.Days,
+		Status:    store.ApplyStatusRunning,
+	}
 }
 
 // startApplyRun writes this apply's in-flight record. Recording never
 // fails an apply: a store write that fails here is logged and dropped.
 // Losing the record of an apply is a reporting gap; refusing to schedule
 // because the reporting table is unhappy would be worse.
-func (r *Runner) startApplyRun(ctx context.Context, runID string, started time.Time, o Options) {
-	source := o.Source
-	if source == "" {
-		source = store.ApplySourceUnknown
-	}
-	if err := r.store.StartApplyRun(ctx, store.ApplyRun{
-		ID: runID, StartedAt: started, Source: source, Scope: o.ChannelID,
-		Days: o.Days, Status: store.ApplyStatusRunning,
-	}); err != nil {
-		r.logger.Warn("failed to record apply run start", "error", err, "run_id", runID)
+func (r *Runner) startApplyRun(ctx context.Context, rec store.ApplyRun) {
+	if err := r.store.StartApplyRun(ctx, rec); err != nil {
+		r.logger.Warn("failed to record apply run start", "error", err, "run_id", rec.ID)
 	}
 }
 
-// finishApplyRun finalizes this apply's record with its outcome, counts
-// and warnings, then prunes runs past their retention. Both writes are
+// finishApplyRun finalizes rec with this apply's outcome, counts and
+// warnings, then prunes runs past their retention. Both writes are
 // best-effort for the same reason startApplyRun's is.
-func (r *Runner) finishApplyRun(ctx context.Context, runID string, started time.Time, o Options, res *Result, runErr error) {
+func (r *Runner) finishApplyRun(ctx context.Context, rec store.ApplyRun, res *Result, runErr error) {
 	finished := r.now()
-	source := o.Source
-	if source == "" {
-		source = store.ApplySourceUnknown
-	}
-	rec := store.ApplyRun{
-		ID: runID, StartedAt: started, FinishedAt: &finished,
-		Source: source, Scope: o.ChannelID, Days: o.Days,
-		Status: store.ApplyStatusOK,
-	}
+	rec.FinishedAt = &finished
+	rec.Status = store.ApplyStatusOK
 	if runErr != nil {
 		rec.Status = store.ApplyStatusError
 		rec.Error = runErr.Error()
@@ -309,11 +312,11 @@ func (r *Runner) finishApplyRun(ctx context.Context, runID string, started time.
 		for _, slots := range res.Channels {
 			rec.SlotCount += len(slots)
 		}
-		rec.Warnings = applyRunWarnings(runID, res.Warnings)
+		rec.Warnings = applyRunWarnings(rec.ID, res.Warnings)
 	}
 
 	if err := r.store.FinishApplyRun(ctx, rec); err != nil {
-		r.logger.Warn("failed to record apply run outcome", "error", err, "run_id", runID)
+		r.logger.Warn("failed to record apply run outcome", "error", err, "run_id", rec.ID)
 		return
 	}
 	if r.applyRunRetention > 0 && runErr == nil {
