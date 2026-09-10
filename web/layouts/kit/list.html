@@ -43,6 +43,49 @@
     </div>
   </section>
 
+  <section class="kit-section" aria-labelledby="kit-link-title">
+    <div class="section-head">
+      <h2 id="kit-link-title">Link legend</h2>
+      <p>
+        The bezel's live-link ladder, all three rungs, in the real
+        <code>.telemetry</code> container. LINK LOST is the only rung that
+        grows a control, and its Reconnect button is shown by CSS off the
+        dot's own <code>data-state</code> — these fixtures run no script to
+        get it. Flare fires the transition's 200ms pulse, which is
+        <em>not</em> a state: it lives on <code>data-pulse</code> so it can
+        only ever fire on a change, never on load. Suppressed entirely
+        under <code>prefers-reduced-motion</code> and under
+        <code>forced-colors</code>.
+      </p>
+    </div>
+    <div class="kit-stack">
+      <div class="telemetry">
+        <span class="telemetry__item" x-data="{ flare: '' }">
+          <span class="telemetry__label">Link</span>
+          <span class="status-dot" data-state="live" :data-pulse="flare || null" aria-hidden="true"></span>
+          <span class="telemetry__value">Live</span>
+          <button type="button" class="btn btn--ghost btn--sm" @click="flare = 'live'; setTimeout(() => (flare = ''), 260)">Flare reacquire</button>
+        </span>
+      </div>
+      <div class="telemetry">
+        <span class="telemetry__item">
+          <span class="telemetry__label">Link</span>
+          <span class="status-dot" data-state="poll" aria-hidden="true"></span>
+          <span class="telemetry__value">Poll</span>
+        </span>
+      </div>
+      <div class="telemetry">
+        <span class="telemetry__item" x-data="{ flare: '' }">
+          <span class="telemetry__label">Link</span>
+          <span class="status-dot" data-state="lost" :data-pulse="flare || null" aria-hidden="true"></span>
+          <span class="telemetry__value">Link lost</span>
+          <button type="button" class="btn btn--sm telemetry__reconnect" aria-label="Reconnect the live link">Reconnect</button>
+          <button type="button" class="btn btn--ghost btn--sm" @click="flare = 'lost'; setTimeout(() => (flare = ''), 260)">Flare drop</button>
+        </span>
+      </div>
+    </div>
+  </section>
+
   <section class="kit-section" aria-labelledby="kit-buttons-title">
     <div class="section-head">
       <h2 id="kit-buttons-title">Buttons</h2>

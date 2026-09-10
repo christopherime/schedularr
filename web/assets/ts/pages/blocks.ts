@@ -5,18 +5,21 @@
 // bundle per page since the v0.5.0 runtime refactor -- this entry compiles
 // the shared runtime in with itself (see partials/ui/page-js.html).
 //
-// Two contract rules drive most of the awkward-looking code below, both
-// from the API's PUT semantics (api/openapi.yaml, BlockWrite):
+// Three contract rules drive most of the awkward-looking code below, all
+// from the API's write semantics (api/openapi.yaml, BlockWrite):
 //
-//   1. PUT is a full replace. Toggling "enabled" from the list still sends
-//      the block's complete stored spec back unchanged -- there is no
-//      partial-update endpoint. Never build a toggle-only body.
-//   2. BlockWrite.enabled defaults to true when omitted. This UI never
-//      relies on that default -- every write (create, edit, and the list
-//      toggle) sends `enabled` explicitly, even when it happens to already
-//      be what the default would have produced.
+//   1. PUT is a full replace, and so requires If-Match carrying the
+//      updated_at this editor loaded. Never build a partial PUT body.
+//   2. PATCH is the field-scoped write, and is what the list's toggle
+//      uses: a toggle that resent the whole spec would overwrite a spec
+//      edit made in another tab, which is also why PATCH needs no
+//      If-Match -- it has no unrelated state to lose.
+//   3. BlockWrite.enabled defaults to true when omitted. This UI never
+//      relies on that default -- create and edit both send `enabled`
+//      explicitly, even when it happens to already be what the default
+//      would have produced.
 //
-// A third, less obvious constraint: the server decodes both create and
+// A further, less obvious constraint: the server decodes both create and
 // update bodies with encoding/json's DisallowUnknownFields (see
 // internal/api/blocks.go), so a request body may only contain fields the
 // OpenAPI schema actually defines -- no client-side convenience fields can
@@ -24,6 +27,7 @@
 // close to gen/types.d.ts's BlockSpec shape for exactly that reason.
 import { ApiError, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
+import { subscribe } from "../runtime/bus.ts";
 import { channelHint as channelHintText, channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { cronReadback } from "../runtime/cron.ts";
@@ -31,7 +35,7 @@ import { draftHref } from "../runtime/draft.ts";
 import { describeError, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { pad2 } from "../runtime/format.ts";
-import { initShell } from "../runtime/shell.ts";
+import { initShell, onResume } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
 import type { components } from "../gen/types";
 
@@ -53,11 +57,6 @@ type OnComplete = NonNullable<SeriesConfig["on_complete"]>;
 declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
 };
-
-// Same double-init defense as dashboard.ts: Alpine.data()'s init() is
-// auto-invoked, so nothing on this page also wires x-init="init()" to it
-// (see that file's comment for the full story of why this guard exists).
-let started = false;
 
 // The cron plain-language readback lives in runtime/cron.ts since v0.5.1
 // (the guide inspector reads it too); cronstrue itself stays the vendored
@@ -613,6 +612,87 @@ export function formFromSpec(spec: BlockSpec, enabled: boolean): EditorForm {
   };
 }
 
+// ---- live link: what an external change does to an open editor -----------
+//
+// plan.invalidated means "something the schedule is derived from changed,
+// go look" -- on this page, that the list is stale. Reading it back is
+// held until the editor closes, because the list is not just what the
+// operator sees: it is where the next save's If-Match comes from (submit()
+// reads updated_at off this.blocks). A list that is a few seconds behind
+// is recoverable; a rebased If-Match is a silent lost update.
+
+/** The editor state the live-link decision reads. */
+export interface EditorSnapshot {
+  open: boolean;
+  /** The block being edited; null in create mode or with the panel shut. */
+  editingId: string | null;
+}
+
+export interface LiveReaction {
+  /** Read the list now. */
+  refetchNow: boolean;
+  /** A read still owed, to be drained when the editor closes. */
+  queued: boolean;
+  /** Raise the "changed elsewhere" note on the open editor. */
+  note: boolean;
+}
+
+/**
+ * Reads the block id out of a plan.invalidated frame, or null when the
+ * frame names something else. The payload is {reason, id} where reason is
+ * "block" or "series" (internal/api/events.go) and a series id is a show
+ * TITLE -- matching that against editingId would raise the note on an
+ * unrelated block whose store id happened to collide with a show name.
+ *
+ * A malformed frame returns null rather than throwing: the bus hands
+ * handlers `unknown` precisely so a payload change fails in the page's
+ * own narrowing instead of taking the stream's pump loop down with it.
+ */
+export function changedBlockId(data: unknown): string | null {
+  if (typeof data !== "object" || data === null) return null;
+  const frame = data as { reason?: unknown; id?: unknown };
+  if (frame.reason !== "block" || typeof frame.id !== "string") return null;
+  return frame.id;
+}
+
+/**
+ * What one plan.invalidated frame does to the list.
+ *
+ * An OPEN editor freezes the list -- dirty or clean, edit or create. A
+ * clean editor looks harmless, and is the whole reason this fix exists:
+ * submit() sends `If-Match: <updated_at>` read out of this.blocks, so a
+ * refetch under an open panel quietly re-arms that header with the
+ * updated_at of a record the operator has never seen. The next save then
+ * SUCCEEDS and full-replaces the other tab's spec with the pre-change one
+ * still on this screen -- exactly the lost update If-Match was added to
+ * stop. Nothing is refetched under an open panel; what the operator holds
+ * and the header they will send stay the same record.
+ *
+ * `queued` is a flag and deliberately not a count: however many changes
+ * land while the editor is open, they are all answered by ONE read of the
+ * list when it closes, so draining is a single fetch rather than a burst
+ * of identical ones.
+ *
+ * The note fires whether or not the editor is dirty. Even a clean editor
+ * is holding the updated_at its next save will send as If-Match, and the
+ * freeze above keeps it holding it -- so once the record moves, that save
+ * is genuinely doomed to a 412, and saying so now is cheaper than saying
+ * so after the operator finishes typing.
+ */
+export function planInvalidatedReaction(editor: EditorSnapshot, changedId: string | null): LiveReaction {
+  const hold = editor.open;
+  return {
+    refetchNow: !hold,
+    queued: hold,
+    note: editor.open && changedId !== null && changedId === editor.editingId,
+  };
+}
+
+/** Raised on the open editor when its own block moved somewhere else.
+ * Worded as an instruction, not an alarm: nothing typed is lost, the edit
+ * just needs the current record under it before it can be saved. */
+const STALE_BLOCK_NOTE = "This block changed elsewhere — reload the list, then save to re-apply your edit.";
+
 interface EditorState {
   open: boolean;
   mode: "create" | "edit";
@@ -668,6 +748,12 @@ interface BlocksState {
   // armed on -- name included so the dialog can say what it deletes.
   confirmDelete: { id: string; name: string } | null;
 
+  // A read of the list the live link owes but is holding back, because
+  // plan.invalidated (or a tab resume) landed while the editor panel was
+  // open. A flag, not a count (see planInvalidatedReaction); drained by
+  // closeEditor.
+  refetchQueued: boolean;
+
   editor: EditorState;
   scheduleDayOptions: ScheduleDayOption[];
 
@@ -676,6 +762,7 @@ interface BlocksState {
   loadBlocks(): Promise<void>;
   loadChannels(): Promise<void>;
   loadMedia(): Promise<void>;
+  noteStale(message: string): void;
 
   cronReadback(raw: string): string | null;
   channelLabel(c: Channel): string;
@@ -740,6 +827,7 @@ document.addEventListener("alpine:init", () => {
 
       pendingId: null,
       confirmDelete: null,
+      refetchQueued: false,
 
       editor: {
         open: false,
@@ -755,16 +843,59 @@ document.addEventListener("alpine:init", () => {
       },
       scheduleDayOptions: SCHEDULE_DAY_OPTIONS,
 
+      // Alpine calls this once per component instance and the page has
+      // exactly one x-data="blocks", so there is no module-level one-shot
+      // guard here: the subscriptions below are wired from init and live
+      // with the component, and initShell() keeps its own idempotence
+      // guard so no second stream can be opened either way.
       init() {
-        if (started) return;
-        started = true;
         void this.loadBlocks().then(() => this.openLinkedEditor());
         void this.loadChannels();
         // Arming a new token re-fires whichever loads failed (the token
         // panel's probe broadcast, runtime/api.ts's onReauth).
+        //
+        // Through the same freeze as the stream and the resume: this is
+        // the third read the operator did not ask for, and it rebases
+        // If-Match exactly as silently as the other two would. Reachable
+        // whenever a load fails while a panel is already open -- the row
+        // actions are not disabled behind it -- so the guard is not
+        // theoretical. The channel list carries no If-Match and is not
+        // held.
         onReauth(() => {
-          if (this.blocksProblem) void this.loadBlocks();
+          if (this.blocksProblem) {
+            if (this.editor.open) this.refetchQueued = true;
+            else void this.loadBlocks();
+          }
           if (this.channelsError) void this.loadChannels();
+        });
+
+        // The live link. Never unsubscribed: an Alpine page component
+        // lives exactly as long as the document does.
+        subscribe("plan.invalidated", (data) => {
+          const changedId = changedBlockId(data);
+          const reaction = planInvalidatedReaction(
+            { open: this.editor.open, editingId: this.editor.editingId },
+            changedId,
+          );
+          // Set before the fetch, which clears it again on the way in:
+          // the reverse order would leave a phantom read owed forever.
+          this.refetchQueued = reaction.queued;
+          if (reaction.note) this.noteStale(STALE_BLOCK_NOTE);
+          if (reaction.refetchNow) void this.loadBlocks();
+        });
+
+        // A hidden tab streams nothing, so it has missed every frame
+        // since it was hidden and the resume replay only reaches back as
+        // far as the hub's ring -- refetching is the only way it can
+        // trust what it shows. Routed through the same freeze as the
+        // stream: a resume that refetched under an open panel would
+        // rebase If-Match just as silently as a frame would.
+        onResume(() => {
+          if (this.editor.open) {
+            this.refetchQueued = true;
+            return;
+          }
+          void this.loadBlocks();
         });
       },
 
@@ -783,6 +914,9 @@ document.addEventListener("alpine:init", () => {
       async loadBlocks() {
         this.blocksLoading = true;
         this.blocksProblem = null;
+        // Any read of the list settles every read owed, wherever it came
+        // from -- the live link's queue, onReauth, or the first load.
+        this.refetchQueued = false;
         try {
           this.blocks = await apiGet<BlockRecord[]>(apiPath("/blocks"));
         } catch (err) {
@@ -833,6 +967,27 @@ document.addEventListener("alpine:init", () => {
         // tracking two independent flags the templates would otherwise
         // have to check separately.
         this.mediaOk = showsOk && metaOk;
+      },
+
+      // Raises the "this block moved under you" note on the open editor
+      // and offers the one action that resolves it. Deliberately does NOT
+      // touch editor.form: reloading the list refreshes the record the
+      // next save's If-Match reads, while what the operator typed stays
+      // exactly where they left it. The note itself rides editor.error,
+      // the panel's one inline status line; the action rides the tape,
+      // which is where this page's actionable lines already live.
+      noteStale(message) {
+        // Once per note, not once per frame: a burst of changes to the
+        // same block would otherwise fill all three tape slots with the
+        // same sentence and push every other line off the tape.
+        if (this.editor.error === message) return;
+        this.editor.error = message;
+        printTape(message, {
+          label: "Reload blocks",
+          run: () => {
+            void this.loadBlocks();
+          },
+        });
       },
 
       cronReadback,
@@ -1010,6 +1165,10 @@ document.addEventListener("alpine:init", () => {
         this.editor.scheduleDaysError = null;
         this.editor.form = emptyEditorForm();
         this.focusReturnSoon();
+        // Drain the live link's held read, if one is owed. However many
+        // changes landed while the panel was open, they cost exactly one
+        // fetch now that no If-Match is armed against the old record.
+        if (this.refetchQueued) void this.loadBlocks();
       },
 
       // The editor panel sits above the list in document order, so opening
@@ -1164,6 +1323,16 @@ document.addEventListener("alpine:init", () => {
             // carries the actual meaning -- dropping it would show the
             // operator a fairly unhelpful single word.
             this.editor.nameConflict = describeError(err);
+          } else if (err instanceof ApiError && err.status === 412) {
+            // The If-Match guard fired: another tab saved this block
+            // first. The server's own detail already reads "Reload and
+            // re-apply your edit" (internal/api/blocks.go), so it is
+            // repeated verbatim rather than paraphrased into something
+            // that could drift out of step with it. What the server
+            // cannot do from its side is offer the reload -- noteStale
+            // attaches that, and nothing here retries silently, which
+            // would be precisely the lost update the header prevents.
+            this.noteStale(describeError(err));
           } else {
             this.editor.error = describeError(err);
           }
@@ -1172,10 +1341,9 @@ document.addEventListener("alpine:init", () => {
         }
       },
 
-      // Full-replace PUT: the body carries the block's own currently
-      // stored spec back unchanged, with only `enabled` flipped -- there is
-      // no partial-update endpoint, and `enabled` is always explicit (see
-      // this file's header comment).
+      // Field-scoped PATCH (contract rule 2): the body carries `enabled`
+      // and nothing else, so the toggle cannot overwrite a spec edit made
+      // elsewhere since this list loaded.
       async toggleEnabled(block) {
         if (this.pendingId) return;
         this.pendingId = block.id;

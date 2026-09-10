@@ -256,29 +256,40 @@ v0.5.5 below).
   **Deliberately left to the History desk slice:** `DELETE /history`,
   per-title removal, the STORAGE strip, the `app_meta.max_plan_seq`
   floor, bulk cursor operations, and YAML import/export on the page.
-- **Then — Live link (SSE): server half shipped in v0.5.8; client
-  pending.** `internal/events` holds an in-process broadcast hub and
-  `GET /api/v1/events` streams it as `text/event-stream`, with a 15s
+- **v0.5.8 / v0.5.9 — Live link (SSE): SHIPPED.** Split across two
+  numbers because the server half was worth shipping and documenting on
+  its own. **v0.5.8** (2026-09-10) put `internal/events`' broadcast hub
+  behind `GET /api/v1/events`, streaming `text/event-stream` with a 15s
   heartbeat carrying `server_time` and `Last-Event-ID` resume over a
   128-event ring. Producers are the seams that already existed:
   `service.Runner` announces `apply.completed` after the run row is
   written, the block and cursor handlers announce `plan.invalidated` and
   `series.changed`, and a reachability prober in `serve` announces
-  `status.changed` — on a flip only, never once per probe, because
-  nothing else server-side notices Tunarr going away. The multi-writer
-  visibility this opens also closed the lost-update hole it would
-  otherwise create: `PUT /blocks/{id}` now requires `If-Match` and
+  `status.changed` — on a flip only, never once per probe. The
+  multi-writer visibility this opens also closed the lost-update hole it
+  would otherwise create: `PUT /blocks/{id}` requires `If-Match` and
   answers `412`, and `PATCH /blocks/{id}` carries the enable/disable
   toggle so it cannot clobber a spec edit made in another tab.
-  `history.appended` was cut from the design spec's catalog: it would
-  fire at the same instant, from the same place, carrying the same
-  `run_id` as `apply.completed`.
-  **Still pending — the client half:** the `fetch`/`ReadableStream`
-  reader (`EventSource` cannot send a bearer header), the event bus and
-  heartbeat skew correction, the bezel's LINK legend and its three
-  states, and the per-page routing with its dirty guards. Until that
-  lands, the server broadcasts to nobody and the UI behaves exactly as
-  it did in v0.5.7.
+  **v0.5.9** landed the client: a hand-rolled `fetch`/`ReadableStream`
+  reader (`EventSource` cannot send a bearer header, and a token in the
+  query string would leak into access logs — refused permanently, not
+  deferred), an event bus with heartbeat-corrected `serverNow()` that
+  every relative timestamp now reads, the bezel's LINK legend across
+  LIVE / POLL / LINK LOST with a manual reconnect, and per-page routing
+  behind two dirty guards. The guards are the slice: the Guide freezes
+  while the inspector is open or a draft is armed, and Blocks freezes
+  while its editor is open — dirty **or clean**, because a clean editor
+  is still holding the `updated_at` its next save sends as `If-Match`,
+  and refetching underneath it would silently re-arm that header and let
+  the save overwrite the other tab's work.
+  **Deliberately left out:** `history.appended` (it would fire at the
+  same instant, from the same place, carrying the same `run_id` as
+  `apply.completed`); a WebSocket (nothing here needs a second
+  direction); server-side fan-out beyond one process (the hub is
+  in-process, and a second replica would need a real bus); and the trace
+  draw-in for rows arriving on `/history/`, which stayed guide-only.
+  Any reverse proxy fronting Schedularr must not buffer or time out
+  `/api/v1/events` — see `docs/deployment.md`.
 - **Then — Block power tools: pending.** Unchanged in scope.
 - **Then — History desk power tools: pending.** Was "the series desk";
   now the desk lives on `/history/`. Bulk cursor operations, YAML

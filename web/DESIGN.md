@@ -135,8 +135,9 @@ candidate.
   consumer card; this is a deliberate override of a softer default.
 - Restrained color: neutrals plus one accent (phosphor green), with
   amber/red reserved for functional signal states, never decoration.
-- One authored motion (the token panel's open/close); every other
-  transition is a plain, short state change.
+- Authored motion is a short, named, closed inventory -- the token
+  panel's open/close, the guide's trace draw-in and settle, and the live
+  link's two flares. Everything else is a plain, short state change.
 - No manual light/dark toggle -- the OS/browser setting decides (see
   Colors below).
 
@@ -277,9 +278,11 @@ binding:
   now × 1440, plus the minutes into now's own day clamped to its 288
   columns -- DST days keep their clamped geometry) and is set once per
   minute via CSSOM by a local 60s timer (a discrete step, not an
-  animation loop; heartbeat skew correction arrives with the SSE
-  live-link slice). It renders only on the week page containing now;
-  other pages hide it.
+  animation loop). Since v0.5.9 that timer reads `bus.ts`'s
+  `serverNow()`, not `Date.now()`, so the stream heartbeat's skew
+  correction lands on the sweep -- the one line whose whole job is being
+  where the SERVER thinks now is. It renders only on the week page
+  containing now; other pages hide it.
   No scroll handler anywhere. The phosphor-persistence trail is a
   `::before` gradient riding the rule; reduced motion drops the trail
   and keeps the rule. Opening auto-scrolls to the sweep on that page (a
@@ -642,12 +645,13 @@ shape.
   the 404 page's "Return to Dashboard" is the first `.btn` on an `<a>`
   rather than a `<button>`, and anchors need it reset explicitly.
 - **`.status-dot`** -- an 8px circle, coded-legend discipline: it never
-  appears without adjacent text naming the state. Two vocabularies share
-  the same `data-state` attribute and the same two colors: the token
-  panel's `armed`/`unarmed`, and every live reading's `ok`/`down`
-  (dashboard Tunarr signal, blocks/series channel fallbacks, the 404
-  page's "No Signal"). `unknown` (the token trigger's initial
-  state before JS runs) falls through to the base muted color.
+  appears without adjacent text naming the state. Three vocabularies
+  share the same `data-state` attribute and the same three colors: the
+  token panel's `armed`/`unarmed`, every live reading's `ok`/`down`
+  (Tunarr signal, blocks/series channel fallbacks, the 404 page's "No
+  Signal"), and the live link's `live`/`poll`/`lost` (v0.5.9). `unknown`
+  -- the pre-JS initial value on the token trigger and on both bezel dots
+  -- falls through to the base muted color.
 - **`.problem`** -- the inline API-error panel (`.problem__title` +
   `.problem__detail`), used identically on every page that fetches on
   load: dashboard status/history, blocks list/editor, the guide's
@@ -695,11 +699,51 @@ shape.
   (not an iOS-style pill, matching the small-radii shape language), used
   for both blocks' Enabled/Disabled and series' Completed/Disabled
   toggles.
-- **`.telemetry`** (v0.5.0) -- the bezel telemetry strip: TUNARR
-  (coded-legend dot+text) plus LAST APPLY / NEXT TICK relative readouts
-  on every page, fed by `runtime/shell.ts`'s 60s `GET /status` poll. The
-  LIVE/POLL/LINK legend is deliberately absent until the SSE slice
-  (v0.5.4) can make it honest.
+- **`.telemetry`** (v0.5.0) -- the bezel telemetry strip: LINK, TUNARR
+  (both coded-legend dot+text) plus LAST APPLY / NEXT TICK relative
+  readouts on every page, fed by `runtime/shell.ts`. LINK sits FIRST
+  because it qualifies the other three: off the LIVE rung those numbers
+  are last-known, not live, and that has to be read before them rather
+  than after.
+- **The LINK legend** (v0.5.9) -- the live link's degradation ladder as a
+  bezel readout, `LIVE` / `POLL` / `LINK LOST`. The `data-state` values
+  are `bus.ts`'s `LinkState` written through verbatim (`live`, `poll`,
+  `lost`), so no name-mapping table sits between the runtime and the
+  stylesheet to drift. `POLL` takes the warn slot rather than danger --
+  the page still shows current data, it has just gone back to refetching
+  instead of listening; degraded, not broken. `LINK LOST` is the one
+  readout in the system that grows a control: a real `Reconnect`
+  `<button>` (`.telemetry__reconnect`, styled `.btn btn--sm` rather than
+  ghost, whose border clears the 3:1 non-text floor in both palettes).
+  Its visibility is CSS off the dot's own `data-state` via the general
+  sibling combinator, never a second attribute from JS -- one writer per
+  transition, and no way to end up with a Reconnect button beside a LIVE
+  legend. `display: none` keeps it out of the tab order while the link is
+  up. Both halves of the gate are scoped under `.telemetry` for weight,
+  and that scope is not cosmetic: the button also carries `.btn`, whose
+  own `display: inline-flex` is a bare class selector declared LATER in
+  the stylesheet, so an unscoped `.telemetry__reconnect { display: none }`
+  ties on specificity and loses on source order -- which is exactly how
+  the button shipped visible in every link state during the first cut of
+  this slice. The value carries `role="status"` (TUNARR's does not): a
+  screen reader that never heard the state change would never go looking
+  for the button that appeared next to it.
+- **The two link flares** (v0.5.9) -- this slice's entire motion budget:
+  one 200ms amber ring when the link drops, one green when it is
+  reacquired, both `box-shadow`-borne off `@keyframes link-flare`. They
+  live on a separate `data-pulse` attribute, not on `data-state`, for two
+  reasons: an animation keyed to a state selector fires the first time
+  that selector matches, which for `live` is the ordinary happy-path
+  connect a second after every page load (spec §5 bans motion on initial
+  load); and the attribute has to be cleared -- `shell.ts` clears it on
+  `animationend` -- for a second flare of the same kind to retrigger at
+  all. No `fill-mode`, so the ring reverts to the state's own box-shadow
+  (the accent glow, or nothing) the instant the 200ms is up. Suppressed
+  by an explicit `animation: none` under `prefers-reduced-motion` (the
+  global 0.01ms collapse still RUNS the keyframes, and their final frame
+  would blink the live dot's glow off and on) and dropped under
+  `forced-colors`, which strips shadows outright -- there the legend text
+  and the appearing Reconnect button carry the transition.
 - **`.plate`** (v0.5.0) -- the channel legend plate; see the partials
   section above.
 - **`.tape`** (v0.5.0) -- the event tape; success is printed, not
@@ -748,9 +792,12 @@ shape.
   adjacent text naming the state. This is load-bearing, not stylistic:
   it is this system's WCAG SC 1.4.1 (Use of Color) answer.
 - **Do** keep motion to plain, short state transitions
-  (`--duration-fast`/`--duration-base`) except the token panel's one
-  authored open/close. Respect `prefers-reduced-motion` (already
-  enforced globally in the reset).
+  (`--duration-fast`/`--duration-base`) unless the moment is already in
+  the authored inventory named in the Overview. Respect
+  `prefers-reduced-motion` -- the global reset collapses durations, but a
+  box-shadow or `clip-path` animation still needs its own explicit
+  `animation: none`, because at 0.01ms the keyframes run and their final
+  frame lands.
 - **Don't** introduce a card-grid, kicker/eyebrow, or same-size
   icon+heading+text pattern -- this is an operate-mode instrument panel
   (a readout row and a table), not a marketing surface.
@@ -890,12 +937,44 @@ with room to spare. The as-run rows reuse the guide's already-verified
 `--color-ink-muted`-on-raised and plate pairings, since they render
 inside the same `.rundown-day` / `.rundown-list` idiom.
 
+**v0.5.9 live link** introduced the bezel LINK legend -- three dot
+states, a legend, and a Reconnect button, all on the bezel's
+`--color-bg-raised` ground. Checked computationally (same
+throwaway-script convention):
+
+| Pairing                                                             | Light   | Dark    |
+| ------------------------------------------------------------------- | ------- | ------- |
+| `--color-ink-muted` on `--color-bg-raised` (`LINK` label)           | 8.46:1  | 7.42:1  |
+| `--color-ink` on `--color-bg-raised` (`LIVE`/`POLL`/`LINK LOST`)    | 16.56:1 | 15.15:1 |
+| `--color-ink` on `--color-bg-raised` (`RECONNECT` button label)     | 16.56:1 | 15.15:1 |
+| `--color-accent` on `--color-bg-raised` (`live` dot, non-text)      | 6.59:1  | 10.19:1 |
+| `--color-warn` on `--color-bg-raised` (`poll` dot, non-text)        | 6.92:1  | 8.43:1  |
+| `--color-danger` on `--color-bg-raised` (`lost` dot, non-text)      | 7.32:1  | 6.51:1  |
+| `--color-border-interactive` on raised (Reconnect border, non-text) | 5.63:1  | 3.58:1  |
+
+Both text pairings clear the 4.5:1 AA floor by a wide margin, and all
+four non-text pairings clear the 3:1 floor -- the tightest is the
+Reconnect button's border in dark at 3.58:1 -- `--color-border-interactive`,
+which every `.btn` in the system already uses precisely because it clears
+that floor. The button is deliberately *not*
+`.btn--ghost`: that variant's `--color-border` edge is a 1.79:1 (light) /
+1.40:1 (dark) pairing, acceptable for a button sitting inside a form the
+operator is already looking at, too quiet for a control that has to be
+findable the moment it appears in dense chrome.
+
+The two flare rings are decorative and are not held to a floor -- the
+same judgment `--sweep-trail` and `--glow-accent` already carry, and for
+the same reason: the dot's own fill and the legend text carry the
+reading, the ring only marks the moment it changed. For the record they
+compute to 2.54:1 light / 3.36:1 dark (amber, 55% over raised) and
+2.52:1 / 3.86:1 (green), against `--glow-accent`'s 1.47:1 / 1.75:1.
+
 ## TypeScript runtime and Alpine.js conventions
 
 **One bundle per page (v0.5.0).** The shared runtime
 (`web/assets/ts/runtime/`: `api.ts`, `token.ts`, `errors.ts`,
-`format.ts`, `channels.ts`, `tape.ts`, `shell.ts`) is imported by thin
-page entries (`web/assets/ts/pages/*.ts`) and compiled INTO each page's
+`format.ts`, `channels.ts`, `tape.ts`, `shell.ts`, and since v0.5.9
+`bus.ts` + `stream.ts`) is imported by thin page entries (`web/assets/ts/pages/*.ts`) and compiled INTO each page's
 single esbuild bundle by the `ui/page-js` partial -- there is no
 separate shell bundle and no `window.schedularr` global anymore. Within
 a page every module (the `ApiError` class identity included) is the same
@@ -905,7 +984,13 @@ AbortController timeouts (15s reads / 60s writes), and entry-guards
 mutations (an identical in-flight mutation shares the first request's
 promise instead of double-firing). `shell.ts` wires the token panel
 (Save probes `GET /status`, arms only on success, then broadcasts the
-re-auth event that re-fires failed loads) and the bezel telemetry poll.
+re-auth event that re-fires failed loads), owns the page's single live
+link -- one `stream.ts` connection, every frame onto `bus.ts` -- and runs
+the `GET /status` poll that is both the POLL rung's fallback and the
+source of the three non-LINK bezel readouts. It fires only on the POLL
+rung: on LIVE the stream's own frames drive the refetch, and on LINK LOST
+there is nothing on the other end to poll -- either way a second reader
+on the same bezel is how a stale number overwrites a fresh one.
 
 Alpine is vendored (`web/assets/vendor/alpine.min.js`, pinned, loaded
 `defer`, no CDN) and used narrowly: one `Alpine.data()` component per

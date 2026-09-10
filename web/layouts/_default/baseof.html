@@ -66,13 +66,44 @@ carrying its provenance.
     {{ partial "nav.html" . }}
     <span class="bezel__spacer"></span>
     {{- /*
-      Bezel telemetry strip (spec §3.4), polled every 60s from GET /status
-      by runtime/shell.ts. TUNARR is a coded-legend dot+text pair; LAST
-      APPLY and NEXT TICK are relative readouts off the new Status fields.
-      The LINK legend deliberately does not exist yet -- it needs the SSE
-      live-link slice's event stream to be honest.
+      Bezel telemetry strip (spec §3.4), driven by runtime/shell.ts.
+      LINK reads the live link itself; TUNARR / LAST APPLY / NEXT TICK
+      are the GET /status readouts. LINK comes FIRST because it qualifies
+      the other three -- once the link is off the LIVE rung those numbers
+      are last-known, not live, and an operator has to know that before
+      reading them, not after.
+
+      Contract with shell.ts, so the markup and the runtime can be owned
+      separately: it writes bus.ts's LinkState verbatim onto
+      #tele-link-dot's data-state ("live" | "poll" | "lost"; the "unknown"
+      the server renders is the pre-first-frame value and falls through to
+      the muted base), the matching legend into #tele-link-text, and a
+      one-shot data-pulse on the same dot for each of the slice's two
+      motion moments. Nothing else: the Reconnect button's visibility is
+      CSS off data-state, so there is no second attribute to fall out of
+      sync with the first.
+
+      Coded-legend discipline throughout -- the text IS the state, the
+      colour is only the scan aid (WCAG SC 1.4.1).
     */ -}}
     <div class="telemetry" aria-label="Telemetry">
+      <span class="telemetry__item">
+        <span class="telemetry__label">Link</span>
+        <span class="status-dot" id="tele-link-dot" data-state="unknown" aria-hidden="true"></span>
+        {{- /* role="status" here and not on TUNARR: this is the one
+             readout that grows a CONTROL. A screen reader that never
+             heard the state change would never go looking for the
+             Reconnect button that appeared next to it. */ -}}
+        <span class="telemetry__value" id="tele-link-text" role="status">—</span>
+        {{- /* Label in Name (SC 2.5.3): the accessible name contains the
+             visible "Reconnect", so voice control still works. */ -}}
+        <button
+          type="button"
+          id="tele-link-reconnect"
+          class="btn btn--sm telemetry__reconnect"
+          aria-label="Reconnect the live link"
+        >Reconnect</button>
+      </span>
       <span class="telemetry__item">
         <span class="telemetry__label">Tunarr</span>
         <span class="status-dot" id="tele-tunarr-dot" data-state="unknown" aria-hidden="true"></span>

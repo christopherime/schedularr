@@ -28,10 +28,29 @@
 // pages four weeks client-side -- the ‹/› week pager never re-plans and
 // never touches the draft; only arming does.
 //
-// The now-line advances on a local 60s timer (browser clock); heartbeat
-// skew correction arrives with the SSE live-link slice.
+// The sweep cursor advances on its OWN local 60s timer, reading
+// runtime/bus.ts's serverNow() so the heartbeat's skew correction lands
+// on it -- never on a stream frame. A minute that only turns when the
+// server has something to say would stop turning the moment the link
+// drops, which is exactly when an operator looks hardest at the cursor.
+//
+// The live link (v0.5.9) only ever tells this page "go look":
+// apply.completed and plan.invalidated carry no plan. What the page may
+// do about that is a GUARD, not a reflex -- see liveAction below. An
+// auto-refetch that discarded an armed draft or re-rendered a half-read
+// inspector out from under the operator would be worse than having no
+// live link at all.
+//
+// A hidden tab is DEAF, not merely quiet: shell.ts drops the stream
+// while the tab is hidden, so nothing arrives to defer in the first
+// place. That is why this page registers its primary GET on shell.ts's
+// onResume, behind the same guard -- the decision is simply re-run the
+// moment the tab is looked at again. Without that hook a deferral is a
+// silent drop, and Last-Event-ID replay cannot cover for it either: the
+// hub's ring holds 128 events and a long-hidden tab outruns it.
 import { ApiError, LONG_GET_TIMEOUT_MS, LONG_SEND_TIMEOUT_MS, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiResponse } from "../runtime/api.ts";
+import { serverNow, subscribe } from "../runtime/bus.ts";
 import { channelHint as channelHintText, channelLabel, channelOrder, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { cronReadback } from "../runtime/cron.ts";
@@ -70,7 +89,7 @@ import {
   windowDayCount,
 } from "../runtime/grid.ts";
 import type { GhostBlockInfo, GridHandle, GuideRow, GuideSlot, RundownHandle } from "../runtime/grid.ts";
-import { initShell } from "../runtime/shell.ts";
+import { initShell, onResume } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
 import type { components } from "../gen/types";
 
@@ -110,6 +129,13 @@ interface WithMagics {
 }
 
 // Same double-init defense as every page: Alpine auto-invokes init().
+// Task 8 retired the page-level one-shots that existed to keep a second
+// STREAM from opening -- shell.ts owns that guard now, and the live-link
+// subscriptions below are made on init like any other wiring. This one
+// stays for the rest of what init() does: a second invocation would add
+// a second 60s sweep timer, a second onReauth handler, a second onResume
+// handler and a duplicate pair of bus subscriptions, none of which is
+// unsubscribed (the component lives as long as the page).
 let started = false;
 
 // DOM references the renderer hands back live OUTSIDE Alpine state --
@@ -162,7 +188,7 @@ let diffMemo: {
   value: DiffResult;
 } | null = null;
 
-type DraftMode = "off" | "previewing" | "armed" | "applying";
+export type DraftMode = "off" | "previewing" | "armed" | "applying";
 
 interface DraftState {
   mode: DraftMode;
@@ -186,6 +212,11 @@ interface DraftState {
   /** A SCOPE change or Arm press that landed during a reload, preview,
    * or apply -- re-fired once the flight lands. */
   pendingScope: boolean;
+  /** The live link announced a change AFTER this draft was generated:
+   * the plan on the glass was built from a source that has since moved,
+   * so it stays readable but may no longer be applied. Only a fresh
+   * preview clears it -- see onLiveChange. */
+  sourceChanged: boolean;
 }
 
 function emptyDraft(seq = 0): DraftState {
@@ -203,7 +234,175 @@ function emptyDraft(seq = 0): DraftState {
     applyFailed: false,
     seq,
     pendingScope: false,
+    sourceChanged: false,
   };
+}
+
+// ---- the live link ---------------------------------------------------------
+
+/**
+ * How long a burst of announcements is allowed to settle before the
+ * guide re-reads. One apply publishes apply.completed once, but a
+ * blocks-page session publishes plan.invalidated per write: saving three
+ * blocks in another tab would otherwise cost three full 28-day re-plans
+ * against Tunarr, each one redrawing the sheet under the operator.
+ * Trailing edge, so the re-read is issued after the LAST write -- a
+ * leading-edge refetch would race the very change it was announcing.
+ */
+export const LIVE_REFETCH_MS = 2_000;
+
+/** The pinned notice, and its button's label. The reading on the glass
+ * no longer matches the server, and while the operator is mid-task it is
+ * THEY who decide when it is replaced -- the page only says so. */
+export const LINEUP_CHANGED_LINE = "Lineup changed — refresh";
+
+/** The draft bar's line once an announced change has disarmed a draft.
+ * A draft is a promise about a source; when the source moves the promise
+ * is void, and only a fresh preview can make it good again. */
+export const DRAFT_STALE_LINE = "Source changed — re-preview";
+
+/** The two timer calls debounce() needs, injected rather than called
+ * through window: it is what lets the coalescing be pinned by a test on
+ * a fake clock instead of by waiting two real seconds. */
+export interface Timers {
+  set(cb: () => void, ms: number): number;
+  clear(handle: number): void;
+}
+
+export interface Debounced {
+  /** Restarts the wait: a burst runs `run` exactly once, `ms` after the
+   * last call. */
+  trigger(): void;
+  /** Drops a pending run. reload() calls it -- a read already in flight
+   * covers every change announced before it started. */
+  cancel(): void;
+}
+
+export function debounce(ms: number, timers: Timers, run: () => void): Debounced {
+  let handle: number | null = null;
+  const cancel = (): void => {
+    if (handle !== null) timers.clear(handle);
+    handle = null;
+  };
+  return {
+    trigger() {
+      cancel();
+      handle = timers.set(() => {
+        // Cleared BEFORE run(): run() re-reads, reload() cancels, and a
+        // cancel of a handle that has already fired would clear a timer
+        // some later trigger owns.
+        handle = null;
+        run();
+      }, ms);
+    },
+    cancel,
+  };
+}
+
+/** Everything the two guards read, in one shape with no DOM in it. */
+export interface GuideLiveness {
+  /** "off" is the only idle mode: previewing and applying are flights,
+   * and armed is a decision the operator has staged. */
+  draftMode: DraftMode;
+  inspectorOpen: boolean;
+  /** A GET /schedule already in the air. */
+  loading: boolean;
+  /** document.hidden -- the tab is not being looked at. */
+  hidden: boolean;
+}
+
+/**
+ * True when the operator's own work is on the glass: a draft in any
+ * state, or an open inspector. Refetching here would throw away a
+ * preview they staged, or re-render the slot they are reading out of
+ * existence, so the change is PINNED instead -- announced, and left for
+ * them to act on. An event is a hint; a hint may not outrank a decision.
+ */
+export function liveRefetchBlocked(s: GuideLiveness): boolean {
+  return s.draftMode !== "off" || s.inspectorOpen;
+}
+
+/**
+ * True when the guide is idle in committed mode, visible, and has no
+ * read of its own in flight -- the only state in which replacing the
+ * reading costs the operator nothing.
+ *
+ * Neither of the two remaining refusals pins a notice, and neither one
+ * drops the announcement: liveStale outlives both, and something re-runs
+ * the decision. A hidden tab would pin a line nobody is reading, and
+ * shell.ts's onResume re-fires the decision the moment it is looked at
+ * again. A load in flight is already about to replace the reading, and
+ * reload()'s tail re-runs the decision in case that response was built
+ * before the write the announcement described.
+ */
+export function liveRefetchReady(s: GuideLiveness): boolean {
+  return !liveRefetchBlocked(s) && !s.loading && !s.hidden;
+}
+
+/** What the page does about a change it has been told about, or about a
+ * window in which it could not be told anything at all. */
+export type LiveAction = "refetch" | "pin" | "defer";
+
+/**
+ * The whole decision, in one pure place: the debounce's fire and the tab
+ * resume both route through it, so a resume can no more discard an armed
+ * draft or a half-read inspector than a live event can.
+ *
+ * `announced` is whether a change is actually KNOWN to have happened
+ * (liveStale). A resume arrives with it false: the tab was deaf, which is
+ * a reason to re-read but not a reason to claim the lineup moved --
+ * pinning LINEUP CHANGED on a hunch would make the one notice this page
+ * has cheap. So an unannounced resume onto blocked work defers silently
+ * and leaves the operator's staged work exactly as they left it.
+ */
+export function liveAction(s: GuideLiveness, announced: boolean): LiveAction {
+  if (liveRefetchReady(s)) return "refetch";
+  if (announced && liveRefetchBlocked(s)) return "pin";
+  return "defer";
+}
+
+// Built in init(), so it closes over the one component on the page.
+let liveRefetch: Debounced | null = null;
+// A change has been announced that the reading on the glass does not
+// include. Cleared only by a read that STARTS after the announcement.
+let liveStale = false;
+let staleNoticeEl: HTMLElement | null = null;
+
+const browserTimers: Timers = {
+  set: (cb, ms) => window.setTimeout(cb, ms),
+  clear: (handle) => window.clearTimeout(handle),
+};
+
+/**
+ * Pins the stale notice, reusing the drop legend's pinned-amber
+ * vocabulary (.guide-droplegend) -- the shape this page already uses for
+ * "the reading you are looking at is not the whole truth". Built here
+ * rather than bound in layouts/index.html because it belongs to the live
+ * link, not to the plan: the guide renders identically with no stream at
+ * all, and the template should not imply otherwise.
+ *
+ * It mounts in the FIRST .guide-chrome -- the one outside .guide-body --
+ * so it survives every state that hides the grid, and it is a button
+ * because "refresh" has to be an affordance: the operator it is pinned
+ * for is exactly the one the page refuses to re-read behind.
+ */
+function showStaleNotice(onRefresh: () => void): void {
+  if (staleNoticeEl) return;
+  const chrome = document.querySelector(".guide-chrome");
+  if (!chrome) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "guide-stale";
+  btn.className = "guide-droplegend";
+  btn.textContent = LINEUP_CHANGED_LINE;
+  btn.addEventListener("click", onRefresh);
+  chrome.append(btn);
+  staleNoticeEl = btn;
+}
+
+function hideStaleNotice(): void {
+  staleNoticeEl?.remove();
+  staleNoticeEl = null;
 }
 
 /** Mirrors the reading for the Blocks round trip (save -> PREVIEW ON
@@ -371,6 +570,11 @@ interface GuideState {
   renderRundownOnly(): void;
   tick(): void;
 
+  liveness(): GuideLiveness;
+  onLiveChange(): void;
+  fireLive(): void;
+  pinStale(): void;
+
   openInspector(slot: GuideSlot, el: HTMLElement): void;
   closeInspector(returnFocus?: boolean): void;
   inspectorBlock(): BlockRecord | null;
@@ -432,8 +636,36 @@ document.addEventListener("alpine:init", () => {
           if (this.draft.previewError) void this.preview();
         });
         // The sweep's minute advance: a discrete step on a local 60s
-        // timer, not an animation loop (motion inventory item 1).
+        // timer, not an animation loop (motion inventory item 1). Local
+        // on purpose -- the cursor must keep turning on POLL and on LINK
+        // LOST, so it never rides a stream frame; tick()'s serverNow()
+        // is what makes the step land on the SERVER's minute.
         window.setInterval(() => this.tick(), 60_000);
+        // The live link. Both events say one thing to this page -- the
+        // reading is out of date -- and both route through the one
+        // guarded, debounced re-read. Never unsubscribed: the component
+        // lives exactly as long as the page does, same as onReauth above.
+        // Two seconds is long enough for the operator to have opened the
+        // inspector or armed a draft since the announcement, so the
+        // decision is taken here at fire time, not only on arrival.
+        liveRefetch = debounce(LIVE_REFETCH_MS, browserTimers, () => this.fireLive());
+        subscribe("apply.completed", () => this.onLiveChange());
+        subscribe("plan.invalidated", () => this.onLiveChange());
+        // The tab-resume half of the live link. A hidden tab has no
+        // stream at all (shell.ts stops it), so on return this page must
+        // re-read on its own account rather than wait to be told: the
+        // resume replay only reaches back as far as the hub's 128-event
+        // ring. Same decision, same guards -- coming back to a tab may
+        // not cost the operator an armed draft either.
+        //
+        // Routed through onLiveChange(), NOT fireLive(), so it lands in
+        // the same debounce window as the replay. shell.ts reconnects
+        // before it fires the resume handlers, and that reconnect resumes
+        // from Last-Event-ID -- so the frames this tab missed arrive at
+        // almost the same moment. Calling fireLive() directly bought two
+        // full 28-day re-plans for one resume, and let the replay pin
+        // LINEUP CHANGED on a reading the resume had already refreshed.
+        onResume(() => this.onLiveChange());
       },
 
       async loadChannels() {
@@ -465,6 +697,12 @@ document.addEventListener("alpine:init", () => {
         // A re-render is the closer here, not Esc/X: never return focus
         // to a slot node the reload is about to hide or discard.
         this.closeInspector(false);
+        // This read supersedes every change announced before it: the
+        // server publishes only after the write it names has committed,
+        // so anything already announced is in the response.
+        liveStale = false;
+        liveRefetch?.cancel();
+        hideStaleNotice();
         this.loading = true;
         this.problem = null;
         this.statusLine = LOADING_LINE;
@@ -521,6 +759,13 @@ document.addEventListener("alpine:init", () => {
           let line = `Programme guide loaded, ${plural(programCount, "program")} across ${plural(rows.length, "channel")}`;
           if (dropped > 0) line += `; ${plural(dropped, "occurrence")} dropped by conflicts, placement unavailable`;
           this.statusLine = line;
+          // No drawIn, and none is reachable: grid.ts decorates only
+          // slots carrying a diff verdict (draft === "new" | "changed"),
+          // and draft.ts's withVerdict is the sole thing that sets one --
+          // a committed reading has none, so the trace draw-in has
+          // nothing to draw. It is a draft-mode motion by construction
+          // (preview() passes it); the committed sheet's counterpart is
+          // discard()'s settle fade.
           this.renderAll();
         } else {
           this.statusLine = "Guide unavailable — Tunarr unreachable";
@@ -534,6 +779,75 @@ document.addEventListener("alpine:init", () => {
           this.draft.pendingScope = false;
           if (this.readingRequestedAt !== 0) void this.preview();
         }
+        // A change announced WHILE this load was in the air is NOT
+        // covered by it -- the response may have been built before that
+        // write committed. Re-run the guard against the reading that
+        // just landed; it may now be blocked (the latch above can have
+        // armed a draft) and pin instead.
+        if (liveStale) liveRefetch?.trigger();
+      },
+
+      // What the two guards read, sampled at the moment of the decision:
+      // the 2s debounce means arrival state and fire state genuinely
+      // differ. document.hidden is absent under the test stubs, which
+      // reads as visible -- the safe default, since the other three
+      // conditions still hold the guard.
+      liveness() {
+        return {
+          draftMode: this.draft.mode,
+          inspectorOpen: this.inspector.open,
+          loading: this.loading,
+          hidden: document.hidden,
+        };
+      },
+
+      // One announced change (apply.completed or plan.invalidated),
+      // arriving. It is a hint with no plan in it: the repair is always
+      // a fresh GET /schedule, and the only question is whether now is
+      // the moment to take it.
+      onLiveChange() {
+        liveStale = true;
+        if (liveRefetchBlocked(this.liveness())) {
+          // A draft planned against a source that has since moved stays
+          // readable but may not be applied: canApply() refuses, and the
+          // bar says why. Cleared by the next preview -- the only thing
+          // that can make the promise good again. Deliberately set for
+          // an in-flight preview too: the server built that plan before
+          // the change landed.
+          if (this.draft.mode !== "off") this.draft.sourceChanged = true;
+          this.pinStale();
+          return;
+        }
+        liveRefetch?.trigger();
+      },
+
+      // The debounce firing, or the tab coming back. Both ask the same
+      // question -- may the reading on the glass be replaced right now?
+      fireLive() {
+        const action = liveAction(this.liveness(), liveStale);
+        if (action === "refetch") {
+          void this.reload();
+          return;
+        }
+        if (action === "pin") {
+          this.pinStale();
+          return;
+        }
+        // "defer", and explicitly so -- this is the branch that used to
+        // fall through and lose the announcement. Nothing is dropped:
+        // liveStale stays set, and whichever of the two deferrals this
+        // is has something behind it. Hidden: onResume above re-fires
+        // this the moment the tab is visible. Loading: reload()'s tail
+        // re-triggers the debounce, because a response built before the
+        // announced write does not cover it.
+      },
+
+      // The branch where re-reading would take something away from the
+      // operator: say so instead, in the pinned line and in the
+      // role="status" announcement, and leave the reading alone.
+      pinStale() {
+        this.statusLine = this.draft.mode === "off" ? LINEUP_CHANGED_LINE : DRAFT_STALE_LINE;
+        showStaleNotice(() => void this.reload());
       },
 
       // Arrival from a block save's PREVIEW ON GUIDE (/?draft=<id|all>).
@@ -658,6 +972,9 @@ document.addEventListener("alpine:init", () => {
         const orphaned = this.previewOrphansFocus();
         this.draft.mode = "previewing";
         this.draft.previewError = null;
+        // The re-preview the disarm asked for: this request is being
+        // built from the source as it stands now.
+        this.draft.sourceChanged = false;
         this.draft.applyError = null;
         this.draft.applyTimedOut = false;
         this.statusLine = draftingLine(this.scopeLabelFor(signature.channelId));
@@ -743,6 +1060,11 @@ document.addEventListener("alpine:init", () => {
         const slots = planSlotCount(plan);
         const channels = planChannelCount(plan);
         if (this.draft.mode === "applying") return applyingLine(slots, channels);
+        // The live link disarmed this draft: the counts below are still
+        // true of the reading they were measured against, but that
+        // reading is no longer the server's, so the bar reports the one
+        // fact that now governs -- APPLY is off until a re-preview.
+        if (this.draft.sourceChanged) return DRAFT_STALE_LINE;
         return draftBarLine({
           slots,
           channels,
@@ -771,8 +1093,16 @@ document.addEventListener("alpine:init", () => {
         return this.scopeLabelFor(armed && signature ? signature.channelId : this.controls.channelId.trim());
       },
 
+      // sourceChanged is the live link's veto: everything else here is
+      // about whether a draft EXISTS, and that one is about whether it
+      // still describes the server it would be pushed to.
       canApply() {
-        return this.draft.mode === "armed" && this.draft.plan !== null && this.draft.signature !== null;
+        return (
+          this.draft.mode === "armed" &&
+          !this.draft.sourceChanged &&
+          this.draft.plan !== null &&
+          this.draft.signature !== null
+        );
       },
 
       requestApply() {
@@ -1078,7 +1408,7 @@ document.addEventListener("alpine:init", () => {
             inspectorId: "guide-inspector",
             drawIn: opts.drawIn,
           });
-          gridHandle.updateNow(Date.now());
+          gridHandle.updateNow(serverNow());
           // The committed sheet fading back after a discard that had
           // nothing to re-fetch (motion inventory item 3's other half).
           if (opts.settle) viewport.querySelector(".guide-sheet")?.classList.add("guide-sheet--settle");
@@ -1095,7 +1425,7 @@ document.addEventListener("alpine:init", () => {
               requestAnimationFrame(() => scrollIntoWeek(attempts - 1));
               return;
             }
-            const nowX = gridHandle?.nowOffsetPx(Date.now());
+            const nowX = gridHandle?.nowOffsetPx(serverNow());
             viewport.scrollLeft = nowX != null ? Math.max(0, nowX - viewport.clientWidth / 3) : 0;
           };
           scrollIntoWeek(20);
@@ -1124,12 +1454,18 @@ document.addEventListener("alpine:init", () => {
             inspectorId: "guide-inspector",
           },
         );
-        rundownHandle.updateNow(Date.now());
+        rundownHandle.updateNow(serverNow());
       },
 
+      // serverNow(), never Date.now(): the sweep is the one line an
+      // operator reads the schedule AGAINST, so a laptop clock minutes
+      // off the server's parks it in the wrong programme -- and both
+      // handles must be told the same instant, or the grid and the
+      // rundown disagree about what is on air.
       tick() {
-        gridHandle?.updateNow(Date.now());
-        rundownHandle?.updateNow(Date.now());
+        const now = serverNow();
+        gridHandle?.updateNow(now);
+        rundownHandle?.updateNow(now);
       },
 
       // Opening is made perceptible: the opener's aria-expanded flips
@@ -1189,7 +1525,9 @@ document.addEventListener("alpine:init", () => {
       inspectorVerdictLine() {
         const slot = this.inspector.slot;
         if (!slot?.draft) return "";
-        const now = Date.now();
+        // Same clock as the sweep: "airing now" in this line and the
+        // on-air piece on the grid must never disagree.
+        const now = serverNow();
         return draftVerdictLine(slot.draft, this.readingRequestedAt, slot.startMs <= now && now < slot.endMs);
       },
 

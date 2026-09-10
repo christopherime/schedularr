@@ -48,13 +48,46 @@ The UI talks to `/api/v1` with the same bearer token `schedularr serve` was star
 
 ## Bezel telemetry
 
-The header carries a persistent telemetry strip on every page, refreshed from `GET /api/v1/status` every 60 seconds:
+The header carries a persistent telemetry strip on every page, fed by the live link and — when that is unavailable — by a 60-second `GET /api/v1/status` poll:
 
 - **TUNARR** — signal dot plus text (**Signal** / **No Signal**, or **No data** while the poll itself can't reach the server).
 - **LAST APPLY** — how long ago the most recent apply pushed a lineup to Tunarr (`Status.last_applied_at`), or an em dash before any apply has been recorded.
 - **NEXT TICK** — when `serve`'s cron loop will next generate and apply (`Status.next_cron_tick`), or **due** while an overrunning tick is still mid-run (the loop records the next tick's time before running the current one, so the stored instant can already be in the past).
 
-There is deliberately no LIVE/POLL link legend yet — that arrives with the SSE live-link slice, and the strip does not pretend to be live before then.
+- **LINK** — the state of the live link itself, as a coded dot plus text. Colour never carries the state alone.
+
+### The LINK legend and its three states
+
+The UI holds one Server-Sent Events connection per tab to [`GET /api/v1/events`](api-reference.md#live-link), so a change one operator makes shows up in every other open tab without anyone pressing reload. The legend says which rung the connection is on, and the rungs degrade what you *see*, never what you can do:
+
+| State         | Means                                                                                                                             | What still works                                                      |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **LIVE**      | The stream is connected and has delivered at least a heartbeat.                                                                   | Everything, plus other tabs' changes arriving on their own.           |
+| **POLL**      | Three consecutive connection failures. The stream keeps retrying in the background while the 60-second `/status` poll takes over. | Everything. Bezel readings stay current; page content needs a reload. |
+| **LINK LOST** | Six consecutive failures — the network is gone. Polling stops and the legend offers a **Reconnect** button.                       | Everything, by reload.                                                |
+
+The reconnect ladder backs off from 1 second to 30 seconds and resumes with `Last-Event-ID`, so a brief drop replays what it missed rather than starting blank. Polling is suspended while the stream is healthy — the two never run at once.
+
+An honest instrument says it has no reading rather than showing a stale one, which is why LINK LOST stops polling instead of leaving the last value on the glass. Two motion moments mark the transitions and no more: one amber pulse entering LINK LOST, one green on reacquire, both suppressed under `prefers-reduced-motion`.
+
+**No page needs the stream.** Every route stays fully operable with a manual refresh when the link is down. If a reverse proxy in front of Schedularr buffers or times out the stream, the UI degrades to POLL and keeps working — see the [proxy requirements](deployment.md#reverse-proxies-and-the-event-stream).
+
+### What refetches, and what deliberately does not
+
+The stream carries change events, not content. A page decides for itself what to do with one:
+
+- **The Guide** refetches `GET /schedule` on `apply.completed` and `plan.invalidated`, debounced 2 seconds — but only while it is idle in committed mode and the tab is visible.
+- **History** prepends to RUNS and refetches AS-RUN on `apply.completed`; `series.changed` refetches TRACKED.
+- **Blocks** refetches the list on `plan.invalidated`.
+
+Two guards override all of that. An auto-refetch that discards work in progress is worse than no live link at all:
+
+- **The Guide freezes while the inspector is open or a draft is armed.** Instead of refetching it pins a `LINEUP CHANGED — REFRESH` line, and an armed draft additionally disarms with `SOURCE CHANGED — RE-PREVIEW` — a draft planned against a source that has since moved stays readable but may not be applied.
+- **Blocks freezes while the editor panel is open**, dirty or clean. A clean editor looks harmless, but it is holding the `updated_at` its next save will send as `If-Match`; refetching underneath it would quietly re-arm that header with a record the operator has never seen, and the next save would then succeed and overwrite the other tab's work. However many changes land while the panel is open, they cost exactly one read when it closes. A change to the *open* block raises an inline note; it never clobbers what you are typing.
+
+The Guide's sweep cursor advances on its own 60-second timer, corrected by the heartbeat's `server_time`, never on the stream. Every relative timestamp in the UI reads that corrected clock rather than the browser's, which is the permanent fix for the clock-skew class of bug.
+
+A hidden tab drops its stream entirely — it holds a connection open for nobody, and the server holds a subscriber slot for it. On becoming visible it reconnects and each page re-reads its own primary `GET`, because the hub's resume ring holds only 128 events and a tab that was away a while cannot trust replay to tell it everything it missed.
 
 ## Event tape
 

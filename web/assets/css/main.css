@@ -381,12 +381,12 @@ p {
   color: var(--color-ink-muted);
 }
 
-/* -- bezel telemetry strip (spec §3.4, polled) ----------------------------
-   TUNARR (coded-legend dot+text) plus LAST APPLY / NEXT TICK relative
-   readouts, on every page -- the dashboard status card generalized into
-   persistent chrome. Fed by runtime/shell.ts's 60s /status poll; the
-   LIVE/POLL/LINK legend is deliberately absent until the SSE live-link
-   slice. */
+/* -- bezel telemetry strip (spec §3.4) ------------------------------------
+   LINK (the live-link ladder) plus TUNARR (coded-legend dot+text) and the
+   LAST APPLY / NEXT TICK relative readouts, on every page -- the dashboard
+   status card generalized into persistent chrome. Fed by runtime/shell.ts:
+   LINK off the SSE stream's own state, the rest off the /status poll that
+   the ladder's POLL rung falls back to. */
 
 .telemetry {
   display: flex;
@@ -424,6 +424,42 @@ p {
   color: var(--color-ink);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* LINK LOST's recovery action. Gated by the general sibling combinator
+   off the dot's own data-state rather than a [hidden] attribute toggled
+   from JS: shell.ts then has exactly ONE thing to write per transition,
+   and a half-applied update cannot leave a Reconnect button sitting
+   beside a LIVE legend. display:none also drops it out of the tab order
+   while the link is up -- [hidden] would, but a JS toggle that forgets to
+   run leaves a focusable ghost, and this one cannot forget.
+
+   Both rules are SCOPED TO .telemetry purely for specificity, and that
+   scope is load-bearing: the button also carries .btn, whose own
+   `display: inline-flex` (the buttons section below) is a bare (0,1,0)
+   class selector -- exactly the weight `.telemetry__reconnect` alone
+   would have on its own. A tie is broken by source order and .btn is
+   LATER in the file, so the unscoped hide lost every cascade and the
+   Reconnect button rendered -- focusable, in the tab order -- beside a
+   LIVE legend. Scoping both halves to .telemetry puts the hide at
+   (0,2,0) and the show at (0,4,0) -- .telemetry + .status-dot +
+   [data-state] + .telemetry__reconnect -- so 4 > 2 > 1 resolves the
+   whole gate on specificity alone, and moving either block cannot
+   re-break it.
+   (Every OTHER same-weight pair in this file is a BEM modifier declared
+   after its base, where source order is the intended tiebreak.)
+
+   .btn, not .btn--ghost: ghost borders on --color-border are a ~1.8:1
+   pairing, fine for a button sitting in a form the operator is already
+   looking at, too quiet for a control that has to be findable the moment
+   it appears in dense chrome. The default border clears the 3:1 non-text
+   floor in both palettes (5.63:1 / 3.58:1 -- see DESIGN.md). */
+.telemetry .telemetry__reconnect {
+  display: none;
+}
+
+.telemetry .status-dot[data-state="lost"] ~ .telemetry__reconnect {
+  display: inline-flex;
 }
 
 /* The desktop cluster's divider rhythm cannot survive wrapping (a
@@ -709,6 +745,74 @@ p {
 
 .status-dot[data-state="down"] {
   background: var(--color-danger);
+}
+
+/* A third vocabulary on the same dot and the same three colours: the live
+   link's degradation ladder. The values are bus.ts's LinkState written
+   through verbatim, so there is no name-mapping table between the runtime
+   and this stylesheet to drift apart -- shell.ts assigns state to
+   dataset.state and stops. POLL takes the warn slot rather than danger on
+   purpose: the page is still showing current data, it has just gone back
+   to refetching instead of listening. Degraded, not broken -- the same
+   "pending/attention, not failure" slot the unarmed token dot uses. */
+.status-dot[data-state="live"] {
+  background: var(--color-accent);
+  box-shadow: var(--glow-accent);
+}
+
+.status-dot[data-state="poll"] {
+  background: var(--color-warn);
+}
+
+.status-dot[data-state="lost"] {
+  background: var(--color-danger);
+}
+
+/* The live-link slice's ENTIRE motion budget: two flares, 200ms each, one
+   per direction -- amber when the link drops, green when it comes back.
+   Deliberately not on data-state: an animation keyed to a state selector
+   fires the first time that selector matches, which for "live" is the
+   ordinary happy-path connect a second after every page load, and spec §5
+   bans motion on initial load. So the flare gets its own attribute that
+   shell.ts sets on a TRANSITION and clears on animationend -- clearing is
+   what lets a second drop flare at all, since re-setting an attribute to
+   the value it already holds restarts nothing.
+
+   box-shadow-borne with no fill-mode, so the ring reverts to whatever the
+   state's own rule says (the accent glow, or nothing) the instant the
+   200ms is up -- a `forwards` here would freeze a dropped link's flare on
+   the glass forever. */
+@keyframes link-flare {
+  from {
+    box-shadow: 0 0 0 0 var(--link-flare, transparent);
+  }
+
+  to {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+.status-dot[data-pulse] {
+  animation: link-flare var(--duration-base) var(--ease-out);
+}
+
+.status-dot[data-pulse="lost"] {
+  --link-flare: color-mix(in srgb, var(--color-warn) 55%, transparent);
+}
+
+.status-dot[data-pulse="live"] {
+  --link-flare: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
+/* The global reset already collapses animation-duration to 0.01ms, but an
+   explicit none is what the guide's authored animations do and it matters
+   here: at 0.01ms the keyframes still RUN, and their final frame
+   (box-shadow: none) would blink the live dot's accent glow off and back
+   on. Not animating at all is the only way the glow stays put. */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot[data-pulse] {
+    animation: none;
+  }
 }
 
 /* -- token panel (native <dialog>) ---------------------------------------- */
@@ -3135,8 +3239,19 @@ dialog.panel .panel__body {
   }
 
   .status-dot[data-state="armed"],
-  .status-dot[data-state="ok"] {
+  .status-dot[data-state="ok"],
+  .status-dot[data-state="live"] {
     background: Highlight;
+  }
+
+  /* Both link flares ride box-shadow, and forced-colors strips shadows
+     outright -- there is nothing to degrade them TO, so they are dropped,
+     the same call the busy shimmer makes below. Nothing is lost: the
+     transition each one marks is already carried by the legend flipping
+     to LINK LOST / LIVE and, on the way down, by a Reconnect button
+     appearing beside it. */
+  .status-dot[data-pulse] {
+    animation: none;
   }
 
   .nav__link[aria-current="page"] {

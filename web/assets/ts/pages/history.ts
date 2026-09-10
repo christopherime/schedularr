@@ -16,14 +16,34 @@
 //   4. GET /applies and GET /history are both bounded by their own
 //      retention knob, so a 90-day window can legitimately return less.
 //      The captions say so instead of implying the store lost data.
+//   5. The live link refetches these feeds when the server says they
+//      changed -- except TRACKED while a cursor is being typed.
+//      loadStates() rebuilds every row's draft wholesale (it is the
+//      page's deliberate resync point), so refetching mid-edit would
+//      discard the edit in progress. Dropping a refetch is recoverable:
+//      the next event, the operator's own save, changing the window, or
+//      the tab-resume refetch (onResume, wired in init) all catch up --
+//      and the last of those is reachable without knowing the live link
+//      exists at all. The row's own Refresh List button is NOT one of
+//      those paths: list.html only renders it inside the row-404 branch.
+//      Discarding typed input is not recoverable, which is why the guard
+//      errs toward keeping it.
+//   6. An event-driven refetch is a BACKGROUND read (loadX(true)): it
+//      never raises the pane's spinner or its error surface, because
+//      list.html hides the rows behind both. A refresh nobody asked for
+//      that fails must leave the last good reading on screen rather than
+//      trading it for an error panel -- the same honest-instrument rule
+//      the bezel follows. Only a read the operator asked for (first load,
+//      window change, retry) may blank a pane.
 import { ApiError, apiGet, apiPath, apiSend, onReauth } from "../runtime/api.ts";
 import type { ApiRequestJSON, ApiResponse } from "../runtime/api.ts";
+import { subscribe } from "../runtime/bus.ts";
 import { channelLabel, channelPlate, loadChannels } from "../runtime/channels.ts";
 import type { Channel, PlateParts } from "../runtime/channels.ts";
 import { describeError, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { durationLabel, formatLocal, pad2, plural } from "../runtime/format.ts";
-import { initShell } from "../runtime/shell.ts";
+import { initShell, onResume } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
 
 initShell();
@@ -37,10 +57,6 @@ type ApplyRunWarning = NonNullable<ApplyRun["warnings"]>[number];
 declare const Alpine: {
   data<T extends object>(name: string, factory: () => T): void;
 };
-
-// Same double-init defense as every other page bundle: Alpine.data()'s
-// init() is auto-invoked, so nothing here also wires x-init="init()".
-let started = false;
 
 // ---- panes -----------------------------------------------------------------
 
@@ -60,13 +76,35 @@ export function paneFromSearch(search: string): Pane {
 
 // ---- tracked ---------------------------------------------------------------
 
-interface RowDraft {
+export interface RowDraft {
   season: string;
   episode: string;
 }
 
 function draftFromState(state: SeriesRecord): RowDraft {
   return { season: String(state.current_season), episode: String(state.current_episode) };
+}
+
+/**
+ * True when a row's draft holds a cursor the operator typed but has not
+ * saved. Exported and pure because it is what the live link consults
+ * before refetching TRACKED (contract note 5 above) as well as what
+ * enables the row's own Save button -- one rule, so the button and the
+ * refetch guard can never disagree about whether a row is being edited.
+ *
+ * A row with no draft counts as clean: drafts are keyed by show_title
+ * and rebuilt on every load, so a missing one means the row arrived
+ * after the map was built, never that it holds hidden input.
+ */
+export function cursorDirty(
+  state: { current_season: number; current_episode: number },
+  draft: RowDraft | undefined,
+): boolean {
+  if (!draft) return false;
+  return (
+    draft.season.trim() !== String(state.current_season) ||
+    draft.episode.trim() !== String(state.current_episode)
+  );
 }
 
 /** SxxEyy, for the visually-hidden label read alongside the two separate
@@ -184,6 +222,22 @@ export function runSummary(run: RunSummaryInput): string {
   return `${slots} ACROSS ${channels} · ${window} · ${scope}`;
 }
 
+// ---- live link -------------------------------------------------------------
+
+/**
+ * The tape line an apply.completed refresh earns, printed once both reads
+ * have settled. A partial or total failure says so and names what is on
+ * screen instead: the panes still hold their last good reading (contract
+ * note 6), and claiming "refreshed" over data that is not refreshed is
+ * the one thing an instrument may never do.
+ */
+export function applyRefreshLine(runsOk: boolean, historyOk: boolean): string {
+  if (runsOk && historyOk) return "Apply landed — runs and as-run refreshed";
+  if (runsOk) return "Apply landed — runs refreshed, as-run still showing the last reading";
+  if (historyOk) return "Apply landed — as-run refreshed, runs still showing the last reading";
+  return "Apply landed — refresh failed, both panes still showing the last reading";
+}
+
 // ---- component -------------------------------------------------------------
 
 interface AiringRow extends HistoryEntry {
@@ -231,9 +285,12 @@ interface HistoryPageState {
   onWindowChange(): void;
   clearFilters(): void;
 
-  loadStates(): Promise<void>;
-  loadHistory(): Promise<void>;
-  loadRuns(): Promise<void>;
+  // Each returns whether the read landed, so an event-driven refresh can
+  // say what actually happened instead of announcing a success it never
+  // waited for. `background` is contract note 6 above.
+  loadStates(background?: boolean): Promise<boolean>;
+  loadHistory(background?: boolean): Promise<boolean>;
+  loadRuns(background?: boolean): Promise<boolean>;
   loadPlateChannels(): void;
 
   cursorLabel(season: number, episode: number): string;
@@ -248,6 +305,7 @@ interface HistoryPageState {
   warningsLabel(run: ApplyRun): string;
 
   rowDirty(state: SeriesRecord): boolean;
+  anyRowEditing(): boolean;
   saveCursor(state: SeriesRecord): Promise<void>;
   toggleCompleted(state: SeriesRecord): Promise<void>;
   toggleDisabled(state: SeriesRecord): Promise<void>;
@@ -284,9 +342,12 @@ document.addEventListener("alpine:init", () => {
       runsError: null,
       runs: [],
 
+      // Alpine calls this once per component instance and the page has
+      // exactly one x-data="history", so there is no module-level one-shot
+      // guard: the subscriptions below are wired from init and live with
+      // the component, and initShell() keeps its own idempotence guard so
+      // no second stream can be opened either way.
       init() {
-        if (started) return;
-        started = true;
         void this.loadStates();
         void this.loadHistory();
         void this.loadRuns();
@@ -297,6 +358,45 @@ document.addEventListener("alpine:init", () => {
           if (this.historyError) void this.loadHistory();
           if (this.runsError) void this.loadRuns();
           if (this.channels.length === 0) this.loadPlateChannels();
+        });
+
+        // The live link. A frame is a hint -- "go look" -- never data to
+        // render (runtime/bus.ts), so each one refetches the feed it
+        // names and trusts the server's own ordering: /applies comes
+        // back newest-first, so an arriving run lands at the top of RUNS
+        // without this page having to splice a card together out of a
+        // payload that carries no status, no start time and no window.
+        //
+        // None of the registrations below is ever cancelled: an Alpine
+        // page component lives exactly as long as the document does.
+        subscribe("apply.completed", () => {
+          // The line is printed after both reads settle, and says which
+          // way they went: printing "refreshed" up front would assert a
+          // refresh that had not happened yet and might not.
+          void Promise.all([this.loadRuns(true), this.loadHistory(true)]).then(([runsOk, historyOk]) => {
+            // The tape's 150ms print draw-in (runtime/tape.ts) is this
+            // page's arrival motion. The panes themselves come back
+            // through a plain refetch, keyed per row, so rows that did
+            // not change do not flash.
+            printTape(applyRefreshLine(runsOk, historyOk));
+          });
+        });
+        subscribe("series.changed", () => {
+          if (this.anyRowEditing()) return;
+          void this.loadStates(true);
+        });
+
+        // A hidden tab streams nothing, so it has missed every frame
+        // since it was hidden and the resume replay only reaches back as
+        // far as the hub's ring. This is the page's catch-up, and the
+        // one an operator gets without knowing the live link exists --
+        // all three panes, since all three were loaded at init and any
+        // of them can be the one on screen. TRACKED keeps its guard: a
+        // cursor half-typed before the tab was hidden is still typed.
+        onResume(() => {
+          if (!this.anyRowEditing()) void this.loadStates(true);
+          void this.loadHistory(true);
+          void this.loadRuns(true);
         });
       },
 
@@ -395,9 +495,11 @@ document.addEventListener("alpine:init", () => {
         return `What actually aired in the last ${plural(this.days, "day")}, bounded by history retention.`;
       },
 
-      async loadStates() {
-        this.statesLoading = true;
-        this.statesError = null;
+      async loadStates(background = false) {
+        if (!background) {
+          this.statesLoading = true;
+          this.statesError = null;
+        }
         try {
           const list = await apiGet<SeriesRecord[]>(apiPath("/state/series"));
           this.states = list;
@@ -421,35 +523,60 @@ document.addEventListener("alpine:init", () => {
           this.rowErrors = rowErrors;
           this.rowNotFound = rowNotFound;
           this.fieldErrors = fieldErrors;
+          this.statesError = null;
+          return true;
         } catch (err) {
-          this.statesError = toProblemView(err);
-          this.states = [];
+          // Contract note 6: a background read that fails leaves the rows
+          // that are already on screen alone. Raising statesError would
+          // hide them (list.html gates every row on !statesError), which
+          // is a worse reading than a few-seconds-old one.
+          if (!background) {
+            this.statesError = toProblemView(err);
+            this.states = [];
+          }
+          return false;
         } finally {
           this.statesLoading = false;
         }
       },
 
-      async loadHistory() {
-        this.historyLoading = true;
-        this.historyError = null;
+      async loadHistory(background = false) {
+        if (!background) {
+          this.historyLoading = true;
+          this.historyError = null;
+        }
         try {
           this.history = await apiGet<HistoryEntry[]>(apiPath("/history", undefined, { days: this.days }));
+          this.historyError = null;
+          return true;
         } catch (err) {
-          this.historyError = toProblemView(err);
-          this.history = [];
+          // Contract note 6 -- see loadStates.
+          if (!background) {
+            this.historyError = toProblemView(err);
+            this.history = [];
+          }
+          return false;
         } finally {
           this.historyLoading = false;
         }
       },
 
-      async loadRuns() {
-        this.runsLoading = true;
-        this.runsError = null;
+      async loadRuns(background = false) {
+        if (!background) {
+          this.runsLoading = true;
+          this.runsError = null;
+        }
         try {
           this.runs = await apiGet<ApplyRun[]>(apiPath("/applies", undefined, { days: this.days }));
+          this.runsError = null;
+          return true;
         } catch (err) {
-          this.runsError = toProblemView(err);
-          this.runs = [];
+          // Contract note 6 -- see loadStates.
+          if (!background) {
+            this.runsError = toProblemView(err);
+            this.runs = [];
+          }
+          return false;
         } finally {
           this.runsLoading = false;
         }
@@ -502,11 +629,18 @@ document.addEventListener("alpine:init", () => {
       },
 
       rowDirty(state) {
-        const draft = this.drafts[state.show_title];
-        if (!draft) return false;
-        return (
-          draft.season.trim() !== String(state.current_season) ||
-          draft.episode.trim() !== String(state.current_episode)
+        return cursorDirty(state, this.drafts[state.show_title]);
+      },
+
+      // The live link's guard for TRACKED: true while any row holds a
+      // typed-but-unsaved cursor, or a save still in flight. pending
+      // counts because applyPatch rewrites that row's draft when it
+      // lands -- a refetch racing it would resolve to whichever finished
+      // last, which is exactly the kind of outcome an operator cannot
+      // reason about.
+      anyRowEditing() {
+        return this.states.some(
+          (s) => this.pending[s.show_title] === true || cursorDirty(s, this.drafts[s.show_title]),
         );
       },
 

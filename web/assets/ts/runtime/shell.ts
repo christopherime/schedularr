@@ -9,29 +9,95 @@
 //      success, then broadcasts the re-auth event that re-fires the
 //      page's failed loads (api.ts's onReauth).
 //   2. The bezel telemetry strip: TUNARR signal, LAST APPLY, and NEXT TICK
-//      readouts on every page, fed by a 60s GET /status poll (no SSE yet
-//      -- the LIVE/POLL/LINK legend arrives with the SSE live-link slice's
-//      event stream and is deliberately absent rather than faked).
+//      readouts on every page, plus the LINK legend naming which rung of
+//      the live link's degradation ladder is currently feeding them.
+//   3. The live link: exactly ONE stream per page (runtime/stream.ts),
+//      every frame routed onto the bus (runtime/bus.ts), every heartbeat
+//      folded into the clock offset every relative timestamp reads.
+//
+// The 60s GET /status poll is the ladder's POLL rung, not a second source
+// of truth running alongside the stream. It is suspended while the link
+// is LIVE (the stream's own status.changed / apply.completed frames
+// trigger the refetch instead) and again on LINK LOST (nothing to poll,
+// and a stale reading is worse than none) -- two pollers feeding one
+// bezel is the race this whole design exists to avoid.
 import { apiGet, apiPath, broadcastReauth, onUnauthorized } from "./api.ts";
 import type { ApiResponse } from "./api.ts";
+import { linkState, noteHeartbeat, onLinkChange, publishLocal, serverNow, setLinkState, subscribe } from "./bus.ts";
+import type { LinkState } from "./bus.ts";
 import { invalidateChannels } from "./channels.ts";
 import { describeError } from "./errors.ts";
 import { relativeTime, untilTime } from "./format.ts";
+import { connectStream } from "./stream.ts";
 import { clearToken, getToken, loadToken, setToken } from "./token.ts";
 
 type Status = ApiResponse<"getStatus", 200>;
 
 const POLL_INTERVAL_MS = 60_000;
 
+/** LINK legend text. Coded-legend discipline, same as the TUNARR pair:
+ * the dot's colour never carries the state on its own. */
+const LINK_LABELS: Record<LinkState, string> = { live: "Live", poll: "Poll", lost: "Link lost" };
+
 function el<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
 }
 
+/**
+ * A frame's `data` field, or null when it is not JSON. Parsing is guarded
+ * because onFrame runs inside the reader loop: one malformed frame
+ * throwing would tear down a connection that is otherwise healthy, and
+ * every later frame with it.
+ */
+export function frameData(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `server_time` of a heartbeat payload, or null when the frame does
+ * not carry one. Narrowed rather than asserted: a heartbeat whose shape
+ * changed must degrade to "no offset correction" (the plain local clock,
+ * exactly as right as the page was before the live link existed), never
+ * feed NaN into the offset -- averaging cannot recover from NaN.
+ */
+export function heartbeatTime(data: unknown): string | null {
+  if (typeof data !== "object" || data === null) return null;
+  const value = (data as { server_time?: unknown }).server_time;
+  return typeof value === "string" ? value : null;
+}
+
+// ---- tab-resume hook -----------------------------------------------------
+
+type ResumeHandler = () => void;
+const resumeHandlers = new Set<ResumeHandler>();
+
+/**
+ * Registers a callback fired when the tab becomes visible again, after
+ * the stream has been reconnected. Page modules register their primary
+ * GET here: a hidden tab stops streaming, so it has missed every event
+ * since it was hidden and the resume replay only reaches back as far as
+ * the hub's ring -- refetching is the only way it can be sure of what it
+ * shows. Returns its unsubscriber.
+ */
+export function onResume(cb: ResumeHandler): () => void {
+  resumeHandlers.add(cb);
+  return () => {
+    resumeHandlers.delete(cb);
+  };
+}
+
+// Idempotence guard. This is what makes "exactly one stream per page"
+// true: every page bundle calls initShell() once at module scope, and a
+// second call must not open a second connection to /events.
 let started = false;
 
-/** Wires the token panel and starts the bezel telemetry poll. Idempotent
- * -- each page entry calls it exactly once, but a second call is a no-op
- * rather than a double-wire. */
+/** Wires the token panel, the bezel telemetry, and the page's one live
+ * link. Idempotent -- each page entry calls it exactly once, but a second
+ * call is a no-op rather than a double-wire (and a second stream). */
 export function initShell(): void {
   if (started) return;
   started = true;
@@ -52,6 +118,10 @@ export function initShell(): void {
   const teleTunarrText = el<HTMLSpanElement>("tele-tunarr-text");
   const teleLastApply = el<HTMLSpanElement>("tele-last-apply");
   const teleNextTick = el<HTMLSpanElement>("tele-next-tick");
+
+  const teleLinkDot = el<HTMLSpanElement>("tele-link-dot");
+  const teleLinkText = el<HTMLSpanElement>("tele-link-text");
+  const teleLinkReconnect = el<HTMLButtonElement>("tele-link-reconnect");
 
   // The last successful poll's payload, or null before one has succeeded
   // (or after a failed poll) -- renderTelemetry() reads it so a failed
@@ -101,11 +171,36 @@ export function initShell(): void {
     }
     if (teleTunarrDot) teleTunarrDot.dataset.state = lastStatus.tunarr_reachable ? "ok" : "down";
     if (teleTunarrText) teleTunarrText.textContent = lastStatus.tunarr_reachable ? "Signal" : "No signal";
-    if (teleLastApply) teleLastApply.textContent = relativeTime(lastStatus.last_applied_at);
+    // serverNow(), not Date.now(): both readouts are differences against
+    // instants the SERVER stamped, so an operator whose laptop clock runs
+    // three minutes fast would otherwise read "3 min ago" as "just now"
+    // -- the heartbeat offset is the one place that is corrected.
+    const now = serverNow();
+    if (teleLastApply) teleLastApply.textContent = relativeTime(lastStatus.last_applied_at, now);
     // untilTime, not relativeTime: an overrunning tick's stored instant
     // sits in the past while the loop is still mid-run, and that must
     // read as "due", not "12 min ago" (which looks like a missed tick).
-    if (teleNextTick) teleNextTick.textContent = untilTime(lastStatus.next_cron_tick);
+    if (teleNextTick) teleNextTick.textContent = untilTime(lastStatus.next_cron_tick, now);
+  }
+
+  /**
+   * Paints the LINK legend. The rung is written verbatim onto the dot's
+   * data-state and nowhere else -- baseof.html's contract: the Reconnect
+   * button's visibility is CSS off that same attribute, so there is no
+   * second thing to write and no half-applied update that could leave a
+   * Reconnect button sitting beside a LIVE legend.
+   */
+  function renderLink(state: LinkState): void {
+    if (teleLinkDot) teleLinkDot.dataset.state = state;
+    if (teleLinkText) teleLinkText.textContent = LINK_LABELS[state];
+  }
+
+  /** Fires one 200ms flare on the dot. Cleared on animationend (below),
+   * because re-setting an attribute to the value it already holds
+   * restarts no animation -- without the clear, a second drop would be
+   * silent. */
+  function flare(kind: "live" | "lost"): void {
+    if (teleLinkDot) teleLinkDot.dataset.pulse = kind;
   }
 
   async function poll(): Promise<void> {
@@ -229,7 +324,19 @@ export function initShell(): void {
       setArmedState("unknown");
       void poll();
     }
-    window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+    window.setInterval(() => {
+      // The poll IS the POLL rung. On LIVE the stream's frames drive the
+      // refetch below, and on LINK LOST there is nothing on the other end
+      // to poll -- firing here anyway would put two readers on one bezel,
+      // which is how a stale number ends up overwriting a fresh one.
+      if (linkState() === "poll") {
+        void poll();
+        return;
+      }
+      // Still repaint on the tick: NEXT TICK counts down and LAST APPLY
+      // ages without any new payload arriving.
+      renderTelemetry();
+    }, POLL_INTERVAL_MS);
   });
 
   // The draft bar (guide) sticks under the bezel, whose height varies as
@@ -244,4 +351,114 @@ export function initShell(): void {
     publish();
     new ResizeObserver(publish).observe(bezel);
   }
+
+  // ---- the live link ------------------------------------------------------
+
+  // Everything below is gated on the LINK legend really being in the
+  // document: the node test stubs answer getElementById with null, and
+  // node HAS fetch, so an ungated connect would loop forever on a
+  // relative URL with no server behind it and hold the runner open.
+  if (teleLinkDot === null) return;
+  const dot = teleLinkDot;
+
+  // The flare attribute clears itself the moment the animation ends, so
+  // the next transition can set it again (see flare()). Registered once.
+  dot.addEventListener("animationend", () => dot.removeAttribute("data-pulse"));
+
+  // The opening paint, deliberately unflared: the bus starts on POLL and
+  // the first frame promotes it to LIVE a moment later, which is the
+  // ordinary happy path of every page load -- spec §5 bans motion there.
+  renderLink(linkState());
+
+  // Frames are hints, never data: an event says a field MAY have moved,
+  // and the bezel re-reads the same /status the poll would have read
+  // rather than rendering the payload, which only carries what changed.
+  subscribe("status.changed", () => void poll());
+  subscribe("apply.completed", () => void poll());
+
+  // Gates the green flare on there having been a red one to recover
+  // from. Without it the LIVE arrival at every page load would flare.
+  let dropped = false;
+
+  onLinkChange((state) => {
+    renderLink(state);
+    if (state === "lost") {
+      dropped = true;
+      flare("lost");
+      // An honest instrument reports that it has no reading rather than
+      // holding up the last one it had, which an operator cannot tell
+      // apart from a current one.
+      lastStatus = null;
+      renderTelemetry();
+      return;
+    }
+    if (state === "live" && dropped) {
+      dropped = false;
+      flare("live");
+    }
+    // Entering POLL takes the reading over immediately instead of leaving
+    // the bezel a minute stale; entering LIVE catches up on whatever
+    // changed while the link was down. At page load the first frame's
+    // promotion repeats the opening poll a second later -- one duplicate
+    // GET, cheaper than a branch that has to know which transitions
+    // belong to a load and which to a recovery.
+    void poll();
+  });
+
+  let stop: (() => void) | null = null;
+
+  function connect(): void {
+    // Always disconnect first: a manual reconnect and the visibility
+    // resume are both "stop, then start again" (stream.ts deliberately
+    // has no reconnect()), and skipping the stop would leave the old
+    // connection pumping into the same bus.
+    stop?.();
+    stop = connectStream({
+      onFrame: (frame) => {
+        const data = frameData(frame.data);
+        if (frame.event === "heartbeat") {
+          const stamp = heartbeatTime(data);
+          if (stamp !== null) noteHeartbeat(stamp);
+        }
+        publishLocal(frame.event, data);
+      },
+      // Straight through, promotions included: stream.ts only reports
+      // "live" once a frame has actually been delivered, so there is
+      // nothing left here to second-guess. The shell used to promote to
+      // LIVE off the first frame itself, because the ladder announced
+      // rung(1) == "live" before anything had ever connected -- that is
+      // fixed at the source now (runtime/stream.ts, everDelivered).
+      onState: setLinkState,
+    });
+  }
+
+  connect();
+
+  // The LINK LOST recovery action. CSS keeps it out of the tab order on
+  // every other rung, so this can never race the client's own retry.
+  teleLinkReconnect?.addEventListener("click", () => connect());
+
+  // A hidden tab holds a connection open for nobody, and the server holds
+  // a subscriber slot for it. Drop the stream while hidden, then
+  // reconnect AND refetch on the way back: the hub's resume ring is small
+  // by design (128 events), so a tab that was away for a while cannot
+  // trust Last-Event-ID replay to tell it everything it missed.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stop?.();
+      stop = null;
+      return;
+    }
+    connect();
+    // The bezel is as stale as the page: while hidden it received no
+    // frames, and the 60s poll was suspended because the rung still read
+    // LIVE. Refetch here rather than leaning on onLinkChange -- the link
+    // usually comes back on the same rung it left on, and a watcher that
+    // fires only on a CHANGE never runs. Without this the LINK legend
+    // reads LIVE beside a pre-hidden TUNARR/LAST APPLY reading, which is
+    // the one thing this bezel must never show.
+    void poll();
+    // Then the pages' own primary GETs, for the same reason.
+    for (const handler of [...resumeHandlers]) handler();
+  });
 }

@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-09-10
+
+The live link's client half. Every page now watches the stream v0.5.8
+started broadcasting, and two guards make sure it never costs the
+operator work in progress.
+
+### Added
+
+- **The stream reader** (`web/assets/ts/runtime/stream.ts`): a
+  hand-rolled `fetch` + `ReadableStream` reader with a pure, tested
+  `parseFrames()` half. An SSE stream arrives in arbitrary chunks — a
+  frame splits mid-field, and even between the two newlines that
+  terminate it — so parsing is against a retained buffer, never a single
+  chunk. `EventSource` does not appear in this file and must not be
+  introduced: it cannot send an `Authorization` header, and the only way
+  around that writes the operator's bearer token into every access log
+  the request passes.
+- **The degradation ladder.** LIVE while connected; POLL after three
+  consecutive failures, where the stream keeps retrying in the background
+  and the 60-second `/status` poll takes over; LINK LOST after six, where
+  polling stops and the bezel offers a manual reconnect. Backoff runs 1s
+  doubling to 30s and resumes from `Last-Event-ID`. Nothing functional
+  depends on any rung — each degrades what the operator SEES, never what
+  they can do.
+- **The event bus** (`runtime/bus.ts`) with `serverNow()`: a smoothed
+  offset folded from each heartbeat's `server_time`, which every relative
+  timestamp and the guide's sweep cursor now read instead of `Date.now()`.
+  This is the permanent fix for the clock-skew class of bug the retired
+  `schedule.ts` had.
+- **The bezel LINK legend**: a coded dot plus text across all three
+  states, with a manual **Reconnect** action on LINK LOST. Colour never
+  carries the state alone. Two motion moments and no more — one amber
+  pulse entering LINK LOST, one green on reacquire — both suppressed
+  under `prefers-reduced-motion`, with `forced-colors` fallbacks since
+  the pulses are box-shadow-borne. `/kit/` gained fixtures for all three
+  states and `web/DESIGN.md` the contrast evidence for every new pairing
+  in both palettes.
+- **Per-page routing.** The Guide refetches `GET /schedule` on
+  `apply.completed` and `plan.invalidated`, debounced 2s; History
+  prepends to RUNS and refetches AS-RUN, and refetches TRACKED on
+  `series.changed`; Blocks refetches its list. A hidden tab drops its
+  stream entirely and, on becoming visible, reconnects and re-reads each
+  page's primary GET — the hub's ring holds 128 events, so a tab that was
+  away a while cannot trust replay alone.
+
+### Changed
+
+- **The 60-second `/status` poll became the POLL rung** rather than being
+  deleted, and is suspended while the stream is healthy so the two never
+  run at once.
+- **Two dirty guards now override every automatic refetch.** They carry
+  the slice. The Guide freezes while
+  the inspector is open or a draft is armed, pinning
+  `LINEUP CHANGED — REFRESH` instead of refetching, and an armed draft
+  additionally disarms with `SOURCE CHANGED — RE-PREVIEW`. Blocks freezes
+  while its editor is open — **dirty or clean**. A clean editor looks
+  harmless, but it is holding the `updated_at` its next save sends as
+  `If-Match`; refetching underneath it would quietly re-arm that header
+  with a record the operator has never seen, and the save would then
+  succeed and overwrite the other tab's spec.
+
+### Fixed
+
+- **The ladder no longer reports LIVE before a connection has delivered
+  anything.** Promotion moved off the post-200 path and onto the first
+  delivered frame: a 200 is not proof, a frame is. A server that accepts
+  a connection and instantly closes it now degrades down the ladder
+  instead of pinning LIVE and retrying every second.
+- **`Last-Event-ID` resume survives a reconnect.** The last seen id was
+  scoped inside `connectStream`, so the manual Reconnect and the
+  visibility resume — the two paths that follow an actual gap — always
+  reconnected as a fresh subscription and replayed nothing.
+- **The bezel refetches its own `/status` on tab resume.** Without it the
+  LINK legend read LIVE beside a pre-hidden TUNARR reading, which is the
+  one thing this bezel must never show.
+- **The LINK LOST Reconnect button is actually hidden when the link is
+  up.** `.telemetry__reconnect { display: none }` tied on specificity
+  with `.btn { display: inline-flex }` and lost on source order, so the
+  button rendered — focusable, in the tab order — in every state. Both
+  halves of the gate are now scoped under `.telemetry`, which resolves it
+  on specificity alone and cannot be re-broken by moving either block.
+
+### Documentation
+
+- `docs/web-ui-guide.md`: the LINK legend and its three states, what
+  refetches and what deliberately does not, both dirty guards, and the
+  plain statement that no page needs the stream.
+- `web/DESIGN.md`: the legend, the two pulses, and the WCAG evidence.
+- `docs/roadmap.md`, `TODO.md`: the live link marked shipped across
+  v0.5.8/v0.5.9, naming what was deliberately left out.
+
 ## [0.5.8] - 2026-09-10
 
 The live link's server half: one event stream carries every change the
@@ -2256,7 +2347,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.9...HEAD
+[0.5.9]: https://github.com/christopherime/schedularr/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/christopherime/schedularr/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/christopherime/schedularr/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/christopherime/schedularr/compare/v0.5.5...v0.5.6

@@ -21,8 +21,11 @@
 - **v0.5.8 shipped the live link's server half** (2026-09-10): the
   broadcast hub, `GET /api/v1/events`, the four change events, the
   reachability prober, and the `If-Match`/`PATCH` pair that closes the
-  lost-update hole multi-writer visibility opens. The client half is
-  deferred — see "Deferred (live link)" below.
+  lost-update hole multi-writer visibility opens.
+- **v0.5.9 shipped the client half** (2026-09-10): the fetch/ReadableStream
+  reader and its ladder, the event bus with heartbeat-corrected
+  `serverNow()`, the bezel's LINK legend, and per-page routing behind the
+  two dirty guards. Block power tools are next in theme order.
 
 ## v1.0 product intake (2026-08-30)
 
@@ -563,33 +566,27 @@ patched piecemeal mid-rebuild.
 
 ## Deferred (live link)
 
-Phase B of `docs/superpowers/plans/2026-09-09-live-link-sse.md`, deferred
-when v0.5.8 shipped the server half alone. The server broadcasts to
-nobody until this lands, and every page behaves exactly as it did in
-v0.5.7. The UI was built to stay operable without the stream, so this
-costs liveness and nothing else.
+Recorded when v0.5.9 closed the slice. None of these block anything; each
+is a known, scoped-out gap.
 
-- **The stream reader** (`web/assets/ts/runtime/stream.ts`). A
-  `fetch`/`ReadableStream` reader with a pure, testable `parseFrames`
-  half, plus the degradation ladder: LIVE, then POLL after three
-  consecutive connection failures, then LINK LOST with a manual
-  reconnect. `EventSource` cannot send a bearer header and must never
-  appear in this file.
-- **The event bus and skew correction** (`runtime/bus.ts`,
-  `runtime/shell.ts`). One stream per page routed onto a bus. The
-  existing 60s `/status` poll is not deleted — it becomes the POLL rung,
-  and must be suspended while the stream is healthy so the two never run
-  at once. `serverNow()`, derived from the heartbeat's `server_time`,
-  replaces `Date.now()` for every relative timestamp.
-- **The bezel LINK legend.** A coded dot plus text for all three states,
-  two motion moments and no more, `prefers-reduced-motion` and
-  `forced-colors` fallbacks, contrast evidence recorded in
-  `web/DESIGN.md`, and `/kit/` fixtures for each state.
-- **Per-page routing and the dirty guards.** The Guide refetches on
-  `apply.completed`/`plan.invalidated`, debounced 2s, but never while the
-  inspector is open or a draft is armed; Blocks queues a refetch until a
-  dirty editor closes. An auto-refetch that discards an armed draft is
-  worse than no live link at all.
-- **`web/DESIGN.md` and `docs/web-ui-guide.md`.** Both are Phase B
-  documentation and were deliberately left untouched by the v0.5.8 docs
-  pass — there is no LINK legend to document yet.
+- **The trace draw-in for newly arrived `/history/` rows.** Task 11 asked
+  for it; the draw-in turned out to be guide-only (`@keyframes
+  guide-drawin`), and giving History its own would mean designing the
+  motion rather than reusing it. The event tape's own print animation
+  marks arrival in the meantime.
+- **The live refetch does not draw in on the Guide either.** The draw-in
+  is structurally reachable only from a draft preview, not from a
+  committed reading, so the Task 10 bullet asking for it describes
+  something the grid cannot currently express.
+- **A throwing subscriber kills its siblings.** Both switchboards —
+  `bus.publishLocal` and shell's resume-handler loop — dispatch with a
+  bare `for (const h of [...set]) h(data)`. Guard both at once or
+  neither; guarding one would make them disagree about whether a handler
+  may throw.
+- **A hidden tab reports `linkState() === "live"`** while its stream is
+  stopped, so the 60s poll stays suspended for a tab that is not
+  streaming. Harmless — nobody is reading a hidden tab, and the resume
+  path refetches everything — but the reading is not strictly honest.
+- **No automated coverage of the full backoff walk** (LIVE → POLL →
+  LINK LOST). It needs 7+ seconds of real backoff and the ladder has no
+  injectable clock. Covered by the gate's by-hand browser pass.
