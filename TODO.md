@@ -18,6 +18,11 @@
   with TRACKED / AS-RUN / RUNS panes replaced `/series/` and
   `/dashboard/` outright. Nav is `GUIDE · BLOCKS · HISTORY`. Live link
   (SSE) is next in theme order — see `docs/roadmap.md`.
+- **v0.5.8 shipped the live link's server half** (2026-09-10): the
+  broadcast hub, `GET /api/v1/events`, the four change events, the
+  reachability prober, and the `If-Match`/`PATCH` pair that closes the
+  lost-update hole multi-writer visibility opens. The client half is
+  deferred — see "Deferred (live link)" below.
 
 ## v1.0 product intake (2026-08-30)
 
@@ -555,3 +560,36 @@ patched piecemeal mid-rebuild.
   `blocks/list.html` runs `cronReadback()` twice per row (2N cronstrue
   parses per list render). Not a bug today; audit before the grid slice
   multiplies row counts.
+
+## Deferred (live link)
+
+Phase B of `docs/superpowers/plans/2026-09-09-live-link-sse.md`, deferred
+when v0.5.8 shipped the server half alone. The server broadcasts to
+nobody until this lands, and every page behaves exactly as it did in
+v0.5.7. The UI was built to stay operable without the stream, so this
+costs liveness and nothing else.
+
+- **The stream reader** (`web/assets/ts/runtime/stream.ts`). A
+  `fetch`/`ReadableStream` reader with a pure, testable `parseFrames`
+  half, plus the degradation ladder: LIVE, then POLL after three
+  consecutive connection failures, then LINK LOST with a manual
+  reconnect. `EventSource` cannot send a bearer header and must never
+  appear in this file.
+- **The event bus and skew correction** (`runtime/bus.ts`,
+  `runtime/shell.ts`). One stream per page routed onto a bus. The
+  existing 60s `/status` poll is not deleted — it becomes the POLL rung,
+  and must be suspended while the stream is healthy so the two never run
+  at once. `serverNow()`, derived from the heartbeat's `server_time`,
+  replaces `Date.now()` for every relative timestamp.
+- **The bezel LINK legend.** A coded dot plus text for all three states,
+  two motion moments and no more, `prefers-reduced-motion` and
+  `forced-colors` fallbacks, contrast evidence recorded in
+  `web/DESIGN.md`, and `/kit/` fixtures for each state.
+- **Per-page routing and the dirty guards.** The Guide refetches on
+  `apply.completed`/`plan.invalidated`, debounced 2s, but never while the
+  inspector is open or a draft is armed; Blocks queues a refetch until a
+  dirty editor closes. An auto-refetch that discards an armed draft is
+  worse than no live link at all.
+- **`web/DESIGN.md` and `docs/web-ui-guide.md`.** Both are Phase B
+  documentation and were deliberately left untouched by the v0.5.8 docs
+  pass — there is no LINK legend to document yet.

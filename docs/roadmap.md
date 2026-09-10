@@ -256,7 +256,29 @@ v0.5.5 below).
   **Deliberately left to the History desk slice:** `DELETE /history`,
   per-title removal, the STORAGE strip, the `app_meta.max_plan_seq`
   floor, bulk cursor operations, and YAML import/export on the page.
-- **Then — Live link (SSE): pending.** Unchanged in scope.
+- **Then — Live link (SSE): server half shipped in v0.5.8; client
+  pending.** `internal/events` holds an in-process broadcast hub and
+  `GET /api/v1/events` streams it as `text/event-stream`, with a 15s
+  heartbeat carrying `server_time` and `Last-Event-ID` resume over a
+  128-event ring. Producers are the seams that already existed:
+  `service.Runner` announces `apply.completed` after the run row is
+  written, the block and cursor handlers announce `plan.invalidated` and
+  `series.changed`, and a reachability prober in `serve` announces
+  `status.changed` — on a flip only, never once per probe, because
+  nothing else server-side notices Tunarr going away. The multi-writer
+  visibility this opens also closed the lost-update hole it would
+  otherwise create: `PUT /blocks/{id}` now requires `If-Match` and
+  answers `412`, and `PATCH /blocks/{id}` carries the enable/disable
+  toggle so it cannot clobber a spec edit made in another tab.
+  `history.appended` was cut from the design spec's catalog: it would
+  fire at the same instant, from the same place, carrying the same
+  `run_id` as `apply.completed`.
+  **Still pending — the client half:** the `fetch`/`ReadableStream`
+  reader (`EventSource` cannot send a bearer header), the event bus and
+  heartbeat skew correction, the bezel's LINK legend and its three
+  states, and the per-page routing with its dirty guards. Until that
+  lands, the server broadcasts to nobody and the UI behaves exactly as
+  it did in v0.5.7.
 - **Then — Block power tools: pending.** Unchanged in scope.
 - **Then — History desk power tools: pending.** Was "the series desk";
   now the desk lives on `/history/`. Bulk cursor operations, YAML

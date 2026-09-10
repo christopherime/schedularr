@@ -90,6 +90,27 @@ There is no `metrics_port` config key: `schedularr serve` exposes Prometheus met
 
 Generate a starting file with `schedularr config generate config.yaml` — see [Getting Started](getting-started.md) and the [CLI Reference](cli-reference.md#config-generate-filename). Never commit real Tunarr credentials; keep redacted examples in `configs/` and store machine-specific overrides outside the repository.
 
+## Reverse proxies and the event stream
+
+`GET /api/v1/events` is a long-lived `text/event-stream` that stays open for the life of a browser tab. **Any reverse proxy or SSO layer in front of Schedularr must not buffer it.** A buffering proxy holds every event until the connection closes, which turns the live link into a stream that delivers nothing and then delivers everything at once — the failure is silent, and it looks like a broken UI rather than a broken proxy.
+
+Schedularr already sets `X-Accel-Buffering: no` on the response, which nginx and anything honouring that header respect. Where the header is not enough, disable buffering for the path explicitly:
+
+```nginx
+location /api/v1/events {
+    proxy_pass              http://schedularr:8484;
+    proxy_buffering         off;
+    proxy_cache             off;
+    proxy_http_version      1.1;
+    proxy_set_header        Connection "";
+    proxy_read_timeout      1h;
+}
+```
+
+`proxy_read_timeout` matters as much as buffering: the stream's own 15s heartbeat keeps the connection warm, so any read timeout comfortably above that is fine, but a default 60s timeout on a proxy that ignores the heartbeat will cut the connection on a cycle. The client reconnects and resumes, so a short timeout degrades to a reconnect loop rather than to data loss — but it is still churn worth avoiding.
+
+Nothing in the web UI *requires* the stream: every page stays fully operable with a manual refresh, and the client falls back to polling on its own. A misconfigured proxy therefore costs liveness, not function.
+
 ## Helm chart
 
 A generic Helm chart for Schedularr is maintained at [geekxflood/helm-charts](https://github.com/geekxflood/helm-charts). It packages the `docker run` invocation above as a Kubernetes `Deployment`/`Service`, with the config file and `SCHEDULARR_API_TOKEN` supplied through standard chart values (a `ConfigMap`/`Secret`, or your own). Consult that repository for the chart's own values reference and version history — this page intentionally stays cluster-agnostic; hostnames, storage classes, and ingress configuration are specific to each deployment and belong in your own cluster's configuration, not here.

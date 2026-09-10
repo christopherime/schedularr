@@ -7,6 +7,7 @@ Schedularr automates Tunarr TV channel programming: cron-based scheduling genera
 - **CLI Interface** (`cmd/`) — user commands for configuration, scheduling, and monitoring.
 - **Scheduling Engine** (`internal/scheduler/`) — core logic for schedule generation and content selection.
 - **HTTP API** (`internal/api/`) — blocks CRUD, schedule generate/apply, history, series state, channels, and status, hosted by `schedularr serve` alongside the cron scheduling loop and the embedded web UI.
+- **Broadcast hub** (`internal/events/`) — in-process fan-out behind `GET /api/v1/events`, so one operator's change reaches every other connected browser tab without polling.
 - **Tunarr Client** (`internal/external/tunarr/`) — API client for communication with Tunarr instances.
 - **State Store** (`internal/store/`) — SQLite-based persistence for blocks, series progression, and schedule history.
 - **Configuration** (`internal/config/`, `internal/cueconfig/`) — CUE schema-based configuration management.
@@ -105,6 +106,7 @@ schedularr/
 │   │   └── migrations/
 │   ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
 │   │   └── gen/                  # server.gen.go -- generated, do not hand-edit
+│   ├── events/                    # In-process broadcast hub behind GET /events (SSE)
 │   ├── service/                   # Schedule generate/apply workflow (shared by CLI + API)
 │   ├── blockio/                   # scheduler.yaml parse/render + first-run store import
 │   ├── problem/                   # RFC 7807 application/problem+json helpers
@@ -185,6 +187,29 @@ CREATE TABLE series_state (
 ```
 
 Series state changes are pending in memory until the schedule applies successfully to Tunarr — commit on success, rollback (discard) on failure or on exit without committing.
+
+### Broadcast hub (`internal/events/`)
+
+One publisher fans an event out to every connected browser tab. Nothing outside the process ever sees it, and nothing inside the process depends on delivery succeeding.
+
+```txt
+producers                          hub                     connected tabs
+─────────                          ───                     ──────────────
+service.Runner      ──┐
+  apply.completed     │
+api block handlers  ──┤
+  plan.invalidated    ├──► events.Hub ──► ring(128) ──┬──► GET /events ──► tab A
+api state handler   ──┤       Publish()               ├──► GET /events ──► tab B
+  series.changed      │       (never blocks)          └──► GET /events ──► tab C
+serve's prober      ──┘                                    buffer 32 each
+  status.changed
+```
+
+The two sides run on different clocks. A publish happens on an apply's critical path; a subscriber is a browser tab that may have stopped reading at any moment. So `Publish` never blocks, never returns an error, and never waits on a reader — a tab that falls behind its 32-event buffer loses events and repairs itself by resuming from `Last-Event-ID` against the hub's 128-event ring, or by refetching its page data when the gap is wider than the ring.
+
+The hub is transport-agnostic: it holds `any` payloads and leaves JSON marshaling to the HTTP handler, so a payload that will not marshal costs the one connection that hit it rather than every subscriber. Producers are the seams that already existed — no new plumbing was threaded through the scheduling engine to make this work. A `Handlers` built without a hub (the CLI's, and every test that doesn't need one) simply doesn't announce, and `GET /events` answers `503`.
+
+See the [API Reference's live-link section](api-reference.md#live-link) for the wire format and the resume contract.
 
 ### Configuration (`internal/config/`)
 

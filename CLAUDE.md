@@ -65,6 +65,7 @@ internal/
 ├── store/                    # SQLite state persistence (blocks, series state, history)
 │   └── migrations/           # DB migrations
 ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
+├── events/                   # In-process broadcast hub behind GET /events (SSE live link)
 ├── problem/                  # RFC 7807 problem+json error body (shared by api + middleware)
 ├── metrics/                  # Prometheus metrics instrumentation
 ├── service/                  # Schedule generate/apply workflow (shared by CLI + API)

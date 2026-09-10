@@ -13,17 +13,20 @@ The API is served by `schedularr serve` — see the [CLI Reference](cli-referenc
 
 Every write path (`POST`/`PUT`) validates the block spec against the CUE scheduler schema before touching the store; every response body is `application/json` (or `application/problem+json` for errors).
 
-| Method | Path           | Success | Error codes   |
-|--------|----------------|---------|---------------|
-| GET    | `/blocks`      | 200     | —             |
-| POST   | `/blocks`      | 201     | 400, 409      |
-| GET    | `/blocks/{id}` | 200     | 404           |
-| PUT    | `/blocks/{id}` | 200     | 400, 404, 409 |
-| DELETE | `/blocks/{id}` | 204     | 404           |
+| Method | Path           | Success | Error codes        |
+|--------|----------------|---------|--------------------|
+| GET    | `/blocks`      | 200     | —                  |
+| POST   | `/blocks`      | 201     | 400, 409           |
+| GET    | `/blocks/{id}` | 200     | 404                |
+| PUT    | `/blocks/{id}` | 200     | 400, 404, 409, 412 |
+| PATCH  | `/blocks/{id}` | 200     | 400, 404, 409      |
+| DELETE | `/blocks/{id}` | 204     | 404                |
 
 - `POST`/`PUT` return `400` for a spec that fails CUE validation (e.g. a missing `cron` or a non-positive `duration`) or a malformed JSON body.
 - `POST` returns `409` for a duplicate block name; `PUT` returns `409` if the request body's `spec.name` differs from the existing block's name and collides with another block. A `PUT` whose `spec.name` differs from the current name without colliding renames the block.
 - `POST`/`PUT` also return `400` for a series block (`spec.type: series`) whose `series[].show_title` is empty. The CUE scheduler schema types `show_title` as a bare `string` with no non-empty constraint, so this case would otherwise pass CUE validation — the check is applied in Go on both block-ingestion paths (here, and `blocks/import` below).
+- `PUT` requires an `If-Match` header carrying the block's current `updated_at`, which you read from a prior `GET`. A missing or unparseable header is `400`; a value that no longer matches the stored `updated_at` is `412` (`title: "block changed since you loaded it"`). This is lost-update protection: `PUT` replaces a block's entire spec, so without it two operators editing one block silently discard the slower one's work. The value is compared as an instant rather than as a string — a client that round-trips `updated_at` through JSON may re-render it equivalently but not identically — and surrounding quotes are accepted, since callers reasonably treat it as an entity tag. The correct response to a `412` is to reload the block and re-apply the edit, never a silent retry.
+- `PATCH /blocks/{id}` is the field-scoped complement to `PUT`: only fields present in the body change (`enabled` is the sole field today), so an enable/disable toggle cannot clobber a spec edit made elsewhere. It takes **no** `If-Match` for that reason — there is no unrelated state for it to overwrite. A body with no fields set is `400` (`title: "empty patch"`), matching `PATCH /state/series/{show_title}`. Re-enabling a block re-enters the same shared-show policy check a create or full update runs, so a `409` is still possible; disabling never triggers one.
 - `PUT`/`DELETE` on a series block also invalidate every not-yet-*finished* occurrence's cursor snapshot for that block — including one currently on air, not just occurrences that haven't started yet (see [Scheduling Concepts' idempotent-apply section](scheduling-concepts.md#idempotent-apply-and-editing-a-block-before-it-airs)) — so the next apply re-derives those occurrences against the spec you just changed instead of a snapshot captured under the old one.
 
 ## Import / export
@@ -139,6 +142,40 @@ Exposes what Tunarr's synced library actually contains — shows and the distinc
 
 !!! note "Live Tunarr's episode shape"
     A live Tunarr `/api/programs/search` "episode" result never sends a flat `showTitle`/`rating`/`seasonNumber` key, and doesn't nest a `show` object either (live-verified against Tunarr 1.3.13). What it actually carries is a `showId` foreign key pointing at a separate, interleaved `Type == "show"` search-result entry — not nested, and not reliably on the same page as its own episodes. Schedularr's fetch path joins each episode's `showId` against those interleaved show entries after accumulating the *entire* paginated result set, and resolves each distinct `seasonId` individually via `GET /api/programming/seasons/{id}` (cached for the same 1h window). This is what makes `/media/shows`, `/media/meta`'s `ratings`, and series-block scheduling actually work against a real, unmodified Tunarr deployment.
+
+## Live link
+
+One Server-Sent Events stream carries every change the server makes to state a browser tab is already showing, so a tab learns about another tab's edit without polling for it.
+
+| Method | Path      | Success | Error codes |
+|--------|-----------|---------|-------------|
+| GET    | `/events` | 200     | 500, 503    |
+
+The response is `text/event-stream` and never completes while the client stays connected. It sets `Cache-Control: no-cache`, `Connection: keep-alive`, and `X-Accel-Buffering: no` — the last of which matters to anything fronting Schedularr (see [Deployment](deployment.md#reverse-proxies-and-the-event-stream)).
+
+**Frames.** Each frame is `event:` plus a JSON `data:` line, and — for everything except heartbeats — an `id:`:
+
+| Event              | Payload                                                                | Published when                                                      |
+|--------------------|------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `heartbeat`        | `{server_time}`                                                        | Immediately on connect, then every 15s                              |
+| `apply.completed`  | `{run_id, source, channel_ids, slot_count, warning_count, applied_at}` | An apply finishes — success **or** failure                          |
+| `plan.invalidated` | `{reason, id}` where `reason` is `block` or `series`                   | A block is created, updated, patched, or deleted; a cursor is reset |
+| `series.changed`   | `{show_title}`                                                         | `PATCH /state/series/{show_title}` succeeds                         |
+| `status.changed`   | `{tunarr_reachable}`                                                   | Tunarr's reachability flips (see below)                             |
+
+`heartbeat` does two jobs: `server_time` (RFC 3339, UTC, nanosecond precision) lets a client correct its own clock drift rather than trusting `Date.now()` for relative timestamps, and the traffic itself stops an intermediary from buffering the connection into uselessness. Heartbeats deliberately carry **no** `id` — they are not resumable state, and giving them ids would make a reconnect replay clock ticks.
+
+`status.changed` fires only on a **transition**, never once per probe. `serve` probes Tunarr every 30s (5s timeout) and publishes only when the answer differs from the last one, plus once on the first probe so a tab that connects before any flip still learns the current reading. A per-probe publish would wake every connected tab twice a minute to tell it nothing had happened. This prober exists because nothing else server-side notices Tunarr going away: between applies, the only Tunarr calls are ones a browser triggers.
+
+There is no `history.appended` event. It would fire at the same instant, from the same place, carrying the same `run_id` as `apply.completed`, and two events for one fact is a catalog that lies about its own granularity.
+
+**Resume.** Send the `Last-Event-ID: <n>` header to receive everything published after id `n`. An unparseable or negative value starts a fresh subscription rather than failing the request — the client refetches its page data on connect anyway, and refusing the connection would strand a tab whose only problem was a corrupt header. The hub retains the 128 most recent events for this, which is sized for a reconnect measured in seconds, not for replaying a session — a client that has been away longer simply misses events and repairs itself by refetching the page's primary `GET`. Each connection also buffers 32 events; a tab that stops reading past that loses events rather than slowing a publisher down, and resumes the same way.
+
+**Errors.** `503` (`title: "live link unavailable"`) means the server was started without an event hub — every `serve` instance wires one, so in practice this is the CLI's own handlers or an embedding that omits it. `500` with the same title means the response writer cannot stream, which is checked *before* any header is written so an unstreamable writer still gets a proper `problem+json` response instead of a committed, empty `200`.
+
+The stream is consumed by a hand-rolled `fetch`/`ReadableStream` reader, never by `EventSource`, which cannot send an `Authorization` header. Passing the token in the query string instead is permanently out of scope: it would leak the token into access logs.
+
+**Nothing depends on the stream.** Every page stays fully operable with a refresh when it is unavailable; the web UI treats a dead stream as a normal state and falls back to polling. Delivery is deliberately best-effort in both directions: publishing happens on an apply's critical path and never blocks, never errors, and never waits on a reader.
 
 ## Middleware
 

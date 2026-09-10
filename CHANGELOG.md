@@ -7,6 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-09-10
+
+The live link's server half: one event stream carries every change the
+server makes to state a browser tab is already showing, and the
+lost-update hole that multi-writer visibility opens is closed in the same
+release.
+
+### Added
+
+- **In-process broadcast hub** (`internal/events/hub.go`): one publisher
+  fans an event out to every connected browser tab, backed by a 128-event
+  ring for `Last-Event-ID` resume and a 32-event buffer per subscriber.
+  The asymmetry is deliberate — a publish happens on an apply's critical
+  path while a subscriber is a tab that may have stopped reading at any
+  moment — so `Publish` never blocks, never returns an error, and never
+  waits on a reader. A tab that falls behind loses events and repairs
+  itself by resuming, or by refetching when the gap is wider than the
+  ring.
+- **`GET /api/v1/events`** (`internal/api/events.go`): the hub streamed
+  as `text/event-stream`, with a `heartbeat` on connect and every 15s
+  thereafter. The heartbeat's `server_time` lets a client correct its own
+  clock drift — the permanent fix for the class of skew bug the retired
+  `schedule.ts` had — and the traffic keeps an intermediary from
+  buffering the connection into uselessness. Heartbeats carry no `id`, so
+  a reconnect cannot replay clock ticks. The response sets
+  `X-Accel-Buffering: no`; a server started without a hub answers `503`
+  rather than dereferencing nil, because the client treats an unavailable
+  stream as a normal state.
+- **Four change events, published from the seams that already existed:**
+  `apply.completed` from `service.Runner` (after the run row is written,
+  so a tab that refetches cannot outrun the run it names — and failed
+  applies are announced too), `plan.invalidated` from the block handlers
+  and the cursor handler, `series.changed` from `PATCH /state/series/
+  {show_title}`, and `status.changed` from a new reachability prober.
+- **Tunarr reachability prober** (`cmd/probe.go`): `serve` probes Tunarr
+  every 30s with a 5s timeout and publishes `status.changed` only when
+  the answer **flips**, plus once on the first probe so a tab connecting
+  before any flip still learns the current reading. A per-probe publish
+  would wake every connected tab twice a minute to say nothing had
+  happened. It exists because nothing else server-side notices Tunarr
+  going away: between applies, the only Tunarr calls are ones a browser
+  triggers.
+- **`PATCH /api/v1/blocks/{id}`**: the field-scoped complement to `PUT`,
+  carrying the enable/disable toggle. It takes no `If-Match` because it
+  has no unrelated state to clobber; an empty patch is `400`, matching
+  `PATCH /state/series/{show_title}`.
+
+### Changed
+
+- **`PUT /api/v1/blocks/{id}` now requires `If-Match`** carrying the
+  block's current `updated_at`, and answers `412` when the block has
+  changed since it was loaded (`400` for a missing or malformed header).
+  `PUT` replaces a block's whole spec, so without this two tabs editing
+  one block silently discard the slower operator's work — and the live
+  link makes that routine rather than theoretical, since both tabs now
+  watch each other's changes land. Compared as instants rather than
+  strings, so a client that re-renders `updated_at` equivalently but not
+  identically is not refused over formatting; surrounding quotes are
+  accepted, since callers reasonably treat it as an entity tag.
+- **The web UI's block save sends `If-Match`** and its enable/disable
+  toggle moves from `PUT` to `PATCH`.
+
+### Fixed
+
+- **Streaming through the middleware stack.** Flushes go through
+  `http.ResponseController` rather than a direct `http.Flusher` assertion:
+  the writer reaching the handler is wrapped by the logging middleware's
+  status recorder, and a plain assertion sees the wrapper rather than the
+  socket. Flush support is probed **before** any header is written, so an
+  unstreamable writer gets a proper `problem+json` response instead of a
+  committed, empty `200`.
+- **A payload that will not marshal** is skipped rather than killing the
+  connection — one malformed event must not cost a tab its live link.
+
+### Documentation
+
+- `docs/api-reference.md`: a live-link section covering the frame format,
+  every event's payload and trigger, the resume contract, and the two
+  error cases; plus `PATCH /blocks/{id}` and `If-Match`/`412` on `PUT`.
+- `docs/deployment.md`: **a standing reverse-proxy requirement** — any
+  proxy or SSO layer fronting Schedularr must not buffer
+  `/api/v1/events`, with the nginx directives and a note on read timeouts
+  versus the 15s heartbeat.
+- `docs/architecture.md`: the hub between producers and connected tabs,
+  as a component detail and in the project tree.
+- `docs/roadmap.md`, `TODO.md`: the live-link entry becomes half-shipped,
+  and Phase B — the stream reader, the event bus, the bezel's LINK
+  legend, and the per-page dirty guards — is recorded as deferred.
+- `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`: `internal/events` in the
+  architecture tree.
+
+### Known gaps
+
+- **No client consumes the stream yet.** The bezel has no LINK legend and
+  no page refetches on an event; every page behaves exactly as it did in
+  v0.5.7 and stays fully operable with a manual refresh. Nothing in the UI
+  requires the stream, so this costs liveness and nothing else — but the
+  release does ship a broadcaster with no audience. See `TODO.md`'s
+  "Deferred (live link)".
+
 ## [0.5.7] - 2026-09-09
 
 Memory: every apply becomes a durable record, the airing history stops
@@ -2156,7 +2256,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.7...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.8...HEAD
+[0.5.8]: https://github.com/christopherime/schedularr/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/christopherime/schedularr/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/christopherime/schedularr/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/christopherime/schedularr/compare/v0.5.4...v0.5.5
