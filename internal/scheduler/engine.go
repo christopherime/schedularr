@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/christopherime/schedularr/internal/external/tunarr"
@@ -38,7 +39,17 @@ type Engine struct {
 	// and reset there too.
 	pendingSnapshots    []occurrenceSnapshotRecord
 	pendingReplacements []occurrenceReplacement
-	// lastPlanSeq backs nextPlanSeq -- see its doc comment.
+	// planSeqMu guards the allocator below. The engine itself is
+	// single-run, but the reservation it draws from is shared state and
+	// the cost of a mutex here is nothing next to a silently dropped
+	// post-state.
+	planSeqMu sync.Mutex
+	// planSeqNext and planSeqLast are the half-open remainder of the block
+	// this engine reserved at construction. When they meet, the allocator
+	// falls back to the wall clock -- see nextPlanSeq.
+	planSeqNext int64
+	planSeqLast int64
+	// lastPlanSeq backs nextPlanSeq's fallback -- see its doc comment.
 	lastPlanSeq int64
 	logger      *slog.Logger
 	// runID is the apply run this engine's Commit belongs to
@@ -50,6 +61,17 @@ type Engine struct {
 	// behavior it was split out of.
 	snapshotRetention time.Duration
 }
+
+// planSeqBlockSize is how many plan sequences an engine reserves up front.
+//
+// Sized so no realistic plan can exhaust it: a run allocates at most a
+// couple per series occurrence, and 65536 covers far more occurrences than
+// a 30-day window over any plausible block set. Exhausting it drops the
+// allocator back to the wall clock, which is correct but reopens the
+// cross-process race -- so the number is chosen to make that unreachable
+// rather than merely unlikely. Sequences are nanosecond-scale, so burning
+// a block costs 65 microseconds of a range that never runs out.
+const planSeqBlockSize = 65536
 
 // nextPlanSeq allocates the next plan-provenance sequence
 // (OccurrenceSnapshot.PlanSeq / SeriesState.CursorPlanSeq): the current
@@ -69,6 +91,32 @@ type Engine struct {
 // silently dropped) until the clock caught up. Engines are single-run,
 // not concurrent, so no locking.
 func (e *Engine) nextPlanSeq() int64 {
+	e.planSeqMu.Lock()
+	defer e.planSeqMu.Unlock()
+
+	// The reserved block is the correct path: no other engine, in this
+	// process or any other sharing the database, holds a sequence in it.
+	//
+	// planSeqNext > 0 is the "have a reservation" test, not decoration:
+	// with no store, or a reservation that failed, both fields are their
+	// zero value and `0 <= 0` would otherwise read as a live block and
+	// hand out sequence 0 -- which every stored cursor already outranks,
+	// so every post-state of that run would be dropped.
+	if e.planSeqNext > 0 && e.planSeqNext <= e.planSeqLast {
+		seq := e.planSeqNext
+		e.planSeqNext++
+		if seq > e.lastPlanSeq {
+			e.lastPlanSeq = seq
+		}
+		return seq
+	}
+
+	// Fallback: no store, a reservation that failed, or a plan large
+	// enough to exhaust one. Wall-clock nanos bumped past the last
+	// allocation -- what this allocator did before reservations existed,
+	// carrying the cross-process race that motivated them. Both routes
+	// into it are logged where they happen, so this branch never has to
+	// explain itself twice.
 	seq := time.Now().UnixNano()
 	if seq <= e.lastPlanSeq {
 		seq = e.lastPlanSeq + 1
@@ -274,15 +322,24 @@ func NewEngineWithOptions(ctx context.Context, client *tunarr.Client, blocks []B
 		snapshotRetention: snapshotRetention,
 	}
 	if store != nil {
-		// Seed the plan-sequence floor from the store's high-water mark
-		// (see nextPlanSeq's doc comment). Failure is survivable -- the
-		// wall clock alone is still correct on any host whose clock never
-		// stepped backward -- so log and continue rather than fail
-		// engine construction.
-		if maxSeq, err := store.MaxPlanSeq(ctx); err != nil {
-			logger.Warn("failed to seed plan-sequence floor from store; falling back to wall clock alone", "error", err)
+		// Reserve a block of plan sequences rather than merely observing a
+		// floor. Observing is what let two processes collide: `serve` and
+		// a concurrent `generate --apply` could both read the same
+		// MaxPlanSeq before either committed, allocate from the same
+		// nanosecond neighborhood, and have the second commit silently
+		// discarded by the provenance guard in syncPostStates.
+		//
+		// Failure is survivable and stays survivable: the wall-clock
+		// fallback is exactly what this allocator did before, correct on
+		// any host whose clock never stepped backward. Failing engine
+		// construction instead would take a scheduling run down over a
+		// bookkeeping write, which is the worse trade.
+		if first, last, err := store.ReservePlanSeqBlock(ctx, planSeqBlockSize); err != nil {
+			logger.Warn("failed to reserve a plan-sequence block; falling back to the wall clock",
+				"error", err, "block_size", planSeqBlockSize)
 		} else {
-			e.lastPlanSeq = maxSeq
+			e.planSeqNext, e.planSeqLast = first, last
+			e.lastPlanSeq = first - 1
 		}
 	}
 	return e
@@ -1180,6 +1237,18 @@ func (e *Engine) syncPostStates(snap OccurrenceSnapshot, occurrenceStart time.Ti
 			continue
 		}
 		if snap.PlanSeq <= existing.CursorPlanSeq {
+			// Reaching here means an aired occurrence's post-state is NOT
+			// being written, and the operator sees a cursor that quietly
+			// stops advancing. With sequences reserved rather than merely
+			// observed this should be unreachable for two concurrent runs,
+			// so if it fires, something upstream is wrong -- a clock that
+			// stepped, an imported cursor carrying a future provenance, or
+			// a reservation that fell back to the wall clock. Say so.
+			e.logger.Warn("dropping an aired post-state whose provenance is not newer than the live cursor",
+				"show_title", title,
+				"snapshot_plan_seq", snap.PlanSeq,
+				"cursor_plan_seq", existing.CursorPlanSeq,
+				"run_id", e.runID)
 			continue
 		}
 		if cursorBehind(s.CurrentSeason, s.CurrentEpisode, existing.CurrentSeason, existing.CurrentEpisode) {

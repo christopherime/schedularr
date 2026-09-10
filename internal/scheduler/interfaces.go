@@ -75,6 +75,17 @@ type StateStore interface {
 	// floor, either would wedge the provenance guard (every replay <=
 	// live provenance, silently dropped) until the clock caught up.
 	MaxPlanSeq(ctx context.Context) (int64, error)
+	// ReservePlanSeqBlock atomically reserves count consecutive
+	// plan-provenance sequences and returns the first and last of them.
+	// Nothing else -- in this process or any other sharing the database --
+	// can be handed a sequence in that range.
+	//
+	// MaxPlanSeq alone is a floor OBSERVED, which is sound for one process
+	// and unsound for two: `serve` and a concurrent `generate --apply` can
+	// both read it before either commits, allocate from the same
+	// nanosecond neighborhood, and the second commit is then silently
+	// discarded by the provenance guard in syncPostStates.
+	ReservePlanSeqBlock(ctx context.Context, count int64) (first, last int64, err error)
 	// ReplaceOccurrenceHistory atomically replaces every schedule_history
 	// row for one occurrence (blockName, occurrenceStart) with entries --
 	// used when a not-yet-aired series occurrence is re-derived against a

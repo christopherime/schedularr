@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/christopherime/schedularr/internal/external/tunarr"
@@ -12,6 +13,17 @@ import (
 type MockStateStore struct {
 	States  map[string]*SeriesState
 	History []ScheduleHistoryEntry
+	// PlanSeqReserveErr, when set, makes ReservePlanSeqBlock fail -- the
+	// path where engine construction must degrade to the wall clock
+	// rather than take a scheduling run down over a bookkeeping write.
+	PlanSeqReserveErr error
+	// planSeqHigh is the mock's own high-water mark, so repeated
+	// reservations against one mock do not overlap. planSeqMu guards it:
+	// the real store gets atomicity from SQLite, and a double that does
+	// not uphold the same contract cannot be used to test the thing the
+	// contract exists for.
+	planSeqMu   sync.Mutex
+	planSeqHigh int64
 	// Snapshots mirrors the series_occurrence_snapshots table, each
 	// entry's RecordedAt mirroring the recorded_at column (real
 	// wall-clock write time, refreshed on every upsert) -- see
@@ -184,6 +196,32 @@ func (m *MockStateStore) MaxPlanSeq(_ context.Context) (int64, error) {
 		}
 	}
 	return maxSeq, nil
+}
+
+// ReservePlanSeqBlock mirrors Store.ReservePlanSeqBlock over an in-memory
+// high-water mark. Reserving from the same max() the real store starts
+// from keeps a mock-backed engine's sequences ordered against whatever the
+// test seeded into Snapshots/States, which several engine tests rely on.
+//
+// PlanSeqReserveErr makes the fallback path testable: a reservation that
+// fails must not fail engine construction.
+func (m *MockStateStore) ReservePlanSeqBlock(ctx context.Context, count int64) (int64, int64, error) {
+	if m.PlanSeqReserveErr != nil {
+		return 0, 0, m.PlanSeqReserveErr
+	}
+	m.planSeqMu.Lock()
+	defer m.planSeqMu.Unlock()
+
+	stored, _ := m.MaxPlanSeq(ctx)
+	floor := time.Now().UnixNano()
+	if stored > floor {
+		floor = stored
+	}
+	if m.planSeqHigh > floor {
+		floor = m.planSeqHigh
+	}
+	m.planSeqHigh = floor + count
+	return floor + 1, m.planSeqHigh, nil
 }
 
 // ReplaceOccurrenceHistory mirrors Store.ReplaceOccurrenceHistory: drops
