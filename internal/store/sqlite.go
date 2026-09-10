@@ -190,8 +190,8 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 
 	for _, entry := range entries {
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type, run_id)
-			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type, :run_id)`, entry); err != nil {
+			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, show_title, type, run_id)
+			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :show_title, :type, :run_id)`, entry); err != nil {
 			return fmt.Errorf("failed to insert schedule history: %w", err)
 		}
 	}
@@ -210,7 +210,7 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 func (s *Store) ListScheduleHistory(ctx context.Context, since time.Time) ([]scheduler.ScheduleHistoryEntry, error) {
 	var entries []scheduler.ScheduleHistoryEntry
 	err := s.db.SelectContext(ctx, &entries, `
-		SELECT program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type, run_id
+		SELECT program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, show_title, type, run_id
 		FROM schedule_history
 		WHERE scheduled_at >= ?
 		ORDER BY scheduled_at DESC`, since)
@@ -231,12 +231,28 @@ func (s *Store) GetCommittedOccurrence(ctx context.Context, blockName string, oc
 		ProgramID  string  `db:"program_id"`
 		DurationMs float64 `db:"duration_ms"`
 		Title      string  `db:"title"`
+		ShowTitle  string  `db:"show_title"`
 		Type       string  `db:"type"`
 	}
+	// show_title is read back for the same reason it is written: this
+	// occurrence may be REPLAYED into ReplaceOccurrenceHistory, which
+	// rebuilds its rows from these Programs. Omit it here and a re-apply
+	// silently blanks the column it was just written to.
+	//
+	// occurrence_start is matched through datetime() on BOTH sides rather
+	// than by a bare equality. SQLite keeps a DATETIME as TEXT carrying
+	// whatever offset the writer had, so one instant written in two zones
+	// is two different strings and a plain "=" silently finds nothing --
+	// which reads as MISSING DATA rather than as a wrong answer, the worst
+	// way for this to fail. Normalising in the predicate also fixes rows
+	// already stored, where rewriting the column would have truncated
+	// sub-second precision; schedule_history's primary key includes
+	// scheduled_at, so a truncating rewrite could collide two rows.
+	// Every exact-match on occurrence_start in this file does the same.
 	err := s.db.SelectContext(ctx, &rows, `
-		SELECT program_id, duration_ms, title, type
+		SELECT program_id, duration_ms, title, show_title, type
 		FROM schedule_history
-		WHERE block_name = ? AND occurrence_start = ?
+		WHERE block_name = ? AND datetime(occurrence_start) = datetime(?)
 		ORDER BY sequence ASC`, blockName, occurrenceStart)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query committed occurrence for block %q at %s: %w", blockName, occurrenceStart, err)
@@ -256,10 +272,11 @@ func (s *Store) GetCommittedOccurrence(ctx context.Context, blockName string, oc
 	programs := make([]tunarr.Program, 0, len(rows))
 	for _, row := range rows {
 		programs = append(programs, tunarr.Program{
-			UUID:     row.ProgramID,
-			Title:    row.Title,
-			Duration: row.DurationMs,
-			Type:     row.Type,
+			UUID:      row.ProgramID,
+			Title:     row.Title,
+			ShowTitle: row.ShowTitle,
+			Duration:  row.DurationMs,
+			Type:      row.Type,
 		})
 	}
 	return programs, true, nil
@@ -282,7 +299,7 @@ func (s *Store) GetOccurrenceSnapshot(ctx context.Context, blockID string, occur
 	}
 	err := s.db.GetContext(ctx, &row, `
 		SELECT snapshot_json, post_state_json, recorded_at, plan_seq FROM series_occurrence_snapshots
-		WHERE block_id = ? AND occurrence_start = ?`, blockID, occurrenceStart)
+		WHERE block_id = ? AND datetime(occurrence_start) = datetime(?)`, blockID, occurrenceStart)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return scheduler.OccurrenceSnapshot{}, false, nil
@@ -480,15 +497,15 @@ func (s *Store) ReplaceOccurrenceHistory(ctx context.Context, blockName string, 
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM schedule_history WHERE block_name = ? AND occurrence_start = ?`,
+		DELETE FROM schedule_history WHERE block_name = ? AND datetime(occurrence_start) = datetime(?)`,
 		blockName, occurrenceStart); err != nil {
 		return fmt.Errorf("failed to clear previous occurrence history for block %q at %s: %w", blockName, occurrenceStart, err)
 	}
 
 	for _, entry := range entries {
 		if _, err := tx.NamedExecContext(ctx, `
-			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, type, run_id)
-			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :type, :run_id)`, entry); err != nil {
+			INSERT INTO schedule_history (program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, show_title, type, run_id)
+			VALUES (:program_id, :channel_id, :block_name, :scheduled_at, :occurrence_start, :sequence, :duration_ms, :title, :show_title, :type, :run_id)`, entry); err != nil {
 			return fmt.Errorf("failed to insert replacement schedule history for block %q at %s: %w", blockName, occurrenceStart, err)
 		}
 	}

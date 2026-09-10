@@ -39,7 +39,18 @@ type ScheduleHistoryEntry struct {
 	Sequence        int       `db:"sequence"`
 	DurationMs      float64   `db:"duration_ms"`
 	Title           string    `db:"title"`
-	Type            string    `db:"type"`
+	// ShowTitle is the SHOW this airing belongs to, where Title is the
+	// EPISODE. Empty for anything that belongs to no show -- a movie, or a
+	// program Tunarr could not resolve a show for -- and for every row
+	// written before migration 000012, which cannot be backfilled.
+	//
+	// It is filled from tunarr.Program.ShowTitle rather than from the
+	// block's series config on purpose: a FILTER block can select an
+	// episode too, and that episode belongs to its show no matter which
+	// kind of block put it on air. Keying off the block would have made
+	// "remove this show" miss exactly those airings.
+	ShowTitle string `db:"show_title"`
+	Type      string `db:"type"`
 	// RunID is the apply run (store.ApplyRun.ID) that committed this row,
 	// or "" for rows written before apply runs were recorded (v0.5.7) --
 	// runs cannot be backfilled, so an empty RunID means "unknown apply",

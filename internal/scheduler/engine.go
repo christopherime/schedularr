@@ -1855,6 +1855,7 @@ func makeHistoryEntries(programs []tunarr.Program, channelID, blockName string, 
 			Sequence:        i,
 			DurationMs:      program.Duration,
 			Title:           program.Title,
+			ShowTitle:       program.ShowTitle,
 			Type:            program.Type,
 		})
 	}
