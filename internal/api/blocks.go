@@ -158,6 +158,15 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	// A spec replacement that MOVES the block, or switches it off, is the
+	// same disruption DELETE and PATCH are guarded against. A filter-only
+	// edit is not, and is deliberately still allowed mid-occurrence.
+	if scheduleMoved(existing.Spec, spec) || !enabled {
+		if !h.refuseIfOnAir(w, r, *existing, "Changing its schedule") {
+			return
+		}
+	}
+
 	existing.Name = spec.Name
 	existing.Enabled = enabled
 	existing.Spec = spec
@@ -196,6 +205,10 @@ func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	if !h.refuseIfOnAir(w, r, *existing, "Deleting it") {
+		return
+	}
+
 	if err := h.d.Store.DeleteBlock(r.Context(), id); err != nil {
 		h.writeBlockStoreError(w, r, "delete_block", err)
 		return
@@ -207,6 +220,64 @@ func (h *Handlers) DeleteBlock(w http.ResponseWriter, r *http.Request, id string
 
 	h.publishPlanInvalidated("block", id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// scheduleMoved reports whether a spec replacement changes WHEN or WHERE a
+// block airs, as opposed to what it selects.
+//
+// PUT is the fourth path that can disturb an occurrence already playing,
+// and the least obvious: change the cron, the channel, or the length and
+// the next apply plans a different occurrence, so the shell for the one on
+// air is not injected and its channel re-anchors at now. Changing a
+// block's FILTER does none of that -- the occurrence keeps its slot, and
+// only its future content differs -- so refusing a filter edit would cost
+// the operator hours for no protection at all.
+func scheduleMoved(before, after scheduler.Block) bool {
+	return before.Cron != after.Cron ||
+		before.ChannelID != after.ChannelID ||
+		before.Duration != after.Duration ||
+		before.MaxDurationOverflowMinutes != after.MaxDurationOverflowMinutes
+}
+
+// refuseIfOnAir answers 409 when rec's occurrence is playing right now,
+// returning false once it has written the response.
+//
+// The three writes that can change what a viewer sees -- deleting a block,
+// switching one off, and giving one a dark window -- all take effect at
+// the NEXT apply, not immediately. That is not a reprieve: serve's cron
+// loop applies at process start and then every cron_interval, unattended,
+// so the operator cannot avoid it by declining to apply. What lands there
+// is worse than a shortened lineup: an occurrence that generates no shell
+// leaves anchorForChannel with nothing to anchor, so the channel
+// re-anchors at now and its whole lineup restarts -- and if the block was
+// the channel's last, clearStaleChannels pushes a flex-only lineup, which
+// is dead air mid-episode.
+//
+// A block that is already inactive is never refused. It generates no shell
+// at the next apply either way, so changing it cannot cut anything off --
+// and refusing there would block the operator from tidying up a block they
+// already switched off.
+//
+// The instant goes in the problem detail as prose rather than a
+// machine-readable field: problem.Problem is a closed struct shared with
+// internal/api/middleware, and widening a shared contract for one caller
+// is a worse trade than a sentence the operator can read.
+func (h *Handlers) refuseIfOnAir(w http.ResponseWriter, r *http.Request, rec store.BlockRecord, action string) bool {
+	now := time.Now()
+	if !rec.Enabled || (rec.DisabledUntil != nil && now.Before(*rec.DisabledUntil)) {
+		return true
+	}
+
+	live := scheduler.OnAirOccurrences([]scheduler.Block{rec.Spec}, now, h.location())
+	if len(live) == 0 {
+		return true
+	}
+
+	safeAt := live[0].SafeAt.In(h.location())
+	WriteProblem(w, r, http.StatusConflict, "block is on air",
+		fmt.Sprintf("%s is airing until %s. %s now would cut the current program. Try again after that.",
+			rec.Name, safeAt.Format("15:04"), action))
+	return false
 }
 
 // checkIfMatch enforces PUT's lost-update protection, returning false
@@ -281,6 +352,15 @@ func (h *Handlers) PatchBlock(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
+	// Only the patches that take a block OUT of the schedule are guarded.
+	// Switching one on, or clearing a dark window, adds to the next
+	// apply's lineup rather than removing from it, and nothing on air can
+	// be cut off by that.
+	takesOffAir := (body.Enabled != nil && !*body.Enabled) || goingDark(body.DisabledUntil)
+	if takesOffAir && !h.refuseIfOnAir(w, r, *existing, "Taking it off air") {
+		return
+	}
+
 	if body.Enabled != nil {
 		// Re-enabling a block re-enters the shared-show policy check the
 		// same way a create or a full update does; disabling never can.
@@ -334,6 +414,25 @@ type blockPatchBody struct {
 // A malformed instant is the caller's error and comes back as a 400 --
 // silently ignoring it would leave the block awake while the operator
 // believes they just took it dark.
+// goingDark reports whether a disabled_until patch would take a block out
+// of the schedule, as opposed to clearing a window or leaving it alone.
+//
+// An absent key changes nothing and an explicit null CLEARS the window --
+// both put the block back on air rather than taking it off, so neither is
+// guarded. Only an instant in the future is a change worth refusing over,
+// and a malformed value is left for applyDisabledUntil to reject with the
+// 400 it deserves rather than being guessed at here.
+func goingDark(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var until time.Time
+	if err := json.Unmarshal(raw, &until); err != nil {
+		return false
+	}
+	return until.After(time.Now())
+}
+
 func applyDisabledUntil(rec *store.BlockRecord, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
