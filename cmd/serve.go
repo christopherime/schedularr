@@ -183,7 +183,7 @@ func runServe(cmd *cobra.Command) error {
 		api.Deps{
 			Store: st, Tunarr: client, Sched: runner, Media: runner,
 			Logger: logger, Version: Version, NextCronTick: tick.next,
-			Events: hub,
+			Events: hub, Location: loc,
 		},
 	)
 	if err != nil {

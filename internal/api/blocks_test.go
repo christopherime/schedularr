@@ -1002,3 +1002,321 @@ func TestPatchBlock_UnknownIdIs404(t *testing.T) {
 	w := doRequest(t, h, http.MethodPatch, "/blocks/does-not-exist", map[string]any{"enabled": false})
 	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
+
+// ---- next_occurrence -------------------------------------------------------
+//
+// next_occurrence answers "when does this block actually air next", which
+// is a different question from "what does its cron say next": both dark
+// switches are in the answer, and an expression that never fires has no
+// answer at all rather than an error.
+
+func TestBlockRecord_CarriesItsNextOccurrence(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("morning", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	rec := decodeBlockRecord(t, w)
+
+	require.NotNil(t, rec.NextOccurrence, "next_occurrence absent for an enabled block")
+	assert.True(t, rec.NextOccurrence.After(time.Now()), "next_occurrence %v is in the past", *rec.NextOccurrence)
+	assert.Equal(t, 6, rec.NextOccurrence.In(time.Local).Hour(), "the occurrence should land on the cron's hour")
+}
+
+func TestBlockRecord_DisabledBlockReportsNoNextOccurrence(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("off", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	wp := doRequest(t, h, http.MethodPatch, "/blocks/"+created.Id, map[string]any{"enabled": false})
+	require.Equal(t, http.StatusOK, wp.Code, wp.Body.String())
+
+	rec := decodeBlockRecord(t, doRequest(t, h, http.MethodGet, "/blocks/"+created.Id, nil))
+	assert.Nil(t, rec.NextOccurrence, "a block an operator switched off has no next airing to report")
+}
+
+func TestBlockRecord_DarkBlockReportsTheFirstOccurrenceAfterItWakes(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("dark", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeBlockRecord(t, w)
+
+	wake := time.Now().Add(10 * 24 * time.Hour).UTC().Truncate(time.Second)
+	wp := doRequest(t, h, http.MethodPatch, "/blocks/"+created.Id,
+		map[string]any{"disabled_until": wake.Format(time.RFC3339)})
+	require.Equal(t, http.StatusOK, wp.Code, wp.Body.String())
+
+	rec := decodeBlockRecord(t, wp)
+	require.NotNil(t, rec.NextOccurrence, "a dark block comes back on its own, so it has a next airing")
+	assert.False(t, rec.NextOccurrence.Before(wake),
+		"next_occurrence %v is before the block wakes at %v -- the planning gate would skip that tick",
+		*rec.NextOccurrence, wake)
+}
+
+// TestBlockRecord_DarkBlockIncludesAnOccurrenceExactlyAtItsWakeInstant pins
+// the one-second search anchor in nextOccurrenceFor: NextOccurrences is
+// strictly-after, so a block waking at 06:00 with a 06:00 cron would
+// otherwise report tomorrow's tick and skip the one it actually airs.
+func TestBlockRecord_DarkBlockIncludesAnOccurrenceExactlyAtItsWakeInstant(t *testing.T) {
+	rec := store.BlockRecord{Enabled: true, Spec: scheduler.Block{Cron: "0 6 * * *"}}
+	wake := time.Date(2026, 9, 20, 6, 0, 0, 0, time.UTC)
+	rec.DisabledUntil = &wake
+
+	got := nextOccurrenceFor(rec, time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC), time.UTC)
+	require.NotNil(t, got)
+	assert.True(t, got.Equal(wake), "got %v, want the tick at the wake instant itself (%v)", *got, wake)
+}
+
+func TestBlockRecord_UnfireableCronReportsNoNextOccurrence(t *testing.T) {
+	h := newTestServer(t)
+
+	// February 30th is a well-formed expression that never fires.
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("never", "0 0 30 2 *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	rec := decodeBlockRecord(t, w)
+	assert.Nil(t, rec.NextOccurrence, "February 30th never comes, so there is nothing to report")
+}
+
+// ---- the timed dark switch -------------------------------------------------
+
+func TestUpdateBlock_PreservesAnExistingDarkWindow(t *testing.T) {
+	h := newTestServer(t)
+
+	post := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("dark-put", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, post.Code, post.Body.String())
+	created := decodeBlockRecord(t, post)
+
+	until := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	patched := decodeBlockRecord(t, doRequest(t, h, http.MethodPatch, "/blocks/"+created.Id,
+		map[string]any{"disabled_until": until.Format(time.RFC3339)}))
+	require.NotNil(t, patched.DisabledUntil)
+
+	// A full spec replacement must not silently clear the dark window.
+	// store.UpdateBlock writes EVERY column from the record, so this holds
+	// only because the handler mutates the record it loaded rather than
+	// rebuilding one. Rebuilding it would nil the column with no test to
+	// notice -- which is exactly why this test exists.
+	w := putBlock(t, h, created.Id, filterBlockWrite("dark-put", "0 7 * * *"))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	after := decodeBlockRecord(t, doRequest(t, h, http.MethodGet, "/blocks/"+created.Id, nil))
+	require.NotNil(t, after.DisabledUntil, "PUT cleared the dark window")
+	assert.True(t, after.DisabledUntil.Equal(until), "dark window moved: got %v want %v", after.DisabledUntil, until)
+	assert.Equal(t, "0 7 * * *", after.Spec.Cron, "the spec edit itself did not land")
+}
+
+func TestPatchBlock_SetsAndClearsDisabledUntil(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	until := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	w := doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id,
+		map[string]any{"disabled_until": until.Format(time.RFC3339)})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	set := decodeBlockRecord(t, w)
+	require.NotNil(t, set.DisabledUntil, "disabled_until not set")
+	assert.True(t, set.DisabledUntil.Equal(until))
+
+	// An explicit null is the only way an operator brings a block back
+	// early, so it must clear rather than read as "leave it alone".
+	w = doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id, map[string]any{"disabled_until": nil})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Nil(t, decodeBlockRecord(t, w).DisabledUntil, "an explicit null must clear the dark window")
+
+	// And it must be persisted, not just reflected in the response.
+	assert.Nil(t, decodeBlockRecord(t, doRequest(t, h, http.MethodGet, "/blocks/"+rec.Id, nil)).DisabledUntil)
+}
+
+func TestPatchBlock_OnlyEnabledLeavesTheDarkWindowAlone(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	until := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	require.Equal(t, http.StatusOK, doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id,
+		map[string]any{"disabled_until": until.Format(time.RFC3339)}).Code)
+
+	w := doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id, map[string]any{"enabled": false})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	got := decodeBlockRecord(t, w)
+	require.NotNil(t, got.DisabledUntil, "an absent disabled_until key cleared the dark window -- the axes are independent")
+	assert.True(t, got.DisabledUntil.Equal(until))
+	assert.False(t, got.Enabled, "enabled not applied")
+}
+
+func TestPatchBlock_OnlyDisabledUntilLeavesEnabledAlone(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	require.Equal(t, http.StatusOK,
+		doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id, map[string]any{"enabled": false}).Code)
+
+	until := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	w := doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id,
+		map[string]any{"disabled_until": until.Format(time.RFC3339)})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	got := decodeBlockRecord(t, w)
+	assert.False(t, got.Enabled, "an absent enabled key re-enabled the block -- the axes are independent")
+	require.NotNil(t, got.DisabledUntil)
+}
+
+func TestPatchBlock_MalformedDisabledUntilIs400(t *testing.T) {
+	// Silently ignoring it would leave the block awake while the operator
+	// believes they just took it dark.
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	w := doRequest(t, h, http.MethodPatch, "/blocks/"+rec.Id, map[string]any{"disabled_until": "last tuesday"})
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// ---- a bad cron is caught at write time ------------------------------------
+
+func TestCreateBlock_UnparseableCronIs400(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("bad-cron", "not a cron"))
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"a bad cron must be caught at write time, not as a 502 from the engine at apply time: %s", w.Body.String())
+
+	p := decodeProblem(t, w)
+	assert.Contains(t, strings.ToLower(p.Detail), "cron", "the problem body must name the field: %s", w.Body)
+}
+
+func TestUpdateBlock_UnparseableCronIs400(t *testing.T) {
+	h := newTestServer(t)
+	rec := seedOneBlock(t, h)
+
+	w := putBlock(t, h, rec.Id, filterBlockWrite("guarded", "75 99 * * *"))
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	// The stored block is untouched: a rejected write changes nothing.
+	assert.Equal(t, "0 6 * * *", decodeBlockRecord(t, doRequest(t, h, http.MethodGet, "/blocks/"+rec.Id, nil)).Spec.Cron)
+}
+
+// ---- duplicate -------------------------------------------------------------
+
+func duplicateBlock(t *testing.T, h http.Handler, id, name string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doRequest(t, h, http.MethodPost, "/blocks/"+id+"/duplicate", map[string]any{"name": name})
+}
+
+func TestDuplicateBlock_CopiesTheSpecAndArrivesDisabled(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("morning", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	source := decodeBlockRecord(t, w)
+
+	wd := duplicateBlock(t, h, source.Id, "copy of morning")
+	require.Equal(t, http.StatusCreated, wd.Code, wd.Body.String())
+
+	copied := decodeBlockRecord(t, wd)
+	assert.NotEqual(t, source.Id, copied.Id, "the copy reused the source's id")
+	assert.Equal(t, "copy of morning", copied.Name)
+	assert.Equal(t, "copy of morning", copied.Spec.Name, "the spec's own name must follow the record's")
+	assert.False(t, copied.Enabled,
+		"the copy arrived enabled -- it would contend with its source at the same cron on the same channel")
+	assert.Nil(t, copied.DisabledUntil, "a copy arrives with no dark window of its own")
+	assert.Equal(t, source.Spec.Cron, copied.Spec.Cron)
+	assert.Equal(t, source.Spec.ChannelId, copied.Spec.ChannelId)
+	assert.Equal(t, source.Spec.Duration, copied.Spec.Duration)
+	assert.False(t, copied.CreatedAt.IsZero())
+
+	// The source is left exactly as it was.
+	stillThere := decodeBlockRecord(t, doRequest(t, h, http.MethodGet, "/blocks/"+source.Id, nil))
+	assert.True(t, stillThere.Enabled, "duplicating must not disturb the source")
+}
+
+func TestDuplicateBlock_CarriesSeriesSeeds(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWrite("anime-night"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	source := decodeBlockRecord(t, w)
+
+	wd := duplicateBlock(t, h, source.Id, "anime-night-b")
+	require.Equal(t, http.StatusCreated, wd.Code, wd.Body.String())
+
+	copied := decodeBlockRecord(t, wd)
+	require.NotNil(t, copied.Spec.Series, "series seeds not copied -- that is what makes it a duplicate")
+	series := *copied.Spec.Series
+	require.Len(t, series, 1)
+	assert.Equal(t, "Show A", series[0].ShowTitle)
+	assert.Equal(t, 2, series[0].EpisodesPerBlock)
+	require.NotNil(t, copied.Spec.Type)
+	assert.Equal(t, gen.BlockSpecTypeSeries, *copied.Spec.Type)
+}
+
+func TestDuplicateBlock_NameCollisionIs409(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("morning", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	source := decodeBlockRecord(t, w)
+
+	require.Equal(t, http.StatusCreated,
+		doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("taken", "0 7 * * *")).Code)
+
+	// The server never invents a name, so a collision is the caller's to
+	// resolve -- the same 409 a colliding create gets.
+	wd := duplicateBlock(t, h, source.Id, "taken")
+	assert.Equal(t, http.StatusConflict, wd.Code, wd.Body.String())
+}
+
+func TestDuplicateBlock_EmptyNameIs400(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("morning", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code)
+	source := decodeBlockRecord(t, w)
+
+	assert.Equal(t, http.StatusBadRequest, duplicateBlock(t, h, source.Id, "").Code)
+	assert.Equal(t, http.StatusBadRequest, duplicateBlock(t, h, source.Id, "   ").Code,
+		"a whitespace-only name is an empty name")
+}
+
+func TestDuplicateBlock_MissingSourceIs404(t *testing.T) {
+	h := newTestServer(t)
+	assert.Equal(t, http.StatusNotFound, duplicateBlock(t, h, "does-not-exist", "x").Code)
+}
+
+// TestDuplicateBlock_ContradictorySharedShowPolicyRejected pins that
+// arriving disabled does not exempt the copy from the shared-show
+// agreement check: it is defined and it will come back, so the collision
+// would otherwise surface the moment somebody enabled it.
+func TestDuplicateBlock_ContradictorySharedShowPolicyRejected(t *testing.T) {
+	h := newTestServer(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", seriesBlockWriteWithPolicy("live", "Shared Show", gen.Restart))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	disabled := false
+	contradicting := seriesBlockWriteWithPolicy("draft", "Shared Show", gen.Disable)
+	contradicting.Enabled = &disabled
+	w = doRequest(t, h, http.MethodPost, "/blocks", contradicting)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	source := decodeBlockRecord(t, w)
+
+	wd := duplicateBlock(t, h, source.Id, "draft-copy")
+	require.Equal(t, http.StatusBadRequest, wd.Code, wd.Body.String())
+	assert.Contains(t, wd.Body.String(), "contradictory completion policy")
+}
+
+func TestDuplicateBlock_AnnouncesOnTheLiveLink(t *testing.T) {
+	h, hub, _ := newTestServerWithHub(t)
+
+	w := doRequest(t, h, http.MethodPost, "/blocks", filterBlockWrite("morning", "0 6 * * *"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	source := decodeBlockRecord(t, w)
+	before := hub.LastID()
+
+	wd := duplicateBlock(t, h, source.Id, "copy")
+	require.Equal(t, http.StatusCreated, wd.Code, wd.Body.String())
+	assert.NotEqual(t, before, hub.LastID(),
+		"duplicate did not announce plan.invalidated -- other tabs would not see the new block")
+}

@@ -40,6 +40,31 @@ export interface paths {
         patch: operations["patchBlock"];
         trace?: never;
     };
+    "/blocks/{id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy a block into a new, disabled one
+         * @description Copies the source block's whole spec -- filter, filler, series seeds and all -- into a new block under the name the caller gives. It exists because a working set of blocks is usually one block varied a few ways, and rebuilding a series roster field by field to change one channel is where operators give up and edit the database.
+         *     Nothing keyed by the source's id comes along: series cursors and occurrence snapshots record what the SOURCE has already aired, and a copy has aired nothing.
+         *     The copy arrives `enabled: false`. An exact copy carries the same cron, channel, and priority as its source, so landing it enabled would put two blocks in contention for one channel at one time and conflict resolution would silently drop one of them. The copy is a draft the operator edits and then turns on.
+         *     The name is required and the server never invents one -- a collision is the caller's to resolve, not something a server-side counter should paper over. Clients pre-fill `Copy of <source>`.
+         */
+        post: operations["duplicateBlock"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/blocks/import": {
         parameters: {
             query?: never;
@@ -210,6 +235,28 @@ export interface paths {
         patch: operations["patchSeriesState"];
         trace?: never;
     };
+    "/cron/next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Upcoming occurrences of a cron expression
+         * @description The next occurrences of `expr`, evaluated server-side in the configured `log.timezone`. It exists so the client never re-implements calendar semantics: DST transitions, month lengths, and descriptor handling all belong to one parser, the same one the scheduling engine uses.
+         *     Occurrences are strictly AFTER `from`, so a `from` sitting exactly on an occurrence does not return it again. The array may be shorter than `count`: a well-formed expression that never fires (February 30th) returns an empty array rather than an error, because the expression is valid and the answer is genuinely "never".
+         *     Stateless -- it reads no blocks and touches no store.
+         */
+        get: operations["nextCronOccurrences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels": {
         parameters: {
             query?: never;
@@ -341,6 +388,15 @@ export interface components {
         /** @description Field-scoped block update. Absent fields are left unchanged; a body with no fields set is rejected. */
         BlockPatch: {
             enabled?: boolean;
+            /**
+             * Format: date-time
+             * @description Take the block dark until this instant, after which it returns on its own. An explicit `null` CLEARS the dark window and is deliberately distinct from an absent key, which leaves it alone -- clearing is the only way an operator brings a block back early, and the two cases would be indistinguishable otherwise.
+             */
+            disabled_until?: string | null;
+        };
+        /** @description The name for the copy. Required, and never defaulted server-side: a collision belongs to the caller, who is the one who can see what the other block is. */
+        BlockDuplicate: {
+            name: string;
         };
         BlockRecord: {
             id: string;
@@ -351,6 +407,16 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * Format: date-time
+             * @description The instant this block returns to the schedule. Absent when there is no dark window. Independent of `enabled`: a block is planned only when it is enabled AND not currently dark. A value in the past is stale rather than meaningful -- it no longer suppresses anything.
+             */
+            disabled_until?: string;
+            /**
+             * Format: date-time
+             * @description The next instant this block will actually air, honouring both `enabled` and `disabled_until`. Absent when the block is disabled, when its cron expression never fires, or when the expression will not parse. For a dark block this is the first occurrence at or after it wakes, not the next raw cron tick -- a NEXT reading beside a dark block would otherwise be a lie.
+             */
+            next_occurrence?: string;
         };
         ImportResult: {
             imported: number;
@@ -655,6 +721,27 @@ export interface operations {
             404: components["responses"]["Problem"];
         };
     };
+    duplicateBlock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlockDuplicate"];
+            };
+        };
+        responses: {
+            201: components["responses"]["BlockItem"];
+            400: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
     importBlocks: {
         parameters: {
             query?: {
@@ -895,6 +982,35 @@ export interface operations {
             };
             400: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+        };
+    };
+    nextCronOccurrences: {
+        parameters: {
+            query: {
+                /** @description A standard 5-field cron expression, or a descriptor such as `@daily`. */
+                expr: string;
+                count?: number;
+                /** @description RFC3339 instant to search after. Defaults to now. */
+                from?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The upcoming occurrences, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        occurrences: string[];
+                    };
+                };
+            };
+            400: components["responses"]["Problem"];
         };
     };
     listChannels: {

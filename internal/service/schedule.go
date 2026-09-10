@@ -193,13 +193,25 @@ func NewRunner(st *store.Store, tc *tunarr.Client, o RunnerOptions) *Runner {
 	}
 }
 
-// ActiveBlocks returns the Spec of every enabled block in the store.
-// scheduler.yaml is import-only (see blockio.Bootstrap): the store is the
-// engine's live source of scheduling truth, and disabled blocks stay
-// defined but out of schedule generation. Moved here from
-// cmd/generate.go's loadActiveBlocks so both the CLI and the API server
-// share one implementation.
-func ActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error) {
+// ActiveBlocks returns the Spec of every block that should be planned as of
+// now: enabled, and not currently inside a dark window. scheduler.yaml is
+// import-only (see blockio.Bootstrap): the store is the engine's live
+// source of scheduling truth.
+//
+// The two switches are independent. Enabled is the indefinite one, undone
+// only by an operator. DisabledUntil is the timed one, undone by the clock.
+// A block needs both to be clear, so setting either suppresses it.
+//
+// now is a parameter rather than a time.Now() call so a run plans against
+// the same instant it generates its window from -- otherwise a block could
+// be dark for the gate and awake for the window, or the reverse -- and so
+// this is testable without a clock stub. The DisabledUntil comparison is
+// instant-vs-instant, so the location now carries does not affect it.
+//
+// This is the ONLY place that decides whether a block is planned -- the
+// cron loop, the API, and the CLI all reach the engine through here. A new
+// suppression rule belongs in this function and nowhere else.
+func ActiveBlocks(ctx context.Context, s *store.Store, now time.Time) ([]scheduler.Block, error) {
 	records, err := s.ListBlocks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list blocks from store: %w", err)
@@ -208,6 +220,13 @@ func ActiveBlocks(ctx context.Context, s *store.Store) ([]scheduler.Block, error
 	blocks := make([]scheduler.Block, 0, len(records))
 	for _, rec := range records {
 		if !rec.Enabled {
+			continue
+		}
+		// "Until" names the instant the block returns, so a wake time equal
+		// to now is already awake. A DisabledUntil in the past is stale
+		// rather than cleared -- nothing sweeps it -- and this comparison
+		// is what makes that harmless.
+		if rec.DisabledUntil != nil && now.Before(*rec.DisabledUntil) {
 			continue
 		}
 		spec := rec.Spec
@@ -391,18 +410,37 @@ func applyRunWarnings(runID string, warnings []scheduler.Warning) []store.ApplyR
 // wraps it in. runID is the apply run its Commit belongs to, empty on a
 // dry run.
 func (r *Runner) run(ctx context.Context, o Options, runID string) (*Result, error) {
-	blocks, err := ActiveBlocks(ctx, r.store)
+	// Truncated to the whole minute because it does double duty as
+	// applyChannels' lineup anchor (offset 0 of every pushed lineup, and
+	// the value written to channel.startTime): Tunarr's own channel-update
+	// write path truncates startTime to the whole minute server-side
+	// regardless of what's sent (tunarr.Client.setChannelStartTime's doc
+	// comment), so truncating here keeps this Run's own timing math
+	// (below, and in applyChannels/buildAnchoredLineup) consistent with
+	// what actually gets stored.
+	//
+	programs, err := r.fetchPrograms(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch programs: %w", err)
+	}
+
+	start := r.now().Truncate(time.Minute)
+	end := start.Add(time.Duration(o.Days) * 24 * time.Hour)
+
+	// Loaded AFTER start is read, and passed that same instant, so the
+	// dark-window gate and the generated window cannot disagree: a second
+	// clock read here could put a block on the wrong side of its own wake
+	// time, planning a block the window then treats as dark, or the
+	// reverse. The order matters the other way too -- start is the lineup
+	// anchor Tunarr is given, so reading it before the program fetch would
+	// silently age every pushed lineup by the fetch's duration.
+	blocks, err := ActiveBlocks(ctx, r.store, start)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load scheduling blocks: %w", err)
 	}
 
 	if o.ChannelID != "" {
 		blocks = blocksForChannel(blocks, o.ChannelID)
-	}
-
-	programs, err := r.fetchPrograms(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch programs: %w", err)
 	}
 
 	engine := scheduler.NewEngineWithOptions(ctx, r.tunarr, blocks, r.store, scheduler.EngineOptions{
@@ -412,17 +450,6 @@ func (r *Runner) run(ctx context.Context, o Options, runID string) (*Result, err
 		SnapshotRetention: r.snapshotRetention,
 		RunID:             runID,
 	})
-
-	// Truncated to the whole minute because it does double duty as
-	// applyChannels' lineup anchor (offset 0 of every pushed lineup, and
-	// the value written to channel.startTime): Tunarr's own channel-update
-	// write path truncates startTime to the whole minute server-side
-	// regardless of what's sent (tunarr.Client.setChannelStartTime's doc
-	// comment), so truncating here keeps this Run's own timing math
-	// (below, and in applyChannels/buildAnchoredLineup) consistent with
-	// what actually gets stored.
-	start := r.now().Truncate(time.Minute)
-	end := start.Add(time.Duration(o.Days) * 24 * time.Hour)
 
 	// scheduler.Engine's exported methods predate this ctx-threaded
 	// service and don't take a context.Context (they use

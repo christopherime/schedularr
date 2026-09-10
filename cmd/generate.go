@@ -250,7 +250,10 @@ func initializeScheduler(cfg *config.Config) (*store.Store, error) {
 		fmt.Printf("%s\n", infoStyle.Render(fmt.Sprintf("📥 Imported %d scheduling block(s) from %s", imported, schedFile)))
 	}
 
-	blocks, err := service.ActiveBlocks(ctx, st)
+	// A fresh clock read is right here: this is a preflight count for a CLI
+	// message, not the instant anything gets planned against. Runner.run
+	// does its own read, tied to the window it generates.
+	blocks, err := service.ActiveBlocks(ctx, st, time.Now())
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("failed to load scheduling blocks: %w", err)

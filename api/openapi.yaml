@@ -95,6 +95,52 @@ paths:
           description: deleted
         "404":
           $ref: "#/components/responses/Problem"
+  /blocks/{id}/duplicate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: duplicateBlock
+      summary: Copy a block into a new, disabled one
+      description: >-
+        Copies the source block's whole spec -- filter, filler, series
+        seeds and all -- into a new block under the name the caller
+        gives. It exists because a working set of blocks is usually one
+        block varied a few ways, and rebuilding a series roster field by
+        field to change one channel is where operators give up and edit
+        the database.
+
+        Nothing keyed by the source's id comes along: series cursors and
+        occurrence snapshots record what the SOURCE has already aired,
+        and a copy has aired nothing.
+
+        The copy arrives `enabled: false`. An exact copy carries the same
+        cron, channel, and priority as its source, so landing it enabled
+        would put two blocks in contention for one channel at one time
+        and conflict resolution would silently drop one of them. The copy
+        is a draft the operator edits and then turns on.
+
+        The name is required and the server never invents one -- a
+        collision is the caller's to resolve, not something a server-side
+        counter should paper over. Clients pre-fill `Copy of <source>`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockDuplicate"
+      responses:
+        "201":
+          $ref: "#/components/responses/BlockItem"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
   /blocks/import:
     post:
       operationId: importBlocks
@@ -328,6 +374,62 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+  /cron/next:
+    get:
+      operationId: nextCronOccurrences
+      summary: Upcoming occurrences of a cron expression
+      description: >-
+        The next occurrences of `expr`, evaluated server-side in the
+        configured `log.timezone`. It exists so the client never
+        re-implements calendar semantics: DST transitions, month lengths,
+        and descriptor handling all belong to one parser, the same one the
+        scheduling engine uses.
+
+        Occurrences are strictly AFTER `from`, so a `from` sitting exactly
+        on an occurrence does not return it again. The array may be shorter
+        than `count`: a well-formed expression that never fires (February
+        30th) returns an empty array rather than an error, because the
+        expression is valid and the answer is genuinely "never".
+
+        Stateless -- it reads no blocks and touches no store.
+      parameters:
+        - name: expr
+          in: query
+          required: true
+          schema:
+            type: string
+          description: A standard 5-field cron expression, or a descriptor such as `@daily`.
+        - name: count
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 3
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: RFC3339 instant to search after. Defaults to now.
+      responses:
+        "200":
+          description: The upcoming occurrences, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [occurrences]
+                properties:
+                  occurrences:
+                    type: array
+                    items:
+                      type: string
+                      format: date-time
+        "400":
+          $ref: "#/components/responses/Problem"
   /channels:
     get:
       operationId: listChannels
@@ -540,6 +642,28 @@ components:
       properties:
         enabled:
           type: boolean
+        disabled_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Take the block dark until this instant, after which it
+            returns on its own. An explicit `null` CLEARS the dark window
+            and is deliberately distinct from an absent key, which leaves
+            it alone -- clearing is the only way an operator brings a
+            block back early, and the two cases would be
+            indistinguishable otherwise.
+    BlockDuplicate:
+      type: object
+      required: [name]
+      description: >-
+        The name for the copy. Required, and never defaulted server-side:
+        a collision belongs to the caller, who is the one who can see
+        what the other block is.
+      properties:
+        name:
+          type: string
+          minLength: 1
     BlockRecord:
       type: object
       required: [id, name, enabled, spec, created_at, updated_at]
@@ -558,6 +682,25 @@ components:
         updated_at:
           type: string
           format: date-time
+        disabled_until:
+          type: string
+          format: date-time
+          description: >-
+            The instant this block returns to the schedule. Absent when
+            there is no dark window. Independent of `enabled`: a block is
+            planned only when it is enabled AND not currently dark. A value
+            in the past is stale rather than meaningful -- it no longer
+            suppresses anything.
+        next_occurrence:
+          type: string
+          format: date-time
+          description: >-
+            The next instant this block will actually air, honouring both
+            `enabled` and `disabled_until`. Absent when the block is
+            disabled, when its cron expression never fires, or when the
+            expression will not parse. For a dark block this is the first
+            occurrence at or after it wakes, not the next raw cron tick --
+            a NEXT reading beside a dark block would otherwise be a lie.
     ImportResult:
       type: object
       required: [imported, dry_run]

@@ -45,6 +45,16 @@ type Deps struct {
 	// unset. cmd/serve.go wires it to the loop's own tick tracker.
 	NextCronTick func() *time.Time
 
+	// Location is the timezone every instant this API computes is
+	// evaluated in -- read by NextCronOccurrences (cron.go) and by toGen, which
+	// stamps every BlockRecord's next_occurrence (blocks.go), whose fields are
+	// wall-clock and therefore meaningless without one. cmd/serve.go passes
+	// the same *time.Location it already resolved from log.timezone for the
+	// Runner, so the UI's occurrence readings and the planner's own windows
+	// can never land in different zones. nil falls back to time.Local,
+	// matching the engine's own nil-handling.
+	Location *time.Location
+
 	// Media is the media-discovery boundary used by ListMediaShows and
 	// GetMediaMeta (see media.go). Production wiring passes the same
 	// *service.Runner as Sched -- MediaAPI is a separate, narrower
@@ -86,3 +96,18 @@ var _ gen.ServerInterface = (*Handlers)(nil)
 
 // ListMediaShows and GetMediaMeta implement gen.ServerInterface. See
 // media.go.
+
+// location is the timezone every instant this API computes is evaluated in.
+//
+// Deps.Location is optional, so the fallback lives here rather than being
+// repeated at each call site: two copies of a default are two places for it
+// to drift, and a handler quietly switching to UTC while its neighbor kept
+// Local is the kind of divergence nobody notices until two readings on one
+// page disagree. Nil falls back to time.Local, matching the engine's own
+// nil-handling in NewEngineWithOptions.
+func (h *Handlers) location() *time.Location {
+	if h.d.Location == nil {
+		return time.Local
+	}
+	return h.d.Location
+}

@@ -846,11 +846,88 @@ func TestActiveBlocks_ExcludesDisabled(t *testing.T) {
 	require.NoError(t, st.CreateBlock(ctx, enabled))
 	require.NoError(t, st.CreateBlock(ctx, disabled))
 
-	blocks, err := ActiveBlocks(ctx, st)
+	blocks, err := ActiveBlocks(ctx, st, time.Now())
 	require.NoError(t, err)
 
 	require.Len(t, blocks, 1)
 	assert.Equal(t, "Enabled Block", blocks[0].Name)
+}
+
+// mustCreateBlock stores one block record with just the fields the
+// planning-gate tests care about -- the two switches and enough spec to be
+// a valid block. The cron is irrelevant here: ActiveBlocks never parses it.
+func mustCreateBlock(t *testing.T, st *store.Store, id, name string, enabled bool, disabledUntil *time.Time) {
+	t.Helper()
+	require.NoError(t, st.CreateBlock(context.Background(), &store.BlockRecord{
+		ID:            id,
+		Name:          name,
+		Enabled:       enabled,
+		DisabledUntil: disabledUntil,
+		Spec: scheduler.Block{
+			Name:      name,
+			Cron:      "0 6 * * *",
+			Duration:  60,
+			ChannelID: "channel-1",
+		},
+	}))
+}
+
+// TestActiveBlocks_SkipsCurrentlyDarkBlocks pins the dark-window half of the
+// planning gate. The two switches are independent axes: Enabled is the
+// indefinite one an operator must undo by hand, DisabledUntil is the timed
+// one the clock undoes. A block is planned only when BOTH are clear, and a
+// DisabledUntil in the past is stale data that suppresses nothing -- nothing
+// ever sweeps that column, so the gate's comparison is the only thing
+// keeping an expired dark window from darkening a block forever.
+func TestActiveBlocks_SkipsCurrentlyDarkBlocks(t *testing.T) {
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+
+	future := now.Add(48 * time.Hour)
+	past := now.Add(-48 * time.Hour)
+
+	mustCreateBlock(t, st, "dark", "Dark", true, &future)
+	mustCreateBlock(t, st, "expired", "Expired", true, &past)
+	mustCreateBlock(t, st, "plain", "Plain", true, nil)
+	mustCreateBlock(t, st, "off", "Off", false, nil)
+	// Both switches at once: still off, because the axes are independent.
+	mustCreateBlock(t, st, "offdark", "OffAndDark", false, &future)
+
+	blocks, err := ActiveBlocks(ctx, st, now)
+	require.NoError(t, err)
+
+	got := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		got = append(got, b.Name)
+	}
+	assert.ElementsMatch(t, []string{"Expired", "Plain"}, got)
+}
+
+// TestActiveBlocks_WakesExactlyAtTheInstant pins the boundary: "until" names
+// the moment the block RETURNS, not the last moment it is dark. Getting this
+// off by one instant is invisible in every other test, and would show up in
+// production only as a block that misses the first occurrence of its own
+// wake-up day.
+func TestActiveBlocks_WakesExactlyAtTheInstant(t *testing.T) {
+	st, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	wake := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	mustCreateBlock(t, st, "b1", "Waking", true, &wake)
+
+	before, err := ActiveBlocks(ctx, st, wake.Add(-time.Second))
+	require.NoError(t, err)
+	assert.Empty(t, before, "block active one second before its wake instant")
+
+	at, err := ActiveBlocks(ctx, st, wake)
+	require.NoError(t, err)
+	assert.Len(t, at, 1, "block not active at its wake instant")
 }
 
 // TestRunner_Run_Apply_UsesConfiguredHistoryWindowForCleanup pins the

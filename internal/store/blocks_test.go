@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/christopherime/schedularr/internal/scheduler"
 	"github.com/christopherime/schedularr/internal/store"
@@ -340,4 +341,137 @@ func TestCreateBlocks_RollsBackWholeBatchOnConflict(t *testing.T) {
 	recs, listErr = s.ListBlocks(ctx)
 	require.NoError(t, listErr)
 	require.Len(t, recs, 3)
+}
+
+// TestBlockDisabledUntilRoundTrips pins that the dark window survives the
+// write/read cycle. It is a column rather than a key inside spec_json, so
+// it is the one block field that does NOT ride along in the JSON blob --
+// a SELECT that forgets it would return nil here while every other field
+// looked correct.
+func TestBlockDisabledUntilRoundTrips(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	until := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	rec := store.BlockRecord{
+		ID:            "b1",
+		Name:          "Dark Block",
+		Enabled:       true,
+		DisabledUntil: &until,
+		Spec:          scheduler.Block{Name: "Dark Block", Cron: "0 6 * * *", Duration: 60, ChannelID: "ch1"},
+	}
+	if err := st.CreateBlock(ctx, &rec); err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+
+	got, err := st.GetBlock(ctx, "b1")
+	if err != nil {
+		t.Fatalf("GetBlock: %v", err)
+	}
+	if got.DisabledUntil == nil {
+		t.Fatal("DisabledUntil round-tripped as nil")
+	}
+	if !got.DisabledUntil.Equal(until) {
+		t.Fatalf("DisabledUntil = %v, want %v", got.DisabledUntil, until)
+	}
+}
+
+// TestBlockDisabledUntilClearsToNil pins the other half of the write path:
+// UpdateBlock writes every column from the record, so a nil clears the
+// stored window rather than leaving it in place.
+func TestBlockDisabledUntilClearsToNil(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	until := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	rec := store.BlockRecord{
+		ID: "b1", Name: "Dark Block", Enabled: true, DisabledUntil: &until,
+		Spec: scheduler.Block{Name: "Dark Block", Cron: "0 6 * * *", Duration: 60, ChannelID: "ch1"},
+	}
+	if err := st.CreateBlock(ctx, &rec); err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+
+	rec.DisabledUntil = nil
+	if err := st.UpdateBlock(ctx, &rec); err != nil {
+		t.Fatalf("UpdateBlock: %v", err)
+	}
+
+	got, err := st.GetBlock(ctx, "b1")
+	if err != nil {
+		t.Fatalf("GetBlock: %v", err)
+	}
+	if got.DisabledUntil != nil {
+		t.Fatalf("DisabledUntil = %v, want nil after clear", got.DisabledUntil)
+	}
+}
+
+// A block written without ever mentioning the column reads back as nil
+// rather than as a zero instant -- the migration adds it with no default,
+// so this is what every row predating it looks like.
+//
+// Paired with the ListBlocks case below on purpose. ListBlocks has its OWN
+// SELECT, so a round-trip proved only through GetBlock would still pass if
+// the column were dropped from the list query -- and ListBlocks is the one
+// the planning gate reads, which is where a silent nil would actually
+// suppress nothing and air a block that should be dark.
+func TestBlockWithNoDarkWindowReadsBackNil(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	rec := store.BlockRecord{
+		ID: "b1", Name: "Plain", Enabled: true,
+		Spec: scheduler.Block{Name: "Plain", Cron: "0 6 * * *", Duration: 60, ChannelID: "ch1"},
+	}
+	if err := st.CreateBlock(ctx, &rec); err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+	got, err := st.GetBlock(ctx, "b1")
+	if err != nil {
+		t.Fatalf("GetBlock: %v", err)
+	}
+	if got.DisabledUntil != nil {
+		t.Fatalf("DisabledUntil = %v, want nil", got.DisabledUntil)
+	}
+}
+
+func TestListBlocksCarriesTheDarkWindow(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	until := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	dark := store.BlockRecord{
+		ID: "b1", Name: "Dark", Enabled: true, DisabledUntil: &until,
+		Spec: scheduler.Block{Name: "Dark", Cron: "0 6 * * *", Duration: 60, ChannelID: "ch1"},
+	}
+	plain := store.BlockRecord{
+		ID: "b2", Name: "Plain", Enabled: true,
+		Spec: scheduler.Block{Name: "Plain", Cron: "0 7 * * *", Duration: 60, ChannelID: "ch1"},
+	}
+	for _, r := range []store.BlockRecord{dark, plain} {
+		rec := r
+		if err := st.CreateBlock(ctx, &rec); err != nil {
+			t.Fatalf("CreateBlock %s: %v", rec.ID, err)
+		}
+	}
+
+	list, err := st.ListBlocks(ctx)
+	if err != nil {
+		t.Fatalf("ListBlocks: %v", err)
+	}
+
+	byID := make(map[string]store.BlockRecord, len(list))
+	for _, r := range list {
+		byID[r.ID] = r
+	}
+	if got := byID["b1"].DisabledUntil; got == nil || !got.Equal(until) {
+		t.Fatalf("b1 DisabledUntil = %v, want %v -- dropped from the LIST query", got, until)
+	}
+	if got := byID["b2"].DisabledUntil; got != nil {
+		t.Fatalf("b2 DisabledUntil = %v, want nil", got)
+	}
 }

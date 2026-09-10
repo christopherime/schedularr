@@ -112,6 +112,61 @@ func TestImportBlocks_InvalidYAML_ReturnsCUEDetail(t *testing.T) {
 	assert.Contains(t, strings.ToLower(p.Detail), "duration", "detail should carry the CUE validation failure")
 }
 
+func TestImportBlocks_UnparseableCron_ImportsNothing(t *testing.T) {
+	h := newTestServer(t)
+
+	// Import is the third writer of a block into the store, and the only
+	// one that creates it ENABLED -- so a cron that will not parse must be
+	// refused here as firmly as on POST/PUT, or it goes straight into
+	// schedule generation and fails at apply time with a 502.
+	badYAML := `blocks:
+  - type: filter
+    name: bad-cron-block
+    cron: "not a cron"
+    duration: 60
+    channel_id: channel-1
+`
+	w := doYAMLRequest(t, h, http.MethodPost, "/blocks/import", badYAML)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	p := decodeProblem(t, w)
+	assert.Contains(t, strings.ToLower(p.Detail), "cron", "detail should name the offending field")
+	assert.Contains(t, p.Detail, "bad-cron-block", "detail should name the offending block")
+
+	list := doRequest(t, h, http.MethodGet, "/blocks", nil)
+	require.Equal(t, http.StatusOK, list.Code)
+	assert.NotContains(t, list.Body.String(), "bad-cron-block", "a rejected import must write nothing")
+}
+
+func TestImportBlocks_NamesEveryBadCronNotJustTheFirst(t *testing.T) {
+	h := newTestServer(t)
+
+	badYAML := `blocks:
+  - type: filter
+    name: bad-one
+    cron: "not a cron"
+    duration: 60
+    channel_id: channel-1
+  - type: filter
+    name: good-one
+    cron: "0 6 * * *"
+    duration: 60
+    channel_id: channel-1
+  - type: filter
+    name: bad-two
+    cron: "75 99 * * *"
+    duration: 60
+    channel_id: channel-1
+`
+	w := doYAMLRequest(t, h, http.MethodPost, "/blocks/import", badYAML)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	p := decodeProblem(t, w)
+	assert.Contains(t, p.Detail, "bad-one")
+	assert.Contains(t, p.Detail, "bad-two", "aggregating means every offender, not just the first")
+	assert.NotContains(t, p.Detail, "good-one")
+}
+
 func TestImportBlocks_CollisionWithExisting_ImportsNothing(t *testing.T) {
 	h := newTestServer(t)
 

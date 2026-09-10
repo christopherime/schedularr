@@ -1,0 +1,11 @@
+-- A block can be dark until an instant without being disabled outright.
+-- The two are independent: `enabled` is the indefinite switch an operator
+-- must undo by hand, `disabled_until` is a timed one that expires on its
+-- own. NULL means no dark window; a value in the past is stale rather than
+-- wrong -- nothing sweeps it, and the planning gate simply stops
+-- suppressing once the instant passes.
+--
+-- A column rather than a key inside spec_json on purpose: `enabled` is
+-- already a column, and splitting the two dark-switches across a column
+-- and a JSON blob makes them impossible to write in one statement.
+ALTER TABLE blocks ADD COLUMN disabled_until DATETIME;

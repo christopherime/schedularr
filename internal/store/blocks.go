@@ -23,22 +23,34 @@ var ErrConflict = errors.New("conflict")
 // Blocks are the API-editable source of truth for scheduling, replacing
 // the static blocks previously defined in scheduler.yaml.
 type BlockRecord struct {
-	ID        string // uuid string
-	Name      string // unique
-	Enabled   bool
-	Spec      scheduler.Block // full block definition
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID      string // uuid string
+	Name    string // unique
+	Enabled bool
+	// DisabledUntil suppresses this block from schedule generation until
+	// the instant it names, after which the block returns on its own.
+	// Independent of Enabled: a block is planned only when Enabled is true
+	// AND it is not currently dark. Nil means no dark window; a value in
+	// the past is stale data that no longer suppresses anything, so a
+	// caller rendering a "dark" affordance must compare against now rather
+	// than test for non-nil.
+	DisabledUntil *time.Time
+	Spec          scheduler.Block // full block definition
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // blockRow is the sqlx-scannable row shape for the blocks table.
+// disabled_until is a *time.Time because the column is nullable: scanning
+// a NULL into a time.Time fails outright, and nil is the value that means
+// "no dark window" rather than a sentinel instant.
 type blockRow struct {
-	ID        string    `db:"id"`
-	Name      string    `db:"name"`
-	Enabled   bool      `db:"enabled"`
-	SpecJSON  string    `db:"spec_json"`
-	CreatedAt time.Time `db:"created_at"`
-	UpdatedAt time.Time `db:"updated_at"`
+	ID            string     `db:"id"`
+	Name          string     `db:"name"`
+	Enabled       bool       `db:"enabled"`
+	DisabledUntil *time.Time `db:"disabled_until"`
+	SpecJSON      string     `db:"spec_json"`
+	CreatedAt     time.Time  `db:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at"`
 }
 
 func (r blockRow) toRecord() (*BlockRecord, error) {
@@ -47,12 +59,13 @@ func (r blockRow) toRecord() (*BlockRecord, error) {
 		return nil, fmt.Errorf("failed to unmarshal block spec: %w", err)
 	}
 	return &BlockRecord{
-		ID:        r.ID,
-		Name:      r.Name,
-		Enabled:   r.Enabled,
-		Spec:      spec,
-		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
+		ID:            r.ID,
+		Name:          r.Name,
+		Enabled:       r.Enabled,
+		DisabledUntil: r.DisabledUntil,
+		Spec:          spec,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
 	}, nil
 }
 
@@ -60,7 +73,7 @@ func (r blockRow) toRecord() (*BlockRecord, error) {
 func (s *Store) ListBlocks(ctx context.Context) ([]BlockRecord, error) {
 	var rows []blockRow
 	if err := s.db.SelectContext(ctx, &rows, `
-		SELECT id, name, enabled, spec_json, created_at, updated_at
+		SELECT id, name, enabled, disabled_until, spec_json, created_at, updated_at
 		FROM blocks ORDER BY name`); err != nil {
 		return nil, fmt.Errorf("failed to list blocks: %w", err)
 	}
@@ -80,7 +93,7 @@ func (s *Store) ListBlocks(ctx context.Context) ([]BlockRecord, error) {
 func (s *Store) GetBlock(ctx context.Context, id string) (*BlockRecord, error) {
 	var row blockRow
 	err := s.db.GetContext(ctx, &row, `
-		SELECT id, name, enabled, spec_json, created_at, updated_at
+		SELECT id, name, enabled, disabled_until, spec_json, created_at, updated_at
 		FROM blocks WHERE id = ?`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -104,9 +117,9 @@ func (s *Store) CreateBlock(ctx context.Context, rec *BlockRecord) error {
 	rec.UpdatedAt = now
 
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO blocks (id, name, enabled, spec_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.Name, rec.Enabled, string(specJSON), rec.CreatedAt, rec.UpdatedAt)
+		INSERT INTO blocks (id, name, enabled, disabled_until, spec_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		rec.ID, rec.Name, rec.Enabled, rec.DisabledUntil, string(specJSON), rec.CreatedAt, rec.UpdatedAt)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return ErrConflict
@@ -145,9 +158,9 @@ func (s *Store) CreateBlocks(ctx context.Context, recs []*BlockRecord) error {
 		rec.CreatedAt = now
 		rec.UpdatedAt = now
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO blocks (id, name, enabled, spec_json, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			rec.ID, rec.Name, rec.Enabled, string(specJSON), rec.CreatedAt, rec.UpdatedAt); err != nil {
+			INSERT INTO blocks (id, name, enabled, disabled_until, spec_json, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			rec.ID, rec.Name, rec.Enabled, rec.DisabledUntil, string(specJSON), rec.CreatedAt, rec.UpdatedAt); err != nil {
 			if isUniqueConstraintErr(err) {
 				return ErrConflict
 			}
@@ -164,6 +177,11 @@ func (s *Store) CreateBlocks(ctx context.Context, recs []*BlockRecord) error {
 // UpdateBlock updates an existing block's fields and bumps UpdatedAt.
 // Returns ErrNotFound if no block with the given ID exists, or ErrConflict
 // if the update would violate the unique name constraint.
+//
+// Every column is written from rec, so a nil DisabledUntil CLEARS any dark
+// window the stored row still carries. Callers that mean "leave the dark
+// window alone" must read the record first and carry the field forward --
+// the same whole-record contract Name, Enabled and Spec already have.
 func (s *Store) UpdateBlock(ctx context.Context, rec *BlockRecord) error {
 	specJSON, err := json.Marshal(rec.Spec)
 	if err != nil {
@@ -173,9 +191,9 @@ func (s *Store) UpdateBlock(ctx context.Context, rec *BlockRecord) error {
 	rec.UpdatedAt = time.Now().UTC()
 
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE blocks SET name = ?, enabled = ?, spec_json = ?, updated_at = ?
+		UPDATE blocks SET name = ?, enabled = ?, disabled_until = ?, spec_json = ?, updated_at = ?
 		WHERE id = ?`,
-		rec.Name, rec.Enabled, string(specJSON), rec.UpdatedAt, rec.ID)
+		rec.Name, rec.Enabled, rec.DisabledUntil, string(specJSON), rec.UpdatedAt, rec.ID)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return ErrConflict

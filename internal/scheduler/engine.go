@@ -262,7 +262,7 @@ func NewEngineWithOptions(ctx context.Context, client *tunarr.Client, blocks []B
 	e := &Engine{
 		client:         client,
 		blocks:         blocks,
-		parser:         cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
+		parser:         NewCronParser(), // shared with NextOccurrences: one option set, so planner and UI never disagree about what parses
 		location:       loc,
 		history:        NewScheduleHistory(historyWindow),
 		store:          store,

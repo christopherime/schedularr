@@ -26,7 +26,7 @@ func (h *Handlers) ListBlocks(w http.ResponseWriter, r *http.Request) {
 
 	list := make(gen.BlockList, 0, len(recs))
 	for _, rec := range recs {
-		list = append(list, toGen(rec))
+		list = append(list, h.toGen(rec))
 	}
 	writeJSON(w, http.StatusOK, list)
 }
@@ -48,6 +48,10 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 
 	spec := fromGen(body.Spec)
 	if err := validateSeriesShowTitles(spec); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
+		return
+	}
+	if err := validateCron(spec.Cron); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
 	}
@@ -74,7 +78,7 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.publishPlanInvalidated("block", rec.ID)
-	writeJSON(w, http.StatusCreated, toGen(*rec))
+	writeJSON(w, http.StatusCreated, h.toGen(*rec))
 }
 
 // GetBlock implements gen.ServerInterface.
@@ -84,7 +88,7 @@ func (h *Handlers) GetBlock(w http.ResponseWriter, r *http.Request, id string) {
 		h.writeBlockStoreError(w, r, "get_block", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toGen(*rec))
+	writeJSON(w, http.StatusOK, h.toGen(*rec))
 }
 
 // UpdateBlock implements gen.ServerInterface.
@@ -148,6 +152,10 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
 	}
+	if err := validateCron(spec.Cron); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
+		return
+	}
 	if err := blockio.ValidateBlocks([]scheduler.Block{spec}); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
@@ -168,7 +176,7 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 	}
 
 	h.publishPlanInvalidated("block", existing.ID)
-	writeJSON(w, http.StatusOK, toGen(*existing))
+	writeJSON(w, http.StatusOK, h.toGen(*existing))
 }
 
 // DeleteBlock implements gen.ServerInterface.
@@ -254,6 +262,12 @@ func (h *Handlers) checkIfMatch(w http.ResponseWriter, r *http.Request, header s
 //
 // A body with no fields set is a 400 rather than a silent no-op, matching
 // PatchSeriesState.
+//
+// enabled and disabled_until are INDEPENDENT axes and this handler treats
+// them that way: enabled is the indefinite switch only an operator undoes,
+// disabled_until is the timed one the clock undoes, and patching one never
+// writes the other. A caller sending only enabled must find its dark
+// window exactly where it left it.
 func (h *Handlers) PatchBlock(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.d.Store.GetBlock(r.Context(), id)
 	if err != nil {
@@ -261,7 +275,7 @@ func (h *Handlers) PatchBlock(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	var body gen.BlockPatch
+	var body blockPatchBody
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
@@ -269,19 +283,26 @@ func (h *Handlers) PatchBlock(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	if body.Enabled == nil {
+	if body.Enabled == nil && body.DisabledUntil == nil {
 		WriteProblem(w, r, http.StatusBadRequest, "empty patch",
-			"at least one field (enabled) must be set")
+			"at least one field (enabled, disabled_until) must be set")
 		return
 	}
 
-	// Re-enabling a block re-enters the shared-show policy check the same
-	// way a create or a full update does; disabling never can.
-	if *body.Enabled && !existing.Enabled &&
-		!h.checkSharedShowPolicies(w, r, []scheduler.Block{existing.Spec}, existing.ID) {
+	if body.Enabled != nil {
+		// Re-enabling a block re-enters the shared-show policy check the
+		// same way a create or a full update does; disabling never can.
+		if *body.Enabled && !existing.Enabled &&
+			!h.checkSharedShowPolicies(w, r, []scheduler.Block{existing.Spec}, existing.ID) {
+			return
+		}
+		existing.Enabled = *body.Enabled
+	}
+
+	if err := applyDisabledUntil(existing, body.DisabledUntil); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "invalid disabled_until", err.Error())
 		return
 	}
-	existing.Enabled = *body.Enabled
 
 	if err := h.d.Store.UpdateBlock(r.Context(), existing); err != nil {
 		h.writeBlockStoreError(w, r, "patch_block", err)
@@ -289,7 +310,120 @@ func (h *Handlers) PatchBlock(w http.ResponseWriter, r *http.Request, id string)
 	}
 
 	h.publishPlanInvalidated("block", existing.ID)
-	writeJSON(w, http.StatusOK, toGen(*existing))
+	writeJSON(w, http.StatusOK, h.toGen(*existing))
+}
+
+// blockPatchBody is PATCH /blocks/{id}'s wire body, hand-written rather
+// than the generated gen.BlockPatch for one reason: disabled_until needs
+// THREE distinguishable states and gen.BlockPatch's *time.Time carries
+// only two.
+//
+// Absent means "leave the dark window alone", an explicit null means
+// "clear it, the block comes back now", and an instant means "go dark
+// until then". Clearing is the only way an operator brings a block back
+// early, so collapsing null into absent would remove the affordance
+// entirely. json.RawMessage keeps the three apart: nil for an absent key,
+// the four bytes "null" for an explicit null, and a quoted instant
+// otherwise. Enabled stays a *bool because it genuinely has only two
+// states.
+//
+// Field names and types must track gen.BlockPatch; the decoder runs with
+// DisallowUnknownFields, so a contract field missing here is rejected at
+// the door rather than silently ignored.
+type blockPatchBody struct {
+	Enabled       *bool           `json:"enabled"`
+	DisabledUntil json.RawMessage `json:"disabled_until"`
+}
+
+// applyDisabledUntil writes the patch body's three-state disabled_until
+// onto rec: an absent key (nil raw) leaves the record untouched, an
+// explicit null clears the dark window, and an RFC3339 instant sets it.
+//
+// A malformed instant is the caller's error and comes back as a 400 --
+// silently ignoring it would leave the block awake while the operator
+// believes they just took it dark.
+func applyDisabledUntil(rec *store.BlockRecord, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if string(raw) == "null" {
+		rec.DisabledUntil = nil
+		return nil
+	}
+
+	var until time.Time
+	if err := json.Unmarshal(raw, &until); err != nil {
+		return fmt.Errorf("failed to parse disabled_until: %w", err)
+	}
+	rec.DisabledUntil = &until
+	return nil
+}
+
+// DuplicateBlock implements gen.ServerInterface.
+//
+// The copy carries the source's spec whole -- series seeds, filter
+// configuration, priority, cron, channel -- because that is what makes it
+// a duplicate rather than a new block with a borrowed name. What it does
+// NOT carry is anything keyed by the SOURCE's block id: series cursors and
+// occurrence snapshots record what the source has already aired, and a
+// copy has aired nothing. It gets a fresh UUID and fresh timestamps, which
+// leaves those records pointing where they belong.
+//
+// It arrives DISABLED. An exact copy shares the source's cron, channel and
+// priority, so landing it enabled would immediately contend with its own
+// source for that slot and conflict resolution would silently drop one of
+// the two. The copy is a draft the operator edits and then turns on.
+//
+// Arriving disabled does not exempt it from the shared-show policy check:
+// a duplicated series block is defined and it will come back, so letting
+// it contradict a live block's completion policy would just defer the
+// collision to the moment somebody enables it.
+//
+// The name is required and never invented server-side. A collision is the
+// caller's to resolve -- they are the one who can see what the other block
+// is -- so it surfaces as the same 409 a colliding create gets.
+func (h *Handlers) DuplicateBlock(w http.ResponseWriter, r *http.Request, id string) {
+	source, err := h.d.Store.GetBlock(r.Context(), id)
+	if err != nil {
+		h.writeBlockStoreError(w, r, "duplicate_block_lookup", err)
+		return
+	}
+
+	var body gen.BlockDuplicate
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		WriteProblem(w, r, http.StatusBadRequest, "block validation failed",
+			"failed to validate blocks: missing required field(s): name")
+		return
+	}
+
+	spec := source.Spec
+	spec.Name = name
+	if !h.checkSharedShowPolicies(w, r, []scheduler.Block{spec}, "") {
+		return
+	}
+
+	rec := &store.BlockRecord{
+		ID:      uuid.NewString(),
+		Name:    name,
+		Enabled: false,
+		Spec:    spec,
+	}
+
+	if err := h.d.Store.CreateBlock(r.Context(), rec); err != nil {
+		h.writeBlockStoreError(w, r, "duplicate_block", err)
+		return
+	}
+
+	h.publishPlanInvalidated("block", rec.ID)
+	writeJSON(w, http.StatusCreated, h.toGen(*rec))
 }
 
 // blockEnabled applies BlockWrite.Enabled's OpenAPI default (true) when the
@@ -423,6 +557,27 @@ func validateSeriesShowTitles(b scheduler.Block) error {
 		if sc.ShowTitle == "" {
 			return fmt.Errorf("failed to validate blocks: series block %q has a series entry with an empty show_title", b.Name)
 		}
+	}
+	return nil
+}
+
+// validateCron rejects a block whose cron expression will not parse.
+//
+// The check lives in Go for the same reason validateSeriesShowTitles does:
+// cmd/schema/config.cue's #Block types `cron` as a bare `string`, and CUE has no
+// way to express "parses as a cron expression", so a typo round-trips
+// through blockio.RenderYAML/ValidateBlocks cleanly. Left unchecked it is
+// accepted at write time and only fails much later, inside the engine, as
+// a 502 at apply time -- in a place that cannot point at the field the
+// operator typed. Rejecting here means they find out while still looking
+// at it.
+//
+// It parses through scheduler.NewCronParser, the same configuration the
+// engine plans with, so this can never reject an expression the planner
+// would have accepted, nor accept one it would later choke on.
+func validateCron(expr string) error {
+	if _, err := scheduler.NewCronParser().Parse(expr); err != nil {
+		return fmt.Errorf("failed to validate blocks: invalid cron %q: %w", expr, err)
 	}
 	return nil
 }
@@ -620,22 +775,71 @@ func fallbackFromGen(f gen.SeriesFallback) scheduler.SeriesFallback {
 }
 
 // toGen converts a store.BlockRecord (the persisted domain representation)
-// into a gen.BlockRecord (the API wire shape). It is reused by Task 14
-// (import/export). Unlike fromGen, toGen has no CUE-default concerns -- it
-// only ever reads already-valid, already-stored data -- so it simply
-// presents every populated (non-zero) optional field as a pointer and
-// leaves unpopulated ones nil, which keeps the JSON response free of
-// spurious empty sub-objects (e.g. an unused "filter": {} on a series
-// block).
-func toGen(rec store.BlockRecord) gen.BlockRecord {
+// into a gen.BlockRecord (the API wire shape). Unlike fromGen, toGen has no
+// CUE-default concerns -- it only ever reads already-valid, already-stored
+// data -- so it simply presents every populated (non-zero) optional field
+// as a pointer and leaves unpopulated ones nil, which keeps the JSON
+// response free of spurious empty sub-objects (e.g. an unused "filter": {}
+// on a series block).
+//
+// It is a method rather than a free function because next_occurrence is
+// calendar arithmetic: "0 6 * * *" names a different instant in a
+// different zone, so the answer depends on the deployment's configured
+// location, and the one authoritative copy of that lives on Deps. A nil
+// Deps.Location falls back to time.Local, matching the engine's own
+// nil-handling.
+func (h *Handlers) toGen(rec store.BlockRecord) gen.BlockRecord {
+	loc := h.location()
 	return gen.BlockRecord{
-		Id:        rec.ID,
-		Name:      rec.Name,
-		Enabled:   rec.Enabled,
-		Spec:      specToGen(rec.Spec),
-		CreatedAt: rec.CreatedAt,
-		UpdatedAt: rec.UpdatedAt,
+		Id:             rec.ID,
+		Name:           rec.Name,
+		Enabled:        rec.Enabled,
+		DisabledUntil:  rec.DisabledUntil,
+		NextOccurrence: nextOccurrenceFor(rec, time.Now(), loc),
+		Spec:           specToGen(rec.Spec),
+		CreatedAt:      rec.CreatedAt,
+		UpdatedAt:      rec.UpdatedAt,
 	}
+}
+
+// nextOccurrenceFor computes what a block will actually do next, which is
+// not the same question as what its cron says next.
+//
+// A disabled block has no answer: it is off until an operator says
+// otherwise, and inventing an instant for it would put a NEXT reading
+// beside a row the operator has deliberately switched off.
+//
+// A dark block DOES have one -- it comes back on its own -- so the search
+// starts at its wake instant rather than now. Anything else would report
+// a tick that the planning gate (service.ActiveBlocks) is going to skip.
+//
+// Returns nil for an unparseable or never-firing expression. Both are
+// answers rather than errors: the list must render a block whose cron is
+// wrong, so it can be the thing the operator goes and fixes.
+//
+// This parses one cron expression per record on every GET /blocks. At the
+// scale this application runs (tens of blocks) that is nothing, and
+// caching it would mean inventing an invalidation rule for a value that
+// changes with the clock; if a list ever gets slow the fix is one batched
+// computation, not a cache.
+func nextOccurrenceFor(rec store.BlockRecord, now time.Time, loc *time.Location) *time.Time {
+	if !rec.Enabled {
+		return nil
+	}
+
+	from := now.In(loc)
+	if rec.DisabledUntil != nil && from.Before(*rec.DisabledUntil) {
+		// One second back, so an occurrence landing exactly ON the wake
+		// instant counts -- NextOccurrences is strictly-after, and a block
+		// that wakes at 06:00 with a 06:00 cron airs that very tick.
+		from = rec.DisabledUntil.In(loc).Add(-time.Second)
+	}
+
+	occurrences, err := scheduler.NextOccurrences(rec.Spec.Cron, from, 1)
+	if err != nil || len(occurrences) == 0 {
+		return nil
+	}
+	return &occurrences[0]
 }
 
 func specToGen(b scheduler.Block) gen.BlockSpec {
