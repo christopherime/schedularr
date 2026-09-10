@@ -332,20 +332,38 @@ v0.5.5 below).
   rows, and nothing here needs it); and `disabled_until` in
   `scheduler.yaml`, which follows from it being operational state rather
   than spec.
-- **Then — History desk power tools: pending.** Was "the series desk";
-  now the desk lives on `/history/`. Bulk cursor operations, YAML
-  import/export, and the two new operator asks: **remove a show or movie
-  from history entirely** (its sequence state, its snapshots, and its
-  airings) and **range cleanup** (delete entries before a date or within
-  a range), behind a STORAGE strip that shows what is actually stored.
-  Engine-first prerequisites, both from the intake spec's invariant
-  audit: the plan-sequence allocator floor must move from a derived
-  `MAX(...)` into `app_meta` so a deletion cannot lower it, and the
-  deletion path must be one transaction across state, snapshots, and
-  history. A removal that intersects a currently-on-air occurrence is the
-  one case that changes what is playing right now — the operator
-  confirmed (2026-09-08, Q9): refuse it with a 409 naming when it becomes
-  safe; aired snapshots lose only the removed title's key (Q5).
+- **v0.5.11 — History desk foundations: SHIPPED.** The desk's safety work,
+  split out and shipped on its own because it touches live output and
+  stored data, and neither wants to land in the same release as a UI.
+  `scheduler.OnAirOccurrences` is the one answer to "is this playing right
+  now", and every write that could disturb an airing block asks it —
+  `DELETE`, a `PATCH` that disables or darkens, and (a path the plan did
+  not anticipate) a `PUT` that moves the block's schedule. A `PUT` that
+  changes only the filter is deliberately still allowed. `schedule_history`
+  gained `show_title`, because the `title` column had always held the
+  *episode* and nothing identified a show's airings. `store.RemoveShow`
+  removes a show's cursor, snapshots and airings in one transaction, and
+  refuses while any block still lists it — the engine would otherwise
+  re-add the show on the next apply and reset the cursor the removal had
+  just deleted.
+  Two fixes to shipped code came with it: the plan-sequence allocator
+  reserved rather than observed, closing a race where `serve` and a
+  concurrent CLI apply could silently discard each other's cursor
+  advances; and exact-match lookups on stored instants stopped depending on
+  the writer's timezone offset.
+  **Deliberately left out:** `app_meta` as a plan-sequence floor (the
+  roadmap's stated prerequisite, which turned out to solve a misdiagnosed
+  invariant — the derived `MAX` already spans surviving cursors); making
+  `Engine.Commit` transactional; and backfilling `show_title` for rows
+  written before the column, which is unrecoverable without the live
+  Tunarr catalogue.
+- **Then — History desk: pending.** The UI half, now that the foundations
+  are under it. Bulk cursor operations, YAML import/export, the
+  remove-from-history and range-cleanup flows over `store.RemoveShow`, and
+  a STORAGE strip showing what is actually stored. Range cleanup is the one
+  that needs care: the operator picks an arbitrary cutoff, and stored
+  instants carry the writer's offset, so its predicates need the same
+  normalisation the exact-match lookups received.
 - **Last — Polish pass: pending.** Unchanged in scope.
 
 Headline surfaces across the train:

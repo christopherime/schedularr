@@ -645,3 +645,32 @@ of it blocks anything.
   fail while others land. The tape reports per-title outcomes and offers
   the tracked view rather than claiming a single success, which is the
   honest reading, not a fix.
+
+## Deferred (history desk foundations)
+
+Recorded when v0.5.11 shipped the safety work. None blocks the desk UI;
+each is a known gap with its reason.
+
+- **Airings predating migration `000012` cannot be removed by title.**
+  They carry an empty `show_title`, and recovering a show from a stored
+  program id needs the live Tunarr catalogue — which may no longer carry
+  that program, and guessing from the block that aired it is wrong for any
+  block scheduling more than one show. They still age out through
+  retention.
+- **`Engine.Commit` is still not transactional** (open since v0.3.0,
+  recorded above). `RemoveShow` is transactional on its own terms, so the
+  desk does not need this — but a crash mid-`Commit` still leaves the same
+  partial state it always has.
+- **Range predicates on stored instants are not normalised.** The
+  exact-match lookups were fixed; ranges were left alone because the date
+  prefix dominates the bytewise comparison for same-zone data, and a test
+  pins that retention prunes by instant. Range cleanup hands the operator
+  an arbitrary cutoff over data that may span a `log.timezone` change,
+  which is where that stops holding — fix it there, with the test that is
+  already in place.
+- **No endpoint calls `store.RemoveShow`.** Deliberate: the primitive and
+  its tests ship here, the endpoint ships with the UI that drives it.
+- **The removal is a two-step flow.** It refuses while any block still
+  lists the show, so the operator edits those blocks first. The error names
+  them; the desk UI should surface that first step rather than letting them
+  hit the 409 cold.

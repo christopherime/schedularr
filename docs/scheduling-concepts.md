@@ -272,6 +272,30 @@ The [shared-show policy check](#completion-actions-on_complete) treats a dark bl
 
 Conflict resolution is the opposite case, and for the same reason. A dark block contributes no occurrences at all — it never reaches the engine — so it can't displace a lower-priority block on its channel while it's out. It stops competing for airtime and keeps competing for shared series state.
 
+## What "on air" means, and why some changes are refused
+
+An occurrence is **on air** when now falls inside `[start, start + duration + max_duration_overflow_minutes)`. The overflow is part of the window on purpose: content that legitimately runs past its slot is still playing, and the snapshot-invalidation path already treats it that way.
+
+Since v0.5.11, a write that would take an airing block out of the next plan is refused with a `409` naming when it becomes safe — deleting it, switching it off, giving it a dark window, or moving its `cron`, channel or duration. Editing its *filter* is not refused, because that leaves the occurrence exactly where it is.
+
+This matters more than it looks, because the damage is deferred rather than absent. Nothing reaches Tunarr at write time; the effect lands at the next apply, which the cron loop performs unattended at process start and then every `cron_interval`. And the failure is not a shortened lineup. Tunarr plays a pushed lineup as `elapsed = (now − channel.startTime) % channel.duration`, so a channel is only ever anchored, never partially updated: an occurrence that generates no shell leaves nothing to anchor at, the channel re-anchors at now, and **its whole lineup restarts**. If the block was that channel's last, the channel is pushed a flex-only lineup instead — dead air, mid-episode.
+
+The predicate asks whether an *occurrence* is live, never how its content was chosen, so a filter block is covered exactly like a series one. It also evaluates in the configured `log.timezone` rather than the host's: a block's cron carries no zone of its own, so reading the same expression in UTC would answer for a different hour entirely.
+
+## Removing a show from history
+
+`series_state`, the occurrence snapshots and the airings in `schedule_history` are three tables holding one show's progression, and they are removed together in a single transaction or not at all. A partial removal would leave a cursor pointing at airings that no longer exist, which is worse than leaving everything in place.
+
+**A removal refuses while any block still lists the show.** This is not caution; it is the difference between removing a show and appearing to. The engine re-adds any `series[].show_title` that is missing from a block's chain, seeded from the default first episode — so a removal that ran anyway would be undone by the next apply *and* would reset the cursor it had just deleted. The refusal names the blocks, so the order is: edit those blocks first, then remove.
+
+Three things a removal deliberately does not do:
+
+- **It does not delete snapshot rows**, only the show's key inside them. A snapshot describes one occurrence of one block, which may have carried several shows.
+- **It does not touch airings that belong to no show** — movies, and every row written before the `show_title` column existed. Those carry an empty show title, and matching it would sweep all of them.
+- **It does not let an emptied occurrence read as never planned.** An occurrence that loses its last airing keeps a marker saying it was planned and produced nothing, which is what actually happened. Without it the next apply would re-plan a slot that has already gone out — rewriting history rather than removing from it.
+
+**Airings written before the `show_title` column cannot be removed by title.** Recovering a show from a stored program id needs the live Tunarr catalogue, which may no longer carry that program at all, and guessing from the block that aired it is wrong for any block scheduling more than one show. Those rows still age out through retention.
+
 ## Priority and conflict resolution
 
 When multiple blocks schedule content for overlapping time periods, the higher `priority` value wins; the conflicting lower-priority block is discarded entirely. Every dropped occurrence is both logged server-side and reported in the API response's `warnings` array (`POST /generate` and `POST /apply`, see the [API Reference](api-reference.md#schedule)) — surfaced on the [Guide](web-ui-guide.md#the-guide) as NO SIGNAL ghost slots at the time each would have aired, not just visible in a server log.

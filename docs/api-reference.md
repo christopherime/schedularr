@@ -19,9 +19,9 @@ Every full-spec write path (`POST`/`PUT`) validates the block spec against the C
 | POST   | `/blocks`                | 201     | 400, 409           |
 | GET    | `/blocks/{id}`           | 200     | 404                |
 | PUT    | `/blocks/{id}`           | 200     | 400, 404, 409, 412 |
-| PATCH  | `/blocks/{id}`           | 200     | 400, 404           |
+| PATCH  | `/blocks/{id}`           | 200     | 400, 404, 409      |
 | POST   | `/blocks/{id}/duplicate` | 201     | 400, 404, 409      |
-| DELETE | `/blocks/{id}`           | 204     | 404                |
+| DELETE | `/blocks/{id}`           | 204     | 404, 409           |
 
 - `POST`/`PUT` return `400` for a spec that fails CUE validation (e.g. a missing `cron` or a non-positive `duration`) or a malformed JSON body.
 - `POST` returns `409` for a duplicate block name; `PUT` returns `409` if the request body's `spec.name` differs from the existing block's name and collides with another block. A `PUT` whose `spec.name` differs from the current name without colliding renames the block.
@@ -39,6 +39,31 @@ Every full-spec write path (`POST`/`PUT`) validates the block spec against the C
 - `POST /blocks/{id}/duplicate` takes `{"name": "…"}` and returns `201` with the new `BlockRecord`. The name is required and never invented server-side: an empty or whitespace-only name is `400`, a name already taken is `409`, and a missing source is `404`. There is no server-side counter appending `(2)`, because a collision belongs to the caller — they are the one who can see what the other block is. The web UI pre-fills `Copy of <source>` and only prompts when the `409` comes back.
 - The copy carries the source's spec **whole** — type, cron, channel, priority, filter, filler, and every series seed — which is what makes it a duplicate rather than a new block wearing a borrowed name. Nothing keyed by the source's id comes with it: series cursors and occurrence snapshots record what the *source* has already aired, and a copy has aired nothing. The copy gets a fresh UUID, fresh timestamps, and no dark window.
 - The copy arrives `enabled: false`. An exact copy shares its source's cron, channel and priority, so landing it enabled would put two blocks in contention for one channel at one time and conflict resolution would silently drop one of the two; the copy is a draft the operator edits and then turns on. Arriving disabled does **not** exempt it from the shared-show policy check, though — it is defined and it will come back, so a duplicated series block that would contradict a live block's completion policy is refused now with a `400` rather than at the moment somebody enables it.
+
+### The on-air guard
+
+Three of those writes can change what a viewer is watching, and since v0.5.11 they refuse to while the block is airing:
+
+| Write                                                                                               | Refused when        |
+| --------------------------------------------------------------------------------------------------- | ------------------- |
+| `DELETE /blocks/{id}`                                                                               | the block is on air |
+| `PATCH /blocks/{id}` with `enabled: false`, or a future `disabled_until`                            | the block is on air |
+| `PUT /blocks/{id}` that changes `cron`, `channel_id`, `duration` or `max_duration_overflow_minutes` | the block is on air |
+
+The refusal is `409` with `title: "block is on air"`, and the detail names both the block and the local time it becomes safe:
+
+```text
+Anime Night is airing until 21:47. Deleting it now would cut the current
+program. Try again after that.
+```
+
+**Why a refusal and not a warning.** Nothing is pushed to Tunarr at write time, so none of these has an immediate effect. That is not a reprieve: `serve`'s cron loop applies at process start and then every `cron_interval`, unattended, so the operator cannot avoid the consequence by declining to apply. And what lands is worse than a shortened lineup — an occurrence that generates no shell leaves the channel with nothing to anchor, so its **whole lineup restarts from the top**; if the block was that channel's last, the channel gets a flex-only lineup, which is dead air mid-episode.
+
+**What is deliberately still allowed.** A `PUT` that changes only a block's *filter* keeps the occurrence exactly where it is — same slot, same length, same channel — so it is never refused. Only a change that moves the block is. Switching a block back **on**, or clearing its dark window, adds to the next lineup rather than removing from it, and is never refused either. Neither is a change to a block that is already disabled or already dark: it generates no shell at the next apply regardless, so nothing can be cut off.
+
+**The airing window includes overflow.** A block is treated as on air for `duration + max_duration_overflow_minutes`, not just `duration`. Content that legitimately overruns its slot is still on air, and the snapshot-invalidation path already uses that wider envelope — a guard that cleared first would refuse to refuse on exactly the content that overran.
+
+**The consequence worth knowing.** While a block is airing you cannot delete it, switch it off, or move its schedule, for up to `duration + max_duration_overflow_minutes`. You can still edit its filter, and you can always wait for the occurrence to finish.
 
 ## Import / export
 

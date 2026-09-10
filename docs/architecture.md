@@ -97,6 +97,7 @@ schedularr/
 │   │   ├── filter.go             # Genre/rating/year/duration/title filters
 │   │   ├── history.go            # Schedule history (prevent repeats)
 │   │   ├── occurrence.go         # NewCronParser + NextOccurrences -- the one occurrence generator
+│   │   ├── onair.go              # OnAirOccurrences -- what is playing right now
 │   │   └── types.go
 │   ├── external/tunarr/          # Tunarr REST API client
 │   ├── metadata/                 # Show metadata providers + canonical genre vocabulary
@@ -104,6 +105,7 @@ schedularr/
 │   │   ├── tmdb/                 # The Movie Database v3 client
 │   │   └── tvdb/                 # TheTVDB v4 client
 │   ├── store/                    # SQLite persistence (blocks, series state, history)
+│   │   ├── removal.go            # Transactional removal of one show's progression
 │   │   └── migrations/
 │   ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
 │   │   └── gen/                  # server.gen.go -- generated, do not hand-edit
@@ -164,6 +166,8 @@ See the [CLI Reference](cli-reference.md) for the full command and flag list.
 **Filter engine (`filter.go`)** — genre, rating, year range, duration range, title regex, tag filters. See [Scheduling Concepts](scheduling-concepts.md#filter-based-blocks) for the field reference.
 
 **Schedule history (`history.go`)** — tracks recently scheduled content per channel to prevent repetition; in-memory map keyed `channel_id:program_id`, cleared on restart, plus the persisted `schedule_history` table (which also carries each occurrence's own `block_name`/`occurrence_start`-keyed assignment, and a `series_occurrence_snapshots` table — keyed by the block's stable store ID rather than its renameable name, and pruned on the same retention window as `schedule_history` (by write time, not the occurrence's own start) — carrying each series occurrence's starting cursor — together the persistence behind idempotent apply, see [Scheduling Concepts](scheduling-concepts.md#idempotent-apply-and-editing-a-block-before-it-airs)). See [Scheduling Concepts](scheduling-concepts.md#schedule-history-and-retention) for the retention/dedup half.
+
+**On-air predicate (`onair.go`)** — one answer to "is this playing right now", asked by every write that could disturb it. It takes the timezone as a parameter rather than reading the host's, because a block's cron carries no zone of its own and reading it in the wrong one answers for a different hour. It uses the wider of the codebase's two airing envelopes (duration **plus** overflow), matching the snapshot-invalidation path, and it asks about occurrences rather than content — so a filter block is covered exactly like a series one.
 
 **Occurrence generator (`occurrence.go`)** — occurrence math is server-side and singular.
 

@@ -78,6 +78,8 @@ The project follows a standard Go project layout with a strong separation of con
   - `cueconfig/`: CUE schema compilation, validation, and default-config generation.
   - `service/`: The schedule generate/apply workflow shared by the CLI (`cmd/generate.go`) and the HTTP API.
   - `api/`: HTTP API -- router, handlers, RFC 7807 problem responses, and `internal/api/gen` (generated from `api/openapi.yaml`; edit only via `make generate`).
+  - `scheduler/onair.go`: `OnAirOccurrences` -- the one answer to "is this playing right now", asked by every write that could disturb it.
+  - `store/removal.go`: Transactional removal of one show's progression across series state, snapshots and airings.
   - `events/`: In-process broadcast hub behind `GET /events` -- fans one change out to every connected browser tab; publishing never blocks and never fails.
   - `blockio/`: `scheduler.yaml` parse/render plus first-run store import (`blockio.Bootstrap`).
   - `cache/`: In-memory content caching used by `service.Runner`.

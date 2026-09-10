@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-09-10
+
+Foundations for deleting scheduling history, plus two fixes to code that
+was already shipping. **No user-reachable deletion ships here** — the
+primitive is built and tested, the endpoint and the UI that drive it are
+the next slice.
+
+### Added
+
+- **An on-air guard on every write that could cut off what is playing.**
+  `DELETE /blocks/{id}`, a `PATCH` that disables or darkens a block, and a
+  `PUT` that moves its `cron`, channel, duration or overflow now answer
+  `409` while the block is airing, naming the local time it becomes safe.
+  A `PUT` that changes only the block's *filter* is deliberately still
+  allowed: it leaves the occurrence exactly where it is. So is any change
+  to a block that is already off, and any change that puts one back on.
+- **`scheduler.OnAirOccurrences`** — one predicate, asked by all of them.
+  It takes the timezone as a parameter rather than reading the host's, uses
+  the wider of the two airing envelopes in this codebase (duration **plus**
+  overflow, matching the snapshot-invalidation path), and asks about
+  occurrences rather than content, so filter blocks are covered like series
+  ones.
+- **`schedule_history.show_title`** (migration `000012`). The `title`
+  column has always held the *episode* title, so nothing in the schema
+  identified a show's airings. Filled from the program's own show, so a
+  filter block that airs an episode records it too.
+- **`store.RemoveShow`** — one show's cursor, snapshots and airings removed
+  in a single transaction, refusing while any block still lists the show.
+
+### Fixed
+
+- **Two concurrent runs could silently discard each other's work.** The
+  plan-sequence allocator observed a floor rather than reserving one, so
+  `serve` and a concurrent `generate --apply` — a pair this store's WAL
+  exists to support — could both read it before either committed and
+  allocate from the same nanosecond neighborhood. The later commit was then
+  dropped by the provenance guard with no log at all: a series cursor that
+  stops advancing and nothing saying why. Sequences are now reserved
+  atomically, verified with two real processes against one database.
+- **That guard is no longer silent.** Reaching it still means something
+  upstream is wrong — a stepped clock, an imported cursor carrying future
+  provenance — so it logs the show and both sequences instead of a bare
+  `continue`.
+- **An occurrence written in one timezone could not be found in another.**
+  SQLite stores a `DATETIME` as text carrying the writer's offset and
+  compares it bytewise, so an exact-match lookup on `occurrence_start`
+  found nothing across a `log.timezone` change — failing as *missing data*
+  rather than as a wrong answer. Both sides of those predicates are now
+  normalised.
+
+### Changed
+
+- **A block cannot be deleted, switched off, or rescheduled while it is
+  airing**, for up to `duration + max_duration_overflow_minutes`. Its
+  filter can still be edited, and the occurrence can always be waited out.
+
+### Known gaps
+
+- **Airings written before migration `000012` cannot be removed by title.**
+  Recovering a show from a stored program id needs the live Tunarr
+  catalogue, which may no longer carry that program, and guessing from the
+  block that aired it is wrong for any block scheduling more than one show.
+  Those rows still age out through retention.
+- **`Engine.Commit` is still not transactional** (open since v0.3.0). The
+  removal primitive is transactional on its own terms; making `Commit` so
+  is a separate change with its own risk.
+
+### Documentation
+
+- `docs/api-reference.md`: the on-air guard, what it refuses and what it
+  deliberately does not, and why a refusal rather than a warning.
+- `docs/scheduling-concepts.md`: what "on air" means, and what removing a
+  show does and does not touch.
+- `docs/architecture.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`: the two
+  new files.
+
 ## [0.5.10] - 2026-09-10
 
 Block power tools. The blocks page now answers what an operator needs
@@ -2547,7 +2623,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.10...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.11...HEAD
+[0.5.11]: https://github.com/christopherime/schedularr/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/christopherime/schedularr/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/christopherime/schedularr/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/christopherime/schedularr/compare/v0.5.7...v0.5.8

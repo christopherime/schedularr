@@ -56,6 +56,7 @@ internal/
 │   ├── filter.go             # Genre/rating/year/duration/title filters
 │   ├── history.go            # 7-day schedule history (prevent repeats)
 │   ├── occurrence.go         # NextOccurrences + the one shared cron parser
+│   ├── onair.go              # OnAirOccurrences -- what is playing right now
 │   └── types.go
 ├── external/                 # API clients
 │   └── tunarr/               # Tunarr REST API client
@@ -64,6 +65,7 @@ internal/
 │   ├── tmdb/                 # The Movie Database v3 client
 │   └── tvdb/                 # TheTVDB v4 client
 ├── store/                    # SQLite state persistence (blocks, series state, history)
+│   ├── removal.go            # Transactional removal of one show's progression
 │   └── migrations/           # DB migrations
 ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
 ├── events/                   # In-process broadcast hub behind GET /events (SSE live link)
