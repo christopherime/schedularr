@@ -73,7 +73,7 @@ func (h *Handlers) ImportBlocks(w http.ResponseWriter, r *http.Request, params g
 		return
 	}
 
-	if err := validateImportedBlocks(blocks); err != nil {
+	if err := validateImportedShowTitles(blocks); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
 	}
@@ -169,49 +169,6 @@ func validateImportedShowTitles(blocks []scheduler.Block) error {
 	}
 	if len(bad) > 0 {
 		return fmt.Errorf("failed to validate blocks: empty show_title in series block(s): %s", strings.Join(bad, ", "))
-	}
-	return nil
-}
-
-// validateImportedBlocks runs every Go-side rule that CUE cannot express
-// over the batch ParseYAML returned. Both rules exist because the CUE
-// schema types the field too loosely to catch the case -- `show_title` as a
-// bare string with no non-empty constraint, `cron` as a bare string with no
-// grammar -- so each is enforced in Go on BOTH ingestion paths, here and in
-// blocks CRUD.
-//
-// One function rather than two calls at the call site because ImportBlocks
-// is already at the cyclomatic ceiling; a third rule belongs in here too.
-func validateImportedBlocks(blocks []scheduler.Block) error {
-	if err := validateImportedShowTitles(blocks); err != nil {
-		return err
-	}
-	return validateImportedCrons(blocks)
-}
-
-// validateImportedCrons runs validateCron (blocks.go) over every block
-// ParseYAML returned, aggregating every offending block's name into one 400
-// detail rather than stopping at the first -- the same shape as
-// validateImportedShowTitles, and for the same reason: this is the batch
-// ingestion path, blocks CRUD is the single-block one, and both enforce one
-// rule.
-//
-// Import is the THIRD writer of a scheduler.Block into the store, and it is
-// the one that matters most for this check: POST and PUT reject a bad cron
-// before it lands, but a block arriving through import is created ENABLED,
-// so an unparseable expression here would go straight into schedule
-// generation and fail at apply time with a 502 instead of at write time
-// with a 400. The UI reads it worse still -- next_occurrence is absent for
-// an unparseable cron, so the NEXT column renders blank rather than broken.
-func validateImportedCrons(blocks []scheduler.Block) error {
-	var bad []string
-	for _, b := range blocks {
-		if err := validateCron(b.Cron); err != nil {
-			bad = append(bad, b.Name)
-		}
-	}
-	if len(bad) > 0 {
-		return fmt.Errorf("failed to validate blocks: unparseable cron in block(s): %s", strings.Join(bad, ", "))
 	}
 	return nil
 }

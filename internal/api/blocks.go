@@ -51,10 +51,6 @@ func (h *Handlers) CreateBlock(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
 	}
-	if err := validateCron(spec.Cron); err != nil {
-		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
-		return
-	}
 	if err := blockio.ValidateBlocks([]scheduler.Block{spec}); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
@@ -149,10 +145,6 @@ func (h *Handlers) UpdateBlock(w http.ResponseWriter, r *http.Request, id string
 
 	spec := fromGen(body.Spec)
 	if err := validateSeriesShowTitles(spec); err != nil {
-		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
-		return
-	}
-	if err := validateCron(spec.Cron); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
 		return
 	}
@@ -406,6 +398,16 @@ func (h *Handlers) DuplicateBlock(w http.ResponseWriter, r *http.Request, id str
 
 	spec := source.Spec
 	spec.Name = name
+	// The fifth write path, and the one that reaches neither blockio
+	// funnel on its own. A stored block can predate the cron rule (or have
+	// arrived through a path that predates it), and duplicating it would
+	// mint a SECOND unparseable row rather than one the operator can go
+	// fix. The detail names the source's expression, because the operator
+	// did not type a cron here -- they typed a name.
+	if err := blockio.ValidateBlocks([]scheduler.Block{spec}); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "block validation failed", err.Error())
+		return
+	}
 	if !h.checkSharedShowPolicies(w, r, []scheduler.Block{spec}, "") {
 		return
 	}
@@ -557,27 +559,6 @@ func validateSeriesShowTitles(b scheduler.Block) error {
 		if sc.ShowTitle == "" {
 			return fmt.Errorf("failed to validate blocks: series block %q has a series entry with an empty show_title", b.Name)
 		}
-	}
-	return nil
-}
-
-// validateCron rejects a block whose cron expression will not parse.
-//
-// The check lives in Go for the same reason validateSeriesShowTitles does:
-// cmd/schema/config.cue's #Block types `cron` as a bare `string`, and CUE has no
-// way to express "parses as a cron expression", so a typo round-trips
-// through blockio.RenderYAML/ValidateBlocks cleanly. Left unchecked it is
-// accepted at write time and only fails much later, inside the engine, as
-// a 502 at apply time -- in a place that cannot point at the field the
-// operator typed. Rejecting here means they find out while still looking
-// at it.
-//
-// It parses through scheduler.NewCronParser, the same configuration the
-// engine plans with, so this can never reject an expression the planner
-// would have accepted, nor accept one it would later choke on.
-func validateCron(expr string) error {
-	if _, err := scheduler.NewCronParser().Parse(expr); err != nil {
-		return fmt.Errorf("failed to validate blocks: invalid cron %q: %w", expr, err)
 	}
 	return nil
 }

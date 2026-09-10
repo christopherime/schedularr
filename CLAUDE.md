@@ -55,6 +55,7 @@ internal/
 │   ├── engine.go             # GenerateForTimeRange, PlanBlock, PlanSeriesBlock
 │   ├── filter.go             # Genre/rating/year/duration/title filters
 │   ├── history.go            # 7-day schedule history (prevent repeats)
+│   ├── occurrence.go         # NextOccurrences + the one shared cron parser
 │   └── types.go
 ├── external/                 # API clients
 │   └── tunarr/               # Tunarr REST API client

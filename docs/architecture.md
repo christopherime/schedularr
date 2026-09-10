@@ -96,6 +96,7 @@ schedularr/
 │   │   ├── engine.go             # GenerateForTimeRange, PlanBlock, PlanSeriesBlock
 │   │   ├── filter.go             # Genre/rating/year/duration/title filters
 │   │   ├── history.go            # Schedule history (prevent repeats)
+│   │   ├── occurrence.go         # NewCronParser + NextOccurrences -- the one occurrence generator
 │   │   └── types.go
 │   ├── external/tunarr/          # Tunarr REST API client
 │   ├── metadata/                 # Show metadata providers + canonical genre vocabulary
@@ -163,6 +164,15 @@ See the [CLI Reference](cli-reference.md) for the full command and flag list.
 **Filter engine (`filter.go`)** — genre, rating, year range, duration range, title regex, tag filters. See [Scheduling Concepts](scheduling-concepts.md#filter-based-blocks) for the field reference.
 
 **Schedule history (`history.go`)** — tracks recently scheduled content per channel to prevent repetition; in-memory map keyed `channel_id:program_id`, cleared on restart, plus the persisted `schedule_history` table (which also carries each occurrence's own `block_name`/`occurrence_start`-keyed assignment, and a `series_occurrence_snapshots` table — keyed by the block's stable store ID rather than its renameable name, and pruned on the same retention window as `schedule_history` (by write time, not the occurrence's own start) — carrying each series occurrence's starting cursor — together the persistence behind idempotent apply, see [Scheduling Concepts](scheduling-concepts.md#idempotent-apply-and-editing-a-block-before-it-airs)). See [Scheduling Concepts](scheduling-concepts.md#schedule-history-and-retention) for the retention/dedup half.
+
+**Occurrence generator (`occurrence.go`)** — occurrence math is server-side and singular.
+
+- `NewCronParser()` builds the project's one parser configuration: standard 5-field expressions plus descriptors (`@daily`, `@every 1h30m`). The engine is constructed with it, `NextOccurrences` parses with it, and every block write path — `POST`/`PUT /blocks` and `POST /blocks/import` — validates a submitted `cron` with it. A block the planner accepts is therefore always one the UI can show occurrences for; two parsers with different option sets would produce exactly that lie, and it would only surface at apply time.
+- `NextOccurrences(expr, from, count)` returns the next `count` start instants strictly **after** `from`, in `from`'s own location. Strictly after is deliberately a different convention from the engine's window walk, which seeds at `from - 1s` so an occurrence landing on the window's edge *is* planned: a window is inclusive of its edge, "next" is not. The slice may come back **short** — `robfig`'s `Next` returns the zero time when it finds no match within five years, so a well-formed expression that never fires (`0 0 30 2 *`, February 30th) yields an empty result rather than an error or a `0001-01-01` instant on the wire.
+
+Two callers read it: `GET /api/v1/cron/next`, which is stateless and the only endpoint in the contract that touches no store, and each `BlockRecord.next_occurrence`. Both evaluate in the deployment's configured `log.timezone` — `cmd/serve.go` resolves it once into `api.Deps.Location`, and a nil there falls back to `time.Local`, matching the engine. Cron fields are wall clock, so evaluating `0 6 * * *` in any other zone hands the operator a different hour than their channel will air.
+
+**The client never evaluates cron.** The web UI vendors cronstrue and renders *prose* with it; every instant an operator reads comes from the server. A client-side evaluator would be a second implementation of calendar semantics kept in step with the Go one by hand, and the place two implementations diverge is DST — the hour that repeats in autumn and the hour that doesn't exist in spring are precisely where a hand-rolled matcher and `robfig` disagree. The operator would then have two readings of the same block and no way to tell which one their channel will follow.
 
 ### Tunarr client (`internal/external/tunarr/`)
 

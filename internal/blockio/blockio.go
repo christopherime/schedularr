@@ -27,6 +27,39 @@ func ValidateBlocks(blocks []scheduler.Block) error {
 		return fmt.Errorf("failed to validate blocks: %w", err)
 	}
 
+	return validateCrons(blocks)
+}
+
+// validateCrons rejects any block whose cron expression the scheduler's own
+// parser cannot read.
+//
+// It lives here rather than at an API call site because this package holds
+// the two funnels every block reaches the store through -- ValidateBlocks
+// for the single-block CRUD paths, ParseYAML for the batch ones -- and a
+// rule enforced at call sites is a rule that covers every caller someone
+// remembered. This one has already been shipped covering two paths of
+// five, then three of five; the funnel is where it stops needing to be
+// remembered.
+//
+// CUE cannot express it: cmd/schema/config.cue's #Block types `cron` as a
+// bare `string`, so an unparseable expression passes schema validation and
+// then fails at apply time with a 502 -- long after the operator left the
+// field. The same reasoning already puts the empty-show_title check in Go.
+//
+// Every offender is named rather than stopping at the first: a batch
+// import that reports one bad block at a time costs the operator one
+// round trip per mistake.
+func validateCrons(blocks []scheduler.Block) error {
+	parser := scheduler.NewCronParser()
+	var bad []string
+	for _, b := range blocks {
+		if _, err := parser.Parse(b.Cron); err != nil {
+			bad = append(bad, fmt.Sprintf("%s (%q)", b.Name, b.Cron))
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("failed to validate blocks: unparseable cron in %s", strings.Join(bad, ", "))
+	}
 	return nil
 }
 
@@ -86,6 +119,14 @@ func ParseYAML(data []byte) ([]scheduler.Block, error) {
 	}
 
 	if err := ValidateSharedShowAgreement(cfg.Blocks); err != nil {
+		return nil, err
+	}
+
+	// The batch funnel's half of the cron rule -- see validateCrons. Both
+	// callers of this function (POST /blocks/import and the first-run
+	// Bootstrap) create blocks ENABLED, so an unparseable expression
+	// arriving here goes straight into schedule generation.
+	if err := validateCrons(cfg.Blocks); err != nil {
 		return nil, err
 	}
 

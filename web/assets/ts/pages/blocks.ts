@@ -35,7 +35,7 @@ import { draftHref } from "../runtime/draft.ts";
 import { describeError, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { durationLabel, formatClock, formatLocal, ordinal, pad2, plural, sxxeyy, untilTime } from "../runtime/format.ts";
-import { priorityRank } from "../runtime/rank.ts";
+import { isContending, priorityRank } from "../runtime/rank.ts";
 import type { RankPeer } from "../runtime/rank.ts";
 import { initShell, onResume } from "../runtime/shell.ts";
 import { printTape } from "../runtime/tape.ts";
@@ -733,7 +733,11 @@ export function priorityLabel(
   now: number,
 ): string {
   const priority = block.spec.priority ?? 0;
-  if (!block.enabled || darkUntilLabel(block.disabled_until, now) !== null) return `PRI ${priority}`;
+  // isContending, not a local re-derivation of it: the guide's inspector
+  // asks the same function, and the whole point of runtime/rank.ts is that
+  // there is one answer to "may this be ranked" rather than two that agree
+  // until someone edits one of them.
+  if (!isContending(block, now)) return `PRI ${priority}`;
   const { rank, of } = priorityRank(priority, peers);
   if (of === 0) return `PRI ${priority}`;
   return `PRI ${priority} · ${ordinal(rank)} of ${of}`;

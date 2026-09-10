@@ -590,3 +590,58 @@ is a known, scoped-out gap.
 - **No automated coverage of the full backoff walk** (LIVE → POLL →
   LINK LOST). It needs 7+ seconds of real backoff and the ladder has no
   injectable clock. Covered by the gate's by-hand browser pass.
+
+## Deferred (block power tools)
+
+Recorded when v0.5.10 closed the slice. Everything here was either scoped
+out before implementation started or is a known gap in what shipped; none
+of it blocks anything.
+
+- **Recurring dark windows** ("dark every August"). One instant, one
+  wake-up. A recurrence rule on `disabled_until` would be a second
+  scheduling language competing with cron, and every question cron
+  already answers badly (DST, month lengths, descriptors) would have to
+  be answered again in a different vocabulary.
+- **Bulk operations on blocks** (multi-select, bulk enable/disable, a
+  bulk dark window). That is the history desk slice's shape applied to a
+  different noun, and it wants the same selection model.
+- **`disabled_until` on series rows or channels.** Blocks only. A dark
+  channel is a different gate in a different place, and nothing asked for
+  one.
+- **Case-insensitive block-name collisions.** Today's SQLite `BINARY
+  UNIQUE` stands, so `Morning Cartoons` and `morning cartoons` coexist
+  and a duplicate can collide with neither. `COLLATE NOCASE` is a
+  migration plus a decision about what to do with existing rows that
+  differ only in case.
+- **`disabled_until` does not round-trip through `scheduler.yaml`.** It
+  is a column rather than a `BlockSpec` field, and that file is a
+  first-run import format for specs; a dark window is operational state.
+  A restored import therefore comes back awake. Deliberate, and the one
+  visible cost of decision 1 — but it is a cost, so it is written down
+  here rather than only in the plan.
+- **Nothing sweeps a stale `disabled_until`.** A wake instant in the past
+  stays in the row forever. Every reader compares against the clock so it
+  suppresses nothing and paints nothing, but the value is still there for
+  anyone reading the database directly, and `PATCH ... null` is the only
+  thing that removes it.
+- **`GET /cron/next` returns start instants only.** The editor's rail
+  adds each block's own duration to get the end times it prints. A block
+  is the only thing that knows its duration, so an endpoint that returned
+  ends would have to be told one.
+- **The save tape line still has no "reaches Tunarr at `<next_cron_tick>`"
+  readout.** `GET /status` already carries `next_cron_tick` and
+  `runtime/shell.ts` already renders it in the bezel, so this is one line
+  in the editor's save path — and the comment above `printTape` in
+  `pages/blocks.ts` still says it "arrives with the block power tools
+  slice", which is now wrong. Fix the comment with the line.
+- **`next_occurrence` parses one cron expression per record on every `GET
+  /blocks`.** At tens of blocks that is nothing, and caching it would
+  mean inventing an invalidation rule for a value that changes with the
+  clock. If the list ever gets slow the fix is one batched computation
+  over the whole list, not a cache.
+- **A cursor rewind across several shows is not atomic.** The confirm is
+  per-block and `PATCH /state/series/{show_title}` is per-show, so a
+  block seeding three shows issues three independent writes and some can
+  fail while others land. The tape reports per-title outcomes and offers
+  the tracked view rather than claiming a single success, which is the
+  honest reading, not a fix.

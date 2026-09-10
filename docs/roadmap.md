@@ -290,7 +290,48 @@ v0.5.5 below).
   draw-in for rows arriving on `/history/`, which stayed guide-only.
   Any reverse proxy fronting Schedularr must not buffer or time out
   `/api/v1/events` — see `docs/deployment.md`.
-- **Then — Block power tools: pending.** Unchanged in scope.
+- **v0.5.10 — Block power tools: SHIPPED (2026-09-10).** The blocks page
+  became a place an operator can answer "what will this do" before they
+  save. Engine-side, migration `000011` added a `disabled_until` column
+  beside `enabled`: a dark window that expires on its own, independent of
+  the indefinite switch only an operator undoes, gated in the one place
+  that decides whether a block is planned — `service.ActiveBlocks`, which
+  now takes the run's own clock, and which the API, the cron loop and the
+  CLI all reach the engine through. The spec sketched `disabled_until` on
+  `BlockSpec`; it shipped as a column because `enabled` is already one,
+  and splitting the two dark-switches across a column and a JSON blob
+  makes them impossible to write in a single statement. The cost, stated
+  rather than buried: a dark window does not round-trip through
+  `scheduler.yaml`, which is a first-run import format for block specs.
+  `scheduler.NextOccurrences` became the one occurrence generator, over
+  the parser configuration the engine already held, and `GET
+  /cron/next` exposes it in the configured `log.timezone` — the client
+  never evaluates cron, which is a spec-level rejection rather than a
+  preference. Each `BlockRecord` now reports `next_occurrence`, the next
+  instant it will *actually* air: absent when disabled or unparseable,
+  and for a dark block the first occurrence after it wakes. `POST
+  /blocks/{id}/duplicate` copies a spec whole, seeds included, and
+  arrives disabled, since an enabled exact copy would contend with its
+  own source at the same cron on the same channel. All three write paths
+  — `POST`, `PUT`, and `POST /blocks/import` — now reject an unparseable
+  cron with a `400` instead of accepting it and failing at apply time
+  with a `502`; import mattered most, because it creates blocks enabled.
+  On the front end the list gained a NEXT column and folded three more
+  readings into cells it already had (duration on the cron, priority rank
+  under the channel plate, the dark chip beside the switch), plus
+  Duplicate and a dark window as row actions, a consequence rail in the
+  editor showing the next three airings with end times, the priority
+  siblings and the projected lineup, collapsed series rows, and a confirm
+  for the cron edit that moves a series already mid-run.
+  **Deliberately left out:** recurring dark windows ("dark every August"
+  — a recurrence rule here would be a second scheduling language
+  competing with cron); bulk block operations (multi-select, bulk
+  enable/disable — that is the desk slice's shape applied to a different
+  noun); case-insensitive name collisions (today's SQLite `BINARY UNIQUE`
+  stands; `COLLATE NOCASE` is a migration plus a decision about existing
+  rows, and nothing here needs it); and `disabled_until` in
+  `scheduler.yaml`, which follows from it being operational state rather
+  than spec.
 - **Then — History desk power tools: pending.** Was "the series desk";
   now the desk lives on `/history/`. Bulk cursor operations, YAML
   import/export, and the two new operator asks: **remove a show or movie

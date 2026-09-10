@@ -7,6 +7,206 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-09-10
+
+Block power tools. The blocks page now answers what an operator needs
+before they commit an edit — when this block next airs, what it will
+displace, and what a cron change does to a series already mid-run — plus
+the two writes that turn a block into a working set: duplicate it, and
+take it dark until a date.
+
+### Added
+
+- **`blocks.disabled_until`** (migration `000011`): a dark window that
+  expires on its own, beside the `enabled` switch only an operator
+  undoes. The two are independent axes — a block is planned only when
+  both are clear, and setting one never writes the other. "Until" names
+  the instant the block RETURNS, so a wake time equal to now is already
+  awake, and a wake time in the past is stale rather than wrong: nothing
+  sweeps it, and every reader compares against the clock instead of
+  testing for non-nil. It is a **column, not a `BlockSpec` field**.
+  `enabled` is already a column, so putting the second switch inside
+  `spec_json` would make the pair impossible to write in one statement
+  and would route every dark window through the full-spec path that
+  carries `If-Match`. The cost is real and worth stating: a dark window
+  does **not** round-trip through `scheduler.yaml`. That file is a
+  first-run import format for block *specs*, and a temporary dark window
+  is operational state.
+- **`scheduler.NextOccurrences`** (`internal/scheduler/occurrence.go`):
+  the one occurrence generator, over `NewCronParser()` — the parser
+  configuration the engine itself holds, extracted so a block the
+  planner accepts is always one the UI can show occurrences for.
+  Instants are strictly **after** `from`, deliberately a different
+  convention from the engine's window walk, which seeds at `from-1s`
+  precisely so an occurrence landing on the window edge IS included: a
+  window is inclusive of its edge, "next" is not. A well-formed
+  expression that never fires (February 30th) shortens the result rather
+  than erroring — `robfig`'s `Next` answers that case with the zero
+  time, and a zero `time.Time` must never reach a caller and serialize
+  as `0001-01-01`.
+- **`GET /api/v1/cron/next?expr=&count=&from=`** →
+  `{"occurrences": ["<RFC3339>", …]}`; `400` for an unparseable `expr`
+  or a `count` outside 1–10. Evaluated in the configured `log.timezone`,
+  because cron fields are wall clock and any other zone hands the
+  operator a different hour than their channel will air. It is the only
+  endpoint in the contract that reads no store. It exists so the client
+  never re-implements calendar semantics: the UI's vendored cronstrue
+  renders prose, and instants come from here.
+- **`next_occurrence` on every `BlockRecord`**: the next instant the
+  block will actually air, which is not the same question as what its
+  cron says next. Absent when the block is disabled, when its expression
+  never fires, and when it will not parse. For a dark block it is the
+  first occurrence at or after it wakes — `NEXT THU 21:00` beside a
+  block dark until next month is a reading that lies.
+- **`POST /api/v1/blocks/{id}/duplicate`**, body `{name}` → `201`
+  BlockRecord; `400` on an empty name, `404` on a missing source, `409`
+  on a collision. The spec is copied whole, series seeds included.
+  Nothing keyed by the source's id comes along: cursors and snapshots
+  record what the SOURCE aired, and a copy has aired nothing. The copy
+  arrives **disabled** — an exact copy carries the same cron, channel
+  and priority, so landing it enabled would contend with the block it
+  was copied from and conflict resolution would silently drop one of the
+  two. It is still checked against the shared-show policy, because
+  arriving disabled only defers a collision to whoever enables it. The
+  name is required and never invented server-side: a collision is the
+  caller's to resolve, since they are the one who can see what the other
+  block is.
+- **A NEXT column on the blocks list**, and three further readings
+  folded into cells that already existed — duration annotates the cron
+  it belongs to, priority rides under the channel plate whose peers it
+  ranks against, and the dark window sits beside the switch it
+  qualifies. Seven columns, not the ten a fact-per-column row would have
+  taken. The DARK UNTIL chip paints only while `disabled_until` is in
+  the future. An absent `next_occurrence` hides three different reasons,
+  so the cell names which one it is and the step that recovers it rather
+  than going blank.
+- **Two row actions.** Duplicate is one click with the name pre-filled;
+  the naming dialog appears only on the `409` path, the one case where
+  the operator has something to decide. The dark control is one button
+  in two states: `Go dark` opens the preset picker, `Bring back`
+  performs the single `PATCH` directly.
+- **The editor's consequence rail**: the next three occurrences with
+  their end times (`/cron/next` returns starts; the block's own duration
+  supplies the rest), the priority siblings on that channel, and the
+  projected lineup. Series rows collapse to one summary line each, an
+  incomplete row summarising to what is missing rather than to a blank
+  line the operator cannot find again. A cron edit on a series block
+  that has already aired raises a confirm naming the shows it moves,
+  with an optional cursor rewind. Every instant on the page is the
+  server's, and every relative time reads `serverNow()`.
+
+### Changed
+
+- **`service.ActiveBlocks` takes the run's own clock** and applies the
+  dark gate there. It is the only place that decides whether a block is
+  planned, and the Runner behind it serves the API, the cron loop and
+  the CLI alike, so the new rule is honoured everywhere by construction
+  rather than by an audit. The clock is a parameter so the gate and the
+  window generated from it cannot disagree about which side of a wake
+  time a block is on.
+- **`PATCH /api/v1/blocks/{id}` carries `disabled_until`** alongside
+  `enabled`. Three cases stay distinct: an absent key leaves the window
+  alone, an explicit `null` clears it, an instant sets it. `*time.Time`
+  cannot tell absent from `null`, so that one field decodes through
+  `json.RawMessage`.
+- **All three write paths reject an unparseable cron with `400`.** CUE
+  types `cron` as a bare string, so an invalid expression used to be
+  accepted and surface as a `502` at apply time, a long way from the
+  field the operator typed. **Live-data hazard:** a block already stored
+  with an unparseable cron is now uneditable until its cron is fixed,
+  because the write path refuses it. Run every stored block's cron
+  through the parser before upgrading.
+- **`priorityRank` moved into `web/assets/ts/runtime/rank.ts`** and the
+  guide's inspector imports it instead of owning it, so the list and the
+  inspector cannot disagree about a block's rank.
+
+### Fixed
+
+- **`POST /blocks/import` bypassed the new cron guard**, and it is the
+  path where that mattered most: import creates blocks **enabled**, so
+  an unparseable expression went straight into schedule generation and
+  failed at apply time, while the UI rendered a blank NEXT column rather
+  than a broken one. Both batch rules now run through one
+  `validateImportedBlocks`, aggregating every offending block's name
+  into a single `400` instead of stopping at the first.
+- **A queued cursor rewind outlived the cron edit that justified it.**
+  The acknowledgement was cleared only when the editor opened or closed,
+  so a `409` on save left it armed: revert the cron, fix the name, save
+  again — and cursors rewound for a change that had been abandoned, with
+  nothing asking a second time. The acknowledgement is now keyed to the
+  expression it was raised on, so an earlier answer to an earlier cron
+  re-asks.
+- **The extracted rank helper shared the computation but not the
+  suppression rule.** For a disabled or dark block the list printed a
+  bare priority while the inspector printed `50 · 2nd of 5` directly
+  beside its own "Disabled" readout — the exact drift the extraction was
+  supposed to end. `isContending` now lives beside `priorityRank` and
+  both surfaces ask it. Rank is among enabled same-channel peers; a dark
+  peer stays in the field, because it is defined and it comes back.
+- **The consequence rail could answer for a superseded cron**, from two
+  directions at once. The refetch armed on `@input` while Simple mode's
+  number field wrote the cron on `@change`, so the debounce read the
+  previous expression and nothing re-armed it; each control now writes
+  on the event Alpine's own `x-model` commits on. And `railState()`
+  decided from the form's cron while the held instants were keyed to the
+  expression they had been fetched for, so one keystroke made the
+  previous expression's occurrences read as settled — the picker saying
+  "the 15th" over a rail listing the 1st, with nothing on screen naming
+  which question was answered. It now decides against the expression the
+  instants actually belong to.
+- **A `Bring back` button that did not bring the block back.** The
+  dark-state row control opened a dialog whose default reading was three
+  re-schedule presets, so the label named an action it did not perform.
+  It is now the write itself — one `PATCH` clearing the window, no
+  dialog on the way — and the dialog's dead restore path is gone. A
+  dialog is where a wake-up is chosen; ending one has nothing to choose.
+- **A keyboard fix left a zero-height focus stop.** The rail's lineup
+  list carries `tabindex="0"` so a capped, scrolling list can be reached
+  from the keyboard, but it had no visibility guard: with no shows
+  seeded, the empty `<ul>` stayed in the tab order as a focus stop with
+  nothing in it, which is a worse accessibility outcome than the scroll
+  trap the `tabindex` was added to fix. All three capped lists are
+  guarded the same way now.
+- **The dark gate had aged every pushed lineup.** Threading the clock
+  into `ActiveBlocks` hoisted the run's `start` above the Tunarr program
+  fetch, stamping every generated slot with an instant that predated the
+  schedule by however long the fetch took. The block load moved down
+  instead of the clock moving up — same guarantee, no behaviour change.
+- **Three new component clusters shipped with no `/kit/` fixture at
+  all** — the consequence rail, the series-row disclosure, and the
+  dialogs — so none of their states passed the gallery review gate this
+  project defines for itself, and that gate did not run on them until a
+  second pass. The gallery now carries the rail both answered and
+  capped-and-scrolling (that cap is why those lists carry `tabindex` at
+  all), the disclosure, and all five dialogs including Name the copy's
+  `409`, which is the state that dialog exists for. Two specimens were
+  wrong on arrival: one printed an occurrence its own renderer cannot
+  produce (21:00 plus three hours crosses midnight, so the end prints as
+  a full instant), and the in-flight dark-window specimen was an
+  **inescapable modal** — every control disabled, no close path — which
+  trapped anyone who opened it in the gallery.
+
+### Documentation
+
+- `docs/api-reference.md`: `GET /cron/next`; `POST
+  /blocks/{id}/duplicate`; `disabled_until` on `PATCH`, including how an
+  explicit `null` clears it; `next_occurrence` and what each of its
+  three absences means; and the new `400` on an unparseable cron at
+  write time.
+- `docs/web-ui-guide.md`: the NEXT column and the folded readings, both
+  row actions, the consequence rail, collapsed series rows, and the cron
+  confirm with its rewind.
+- `docs/scheduling-concepts.md`: `disabled_until` as the timed dark
+  switch, its independence from `enabled`, and the plain statement that
+  it does not round-trip through `scheduler.yaml`.
+- `docs/architecture.md`: `internal/scheduler/occurrence.go` as the one
+  occurrence generator, and why the client never evaluates cron.
+- `web/DESIGN.md`: the blocks row's seven columns, the DARK UNTIL chip,
+  the rail and the series-row disclosure, and WCAG evidence for every
+  new pairing in both palettes.
+- `docs/roadmap.md`, `TODO.md`: block power tools marked shipped, naming
+  what was deliberately left out.
+
 ## [0.5.9] - 2026-09-10
 
 The live link's client half. Every page now watches the stream v0.5.8
@@ -2347,7 +2547,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.9...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.10...HEAD
+[0.5.10]: https://github.com/christopherime/schedularr/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/christopherime/schedularr/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/christopherime/schedularr/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/christopherime/schedularr/compare/v0.5.6...v0.5.7

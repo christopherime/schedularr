@@ -110,7 +110,7 @@ When a series runs out of episodes (every season and episode scheduled):
 
 `max_runs` (used with `on_complete: "restart"`) caps how many times a series restarts. Once `run_count` reaches `max_runs`, the series is disabled automatically. `0` means unlimited restarts.
 
-**Shared shows must agree on their policy — enforced.** Series state is keyed by show title, shared across every block that schedules the show — `on_complete` included. Two blocks giving the same show *contradictory* policies (one `disable`, another `restart` or `continue`) would fight over that shared state, so every write path rejects the contradiction with a `400` naming the show and both blocks: block create/update (against every *enabled* block — a disabled block plans nothing and fights nobody, but re-enabling it re-validates), `POST /blocks/import`, and `scheduler.yaml` import. The compared policy is the pair `on_complete` + (for `restart`) `max_runs` — a per-block `max_runs` cap counts against the show's shared `run_count`, so disagreeing caps are the same fight. An omitted `on_complete` counts as the default, `continue`. Relatedly, `skip_episodes` also acts on the shared cursor: a skip in one block skips for every block sharing the show.
+**Shared shows must agree on their policy — enforced.** Series state is keyed by show title, shared across every block that schedules the show — `on_complete` included. Two blocks giving the same show *contradictory* policies (one `disable`, another `restart` or `continue`) would fight over that shared state, so every write path rejects the contradiction with a `400` naming the show and both blocks: block create/update (against every *enabled* block — a disabled block plans nothing and fights nobody, but re-enabling it re-validates, and a block that is merely [dark](#a-dark-block-is-still-a-competitor) is checked throughout, since it comes back on its own), `POST /blocks/import`, and `scheduler.yaml` import. `POST /blocks/{id}/duplicate` runs the same check even though the copy arrives disabled — a contradiction it introduced would otherwise surface the moment somebody enabled it, which is the worst moment to learn of it. The compared policy is the pair `on_complete` + (for `restart`) `max_runs` — a per-block `max_runs` cap counts against the show's shared `run_count`, so disagreeing caps are the same fight. An omitted `on_complete` counts as the default, `continue`. Relatedly, `skip_episodes` also acts on the shared cursor: a skip in one block skips for every block sharing the show.
 
 ### Skipping episodes
 
@@ -240,6 +240,37 @@ cron: "30 19 * * 1,3,5"  # Mon/Wed/Fri at 7:30 PM
 Validate with `schedularr validate scheduler.yaml` before deploying — see the [CLI Reference](cli-reference.md#validation).
 
 The [Web UI's blocks editor](web-ui-guide.md#schedule-picker) offers a Simple mode alternative to hand-writing cron: a frequency select, day-of-week checkboxes, and a time input that generate the cron string live. It parses back from an existing cron string when the pattern is representable in Simple mode (a fixed time, optionally restricted to weekdays or a single day-of-month); anything more complex — a day-of-month combined with a weekday restriction, a month restriction, a list/range/step on minute or hour — stays in Cron mode. A plain-language readback (cronstrue) renders under the field in both modes.
+
+## Enabled, dark, and the single planning gate
+
+Two switches decide whether a block is planned at all, and they answer different operator questions:
+
+| Switch           | Written by                                                      | Undone by                       | The question it answers                             |
+| ---------------- | --------------------------------------------------------------- | ------------------------------- | --------------------------------------------------- |
+| `enabled`        | `POST`/`PUT /blocks` (defaults to `true`), `PATCH /blocks/{id}` | an operator, by hand            | Is this rule part of my lineup at all?              |
+| `disabled_until` | `PATCH /blocks/{id}` only                                       | the clock, at the instant named | Skip it while I'm away, and put it back without me. |
+
+They are independent axes: a block is planned only when it is enabled **and** now is at or past its `disabled_until`, so setting either one suppresses it and setting one never writes the other. A `PATCH` carrying only `enabled` finds its dark window exactly where it left it, and a full `PUT /blocks/{id}` spec save doesn't disturb it either — `disabled_until` isn't part of a spec body. Bringing a block back early is an explicit `{"disabled_until": null}`; an absent key means "leave it alone", so `null` is the only way to say "clear it".
+
+**"Until" names the instant the block returns**, not the last moment it is dark — a wake time equal to now is already awake. A `disabled_until` in the past is *stale*, not cleared: nothing sweeps the column, and nothing needs to, because the gate compares it against now rather than testing whether a value is present. Anything that renders a "dark" affordance has to make that same comparison, which is why a window that lapsed last week paints nothing on the [Blocks page](web-ui-guide.md#blocks-blocks).
+
+### One gate, every path
+
+`service.ActiveBlocks(ctx, store, now)` is the only place in the codebase that decides whether a block reaches the engine. The `serve` cron loop, `POST /api/v1/generate`, `POST /api/v1/apply` and `schedularr generate` all load their blocks through it, so both switches hold on every path by construction rather than by three separate checks agreeing with each other. A new suppression rule belongs in that function and nowhere else.
+
+Its clock is a parameter rather than a `time.Now()` inside it. An apply passes the same instant it derives its window from, so a block can never be dark for the gate and awake for the window — two independent reads would sit a program fetch apart.
+
+### The dark window doesn't round-trip through `scheduler.yaml`
+
+`disabled_until` is a column on the block row beside `enabled`, not a field inside the stored spec, which keeps both switches in one row and one write. The consequence is worth stating plainly because it will surprise someone: `GET /blocks/export` renders block **specs**, so neither `disabled_until` nor `enabled` survives an export. Export, wipe the store, re-import, and every block comes back **awake and enabled** — `POST /blocks/import` and first-run `scheduler.yaml` bootstrap both create blocks enabled with no dark window.
+
+That split is deliberate. `scheduler.yaml` describes scheduling rules; a dark window is operational state about one deployment at one moment, which a rules file has no business carrying. If a re-import is part of a restore, re-apply the dark windows by hand afterwards. Nothing has to be re-derived to do it: a dark window is one instant and one wake-up, never a recurrence.
+
+### A dark block is still a competitor
+
+The [shared-show policy check](#completion-actions-on_complete) treats a dark block as live, because it is defined and it comes back. A write is validated against every *enabled* block, dark ones included, so a second block can't claim a contradictory `on_complete` policy for a show while the first sits dark and then collide with it the moment it wakes.
+
+Conflict resolution is the opposite case, and for the same reason. A dark block contributes no occurrences at all — it never reaches the engine — so it can't displace a lower-priority block on its channel while it's out. It stops competing for airtime and keeps competing for shared series state.
 
 ## Priority and conflict resolution
 
