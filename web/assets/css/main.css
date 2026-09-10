@@ -1321,6 +1321,18 @@ dialog.panel .panel__body {
   border-color: var(--color-accent);
 }
 
+/* The DARK UNTIL chip (v0.5.10): a block whose `disabled_until` is still
+   ahead. Warn, not danger -- a dark block is degraded, not broken; it
+   comes back by itself, which is the same distinction POLL takes from
+   LINK LOST on the link ladder. The chip's own text names the instant, so
+   the tint is the scan aid and not the fact (SC 1.4.1). WCAG (computed,
+   recorded in DESIGN.md): 6.92:1 light / 8.43:1 dark on the row's ground,
+   5.62 / 9.23 on the hovered row's inset. */
+.badge[data-state="dark"] {
+  color: var(--color-warn);
+  border-color: var(--color-warn);
+}
+
 /* -- blocks: enabled toggle --------------------------------------------------
    A rocker switch, not an iOS pill: small radii throughout, matching the
    "machined instrument bezel" thesis at the top of this file. Built as a
@@ -1409,8 +1421,19 @@ dialog.panel .panel__body {
 /* -- blocks: list table -------------------------------------------------------
    Reuses .table-wrap/.history-table verbatim (Task 4) -- same bordered
    instrument-log look, zero duplicated table CSS. blocks-table only adds
-   the cells specific to this page's content (cron hint line, row
-   actions); it carries no layout rules of its own. */
+   the cells specific to this page's content (the schedule stack, the NEXT
+   reading, the channel/priority stack, the status stack, row actions); it
+   carries no layout rules of its own.
+
+   v0.5.10 gave the row four more facts -- runtime, next airing, priority
+   rank, dark window -- and every one of them except NEXT went INSIDE a
+   cell that was already answering its question rather than into a column
+   of its own. Ten columns on this table's real longest values overflow
+   --content-max on any laptop, which turns the page's primary scanning
+   surface into a horizontal scroller. Each stack is an inner div, never
+   `display: flex` on the <td> itself: that strips the cell's table
+   display and floats its bottom border at content height instead of the
+   row edge. */
 
 .blocks-table__cron {
   display: flex;
@@ -1418,9 +1441,103 @@ dialog.panel .panel__body {
   gap: var(--space-1);
 }
 
+/* Duration annotates the expression instead of claiming a column:
+   "0 21 * * 6  3 h" is how the operator states the rule out loud. Spaced
+   by flex gap and never by a literal "·" between inline siblings -- the
+   minifier collapses the whitespace around one and the two values would
+   render welded together. */
+.blocks-table__cron-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.blocks-table__dur {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  white-space: nowrap;
+}
+
+/* Capped, not truncated: the longest readback cronstrue produces ("At
+   09:00 PM, only on Saturday") would otherwise set this column's width
+   for every row in the table. It wraps to a second line instead. */
 .blocks-table__cron-hint {
   font-size: var(--text-xs);
   color: var(--color-ink-muted);
+  max-width: 24ch;
+}
+
+/* NEXT -- the one column this slice added outright, because no existing
+   cell was answering "when does this actually air next". */
+.blocks-table__next {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
+}
+
+.blocks-table__next-primary {
+  white-space: nowrap;
+}
+
+.blocks-table__next-detail {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  max-width: 26ch;
+}
+
+/* An absent instant is not a value, so it does not get a value's
+   treatment: the three absences render in the uppercase legend voice the
+   badges and empty-state legends already use, which is what stops
+   "Disabled" from being misread as a time. */
+.blocks-table__next:not([data-kind="instant"]) .blocks-table__next-primary {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* Two of the three absences are the operator's to fix (the cron will not
+   parse, or it parses and never comes round); a disabled block is a
+   choice they already made. Amber marks the two, muted leaves the one
+   alone -- and the legend text carries all three regardless, so nothing
+   here depends on the colour being seen. */
+.blocks-table__next[data-kind="disabled"] .blocks-table__next-primary {
+  color: var(--color-ink-muted);
+}
+
+.blocks-table__next[data-kind="unreadable"] .blocks-table__next-primary,
+.blocks-table__next[data-kind="never"] .blocks-table__next-primary {
+  color: var(--color-warn);
+}
+
+/* Priority rides under the channel plate rather than in a column of its
+   own because the rank is CHANNEL-SCOPED: "2nd of 5" only means anything
+   beside the channel those five blocks contend on. */
+.blocks-table__channel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
+}
+
+.blocks-table__pri {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  white-space: nowrap;
+}
+
+/* The dark chip sits UNDER the toggle, not in place of it: `enabled` and
+   `disabled_until` are independent axes, and hiding the switch would hide
+   the control that ends a dark window for good. */
+.blocks-table__status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
 }
 
 .blocks-table__actions {
@@ -1437,6 +1554,45 @@ dialog.panel .panel__body {
 .row-actions__prompt {
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
+}
+
+/* -- blocks: the dark-window disclosure (v0.5.10) -----------------------------
+   The presets inside the dark dialog. The dialog itself is `dialog.panel`
+   verbatim -- the confirm idiom's element, with its own x-ref -- so
+   nothing here restyles a surface: a popover would have been a third
+   overlay vocabulary (--z-popover carries exactly one thing, the guide's
+   mobile sheet) for a choice of four buttons.
+
+   Each preset is a full-width .btn with the instant it commits to pushed
+   to the far edge. "Next week" is not a choice until the operator can see
+   which day it lands on -- and that instant is what the server stores, so
+   showing it is showing the write, not a decoration on it. No new colours:
+   the muted-on-raised and muted-on-inset (hover) pairings are the ones
+   already recorded in DESIGN.md's WCAG evidence. */
+
+.dark-presets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dark-preset {
+  justify-content: space-between;
+  gap: var(--space-4);
+  text-align: left;
+}
+
+/* Out of the button's own legend voice: the label is the control's name
+   and stays uppercase, the instant beside it is a VALUE and reads as one
+   -- the same split the row's own cells make between a legend and a
+   reading. */
+.dark-preset__when {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-ink-muted);
+  white-space: nowrap;
 }
 
 /* -- blocks: editor panel -----------------------------------------------------
@@ -1632,6 +1788,89 @@ dialog.panel .panel__body {
   color: var(--color-danger);
 }
 
+/* -- blocks: the editor's consequence rail (v0.5.10) ---------------------------
+   The rail answers "what will this do" before the operator commits, and it
+   sits last in the panel body -- directly above Save -- because that is
+   where such a reading is actually read. It is a .form-section like every
+   other block in the panel (border-top, title, spacing all reused); only
+   the three-readout cluster below is new.
+
+   A labelled readout cluster, in the bezel telemetry strip's register, not
+   three cards: no per-group border, no icon, no fixed shape -- one legend
+   over one reading, three times, each a different length. The groups sit
+   on an auto-fit grid so they drop to one column on a narrow panel instead
+   of squeezing an instant into six characters. */
+
+.editor-rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4);
+}
+
+.editor-rail__group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.editor-rail__legend {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--color-ink-muted);
+}
+
+.editor-rail__readout {
+  width: 100%;
+}
+
+/* Capped and scrolled rather than uncapped: a channel carrying a dozen
+   blocks would otherwise push the Save button off the bottom of a laptop
+   screen with a list nobody asked to read in full.
+
+   The cap is what makes each list a scroll container, and its children are
+   plain <li> text with nothing focusable in them -- so the template gives
+   every one of these lists tabindex="0" and a name from its own legend.
+   Firefox and Chrome focus a scroller by themselves; Safari does not, and
+   the clipped entries would be unreachable by keyboard there (SC 2.1.1).
+   The focus ring is the global :focus-visible outline. */
+.editor-rail__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.editor-rail__item {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+}
+
+/* The field recedes; the block being edited stays in full ink. The text
+   says "(this block)" as well -- weight and colour are a scan aid here,
+   never the fact (SC 1.4.1). */
+.editor-rail__item[data-self="false"] {
+  color: var(--color-ink-muted);
+}
+
+/* Same warn voice the collapsed row uses for the same row: a lineup entry
+   that will 400 on save is the one line in the projection worth finding. */
+.editor-rail__item[data-state="incomplete"] {
+  color: var(--color-warn);
+}
+
+.editor-rail__note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
 /* -- blocks: series rows (repeating) -------------------------------------- */
 
 .series-rows {
@@ -1656,12 +1895,65 @@ dialog.panel .panel__body {
   margin-bottom: var(--space-3);
 }
 
+/* The row's identity is its disclosure control (v0.5.10): a dozen open
+   rows is what made this editor unreadable, and the summary line is what
+   makes a closed one findable again. Chrome-free on purpose -- it is the
+   row's own heading, not a button parked next to one -- so it carries no
+   border or background of its own and leans on the global :focus-visible
+   ring. */
+.series-row__toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* One chevron, two orientations -- the affordance is the rotation, which
+   is why it can share a glyph with the move buttons at the row's other
+   end without reading as a third of them. */
+.series-row__chevron {
+  flex: none;
+  align-self: center;
+  color: var(--color-ink-muted);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.series-row__toggle[aria-expanded="false"] .series-row__chevron {
+  transform: rotate(-90deg);
+}
+
+.series-row__toggle:not(:disabled):hover .series-row__chevron {
+  color: var(--color-ink);
+}
+
 .series-row__index {
+  flex: none;
   font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
   color: var(--color-ink-muted);
+}
+
+.series-row__summary {
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+/* A row missing a required field says so on its closed line, in the same
+   warn voice the rail's lineup uses for it. Collapsing a dozen rows must
+   not be able to hide the one that will 400 on save. */
+.series-row__summary[data-state="incomplete"] {
+  color: var(--color-warn);
 }
 
 .series-row__actions {

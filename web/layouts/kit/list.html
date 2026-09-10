@@ -353,6 +353,812 @@
     </div>
   </section>
 
+  <section class="kit-section" aria-labelledby="kit-blocks-row-title">
+    <div class="section-head">
+      <h2 id="kit-blocks-row-title">Blocks row</h2>
+      <p>
+        The blocks list's row rhythm. Four facts arrived in v0.5.10 and
+        only NEXT took a column: duration annotates the cron it belongs
+        to, the priority rank rides under the channel plate whose peers it
+        ranks against, and the dark window sits under the switch it
+        qualifies. A missing next occurrence has three separate causes —
+        disabled, an unreadable cron, a cron that never comes round — and
+        each reads as its own legend rather than a shared em dash. A block
+        that is disabled or currently dark shows its priority with no
+        rank: it is not contending right now. The Actions cell carries
+        all four of the row's actions — the dark button renames itself to
+        <em>Bring back</em> on a block that is already dark, and both
+        power tools go <code>:disabled</code> whenever a row write is in
+        flight or the editor panel is open, while Edit and Delete stay
+        live (the last row shows that state).
+      </p>
+    </div>
+    <div class="table-wrap">
+      <table class="history-table blocks-table">
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Type</th>
+            <th scope="col">Schedule</th>
+            <th scope="col">Next</th>
+            <th scope="col">Channel · Priority</th>
+            <th scope="col">Status</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr x-data="{ on: true }">
+            <td>Spooky Saturday Night</td>
+            <td><span class="badge" data-type="series">Series</span></td>
+            <td>
+              <div class="blocks-table__cron">
+                <span class="blocks-table__cron-line"><code>0 21 * * 6</code><span class="blocks-table__dur">3 h</span></span>
+                <span class="blocks-table__cron-hint">At 09:00 PM, only on Saturday</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__next" data-kind="instant">
+                <span class="blocks-table__next-primary">in 3 d</span>
+                <span class="blocks-table__next-detail">09/12/2026, 21:00</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__channel">
+                <span class="plate"><span class="plate__ch">CH 04</span><span class="plate__name">HORROR</span></span>
+                <span class="blocks-table__pri">PRI 50 · 1st of 2</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__status">
+                {{ partial "ui/toggle.html" (dict "checked" "on" "click" "on = !on" "on" "Enabled" "off" "Disabled") }}
+              </div>
+            </td>
+            <td class="blocks-table__actions">
+              <div class="row-actions">
+                <button type="button" class="btn btn--ghost btn--sm">Edit</button>
+                <button type="button" class="btn btn--ghost btn--sm">Duplicate</button>
+                <button type="button" class="btn btn--ghost btn--sm">Go dark</button>
+                <button type="button" class="btn btn--danger-ghost btn--sm">Delete</button>
+              </div>
+            </td>
+          </tr>
+
+          {{- /* DARK: enabled AND dark. The chip joins the toggle instead
+                 of replacing it — the two switches are independent axes —
+                 and NEXT reports the first occurrence after the block
+                 wakes, not the next raw cron tick. No rank: it is not in
+                 the field this week. */}}
+          <tr x-data="{ on: true }">
+            <td>Advent Marathon</td>
+            <td><span class="badge" data-type="filter">Filter</span></td>
+            <td>
+              <div class="blocks-table__cron">
+                <span class="blocks-table__cron-line"><code>0 6 * * *</code><span class="blocks-table__dur">1 h 30 min</span></span>
+                <span class="blocks-table__cron-hint">At 06:00 AM</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__next" data-kind="instant">
+                <span class="blocks-table__next-primary">in 2 d</span>
+                <span class="blocks-table__next-detail">09/12/2026, 06:00</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__channel">
+                <span class="plate"><span class="plate__ch">CH 07</span><span class="plate__name">CARTOONS</span></span>
+                <span class="blocks-table__pri">PRI 20</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__status">
+                {{ partial "ui/toggle.html" (dict "checked" "on" "click" "on = !on" "on" "Enabled" "off" "Disabled") }}
+                <span class="badge" data-state="dark">Dark until 09/12/2026, 06:00</span>
+              </div>
+            </td>
+            <td class="blocks-table__actions">
+              <div class="row-actions">
+                <button type="button" class="btn btn--ghost btn--sm">Edit</button>
+                <button type="button" class="btn btn--ghost btn--sm">Duplicate</button>
+                <button type="button" class="btn btn--ghost btn--sm">Bring back</button>
+                <button type="button" class="btn btn--danger-ghost btn--sm">Delete</button>
+              </div>
+            </td>
+          </tr>
+
+          {{- /* DISABLED: rankless, and the first of the three absences.
+                 Muted, not amber — the operator chose this one. */}}
+          <tr x-data="{ on: false }">
+            <td>Summer Reruns</td>
+            <td><span class="badge" data-type="filter">Filter</span></td>
+            <td>
+              <div class="blocks-table__cron">
+                <span class="blocks-table__cron-line"><code>0 14 * * 0</code><span class="blocks-table__dur">4 h</span></span>
+                <span class="blocks-table__cron-hint">At 02:00 PM, only on Sunday</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__next" data-kind="disabled">
+                <span class="blocks-table__next-primary">Disabled</span>
+                <span class="blocks-table__next-detail">Enable the block to schedule it.</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__channel">
+                <span class="plate"><span class="plate__ch">CH 12</span><span class="plate__name">SITCOMS</span></span>
+                <span class="blocks-table__pri">PRI 10</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__status">
+                {{ partial "ui/toggle.html" (dict "checked" "on" "click" "on = !on" "on" "Enabled" "off" "Disabled") }}
+              </div>
+            </td>
+            <td class="blocks-table__actions">
+              <div class="row-actions">
+                <button type="button" class="btn btn--ghost btn--sm">Edit</button>
+                <button type="button" class="btn btn--ghost btn--sm">Duplicate</button>
+                <button type="button" class="btn btn--ghost btn--sm">Go dark</button>
+                <button type="button" class="btn btn--danger-ghost btn--sm">Delete</button>
+              </div>
+            </td>
+          </tr>
+
+          {{- /* UNREADABLE: the expression will not parse, so the Schedule
+                 cell prints no readback line either — the two cells read
+                 off the same signal and cannot disagree. */}}
+          <tr x-data="{ on: true }">
+            <td>Typo Block</td>
+            <td><span class="badge" data-type="filter">Filter</span></td>
+            <td>
+              <div class="blocks-table__cron">
+                <span class="blocks-table__cron-line"><code>0 25 * * *</code><span class="blocks-table__dur">45 min</span></span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__next" data-kind="unreadable">
+                <span class="blocks-table__next-primary">Cron unreadable</span>
+                <span class="blocks-table__next-detail">Fix the expression to schedule this block.</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__channel">
+                <span class="plate"><span class="plate__ch">CH 04</span><span class="plate__name">HORROR</span></span>
+                <span class="blocks-table__pri">PRI 30 · 2nd of 2</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__status">
+                {{ partial "ui/toggle.html" (dict "checked" "on" "click" "on = !on" "on" "Enabled" "off" "Disabled") }}
+              </div>
+            </td>
+            <td class="blocks-table__actions">
+              <div class="row-actions">
+                <button type="button" class="btn btn--ghost btn--sm">Edit</button>
+                <button type="button" class="btn btn--ghost btn--sm">Duplicate</button>
+                <button type="button" class="btn btn--ghost btn--sm">Go dark</button>
+                <button type="button" class="btn btn--danger-ghost btn--sm">Delete</button>
+              </div>
+            </td>
+          </tr>
+
+          {{- /* NEVER FIRES: the expression parses and reads back cleanly,
+                 and still names a date that does not exist. This row also
+                 carries the power tools' refused state -- one global
+                 pendingId, or an open editor, disables Duplicate and the
+                 dark button on EVERY row (canArmRowAction). Edit and
+                 Delete are not gated: neither can lose a half-typed edit
+                 or re-arm an If-Match against a record nobody has seen. */}}
+          <tr x-data="{ on: true }">
+            <td>Leap Day Special</td>
+            <td><span class="badge" data-type="series">Series</span></td>
+            <td>
+              <div class="blocks-table__cron">
+                <span class="blocks-table__cron-line"><code>0 20 30 2 *</code><span class="blocks-table__dur">2 h</span></span>
+                <span class="blocks-table__cron-hint">At 08:00 PM, on day 30 of the month, only in February</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__next" data-kind="never">
+                <span class="blocks-table__next-primary">Never fires</span>
+                <span class="blocks-table__next-detail">No date matches this cron.</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__channel">
+                <span class="plate"><span class="plate__name">a1b2c3</span></span>
+                <span class="blocks-table__pri">PRI 0 · 1st of 1</span>
+              </div>
+            </td>
+            <td>
+              <div class="blocks-table__status">
+                {{ partial "ui/toggle.html" (dict "checked" "on" "click" "on = !on" "on" "Enabled" "off" "Disabled") }}
+              </div>
+            </td>
+            <td class="blocks-table__actions">
+              <div class="row-actions">
+                <button type="button" class="btn btn--ghost btn--sm">Edit</button>
+                <button type="button" class="btn btn--ghost btn--sm" disabled>Duplicate</button>
+                <button type="button" class="btn btn--ghost btn--sm" disabled>Go dark</button>
+                <button type="button" class="btn btn--danger-ghost btn--sm">Delete</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-dark-title">
+    <div class="section-head">
+      <h2 id="kit-dark-title">Dark window</h2>
+      <p>
+        The wake-up picker behind the row's <em>Go dark</em>: a native
+        &lt;dialog class="panel"&gt; carrying its own <code>x-ref</code>,
+        not a popover and not a second instance of ui/confirm.html. The
+        presets are its commit controls — each writes the wake-up printed
+        on it — so Cancel is the only button in the action row, and a
+        block that is already dark never gets here at all (the row's
+        <em>Bring back</em> is the write itself). Every preset prints the
+        instant it commits to: "next week" is not a choice until the
+        operator can see which day it lands on, and that instant is what
+        the server stores. The label keeps the button's uppercase legend
+        voice; the reading beside it is a value. Two fixtures: at rest,
+        and with a write on the wire, where every control including the
+        backdrop and Escape is refused at once.
+      </p>
+    </div>
+    <div class="kit-row">
+      <button type="button" class="btn btn--ghost" @click="$refs.kitDarkDialog.showModal()">Open dark window</button>
+      <button type="button" class="btn btn--ghost" @click="$refs.kitDarkSendingDialog.showModal()">Open dark window (sending)</button>
+      <button type="button" class="btn btn--ghost" @click="$refs.kitDuplicateDialog.showModal()">Open name the copy</button>
+      <button type="button" class="btn btn--ghost" @click="$refs.kitDuplicateErrorDialog.showModal()">Open name the copy (taken)</button>
+    </div>
+  </section>
+
+  {{- /* Duplicate is one click; this dialog exists for the ONE thing the
+         server can refuse -- a name already in use. Both states are here
+         because the error is the whole reason the dialog exists, and a
+         specimen showing only the clean form reviews the half that never
+         needed reviewing. */}}
+  <dialog
+    class="panel"
+    x-ref="kitDuplicateDialog"
+    aria-labelledby="kit-duplicate-title"
+    aria-describedby="kit-duplicate-body"
+    @click="if ($event.target === $refs.kitDuplicateDialog) $refs.kitDuplicateDialog.close()"
+  >
+    <div class="panel__head">
+      <h2 id="kit-duplicate-title">Name the copy</h2>
+      <button type="button" class="btn btn--icon" @click="$refs.kitDuplicateDialog.close()" aria-label="Close naming">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" id="kit-duplicate-body">Block names are unique. The copy keeps the whole spec, arrives disabled, and opens in the editor.</p>
+      <div class="form-field">
+        <label for="kit-duplicate-name">Name<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+        <input type="text" id="kit-duplicate-name" value="Copy of Spooky Saturday Night" autocomplete="off">
+      </div>
+    </div>
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" @click="$refs.kitDuplicateDialog.close()">Cancel</button>
+      <div class="panel__actions-right">
+        <button type="button" class="btn btn--primary">Duplicate</button>
+      </div>
+    </div>
+  </dialog>
+
+  {{- /* The 409 state: the field keeps what the operator typed, carries
+         aria-invalid, and the error speaks in the problem+json detail's
+         own voice. Nothing is cleared -- retyping a long name because the
+         server said no is a punishment for the server's answer. */}}
+  <dialog
+    class="panel"
+    x-ref="kitDuplicateErrorDialog"
+    aria-labelledby="kit-duplicate-error-title"
+    aria-describedby="kit-duplicate-error-body"
+    @click="if ($event.target === $refs.kitDuplicateErrorDialog) $refs.kitDuplicateErrorDialog.close()"
+  >
+    <div class="panel__head">
+      <h2 id="kit-duplicate-error-title">Name the copy</h2>
+      <button type="button" class="btn btn--icon" @click="$refs.kitDuplicateErrorDialog.close()" aria-label="Close naming">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" id="kit-duplicate-error-body">Block names are unique. The copy keeps the whole spec, arrives disabled, and opens in the editor.</p>
+      <div class="form-field">
+        <label for="kit-duplicate-error-name">Name<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+        <input type="text" id="kit-duplicate-error-name" value="Advent Marathon" autocomplete="off" aria-invalid="true">
+        <p class="form-field__error" role="alert">block name already exists</p>
+      </div>
+    </div>
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" @click="$refs.kitDuplicateErrorDialog.close()">Cancel</button>
+      <div class="panel__actions-right">
+        <button type="button" class="btn btn--primary">Duplicate</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog
+    class="panel"
+    x-ref="kitDarkDialog"
+    aria-labelledby="kit-dark-fixture-title"
+    aria-describedby="kit-dark-fixture-body"
+    @click="if ($event.target === $refs.kitDarkDialog) $refs.kitDarkDialog.close()"
+  >
+    <div class="panel__head">
+      <h2 id="kit-dark-fixture-title">Dark window</h2>
+      <button type="button" class="btn btn--icon" @click="$refs.kitDarkDialog.close()" aria-label="Close dark window">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" id="kit-dark-fixture-body">Spooky Saturday Night leaves the schedule until the instant you pick, then comes back on its own. Its enabled switch is untouched.</p>
+      <div class="dark-presets">
+        <button type="button" class="btn dark-preset">
+          <span>Tomorrow</span>
+          <span class="dark-preset__when">09/11/2026, 00:00</span>
+        </button>
+        <button type="button" class="btn dark-preset">
+          <span>Next week</span>
+          <span class="dark-preset__when">09/17/2026, 00:00</span>
+        </button>
+        <button type="button" class="btn dark-preset">
+          <span>In four weeks</span>
+          <span class="dark-preset__when">10/08/2026, 00:00</span>
+        </button>
+      </div>
+    </div>
+    {{- /* The presets are the commit controls, so Cancel is the whole
+           action row. Ending a window never arrives here: the row's own
+           "Bring back" performs that write directly. */}}
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" @click="$refs.kitDarkDialog.close()">Cancel</button>
+    </div>
+  </dialog>
+
+  {{- /* The in-flight half of the same dialog: one global pendingId
+         disables every control at once, so on the real page the backdrop
+         and Escape are guarded too -- a write is on the wire and the
+         operator cannot take the dialog away from it.
+         THE SPECIMEN DELIBERATELY DIFFERS THERE. It keeps every disabled
+         control so the state reads correctly, but leaves Escape and the
+         backdrop working, because a gallery a reviewer cannot leave is a
+         broken review surface -- and nothing is actually on the wire
+         here. Compare the shipped dialog in blocks/list.html for the
+         guarded form. */}}
+  <dialog
+    class="panel"
+    x-ref="kitDarkSendingDialog"
+    aria-labelledby="kit-dark-sending-title"
+    aria-describedby="kit-dark-sending-body"
+    @click="if ($event.target === $refs.kitDarkSendingDialog) $refs.kitDarkSendingDialog.close()"
+  >
+    <div class="panel__head">
+      <h2 id="kit-dark-sending-title">Dark window</h2>
+      <button type="button" class="btn btn--icon" disabled aria-label="Close dark window">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" id="kit-dark-sending-body">Advent Marathon leaves the schedule until the instant you pick, then comes back on its own. Its enabled switch is untouched.</p>
+      <div class="dark-presets">
+        <button type="button" class="btn dark-preset" disabled>
+          <span>Tomorrow</span>
+          <span class="dark-preset__when">09/11/2026, 00:00</span>
+        </button>
+        <button type="button" class="btn dark-preset" disabled>
+          <span>Next week</span>
+          <span class="dark-preset__when">09/17/2026, 00:00</span>
+        </button>
+        <button type="button" class="btn dark-preset" disabled>
+          <span>In four weeks</span>
+          <span class="dark-preset__when">10/08/2026, 00:00</span>
+        </button>
+      </div>
+    </div>
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" disabled>Cancel</button>
+    </div>
+    {{- /* Specimen-only: the shipped dialog has no such control, because
+           on the real page this state ends when the write answers. */}}
+    <p class="panel__hint">
+      Specimen only — press Escape or click the backdrop to leave. On the
+      real page this state ends when the write answers.
+    </p>
+  </dialog>
+
+  <section class="kit-section" aria-labelledby="kit-rail-title">
+    <div class="section-head">
+      <h2 id="kit-rail-title">Editor consequence rail</h2>
+      <p>
+        The last section of the block editor's body, directly above Save,
+        because that is where a "what will this do" reading is actually
+        read. Three labelled readouts in the bezel telemetry strip's
+        register — one legend over one reading — on an auto-fit grid that
+        drops to a single column rather than squeezing an instant into
+        six characters. Every instant is the server's, from
+        <code>GET /cron/next</code>: the client never evaluates cron.
+        Three fixtures cover every state of every group.
+      </p>
+    </div>
+
+    <div class="kit-stack">
+      {{- /* 1. A fresh create: nothing typed, so all three groups are in
+             their prompt state. Each names the field that fills it, not
+             an em dash. */}}
+      <section class="editor-panel graticule" aria-label="Consequence rail (fixture, nothing entered yet)">
+        <div class="panel__body">
+          <div class="form-section">
+            <h3 class="form-section__title">What this will do</h3>
+            <div class="editor-rail">
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend" id="kit-rail-prompt-legend">Next three</span>
+                <div class="editor-rail__readout" role="status" aria-labelledby="kit-rail-prompt-legend">
+                  <p class="editor-rail__note">Set a schedule to see when this block airs.</p>
+                </div>
+              </div>
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend">On this channel</span>
+                <p class="editor-rail__note">Pick a channel to see what it contends with.</p>
+              </div>
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend">Lineup</span>
+                <p class="editor-rail__note">Add a show to see the airing order.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {{- /* 2. The answer: three server occurrences with the block's own
+             duration closing each one, a channel with nothing else on
+             it, and a lineup whose second row cannot be saved yet -- the
+             same summary its collapsed row carries, in the same warn
+             voice.
+             This block is the table's Spooky Saturday Night: 0 21 * * 6,
+             three hours, so every occurrence ENDS PAST MIDNIGHT. That is
+             deliberately the harder half of occurrenceLabel's rule --
+             the end prints as a full instant rather than a bare clock,
+             because "21:00 – 00:00" would read as ending three hours
+             before it starts. Change the duration here and this specimen
+             stops matching what the renderer produces. */}}
+      {{- /* 3. The capped state. max-height is 9rem, so a lineup past
+             about five rows scrolls -- which is the whole reason these
+             lists carry tabindex. This is the fixture that makes that
+             reviewable: the scrollbar, the clipped last row, and the
+             focus ring on the container itself. Nothing else on the page
+             shows it, because the answered fixture above holds three
+             items and never overflows. */}}
+      <section class="editor-panel graticule" aria-label="Consequence rail (fixture, capped and scrolling)">
+        <div class="panel__body">
+          <div class="form-section">
+            <h3 class="form-section__title">What this will do</h3>
+            <div class="editor-rail">
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend" id="kit-rail-capped-legend">Lineup</span>
+                <ul class="editor-rail__list" tabindex="0" aria-labelledby="kit-rail-capped-legend">
+                  <li class="editor-rail__item">1. Bloody Mary — S02E05</li>
+                  <li class="editor-rail__item">2. Bloody Mary — S02E06</li>
+                  <li class="editor-rail__item">3. Night Court — S01E12</li>
+                  <li class="editor-rail__item">4. Night Court — S01E13</li>
+                  <li class="editor-rail__item">5. The Prisoner — S01E02</li>
+                  <li class="editor-rail__item">6. The Prisoner — S01E03</li>
+                  <li class="editor-rail__item">7. Twilight Zone — S03E21</li>
+                  <li class="editor-rail__item">8. Twilight Zone — S03E22</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="editor-panel graticule" aria-label="Consequence rail (fixture, answered)">
+        <div class="panel__body">
+          <div class="form-section">
+            <h3 class="form-section__title">What this will do</h3>
+            <div class="editor-rail">
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend" id="kit-rail-answer-legend">Next three</span>
+                <div class="editor-rail__readout" role="status" aria-labelledby="kit-rail-answer-legend">
+                  {{- /* tabindex and the legend name mirror the shipped
+                         template: max-height 9rem makes every one of
+                         these a scroll container, and a browser that does
+                         not focus scrollers on its own would otherwise
+                         strand the clipped entries (SC 2.1.1). A fixture
+                         without them reviews a component the page does
+                         not ship. */}}
+                  <ul class="editor-rail__list" tabindex="0" aria-labelledby="kit-rail-answer-legend">
+                    <li class="editor-rail__item">09/12/2026, 21:00 – 09/13/2026, 00:00</li>
+                    <li class="editor-rail__item">09/19/2026, 21:00 – 09/20/2026, 00:00</li>
+                    <li class="editor-rail__item">09/26/2026, 21:00 – 09/27/2026, 00:00</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend">On this channel</span>
+                <span class="plate"><span class="plate__ch">CH 12</span><span class="plate__name">SITCOMS</span></span>
+                <p class="editor-rail__note">Nothing else is contending for this channel.</p>
+              </div>
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend">Lineup</span>
+                <ul class="editor-rail__list" tabindex="0">
+                  <li class="editor-rail__item" data-state="named">1. Breaking Bad · 2 episodes · from S02E05</li>
+                  <li class="editor-rail__item" data-state="incomplete">2. Twin Peaks — add an episode count</li>
+                  <li class="editor-rail__item" data-state="named">3. The Wire · 1 episode</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {{- /* 3. The three readings that are not a list, on a select so
+             each is reviewable in place. `never` is a real answer, not an
+             empty rail: a well-formed expression that never comes round
+             returns an empty array, and an empty group would report it as
+             "nothing yet". The channel group carries the contended field
+             here, ordered by priority so the position IS the rank -- the
+             edited block names itself in text, never by ink alone. */}}
+      <section class="editor-panel graticule" x-data="{ rail: 'loading' }" aria-label="Consequence rail (fixture, the three non-list readings)">
+        <div class="panel__body">
+          <div class="form-section">
+            <div class="form-field">
+              <label for="kit-rail-state">Fixture state</label>
+              <select id="kit-rail-state" x-model="rail">
+                <option value="loading">Loading</option>
+                <option value="error">Error (the server's own reason)</option>
+                <option value="never">Never fires</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-section">
+            <h3 class="form-section__title">What this will do</h3>
+            <div class="editor-rail">
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend" id="kit-rail-states-legend">Next three</span>
+                <div class="editor-rail__readout" role="status" aria-labelledby="kit-rail-states-legend">
+                  <template x-if="rail === 'loading'">
+                    {{ partial "ui/skeleton.html" (dict "variant" "stack" "count" 3) }}
+                  </template>
+                  <p class="form-field__error" x-show="rail === 'error'">invalid cron expression: expected exactly 5 fields, found 4: "0 21 * *"</p>
+                  <p class="editor-rail__note" x-show="rail === 'never'">No date matches this cron.</p>
+                </div>
+              </div>
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend">On this channel</span>
+                <span class="plate"><span class="plate__ch">CH 04</span><span class="plate__name">HORROR</span></span>
+                <ul class="editor-rail__list" tabindex="0">
+                  <li class="editor-rail__item" data-self="false">PRI 50 · Spooky Saturday Night</li>
+                  <li class="editor-rail__item" data-self="true">PRI 30 · Typo Block (this block)</li>
+                  <li class="editor-rail__item" data-self="false">PRI 10 · Late Movie</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-series-row-title">
+    <div class="section-head">
+      <h2 id="kit-series-row-title">Series row disclosure</h2>
+      <p>
+        A dozen expanded shows is what made this editor unreadable, so
+        the row's identity <em>is</em> its disclosure control: chevron,
+        index, and the one summary line that makes a closed row findable
+        again. A button rather than
+        &lt;details&gt;/&lt;summary&gt; — reorder and remove have to stay
+        reachable while the row is closed, and putting them inside a
+        &lt;summary&gt; nests interactive controls inside the one control
+        that opens it. Chrome-free on purpose: no border, no background,
+        the global focus ring. The rows below are the four states —
+        collapsed and named, expanded, collapsed and incomplete (warn, so
+        collapsing cannot hide the row that will 400 on save), and the
+        edge rows whose move buttons have nowhere to go. The expanded
+        body is trimmed to four fields here; the field system has its own
+        section below.
+      </p>
+    </div>
+    <section class="editor-panel graticule" aria-label="Series rows (fixture)">
+      <div class="panel__body">
+        <div class="form-section">
+          <h3 class="form-section__title">Series</h3>
+          <div class="series-rows">
+            <div class="series-row" x-data="{ open: false }">
+              <div class="series-row__head">
+                <button
+                  type="button"
+                  class="series-row__toggle"
+                  :aria-expanded="open ? 'true' : 'false'"
+                  aria-controls="kit-series-fields-1"
+                  @click="open = !open"
+                >
+                  {{ partial "ui/icon.html" (dict "name" "chevron-down" "class" "series-row__chevron") }}
+                  <span class="series-row__index">Series 1</span>
+                  <span class="series-row__summary" data-state="named">Breaking Bad · 2 episodes · from S02E05</span>
+                </button>
+                <div class="series-row__actions">
+                  <button type="button" class="btn btn--icon" disabled aria-label="Move series 1 up">
+                    {{ partial "ui/icon.html" (dict "name" "chevron-up") }}
+                  </button>
+                  <button type="button" class="btn btn--icon" aria-label="Move series 1 down">
+                    {{ partial "ui/icon.html" (dict "name" "chevron-down") }}
+                  </button>
+                  <button type="button" class="btn btn--danger-ghost btn--sm">Remove</button>
+                </div>
+              </div>
+              <div class="form-grid" id="kit-series-fields-1" x-show="open" x-cloak>
+                <div class="form-field form-field--wide">
+                  <label for="kit-series-title-1">Show title<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                  <input type="text" id="kit-series-title-1" value="Breaking Bad">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-episodes-1">Episodes per block<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                  <input type="number" min="1" id="kit-series-episodes-1" value="2">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-season-1">Start season</label>
+                  <input type="number" min="1" id="kit-series-season-1" value="2">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-episode-1">Start episode</label>
+                  <input type="number" min="1" id="kit-series-episode-1" value="5">
+                </div>
+              </div>
+            </div>
+
+            {{- /* Open on arrival, the state a row is added in. */}}
+            <div class="series-row" x-data="{ open: true }">
+              <div class="series-row__head">
+                <button
+                  type="button"
+                  class="series-row__toggle"
+                  :aria-expanded="open ? 'true' : 'false'"
+                  aria-controls="kit-series-fields-2"
+                  @click="open = !open"
+                >
+                  {{ partial "ui/icon.html" (dict "name" "chevron-down" "class" "series-row__chevron") }}
+                  <span class="series-row__index">Series 2</span>
+                  <span class="series-row__summary" data-state="named">The Wire · 1 episode</span>
+                </button>
+                <div class="series-row__actions">
+                  <button type="button" class="btn btn--icon" aria-label="Move series 2 up">
+                    {{ partial "ui/icon.html" (dict "name" "chevron-up") }}
+                  </button>
+                  <button type="button" class="btn btn--icon" aria-label="Move series 2 down">
+                    {{ partial "ui/icon.html" (dict "name" "chevron-down") }}
+                  </button>
+                  <button type="button" class="btn btn--danger-ghost btn--sm">Remove</button>
+                </div>
+              </div>
+              <div class="form-grid" id="kit-series-fields-2" x-show="open" x-cloak>
+                <div class="form-field form-field--wide">
+                  <label for="kit-series-title-2">Show title<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                  <input type="text" id="kit-series-title-2" value="The Wire">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-episodes-2">Episodes per block<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                  <input type="number" min="1" id="kit-series-episodes-2" value="1">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-season-2">Start season</label>
+                  <input type="number" min="1" id="kit-series-season-2" placeholder="1">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-episode-2">Start episode</label>
+                  <input type="number" min="1" id="kit-series-episode-2" placeholder="1">
+                </div>
+              </div>
+            </div>
+
+            {{- /* The last row: no move-down, and a summary that names
+                   the missing field instead of going blank. Findable
+                   beats complete -- the title still leads when there is
+                   one, because "row 3 is incomplete" makes the operator
+                   open all twelve. */}}
+            <div class="series-row" x-data="{ open: false }">
+              <div class="series-row__head">
+                <button
+                  type="button"
+                  class="series-row__toggle"
+                  :aria-expanded="open ? 'true' : 'false'"
+                  aria-controls="kit-series-fields-3"
+                  @click="open = !open"
+                >
+                  {{ partial "ui/icon.html" (dict "name" "chevron-down" "class" "series-row__chevron") }}
+                  <span class="series-row__index">Series 3</span>
+                  <span class="series-row__summary" data-state="incomplete">Twin Peaks — add an episode count</span>
+                </button>
+                <div class="series-row__actions">
+                  <button type="button" class="btn btn--icon" aria-label="Move series 3 up">
+                    {{ partial "ui/icon.html" (dict "name" "chevron-up") }}
+                  </button>
+                  <button type="button" class="btn btn--icon" disabled aria-label="Move series 3 down">
+                    {{ partial "ui/icon.html" (dict "name" "chevron-down") }}
+                  </button>
+                  <button type="button" class="btn btn--danger-ghost btn--sm">Remove</button>
+                </div>
+              </div>
+              <div class="form-grid" id="kit-series-fields-3" x-show="open" x-cloak>
+                <div class="form-field form-field--wide">
+                  <label for="kit-series-title-3">Show title<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                  <input type="text" id="kit-series-title-3" value="Twin Peaks">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-episodes-3">Episodes per block<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+                  <input type="number" min="1" id="kit-series-episodes-3" placeholder="1">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-season-3">Start season</label>
+                  <input type="number" min="1" id="kit-series-season-3" placeholder="1">
+                </div>
+                <div class="form-field">
+                  <label for="kit-series-episode-3">Start episode</label>
+                  <input type="number" min="1" id="kit-series-episode-3" placeholder="1">
+                </div>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="btn btn--ghost btn--sm">+ Add Series</button>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-cron-footgun-title">
+    <div class="section-head">
+      <h2 id="kit-cron-footgun-title">Mid-run change</h2>
+      <p>
+        The cron footgun: a series block's cron is also how often the
+        cursor advances, so once a show has aired under one expression,
+        saving a different one changes which episode lands on which date.
+        A fourth &lt;dialog class="panel"&gt; with its own
+        <code>x-ref</code>, not a second ui/confirm.html — that partial
+        offers exactly one action and this choice has two that both save.
+        Each show gets both readings, where it is and where a rewind
+        sends it, as plain sentences: an arrow is notation this UI never
+        taught anywhere else.
+      </p>
+    </div>
+    <button type="button" class="btn btn--ghost" @click="$refs.kitCronDialog.showModal()">Open mid-run change</button>
+  </section>
+
+  <dialog
+    class="panel"
+    x-ref="kitCronDialog"
+    aria-labelledby="kit-cron-fixture-title"
+    aria-describedby="kit-cron-fixture-body kit-cron-fixture-rewind"
+    @click="if ($event.target === $refs.kitCronDialog) $refs.kitCronDialog.close()"
+  >
+    <div class="panel__head">
+      <h2 id="kit-cron-fixture-title">Mid-run change</h2>
+      <button type="button" class="btn btn--icon" @click="$refs.kitCronDialog.close()" aria-label="Close schedule change">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" id="kit-cron-fixture-body">Spooky Saturday Night has already aired. Which episode lands on which date follows from the cron, so saving a new one re-aligns 2 shows from here on.</p>
+      <p class="panel__hint" id="kit-cron-fixture-rewind">Breaking Bad is at S02E05 — rewind sets it to S01E01. Twin Peaks is at S01E09 — rewind sets it to S01E01.</p>
+    </div>
+    {{- /* Three buttons, two of which save. The plain save is primary:
+           carrying on from where each show stands is what the operator
+           asked for by editing the cron, and the rewind is the offer
+           beside it. No busy bindings -- both save paths close this
+           dialog before the write starts, and the editor's own Save
+           button carries the in-flight state. */}}
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" @click="$refs.kitCronDialog.close()">Cancel</button>
+      <div class="panel__actions-right">
+        <button type="button" class="btn btn--ghost" @click="$refs.kitCronDialog.close()">Save and rewind</button>
+        <button type="button" class="btn btn--primary" @click="$refs.kitCronDialog.close()">Save schedule</button>
+      </div>
+    </div>
+  </dialog>
+
   <section class="kit-section" aria-labelledby="kit-fields-title">
     <div class="section-head">
       <h2 id="kit-fields-title">Form fields</h2>

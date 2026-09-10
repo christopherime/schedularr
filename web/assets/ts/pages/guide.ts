@@ -77,6 +77,7 @@ import type { DiffCounts, DraftSignature } from "../runtime/draft.ts";
 import { problemLine, toProblemView } from "../runtime/errors.ts";
 import type { ProblemView } from "../runtime/errors.ts";
 import { durationLabel, formatClock, ordinal, plural, sxxeyy } from "../runtime/format.ts";
+import { isContending, priorityRank } from "../runtime/rank.ts";
 import {
   addDays,
   localDayStart,
@@ -1559,22 +1560,31 @@ document.addEventListener("alpine:init", () => {
       },
 
       // §3.2 rank context: "50 · 2nd of 5" among ENABLED same-channel
-      // blocks, computed from the already-loaded blocksByName.
-      // Competition ranking, so ties share a rank (two blocks at 80 are
-      // both 1st of n). Falls back to the bare number when the blocks
-      // fetch failed (no peers resolvable).
+      // blocks, computed from the already-loaded blocksByName. Both
+      // halves come from runtime/rank.ts, shared with the blocks list so
+      // the two surfaces cannot disagree: isContending decides whether a
+      // rank may be printed, priorityRank computes it.
+      //
+      // Bare number when this block is not contending -- switched off, or
+      // dark, which an already-generated row on the grid outlives. A
+      // missing record is the same answer: a block the store no longer
+      // lists is in no contest either.
+      //
+      // Past that guard the field is never empty, so rank.ts's `of === 0`
+      // sentinel cannot arise here: `record` came out of blocksByName, it
+      // is enabled (isContending said so), and it matches its own
+      // channel_id -- so it is always one of its own peers. The blocks
+      // list needs that branch because it ranks rows whose peer fetch may
+      // have failed; this surface reads the same map it ranks against.
       inspectorPriority() {
         const slot = this.inspector.slot;
         if (!slot) return "";
         const record = this.inspectorBlock();
         const priority = slot.kind === "ghost" ? (record?.spec.priority ?? slot.priority) : slot.priority;
-        const channelId = record?.spec.channel_id ?? slot.channelId;
-        const peers = Object.values(this.blocksByName).filter(
-          (b) => b.enabled && b.spec.channel_id === channelId,
-        );
-        if (peers.length === 0) return String(priority);
-        const higher = peers.filter((b) => (b.spec.priority ?? 0) > priority).length;
-        return `${priority} · ${ordinal(higher + 1)} of ${peers.length}`;
+        if (!record || !isContending(record, serverNow())) return String(priority);
+        const peers = Object.values(this.blocksByName).filter((b) => b.spec.channel_id === record.spec.channel_id);
+        const { rank, of } = priorityRank(priority, peers);
+        return `${priority} · ${ordinal(rank)} of ${of}`;
       },
 
       // Enabled state comes from the BlockRecord (BlockSpec doesn't carry

@@ -516,6 +516,344 @@ and both are backed by the same rows.
   zeros would read as "applied nothing" rather than "never got that
   far".
 
+## The blocks row (v0.5.10)
+
+The blocks list is the page's primary scanning surface, and the block
+power tools slice handed it four more facts to carry: how long a block
+runs, when it next actually airs, where it ranks against the other blocks
+on its channel, and whether it is sitting dark.
+
+**Four facts, one new column.** A column per fact would have taken the
+table to ten. Measured against the real longest values -- a 21-character
+block name, cronstrue's `At 09:00 PM, only on Saturday`, a
+`Dark until 09/12/2026, 06:00` chip -- that row overflows `--content-max`
+on any laptop, which turns the one surface an operator scans into a
+horizontal scroller. Three of the four facts went INSIDE a cell that was
+already answering their question instead:
+
+| Column               | Carries                                                                     |
+| -------------------- | --------------------------------------------------------------------------- |
+| `Name`               | the block name                                                              |
+| `Type`               | the `.badge` (`FILTER` / `SERIES`)                                          |
+| `Schedule`           | the cron expression, its **duration** beside it, cronstrue's readback under |
+| `Next`               | the countdown, with the absolute local instant under it                     |
+| `Channel · Priority` | the `.plate`, with the **priority rank** under it                           |
+| `Status`             | the enabled `.toggle`, with the **DARK UNTIL** chip under it                |
+| `Actions`            | Edit / Duplicate / Go dark (`Bring back` while dark) / Delete               |
+
+Each pairing is a claim about where the fact belongs, not a space-saving
+dodge. Duration annotates the expression it qualifies -- `0 21 * * 6` and
+`3 h` are one sentence an operator says out loud. Priority rank is
+channel-scoped, so `2nd of 5` only means anything beside the channel
+those five blocks contend on. The dark window qualifies the switch, and
+sits under it rather than replacing it because `enabled` and
+`disabled_until` are independent axes: hiding the toggle would hide the
+control that ends a dark window for good.
+
+Only `NEXT` took a column outright, because no cell was answering "when
+does this actually air next".
+
+Every stack is an inner div. `display: flex` on a `<td>` strips the
+cell's table display and floats its bottom border at content height
+instead of the row edge -- the rule the cron cell has followed since
+v0.5.2, now applied four more times.
+
+**An absent instant is three different facts.** `next_occurrence` is
+absent when the block is disabled, when its cron will not parse, and when
+the cron parses but never comes round. An em dash covering all three
+hides the only thing worth knowing: which one applies, and whether it is
+the operator's to fix. Each gets its own legend plus the step that
+recovers it, and the cell drops out of value voice into the uppercase
+legend voice the badges and empty-state legends already use, so
+`DISABLED` cannot be misread as a time:
+
+| `data-kind`  | Legend            | Line under it                               | Ink   |
+| ------------ | ----------------- | ------------------------------------------- | ----- |
+| `instant`    | `in 3 d` / `due`  | `09/12/2026, 21:00`                         | ink   |
+| `disabled`   | `DISABLED`        | Enable the block to schedule it.            | muted |
+| `unreadable` | `CRON UNREADABLE` | Fix the expression to schedule this block.  | warn  |
+| `never`      | `NEVER FIRES`     | No date matches this cron.                  | warn  |
+
+Amber marks the two the operator has to fix; a disabled block is a choice
+they already made, so it stays muted. The legend text carries all three
+regardless (SC 1.4.1).
+
+`untilTime`, not `relativeTime`, for the present case, and for the same
+reason the bezel's NEXT TICK uses it: the server computes
+`next_occurrence` before the block starts airing, so an occurrence
+already under way leaves a past instant on a perfectly fresh row.
+`12 min ago` there reads as a missed airing; `due` reads as one in
+progress.
+
+**The `unreadable` branch reads cronstrue, and that is still not cron
+evaluation.** cronstrue renders prose and computes no instant, which is
+the one thing the client is allowed to do with a cron expression (spec
+§10). It is also the same signal the Schedule cell two columns over
+already uses to decide whether to print a readback, so the two cells
+cannot disagree about whether the expression can be read at all. Should
+the two parsers ever disagree the other way -- cronstrue reading an
+expression the server refused -- the row falls through to `NEVER FIRES`,
+whose recovery line points at the same cron.
+
+**Every relative reading is measured against `serverNow()`**
+(`runtime/bus.ts`), never `Date.now()`, and against a `now` held in
+component state that a local 60s timer advances. The field is what makes
+the column reactive at all: Alpine only redraws a row when reactive state
+it read has changed, so a `NEXT` computed from a bare `serverNow()` would
+freeze at whatever the clock said when the list last loaded. The timer is
+local for the same reason the guide's sweep is: it has to keep turning on
+POLL and on LINK LOST, so it can never ride a stream frame.
+
+**The DARK UNTIL chip** is `.badge[data-state="dark"]` -- the type
+badge's shape, in warn. Warn and not danger: a dark block is degraded,
+not broken, and comes back by itself, the same distinction `POLL` takes
+from `LINK LOST` on the link ladder. It paints only while
+`disabled_until` is in the FUTURE. A passed wake-up suppresses nothing,
+and a chip there would report a state the server does not hold; the same
+predicate suppresses the priority rank, so the chip and the rank cannot
+end up disagreeing about one instant.
+
+**Rank suppression is the call site's rule, not the helper's.**
+`runtime/rank.ts`'s `priorityRank` counts every ENABLED peer, dark ones
+included, and the guide's inspector reads the identical function -- a
+second opinion here is exactly the drift the extraction ended. What this
+page decides on its own is whether to PRINT a rank: a disabled or
+currently-dark block shows `PRI 50` bare, because it is not contending
+for airtime right now and announcing a placing in a contest it is not in
+would be a reading that lies. `of === 0` (the blocks fetch failed, or
+every peer is disabled) prints the bare number too, never `1st of 0`.
+
+**The row's four actions.** `Edit` / `Duplicate` / `Go dark` / `Delete`,
+all in the one `.row-actions` div, because the row has no spare column and
+a second switch parked in the `Status` cell would have made that cell a
+three-deck stack. The dark button renames itself to `Bring back` on a
+block that is currently dark: one control, each state naming the action it
+actually performs from there -- and each state performing it. `Go dark`
+opens the wake-up picker, because a window has an instant to choose;
+`Bring back` is the write itself, straight to `PATCH` with a null, because
+ending one has nothing to choose. Routing the second through a panel of
+re-schedule presets made the label a claim the button did not honour.
+
+Both power tools go `:disabled` whenever a row action is in flight or the
+editor panel is open (`canArmRowAction`, `pages/blocks.ts`). Two different
+failures, one rule. `pendingId` is a single global slot, so a second write
+armed over the first is dropped silently by its own re-entrancy guard,
+after the click. And an open panel has to stay undisturbed: Duplicate
+takes the editor away from whatever is half-typed in it, while the dark
+write splices a server record into `this.blocks` -- which is where
+`submit()` reads its `If-Match`. If that block moved elsewhere since the
+list loaded, the returned record carries the *other* edit's `updated_at`,
+the open editor's next save is re-armed against a record nobody on this
+screen has seen, and it succeeds. That is the lost update
+`planInvalidatedReaction` freezes the list to prevent, arriving through a
+row action instead of through a frame.
+
+**The dark window is a `<dialog>`, not a popover** -- and it opens on one
+path only, the `Go dark` half of that button. `--z-popover` carries
+exactly one thing in this system -- the guide's mobile bottom sheet -- and
+a choice of three presets does not earn a third overlay vocabulary. Both
+power tools use `dialog.panel` verbatim, the same element the confirm
+idiom uses, which is also where their focus trap, Escape handling and
+focus return come from.
+
+Four dialogs ship on this page, and each of the three the page authors
+itself carries its **own `x-ref`** -- `duplicateDialog`, `darkDialog`,
+and `cronDialog` (the mid-run change below) -- alongside the
+`ui/confirm.html` instance Delete arms, whose `x-ref="confirmDialog"` the
+partial hard-codes. That hard-coding is the whole constraint: a second
+element claiming `confirmDialog` wins it and quietly leaves Delete arming
+a dialog it no longer points at, so a page needing a second modal writes
+its own element rather than instantiating the partial twice.
+
+The presets ARE that dialog's commit controls: each writes the wake-up
+printed on it, so `Cancel` is the only button in the action row. There is
+no `Bring back now` beside it, because a block that is already dark never
+opens this dialog.
+
+Every preset prints the instant it commits to (`Tomorrow` ·
+`09/11/2026, 00:00`). "Next week" is not a choice until the operator can
+see which day it lands on, and that instant is exactly what the server
+stores. The label keeps the button's uppercase legend voice; the instant
+beside it reads as a value, the same split the row's own cells make.
+Presets resolve on the **wall clock**, from `serverNow()`: local midnight
+N days on, stepped through the local date fields, so "tomorrow" at 23:59
+is a minute away rather than a day, and a DST night cannot move a wake-up
+by an hour. The three are whole days (1 / 7 / 28) -- an "in a month"
+preset would have to answer what the 31st of January plus one month is,
+and JavaScript answers "the 3rd of March".
+
+**Duplicate is one click; the dialog is the collision path.** The name is
+pre-filled `Copy of <source>` and sent immediately. The copy arrives
+disabled, so its row reads `DISABLED` the moment it appears, and the
+editor opens on the record the *server* returned -- which is what arms
+`If-Match` against the block that actually exists rather than a
+client-side guess at it. A `409` is a normal outcome, not a failure: the
+naming dialog comes up carrying the server's own reason with the name
+selected, and the operator retypes and sends again. Nothing appends a
+counter, for the same reason the server refuses to invent a name: only the
+operator can see what the other block is.
+
+**The mid-run change is the fourth dialog, and the one with two ways to
+say yes.** A series block's cron is not only when it airs -- it is how
+often the cursor advances, so once a show has aired under one expression,
+saving a different one changes which episode lands on which date.
+`initializeSeriesState` (`internal/scheduler/engine.go`) applies a row's
+`start_season`/`start_episode` ONLY while `last_aired` is nil; after that
+the stored cursor decides, and the block's own start position is ignored
+for good. So the confirm says that out loud before the write and offers
+the one repair: putting each cursor back where the block says it starts.
+
+It is a fourth `<dialog class="panel">` (`x-ref="cronDialog"`) rather than
+a second `ui/confirm.html` for two reasons that compound. The partial
+hard-codes `confirmDialog`, so a second instance takes the ref away from
+Delete; and it offers exactly ONE action, while this choice has two that
+both save -- with the cursors rewound or without. Multiplexing Delete's
+dialog behind a kind discriminator would grow the shared partial a second
+confirm button for the guide and the kit as well, to buy a body its single
+`<p>` could not carry either.
+
+The copy is composed in `footgunCopy` (`pages/blocks.ts`), not in the
+template: both the count and each cursor are facts the operator decides
+on, and a template expression is the one place they cannot be pinned by a
+test. Each show gets BOTH readings -- where it is and where a rewind sends
+it -- as plain sentences rather than `S02E05 → S01E01`: an arrow is
+notation this UI never taught anywhere else, and a modal read once is the
+worst place to introduce one. The plain save is the primary action,
+because carrying on from where each show stands is what the operator asked
+for by editing the cron; the rewind is the offer beside it. Neither save
+path carries a busy binding -- both close this dialog before the write
+starts, and the editor's own Save button already shows the in-flight
+state. A rewind is one `PATCH /state/series/{show_title}` per show, so
+`rewindReport` prints what moved and what did not as two separate tape
+lines: one "Cursors rewound" over a partial failure is exactly the silent
+half-success this page refuses everywhere else.
+
+**Responsive.** The table keeps `.table-wrap`'s own horizontal scroll --
+the system's answer for every table since Task 4 -- rather than
+restructuring into cards at a breakpoint, which would be a second row
+vocabulary competing with this one. Two caps keep the columns honest
+before it comes to that: the readback line is capped at `24ch` and the
+`NEXT` detail line at `26ch`, so cronstrue's longest sentence wraps
+instead of setting the column width for every row in the table.
+
+## The block editor (v0.5.10)
+
+The same slice that gave the row four facts gave the editor two shapes it
+did not have: a consequence rail under the form, and a disclosure on every
+series row. Both exist because the panel had grown past what one screen
+answers.
+
+**The consequence rail (`.editor-rail*`) answers "what will this do"
+before Save.** It is the LAST section of `.panel__body`, directly above
+the commit controls, because that is where such a reading is actually
+read -- on the way to Save, not at the top of a form nobody has filled in
+yet. It is a `.form-section` like every other block in the panel
+(border-top, title, spacing all reused); only the readout cluster inside
+it is new.
+
+Three labelled readouts, in the bezel telemetry strip's register rather
+than three cards: no per-group border, no icon, no fixed shape -- one
+legend over one reading, three times, each a different length. The groups
+sit on `repeat(auto-fit, minmax(15rem, 1fr))` so a narrow panel drops them
+to one column instead of squeezing an instant into six characters.
+
+| Group             | Reads                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `Next three`      | the next three occurrences, each closed by the block's own duration                  |
+| `On this channel` | the channel plate, then every enabled peer contending on it, priority order          |
+| `Lineup`          | (series blocks only) the series rows in airing order, one line each                  |
+
+Every instant in the rail is the SERVER's, from `GET /cron/next`. The
+client still never evaluates cron (spec §10); the readback two fields up
+is cronstrue rendering prose about the expression, which is a different
+thing from computing a date. The one piece of occurrence math that stays
+on this side is adding the block's duration to a start the server already
+gave -- no calendar knowledge involved -- and the end prints as a bare
+clock while it lands on the start's local day, as a full instant when it
+does not: a block running 23:30 to 01:00 would otherwise read as ending
+ninety minutes before it starts, and `+1` is notation this UI has never
+taught anyone.
+
+The occurrence group has five states and `railState()` decides between
+them once, in TS, so the precedence is pinned by a test rather than by
+four `x-show` expressions racing in a template:
+
+| `railState()` | Shows                                                    |
+| ------------- | -------------------------------------------------------- |
+| `loading`     | `ui/skeleton` (`stack`, 3) -- never a spinner            |
+| `error`       | the server's own reason, in `.form-field__error`         |
+| `prompt`      | `Set a schedule to see when this block airs.`            |
+| `never`       | `No date matches this cron.`                             |
+| `occurrences` | the three instants                                       |
+
+`never` is a state and not an empty list because a well-formed expression
+that never comes round (February 30th) returns an EMPTY array rather than
+a 400: the expression is fine and the answer is genuinely "never". An
+empty rail there would report it as "nothing yet", the one reading an
+instrument must not give. Its sentence is deliberately the same one the
+list's `NEXT` column gives a never-firing block -- one cron, one answer,
+whichever surface the operator is looking at. `error` outranks everything
+for the same reason: an empty rail under a cron the server rejected is a
+silent failure.
+
+The readout is `role="status"`, polite and never assertive: the rail
+re-reads on a pause in typing (Alpine's own `.debounce`, one listener on
+the schedule field, because `input` bubbles from all six controls that can
+change the cron), and an assertive region would interrupt the field the
+operator is still in.
+
+The channel group's list is ordered by priority, so the POSITION in it is
+the rank -- there is no second computation of a rank here to disagree with
+the row's own `PRI` cell. The block being edited stands in the field with
+the FORM's values, not the stored record's: a priority typed a second ago
+would otherwise be missing from the very list that shows what it does,
+while the superseded one sat there looking current. It marks itself in
+TEXT (`Typo Block (this block)`, or `This block` before it has a name);
+`data-self="false"` receding to muted ink is the scan aid on top of that,
+never the fact (SC 1.4.1). A blank channel returns nothing at all, because
+a lone "this block" entry reads as "nothing else contends", which is a
+different claim from "you have not said where this goes yet".
+
+`.editor-rail__list` caps at `9rem` and scrolls. A channel carrying a
+dozen blocks would otherwise push Save off the bottom of a laptop screen
+with a list nobody asked to read in full.
+
+**The series row is its own disclosure (`.series-row__toggle`).** A dozen
+expanded shows is what made this editor unreadable, and the summary line
+is what makes a closed row findable again. The row's head is the control:
+chevron, `Series N` index, and one summary line.
+
+**The disclosure is a `<button aria-expanded>`, not
+`<details>`/`<summary>`** -- recorded here because it was a real fork.
+Reorder and Remove have to stay reachable while the row is closed, and
+they sit on the same head line. Put that head in a `<summary>` and those
+three controls nest inside the one control that opens the row: HTML's
+content model forbids interactive descendants there, and a click on Remove
+would toggle the row on its way through. Splitting the head so the summary
+holds only the label costs the summary its whole width, which is the part
+that makes a closed row findable. The button carries
+`aria-controls` pointing at the field grid, and the grid is hidden with
+`x-show`, never a `<template>`: the fields keep their `x-model` bindings
+while the row is closed, so collapsing a row never touches what is in it.
+
+The toggle is chrome-free on purpose -- no border, no background, `font:
+inherit` -- because it is the row's own heading, not a button parked next
+to one; it leans on the global `:focus-visible` ring. One chevron in two
+orientations carries the open state (`rotate(-90deg)` when closed, a
+`--duration-fast` transition), which is why it can share a glyph with the
+move buttons at the row's other end without reading as a third of them.
+
+The summary comes from `seriesRowSummary`, the SAME function the rail's
+lineup prints, so a row and the projection of it can never describe one
+show differently. Both required fields count as identity: a row with no
+show title has nothing to be called, a row with no episode count is not
+yet a schedule, and either summarises to what is missing in warn voice
+(`data-state="incomplete"`, on the closed line and on the rail's lineup
+entry alike). Collapsing a dozen rows must not be able to hide the one
+that will 400 on save. Findable beats complete -- the title still leads
+when there is one, because `Breaking Bad — add an episode count` points at
+a row and "row 3 is incomplete" makes the operator open all twelve.
+
 ## Typography
 
 One family everywhere: `var(--font-mono)`, a `ui-monospace` stack with
@@ -625,7 +963,14 @@ with its Alpine expressions as dict args. The set:
 
 **`/kit/` (dev builds only)** renders every partial in every state on
 fixture data and is the review gate: a slice is not done until its new
-states appear there. It is excluded from production builds via
+states appear there. It is no longer only the `ui/*` partials -- a
+page-level cluster with states of its own is a fixture too, which is what
+the blocks row, the editor's consequence rail -- in both its answered and
+its capped-and-scrolling states, since the 9rem cap is the reason those
+lists carry `tabindex` -- the series-row disclosure, and all three
+own-`x-ref` dialogs are doing there: Dark window (idle and sending), Name
+the copy (clean and name-taken, because the 409 is the whole reason that
+dialog exists), and Mid-run change. It is excluded from production builds via
 `web/config/production/hugo.toml`'s cascade (`build.render/list =
 "never"` for `/kit/**`); build it with `hugo -s web -e development`.
 
@@ -686,6 +1031,30 @@ shape.
   inline `<section>`, not a `<dialog>` -- creating/editing a block is a
   multi-minute task, long enough that interrupting the page under a
   modal isn't worth it.
+- **`.editor-rail` / `__group` / `__legend` / `__readout` / `__list` /
+  `__item` / `__note`** (v0.5.10) -- the editor's consequence rail: an
+  auto-fit grid of labelled readouts in the telemetry strip's register,
+  last in `.panel__body`. `__item` takes `data-self` (the edited block
+  stays in full ink, the rest recede) and `data-state="incomplete"` (warn,
+  the same voice the collapsed series row uses for the same row);
+  `__list` caps at `9rem` and scrolls so a busy channel cannot push Save
+  off the screen. Every other shape in it is reused verbatim --
+  `.form-section`, `ui/skeleton`, `.form-field__error`, `ui/plate`. See
+  "The block editor" above.
+- **`.series-row__toggle` / `__chevron` / `__index` / `__summary`**
+  (v0.5.10) -- the series row's disclosure. A chrome-free
+  `<button aria-expanded>` that IS the row's heading (no border, no
+  background, `font: inherit`, the global focus ring), not `<details>` --
+  Reorder and Remove share the head line and cannot nest inside a
+  `<summary>`. One chevron rotates; `__summary[data-state="incomplete"]`
+  goes warn so a closed row cannot hide a field that will 400 on save.
+- **`.dark-presets` / `.dark-preset` / `.dark-preset__when`** (v0.5.10) --
+  the dark-window presets. Each is a full-width `.btn` with the instant it
+  commits to pushed to the far edge: `__when` steps out of the button's
+  uppercase legend voice into a value's (normal tracking, sentence
+  weight, muted ink), the same split the blocks row's own cells make
+  between a legend and a reading. No new colours -- the muted-on-raised
+  and muted-on-inset (hover) pairings are in the WCAG evidence below.
 - **`.hero-panel` + `.graticule`** -- the bordered "instrument surface"
   primitive (Task 3's landing placeholder), reused as-is by the
   dashboard's status card, the guide's NO SIGNAL blackout, and the 404
@@ -694,7 +1063,9 @@ shape.
   measurement-grid texture.
 - **`.badge`** -- the blocks list's type indicator (`Filter`/`Series`);
   text carries the fact, `data-type="series"` adds an accent tint as a
-  secondary scan aid only.
+  secondary scan aid only. `data-state="dark"` (v0.5.10) is the same
+  shape in warn, carrying the blocks row's `DARK UNTIL <instant>` -- see
+  "The blocks row" above.
 - **`.toggle`** -- a `role="switch"` button styled as a small rocker
   (not an iOS-style pill, matching the small-radii shape language), used
   for both blocks' Enabled/Disabled and series' Completed/Disabled
@@ -968,6 +1339,81 @@ the same reason: the dot's own fill and the legend text carry the
 reading, the ring only marks the moment it changed. For the record they
 compute to 2.54:1 light / 3.36:1 dark (amber, 55% over raised) and
 2.52:1 / 3.86:1 (green), against `--glow-accent`'s 1.47:1 / 1.75:1.
+
+**v0.5.10 blocks row** introduced the `DARK UNTIL` chip and the two
+amber `NEXT` legends. Both land on `--color-bg-raised` normally and on
+`--color-bg-inset` under `.history-table tbody tr:hover td`, so each
+pairing is checked on BOTH grounds -- a hovered row is the one the
+operator is reading. Checked computationally (same throwaway-script
+convention; the script reproduces every ratio already recorded above
+before it was trusted for the new ones):
+
+| Pairing                                                                    | Light   | Dark    |
+| -------------------------------------------------------------------------- | ------- | ------- |
+| `--color-warn` on `--color-bg-raised` (`DARK UNTIL` chip, amber legends)   | 6.92:1  | 8.43:1  |
+| `--color-warn` on `--color-bg-inset` (same, hovered row)                   | 5.62:1  | 9.23:1  |
+| `--color-warn` chip border on `--color-bg-raised` (non-text)               | 6.92:1  | 8.43:1  |
+| `--color-warn` chip border on `--color-bg-inset` (non-text, hovered row)   | 5.62:1  | 9.23:1  |
+| `--color-ink-muted` on `--color-bg-raised` (duration, detail, `PRI` line)  | 8.46:1  | 7.42:1  |
+| `--color-ink-muted` on `--color-bg-inset` (same, hovered row)              | 6.88:1  | 8.13:1  |
+| `--color-ink` on `--color-bg-raised` (the `NEXT` countdown)                | 16.56:1 | 15.15:1 |
+| `--color-ink` on `--color-bg-inset` (same, hovered row)                    | 13.45:1 | 16.60:1 |
+
+Every text pairing clears the 4.5:1 AA floor; the tightest is amber on
+the hovered row's inset in light at 5.62:1. The chip's border clears the
+3:1 non-text floor on both grounds by the same margin, since it is the
+same colour on the same ground. The muted and ink rows are the pairings
+Tasks 4 and v0.5.0 already verified, repeated here because this slice is
+the first to put text on them inside a hovered table row. Nothing else in
+the row introduced a colour: the plate, the toggle, the type badge and
+the row actions are the classes those tasks already cleared.
+
+None of the three dialogs this page authors -- Duplicate, the dark window,
+the mid-run change -- introduces a pairing. `dialog.panel`,
+`.panel__hint`, `.form-field` and `.btn` are Task 3's and Task 4's own
+components on Task 3's own `--color-bg-raised` ground; the one shape
+inside them that is new, the dark preset, is in the table below.
+
+**v0.5.10 block editor** introduced the consequence rail, the series-row
+disclosure, and the dark-window presets. Every one of them lands on a
+ground this document already holds -- the editor panel's
+`--color-bg-raised`, the series row's `--color-bg-inset`, and a `.btn`'s
+hover step from the first to the second -- so the slice's second half
+introduced no colour of its own. Recomputed regardless (same
+throwaway-script convention; the script reproduced every ratio already
+recorded above, this slice's first half included, before it was trusted
+for these), because a ratio is a property of the ground a pairing lands
+on, not of the class carrying it:
+
+| Pairing                                                                            | Light   | Dark    |
+| ---------------------------------------------------------------------------------- | ------- | ------- |
+| `--color-ink-muted` on `--color-bg-raised` (rail legends + notes, preset instant)  | 8.46:1  | 7.42:1  |
+| `--color-ink` on `--color-bg-raised` (rail item -- the edited block; preset label) | 16.56:1 | 15.15:1 |
+| `--color-warn` on `--color-bg-raised` (rail lineup, incomplete row)                | 6.92:1  | 8.43:1  |
+| `--color-danger` on `--color-bg-raised` (the rail's cron error line)               | 7.32:1  | 6.51:1  |
+| `--color-ink` on `--color-bg-inset` (series-row toggle + summary)                  | 13.45:1 | 16.60:1 |
+| `--color-ink-muted` on `--color-bg-inset` (row index + chevron; hovered preset)    | 6.88:1  | 8.13:1  |
+| `--color-warn` on `--color-bg-inset` (collapsed series row, incomplete)            | 5.62:1  | 9.23:1  |
+| `--color-border-interactive` on `--color-bg-raised` (preset border, non-text)      | 5.63:1  | 3.58:1  |
+| `--color-border-interactive` on `--color-bg-inset` (hovered preset, non-text)      | 4.58:1  | 3.92:1  |
+
+Every text pairing clears the 4.5:1 AA floor; the tightest is amber on the
+series row's inset ground in light at 5.62:1. Both non-text border
+pairings clear 3:1 -- the tightest, 3.58:1 for a resting preset in dark,
+is `--color-border-interactive`, the ratio every `.btn` in this system
+already carries, and the button's hover step raises it rather than
+lowering it. The chevron is drawn ink, not a colour-only signal: at
+6.88:1 / 8.13:1 it clears the non-text floor on its own, and the row's
+state is carried by `aria-expanded` and the summary line regardless.
+
+Two things in these clusters are deliberately not held to a floor.
+`.series-row`'s own 1px `--color-border` container edge is a 1.46:1 /
+1.54:1 pairing -- a container boundary, not a state-bearing UI component,
+the same judgment Task 3 and Task 4 already made for `.hero-panel`'s
+border. And a disabled preset (`.btn:disabled`, `opacity: 0.5`) falls
+under WCAG 1.4.3's inactive-component exception; the whole preset row goes
+disabled together while a write is on the wire, so nothing in it is a
+choice the operator can still make.
 
 ## TypeScript runtime and Alpine.js conventions
 

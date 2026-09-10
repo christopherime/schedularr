@@ -34,7 +34,33 @@
                 <option value="series">Series</option>
               </select>
             </div>
-            <div class="form-field form-field--wide" id="schedule-field">
+            {{- /* One listener for every control that can change the cron.
+                   They all live inside this field -- the raw text box and
+                   all five picker controls -- and input bubbles, so the
+                   rail's fetch is armed once here instead of on six
+                   handlers. Alpine's own .debounce owns the timer: the
+                   vendored dependency already has one, and a hand-rolled
+                   copy would be a second answer to a solved question.
+
+                   Which is why each picker control below writes the cron
+                   on the same event x-model itself commits on: `input`
+                   for the typed fields, `change` for the <select> and the
+                   checkboxes, because that is the event Alpine's x-model
+                   binds for those two (x-model.js). The debounce reads
+                   editor.form.cron when it FIRES, so what matters is that
+                   the write lands inside the 500 ms -- and a select or a
+                   checkbox commits in the same interaction that armed it.
+                   A <input type="number"> on @change did not: `change`
+                   waits for blur or Enter while `input` fires per
+                   keystroke, so the debounce read the superseded
+                   expression and the blur that fixed the cron, raising no
+                   input event, never re-armed the fetch. The rail then
+                   listed the 1st beside a picker reading the 15th. */}}
+            <div
+              class="form-field form-field--wide"
+              id="schedule-field"
+              @input.debounce.500ms="loadRailOccurrences()"
+            >
               <div class="schedule-field__head">
                 <label id="schedule-label">Schedule<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
                 <div class="schedule-mode-toggle" role="group" aria-labelledby="schedule-label">
@@ -68,7 +94,7 @@
                     </div>
                     <div class="form-field">
                       <label for="schedule-time">Time</label>
-                      <input type="time" id="schedule-time" x-model="editor.form.simpleSchedule.time" @change="updateCronFromSimple()">
+                      <input type="time" id="schedule-time" x-model="editor.form.simpleSchedule.time" @input="updateCronFromSimple()">
                     </div>
                     <template x-if="editor.form.simpleSchedule.frequency === 'monthly'">
                       <div class="form-field">
@@ -79,7 +105,7 @@
                           max="31"
                           id="schedule-day-of-month"
                           x-model="editor.form.simpleSchedule.dayOfMonth"
-                          @change="updateCronFromSimple()"
+                          @input="updateCronFromSimple()"
                         >
                       </div>
                     </template>
@@ -221,7 +247,30 @@
               <template x-for="(row, index) in editor.form.series" :key="index">
                 <div class="series-row">
                   <div class="series-row__head">
-                    <span class="series-row__index" x-text="'Series ' + (index + 1)"></span>
+                    {{- /* The row's identity IS its disclosure control: a
+                           dozen expanded shows is what makes this editor
+                           unreadable, and the summary line is what makes a
+                           closed row findable again. A button rather than
+                           <details>/<summary> because reorder and remove
+                           have to stay reachable while the row is closed,
+                           and putting them inside a <summary> nests
+                           interactive controls inside the one control that
+                           opens it. */}}
+                    <button
+                      type="button"
+                      class="series-row__toggle"
+                      :aria-expanded="editor.seriesOpen[index] ? 'true' : 'false'"
+                      :aria-controls="'series-fields-' + index"
+                      @click="toggleSeriesRow(index)"
+                    >
+                      {{ partial "ui/icon.html" (dict "name" "chevron-down" "class" "series-row__chevron") }}
+                      <span class="series-row__index" x-text="'Series ' + (index + 1)"></span>
+                      <span
+                        class="series-row__summary"
+                        :data-state="seriesSummary(row).kind"
+                        x-text="seriesSummary(row).text"
+                      ></span>
+                    </button>
                     <div class="series-row__actions">
                       <button
                         type="button"
@@ -244,7 +293,10 @@
                       <button type="button" class="btn btn--danger-ghost btn--sm" @click="removeSeriesRow(index)">Remove</button>
                     </div>
                   </div>
-                  <div class="form-grid">
+                  {{- /* x-show, not a template: the fields keep their
+                         x-model bindings while the row is closed, so
+                         collapsing a row never touches what is in it. */}}
+                  <div class="form-grid" :id="'series-fields-' + index" x-show="editor.seriesOpen[index]">
                     <div class="form-field form-field--wide">
                       <label :for="'series-title-' + index">Show title<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
                       <input type="text" :id="'series-title-' + index" x-model="row.show_title" list="media-shows-list">
@@ -343,6 +395,115 @@
           </div>
         </div>
 
+        {{- /* The consequence rail (v0.5.10). It sits last in the body,
+               directly above the commit controls, because that is where a
+               "what will this do" reading is actually read: on the way to
+               Save. Every instant in it is the server's, from
+               GET /cron/next -- the client never evaluates cron (spec
+               §10), and the readback further up is cronstrue rendering
+               prose, not a date. */}}
+        <div class="form-section">
+          <h3 class="form-section__title">What this will do</h3>
+          <div class="editor-rail">
+            <div class="editor-rail__group">
+              <span class="editor-rail__legend" id="rail-next-legend">Next three</span>
+              {{- /* Polite, not assertive: the rail re-reads on a pause in
+                     typing, and an assertive region would interrupt the
+                     field the operator is still in. */}}
+              <div class="editor-rail__readout" role="status" aria-labelledby="rail-next-legend">
+                <template x-if="railState() === 'loading'">
+                  {{ partial "ui/skeleton.html" (dict "variant" "stack" "count" 3) }}
+                </template>
+                {{- /* The server's own reason for refusing the expression.
+                       An empty rail under a rejected cron would be a
+                       silent failure (PRODUCT.md, principle 3). */}}
+                <p class="form-field__error" x-show="railState() === 'error'" x-text="editor.rail.error"></p>
+                <p class="editor-rail__note" x-show="railState() === 'prompt'">Set a schedule to see when this block airs.</p>
+                {{- /* Deliberately the same sentence the list's NEXT
+                       column gives a never-firing block (nextReading in
+                       pages/blocks.ts): one cron, one answer, whichever
+                       surface the operator is looking at. */}}
+                <p class="editor-rail__note" x-show="railState() === 'never'">No date matches this cron.</p>
+                {{- /* tabindex=0 on each capped list: max-height plus
+                       overflow-y makes these scroll containers, and their
+                       only children are plain <li> text -- a browser that
+                       does not focus scrollers on its own (Safari) would
+                       leave the clipped entries unreachable by keyboard
+                       (SC 2.1.1). Named from the legend already on
+                       screen, so the words cannot drift apart. */}}
+                <ul
+                  class="editor-rail__list"
+                  x-show="railState() === 'occurrences'"
+                  tabindex="0"
+                  aria-labelledby="rail-next-legend"
+                >
+                  <template x-for="(line, i) in railNext()" :key="i">
+                    <li class="editor-rail__item" x-text="line"></li>
+                  </template>
+                </ul>
+              </div>
+            </div>
+
+            <div class="editor-rail__group">
+              <span class="editor-rail__legend" id="rail-channel-legend">On this channel</span>
+              <p class="editor-rail__note" x-show="editor.form.channel_id.trim() === ''">Pick a channel to see what it contends with.</p>
+              <template x-if="editor.form.channel_id.trim() !== ''">
+                {{ partial "ui/plate.html" (dict "expr" "plate(editor.form.channel_id)") }}
+              </template>
+              {{- /* Ordered by priority, so the position in the list IS
+                     the rank -- no second computation of it to disagree
+                     with the row's own PRI cell. */}}
+              <ul
+                class="editor-rail__list"
+                x-show="railChannel().length > 0"
+                tabindex="0"
+                aria-labelledby="rail-channel-legend"
+              >
+                <template x-for="(sibling, i) in railChannel()" :key="i">
+                  <li class="editor-rail__item" :data-self="sibling.self ? 'true' : 'false'" x-text="sibling.text"></li>
+                </template>
+              </ul>
+              <p
+                class="editor-rail__note"
+                x-show="editor.form.channel_id.trim() !== '' && railChannel().length === 0"
+              >Nothing else is contending for this channel.</p>
+            </div>
+
+            <template x-if="editor.form.type === 'series'">
+              {{- /* The lineup is the series rows in their current order,
+                     which is the airing order -- so a reorder above shows
+                     up here as the reorder it will actually cause. Each
+                     line is the same summary its collapsed row carries,
+                     from one function, so the row and the projection of
+                     it can never describe the same show differently. */}}
+              <div class="editor-rail__group">
+                <span class="editor-rail__legend" id="rail-lineup-legend">Lineup</span>
+                <p class="editor-rail__note" x-show="editor.form.series.length === 0">Add a show to see the airing order.</p>
+                {{- /* Guarded like its two siblings: tabindex="0" on a list
+                       the x-for renders empty would leave a zero-height
+                       focus stop in the tab order, which is a worse
+                       accessibility outcome than the scroll trap it was
+                       added to fix. The note above takes its place when
+                       there is nothing to order. */}}
+                <ul
+                  class="editor-rail__list"
+                  x-show="editor.form.series.length > 0"
+                  tabindex="0"
+                  aria-labelledby="rail-lineup-legend"
+                >
+                  <template x-for="(row, index) in editor.form.series" :key="index">
+                    <li
+                      class="editor-rail__item"
+                      :data-state="seriesSummary(row).kind"
+                      x-text="(index + 1) + '. ' + seriesSummary(row).text"
+                    ></li>
+                  </template>
+                </ul>
+              </div>
+            </template>
+          </div>
+        </div>
+
         <p class="panel__status" data-tone="error" x-show="editor.error" x-text="editor.error" role="alert"></p>
       </div>
 
@@ -392,12 +553,20 @@
     <template x-if="!blocksLoading && blocks.length > 0">
       <div class="table-wrap">
         <table class="history-table blocks-table">
+          {{- /* Seven columns, not the ten a fact-per-column row would have
+                 needed (v0.5.10). Duration annotates the cron it belongs
+                 to, priority rides under the channel plate whose peers it
+                 ranks against, and the dark window sits under the switch
+                 it qualifies -- only NEXT asked a question no existing
+                 cell was already answering. See web/DESIGN.md, "The
+                 blocks row". */}}
           <thead>
             <tr>
               <th scope="col">Name</th>
               <th scope="col">Type</th>
-              <th scope="col">Cron</th>
-              <th scope="col">Channel</th>
+              <th scope="col">Schedule</th>
+              <th scope="col">Next</th>
+              <th scope="col">Channel · Priority</th>
               <th scope="col">Status</th>
               <th scope="col">Actions</th>
             </tr>
@@ -409,22 +578,69 @@
                 <td><span class="badge" :data-type="block.spec.type" x-text="block.spec.type"></span></td>
                 <td>
                   <div class="blocks-table__cron">
-                    <code x-text="block.spec.cron"></code>
+                    <span class="blocks-table__cron-line">
+                      <code x-text="block.spec.cron"></code>
+                      <span class="blocks-table__dur" x-text="durationLabel(block.spec.duration)"></span>
+                    </span>
                     <span class="blocks-table__cron-hint" x-show="cronReadback(block.spec.cron)" x-text="cronReadback(block.spec.cron)"></span>
                   </div>
                 </td>
-                <td>{{ partial "ui/plate.html" (dict "expr" "plate(block.spec.channel_id)") }}</td>
                 <td>
-                  {{ partial "ui/toggle.html" (dict
-                    "checked" "block.enabled"
-                    "disabled" "pendingId === block.id"
-                    "click" "toggleEnabled(block)"
-                    "on" "Enabled"
-                    "off" "Disabled") }}
+                  {{- /* Three separate absences hide behind a missing
+                         next_occurrence, so data-kind carries which one
+                         and the cell's treatment follows it: an instant
+                         reads as a value, an absence reads as a state
+                         legend with the step that recovers it. */}}
+                  <div class="blocks-table__next" :data-kind="next(block).kind">
+                    <span class="blocks-table__next-primary" x-text="next(block).primary"></span>
+                    <span class="blocks-table__next-detail" x-text="next(block).detail"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="blocks-table__channel">
+                    {{ partial "ui/plate.html" (dict "expr" "plate(block.spec.channel_id)") }}
+                    <span class="blocks-table__pri" x-text="priorityCell(block)"></span>
+                  </div>
+                </td>
+                <td>
+                  {{- /* enabled and disabled_until are independent axes: a
+                         block can be enabled AND dark, so the chip joins
+                         the toggle rather than replacing it. */}}
+                  <div class="blocks-table__status">
+                    {{ partial "ui/toggle.html" (dict
+                      "checked" "block.enabled"
+                      "disabled" "pendingId === block.id"
+                      "click" "toggleEnabled(block)"
+                      "on" "Enabled"
+                      "off" "Disabled") }}
+                    <span class="badge" data-state="dark" x-show="darkUntil(block)" x-text="darkUntil(block)"></span>
+                  </div>
                 </td>
                 <td class="blocks-table__actions">
+                  {{- /* Both power tools go dark (v0.5.10) whenever a row
+                         action is in flight or the editor is open --
+                         canArmRowAction in pages/blocks.ts carries what
+                         each would break. The :disabled binding is the
+                         visible half; the entry points re-check the same
+                         gate, because an attribute is a convention and the
+                         check is the guarantee. */}}
                   <div class="row-actions">
                     <button type="button" :id="'block-edit-' + block.id" class="btn btn--ghost btn--sm" @click="openEdit(block)">Edit</button>
+                    <button type="button" class="btn btn--ghost btn--sm" :disabled="!canArm()" @click="requestDuplicate(block)">Duplicate</button>
+                    {{- /* One control, two states, each performing the
+                           action it names: "Go dark" opens the window
+                           picker, "Bring back" is the write itself. The
+                           dialog is where a wake-up is chosen; ending one
+                           has nothing to choose, and routing it through a
+                           panel of re-schedule presets made the label a
+                           claim the button did not honour. */}}
+                    <button
+                      type="button"
+                      class="btn btn--ghost btn--sm"
+                      :disabled="!canArm()"
+                      @click="darkUntil(block) ? bringBack(block) : requestDark(block)"
+                      x-text="darkUntil(block) ? 'Bring back' : 'Go dark'"
+                    ></button>
                     <button type="button" class="btn btn--danger-ghost btn--sm" @click="requestDelete(block)">Delete</button>
                   </div>
                 </td>
@@ -435,6 +651,150 @@
       </div>
     </template>
   </section>
+
+  {{- /* The two power-tool dialogs (v0.5.10). Both are the same native
+         <dialog class="panel"> the confirm idiom already uses -- focus
+         trap, Escape and focus return come from the element itself -- and
+         each carries its OWN x-ref, because ui/confirm.html hard-codes
+         x-ref="confirmDialog" and a second element claiming that name
+         would win it and leave Delete arming a dialog it no longer points
+         at. Neither is a popover: --z-popover exists for exactly one
+         thing (the guide's mobile sheet), and a third overlay vocabulary
+         for a choice this small would be a pattern nobody asked for. See
+         web/DESIGN.md, "The blocks row". */}}
+  <dialog
+    class="panel"
+    x-ref="duplicateDialog"
+    aria-labelledby="duplicate-title"
+    aria-describedby="duplicate-body"
+    @click="if ($event.target === $refs.duplicateDialog && pendingId === null) cancelDuplicate()"
+    @cancel="if (pendingId !== null) $event.preventDefault()"
+    @close="duplicating = null"
+  >
+    <div class="panel__head">
+      <h2 id="duplicate-title">Name the copy</h2>
+      <button type="button" class="btn btn--icon" :disabled="pendingId !== null" @click="cancelDuplicate()" aria-label="Close naming">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    {{- /* x-model needs a real object under it, and `duplicating` is null
+           whenever no copy is being named -- the head and actions read
+           pendingId only, so only the body is gated. */}}
+    <template x-if="duplicating">
+      <div class="panel__body">
+        <p class="panel__hint" id="duplicate-body">Block names are unique. The copy keeps the whole spec, arrives disabled, and opens in the editor.</p>
+        <div class="form-field">
+          <label for="duplicate-name">Name<span class="form-field__required" aria-hidden="true">*</span><span class="visually-hidden"> (required)</span></label>
+          <input
+            type="text"
+            id="duplicate-name"
+            x-model="duplicating.name"
+            autocomplete="off"
+            :aria-invalid="duplicating.error ? 'true' : null"
+            @keydown.enter.prevent="performDuplicate()"
+          >
+          <p class="form-field__error" x-show="duplicating.error" x-text="duplicating.error" role="alert"></p>
+        </div>
+      </div>
+    </template>
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" :disabled="pendingId !== null" @click="cancelDuplicate()">Cancel</button>
+      <div class="panel__actions-right">
+        <button
+          type="button"
+          class="btn btn--primary"
+          :disabled="pendingId !== null"
+          :aria-busy="pendingId !== null"
+          @click="performDuplicate()"
+          x-text="pendingId !== null ? 'Copying…' : 'Duplicate'"
+        ></button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog
+    class="panel"
+    x-ref="darkDialog"
+    aria-labelledby="dark-title"
+    aria-describedby="dark-body"
+    @click="if ($event.target === $refs.darkDialog && pendingId === null) cancelDark()"
+    @cancel="if (pendingId !== null) $event.preventDefault()"
+    @close="darkTarget = null"
+  >
+    <div class="panel__head">
+      <h2 id="dark-title">Dark window</h2>
+      <button type="button" class="btn btn--icon" :disabled="pendingId !== null" @click="cancelDark()" aria-label="Close dark window">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" id="dark-body" x-text="darkBody()"></p>
+      {{- /* Every preset names the instant it commits to. A choice
+             measured in days ("next week") is not a choice until the
+             operator can see which day it lands on -- and the instant is
+             what the server actually stores. */}}
+      <div class="dark-presets">
+        <template x-for="preset in darkPresets" :key="preset.id">
+          <button type="button" class="btn dark-preset" :disabled="pendingId !== null" @click="applyDark(preset.id)">
+            <span x-text="preset.label"></span>
+            <span class="dark-preset__when" x-text="darkPresetWhen(preset.id)"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+    {{- /* The presets ARE this dialog's commit controls -- each one
+           writes the wake-up printed on it -- so Cancel is the only
+           button in the action row. Ending a window never arrives here:
+           the row's own "Bring back" performs that write directly. */}}
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" :disabled="pendingId !== null" @click="cancelDark()">Cancel</button>
+    </div>
+  </dialog>
+
+  {{- /* The cron footgun (v0.5.10). A fourth <dialog class="panel">, NOT a
+         second ui/confirm.html: that partial hard-codes
+         x-ref="confirmDialog", so instantiating it twice on one page hands
+         the ref to whichever element Alpine walks last and leaves Delete
+         arming a dialog it no longer points at. It also offers exactly one
+         action, and this choice has two that both save -- with the cursors
+         or without them. Multiplexing Delete's dialog behind a kind
+         discriminator would have to grow the shared partial a second
+         confirm button for the guide and the kit as well, to buy a body
+         the partial's single <p> could not carry either. The page already
+         answers this the same way twice (Duplicate, Dark window): its own
+         element, its own ref, the platform's focus trap and Escape. */}}
+  <dialog
+    class="panel"
+    x-ref="cronDialog"
+    aria-labelledby="cron-title"
+    aria-describedby="cron-body cron-rewind"
+    @click="if ($event.target === $refs.cronDialog) cancelCron()"
+    @close="cronConfirm = null"
+  >
+    <div class="panel__head">
+      <h2 id="cron-title">Mid-run change</h2>
+      <button type="button" class="btn btn--icon" @click="cancelCron()" aria-label="Close schedule change">
+        {{ partial "ui/icon.html" (dict "name" "x") }}
+      </button>
+    </div>
+    <div class="panel__body">
+      <p class="panel__hint" id="cron-body" x-text="cronCopy().consequence"></p>
+      <p class="panel__hint" id="cron-rewind" x-text="cronCopy().rewind"></p>
+    </div>
+    {{- /* Three buttons, two of which save. Cancel is the way back to the
+           editor; the plain save is primary because carrying on from where
+           each show stands is what the operator asked for by editing the
+           cron, and the rewind is the offer beside it. No busy bindings:
+           both save paths close this dialog before the write starts, and
+           the editor's own Save button carries the in-flight state. */}}
+    <div class="panel__actions">
+      <button type="button" class="btn btn--ghost" @click="cancelCron()">Cancel</button>
+      <div class="panel__actions-right">
+        <button type="button" class="btn btn--ghost" @click="proceedCron(true)">Save and rewind</button>
+        <button type="button" class="btn btn--primary" @click="proceedCron(false)">Save schedule</button>
+      </div>
+    </div>
+  </dialog>
 
   {{ partial "ui/confirm.html" (dict
     "title" "'Delete block'"
