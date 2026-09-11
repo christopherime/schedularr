@@ -661,16 +661,41 @@ each is a known gap with its reason.
   recorded above). `RemoveShow` is transactional on its own terms, so the
   desk does not need this — but a crash mid-`Commit` still leaves the same
   partial state it always has.
-- **Range predicates on stored instants are not normalised.** The
-  exact-match lookups were fixed; ranges were left alone because the date
-  prefix dominates the bytewise comparison for same-zone data, and a test
-  pins that retention prunes by instant. Range cleanup hands the operator
-  an arbitrary cutoff over data that may span a `log.timezone` change,
-  which is where that stops holding — fix it there, with the test that is
-  already in place.
-- **No endpoint calls `store.RemoveShow`.** Deliberate: the primitive and
-  its tests ship here, the endpoint ships with the UI that drives it.
-- **The removal is a two-step flow.** It refuses while any block still
-  lists the show, so the operator edits those blocks first. The error names
-  them; the desk UI should surface that first step rather than letting them
-  hit the 409 cold.
+- ~~**Range predicates on stored instants are not normalised.**~~
+  RESOLVED in v0.5.12: nine predicates across `schedule_history`, the
+  snapshots and the apply runs now normalise both sides, guarded by a
+  test using offsets far enough apart that the stored text sorts against
+  the real order.
+- ~~**No endpoint calls `store.RemoveShow`.**~~ RESOLVED in v0.5.12:
+  `DELETE /state/series/{show_title}` drives it, with the desk UI above
+  it.
+- ~~**The removal is a two-step flow.**~~ RESOLVED in v0.5.12: the
+  TRACKED row reads `GET /blocks` itself and shows a blocked removal as
+  blocked, naming and linking the blocks, so the 409 is only the
+  backstop for a block added between that read and the delete.
+
+## Deferred (history desk)
+
+Recorded when v0.5.12 shipped the deletion half.
+
+- **Bulk cursor operations and series-state YAML import/export are not
+  built.** Moved to the following slice, with the reason in
+  `docs/roadmap.md`: a multi-select over an existing PATCH shares a route
+  with the deletion work but nothing else.
+- **`datetime()` on a range predicate cannot use an index.** Accepted:
+  every table reached that way is bounded by retention, so the scan is
+  over a few thousand rows at most. If a deployment ever widens retention
+  far enough for that to matter, a generated normalised column with its
+  own index is the fix.
+- **A range deletion leaves one sentinel per emptied occurrence.** For a
+  window well inside the past that is pure overhead — those occurrences
+  will never be re-planned — but distinguishing "old enough that no apply
+  will reach it" from "recent" needs the planning horizon, and guessing
+  it wrong re-plans a slot that already aired. The rows are tiny and the
+  storage strip counts them honestly.
+- **Airings predating migration `000012` still cannot be removed by
+  title**, and a range is the only way to reach them. Unchanged from the
+  foundations slice: recovering a show from a stored program id needs the
+  live Tunarr catalogue.
+- **The blocked-row check reads every block on page load.** Fine at any
+  realistic block count, and it is the same list the Blocks page loads.

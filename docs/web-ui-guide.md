@@ -284,11 +284,27 @@ Every persisted `series_state` row — the per-show season/episode cursor a sequ
 
 **Row vanishes mid-edit** — a save against a `show_title` whose `series_state` row was deleted or reset out from under the operator returns `404`. The row stays on screen with an inline error and a **Refresh list** action next to the show title, rather than a row that silently can never save again.
 
+#### The storage strip
+
+Above the panes, a single line of what is actually stored: airings, tracked shows, apply runs, and the span the stored airings cover. It reports rows, not policy — retention says what should age out, and a database whose retention was widened holds whatever it holds.
+
+**Empty slots** appear in the strip once any exist. An occurrence that lost every airing keeps a marker saying it was committed and aired nothing, so a later apply does not re-plan a slot that already went out. Markers cannot be deleted by range, which is why they are counted apart from airings — folded together, the airing count could never reach zero.
+
+#### Removing a show
+
+Each TRACKED row carries a **Remove** action. It deletes the show's cursor, its airings, and its keys inside every occurrence snapshot, in one transaction. Pressing it runs a dry run first and opens a confirm naming the real counts. **Nothing brings the data back.**
+
+A row whose show is still listed by a block shows the block names instead of the button, each linking to its editor, with "Remove it there first." The removal genuinely refuses in that state — the next apply would re-add the show from the block spec and reset the cursor the removal just deleted — so the page says so before the click rather than after.
+
 #### AS-RUN
 
 What actually aired, from `GET /api/v1/history?days=N`, grouped by local day with the newest day first and each day's entries in air order. A row carries the local time, the channel legend plate, the program title, the block that scheduled it, and its duration — program names, not the UUIDs the old dashboard table showed. Channel, block, and title filters narrow the loaded window.
 
 The window is bounded by `maintenance.history_retention`, so a 90-day view can legitimately come back with seven days of rows. The empty state says so rather than implying the store lost something.
+
+**Delete a range** sits collapsed inside this pane, because these are the rows it deletes. Opened, it takes a From and a To — prefilled from the strip's stored span — and inherits whatever channel and block filters the pane already has, so the preview counts the list being looked at. **Preview deletion** runs the dry run and opens the same confirm.
+
+A range deletes airings only. Cursors and snapshots stay, because a date range is not a statement about any particular show — use the TRACKED row action for that. A range covering an occurrence that is on air right now is refused, naming when it becomes safe: deleting the record of what is playing is the one deletion that changes what a viewer sees.
 
 #### RUNS
 

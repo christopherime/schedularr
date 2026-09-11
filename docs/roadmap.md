@@ -357,13 +357,32 @@ v0.5.5 below).
   `Engine.Commit` transactional; and backfilling `show_title` for rows
   written before the column, which is unrecoverable without the live
   Tunarr catalogue.
-- **Then — History desk: pending.** The UI half, now that the foundations
-  are under it. Bulk cursor operations, YAML import/export, the
-  remove-from-history and range-cleanup flows over `store.RemoveShow`, and
-  a STORAGE strip showing what is actually stored. Range cleanup is the one
-  that needs care: the operator picks an arbitrary cutoff, and stored
-  instants carry the writer's offset, so its predicates need the same
-  normalisation the exact-match lookups received.
+- **v0.5.12 — History desk (deletion): SHIPPED (2026-09-11).** The
+  deletion half of the desk, over the foundations v0.5.11 built. `DELETE
+  /state/series/{show_title}` removes one show's progression and refuses
+  with a 409 naming the blocks to edit first; `DELETE /history` takes a
+  window, in one transaction, keeping every occurrence it empties
+  committed through its sentinel; `GET /storage` reports what is actually
+  stored rather than what retention says should be. Both deletions take
+  `dry_run`, and the UI runs it before every confirm, so the dialog names
+  a real count. The range predicates got the normalisation v0.5.11
+  deliberately left: the exact-match lookups were fixed there on the
+  argument that a date prefix dominates a bytewise comparison for
+  same-zone data, which stops holding the moment one database carries
+  rows written under two `log.timezone` settings — and an arbitrary
+  cutoff is exactly where an operator finds that.
+  On the page: a storage strip above the band, a TRACKED row action that
+  shows a blocked removal as blocked *before* the click by reading `GET
+  /blocks` itself, and a collapsed range-cleanup panel inside the AS-RUN
+  pane that inherits its filters.
+  **Scope amended:** bulk cursor operations and series-state YAML
+  import/export moved to the slice after this one. They are a different
+  subsystem sharing a route — a multi-select over an existing PATCH,
+  with no transaction, no on-air guard and nothing to refuse — and
+  gating the deletion work, whose foundations were already built and
+  warm, on work with no dependency on it would have helped nobody.
+- **Then — History desk (bulk editing): pending.** Bulk cursor
+  operations and series-state YAML import/export, on the TRACKED pane.
 - **Last — Polish pass: pending.** Unchanged in scope.
 
 Headline surfaces across the train:

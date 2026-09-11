@@ -45,7 +45,7 @@ Every full-spec write path (`POST`/`PUT`) validates the block spec against the C
 Three of those writes can change what a viewer is watching, and since v0.5.11 they refuse to while the block is airing:
 
 | Write                                                                                               | Refused when        |
-| --------------------------------------------------------------------------------------------------- | ------------------- |
+|-----------------------------------------------------------------------------------------------------|---------------------|
 | `DELETE /blocks/{id}`                                                                               | the block is on air |
 | `PATCH /blocks/{id}` with `enabled: false`, or a future `disabled_until`                            | the block is on air |
 | `PUT /blocks/{id}` that changes `cron`, `channel_id`, `duration` or `max_duration_overflow_minutes` | the block is on air |
@@ -157,6 +157,46 @@ Lists recorded applies, newest first — one row per apply, from the web UI, the
 | `warnings`                    | Always an array — `block_name`, `occurrence_start`, `blocking_block_name`, `channel_id`, `duration_minutes` |
 
 The row is written **before** the apply pushes anything to Tunarr and finalized afterwards, so a row still reading `running` long after its timestamp means the process died mid-apply: its `finished_at` will never arrive. A failed apply is still a run, carrying its error. Runs are never backfilled: nothing exists from before the migration that created the table.
+
+## Deleting history
+
+Two destructive endpoints and one readout. Both deletions take `dry_run`, and both run the same predicates in preview as they do for real — a preview that counted different rows than the delete removes would be worse than none, because the operator confirms against it.
+
+**Nothing here can be undone.** There is no backfill: the data is gone.
+
+| Method | Path                                  | Success | Error codes |
+|--------|---------------------------------------|---------|-------------|
+| DELETE | `/state/series/{show_title}?dry_run=` | 200     | 404, 409    |
+| DELETE | `/history?…&dry_run=`                 | 200     | 400, 409    |
+| GET    | `/storage`                            | 200     | —           |
+
+### Removing one show
+
+`DELETE /state/series/{show_title}` removes the show's cursor, its airings, and its keys inside every occurrence snapshot, in one transaction. A snapshot loses the show's KEY, not the row — a snapshot describes one occurrence of one block, which may have carried several shows.
+
+It is **refused with 409 while any block still lists the show**. The next apply would re-add it from the block spec and reset the cursor the removal just deleted, so the refusal names the blocks to edit first in the problem's `detail`. The web UI reads `GET /blocks` itself and shows such a row as blocked before the operator clicks; the 409 is the backstop for a block added in between.
+
+`404` means no tracked cursor exists for that title.
+
+### Deleting a range
+
+`DELETE /history` takes exactly one window form — `before=<RFC3339>`, or `from=<RFC3339>&to=<RFC3339>` — optionally narrowed by `channel_id`, `block_name`, and `show_title`. Neither form, or both, is a `400`; so is `from` after `to`. Sending no window is never read as "delete everything".
+
+The window is measured on `scheduled_at`, the same column `GET /history?days=N` filters on, so a preview counts the rows the AS-RUN pane is showing.
+
+Cursors and snapshots are untouched: a date range is not a statement about any particular show.
+
+`409` means the range covers an occurrence that is **on air right now**. Deleting the record of what is playing is the one deletion that changes what a viewer sees, because the next unattended apply would re-plan the slot mid-program. The problem names when it becomes safe.
+
+### The empty-slot marker
+
+An occurrence that loses every airing keeps one row with an empty `program_id`. Without it the engine would answer "this occurrence was never planned" and the next apply would re-plan a slot that already went out — rewriting history rather than removing from it. The marker says "committed, produced nothing", which is what actually happened.
+
+Markers are not airings: a range deletion never removes one, so running the same window twice is a no-op, and `GET /storage` counts them separately.
+
+### What is stored
+
+`GET /storage` reports row counts per table plus the span the stored airings cover. It reports what IS stored, never what retention says should be — a database whose retention was widened holds whatever it holds.
 
 ## Series state
 

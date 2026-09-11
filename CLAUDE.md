@@ -66,6 +66,8 @@ internal/
 │   └── tvdb/                 # TheTVDB v4 client
 ├── store/                    # SQLite state persistence (blocks, series state, history)
 │   ├── removal.go            # Transactional removal of one show's progression
+│   ├── rangedelete.go        # Range deletion of airings, sentinel-preserving
+│   ├── storage.go            # Row counts per table for the History page's strip
 │   └── migrations/           # DB migrations
 ├── api/                      # HTTP API: router, handlers, generated gen.ServerInterface
 ├── events/                   # In-process broadcast hub behind GET /events (SSE live link)

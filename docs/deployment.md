@@ -63,6 +63,9 @@ database: "schedularr.db" # SQLite database path (opened with _busy_timeout=5000
 # expect -shm/-wal sidecar files alongside it)
 scheduler_file: "scheduler.yaml" # First-run block import file -- see Scheduling Concepts
 
+# Retention is the routine mechanism; the History page's deletion tools are
+# for taking one specific thing out. Neither can be undone and nothing
+# backfills either -- see docs/scheduling-concepts.md.
 maintenance: # retention is per table -- each one prunes on its own clock
   history_retention: "168h" # How long schedule_history rows are kept; also bounds GET /history?days=N and the engine's recency-dedup window
   snapshot_retention: "168h" # How long series occurrence snapshots are kept

@@ -350,6 +350,28 @@ Setting `snapshot_retention` **longer** than `history_retention` keeps rows that
 
 Apply runs default to a far longer horizon than the other two because they answer a different question. History and snapshots feed the engine's own replay and dedup machinery, where a week is ample; a run card is the operator's only durable answer to "why didn't X air last Tuesday", and it cannot be backfilled — nothing exists from before the migration that created the table.
 
+### Removing history
+
+Two removals exist, and they answer different questions.
+
+**One show** (`DELETE /state/series/{show_title}`) takes that show's whole progression: its cursor, its airings, and its keys inside every occurrence snapshot, in one transaction. A snapshot loses the show's **key**, not the row — a snapshot describes one occurrence of one block, which may have carried several shows, and deleting the row would cost the others their verbatim replay.
+
+It **refuses while any block still lists the show**. `backfillChainFromLive` re-adds any `block.series` title missing from the chain, seeded from a fabricated S01E01, so a removal that ran anyway would be undone by the next apply *and* would reset the cursor it just deleted. Rewriting the operator's block specs from a history deletion was the alternative, and it can empty a block entirely — far too large a blast radius for one click. Refusing names the blocks to edit first.
+
+**A date range** (`DELETE /history`) takes airings and nothing else. Cursors and snapshots stay, because a date range is not a statement about any particular show.
+
+#### The empty-slot marker
+
+An occurrence that loses every airing keeps one row with an empty `program_id`.
+
+This is the surprising part, so it is worth stating plainly: without that row, `GetCommittedOccurrence` would answer "this occurrence was never planned", and the next apply would re-plan a slot that has **already gone out** — which is rewriting history, not removing from it. The marker says "committed, produced nothing", which is what actually happened once the record was deleted.
+
+Markers are not airings. A range deletion never removes one, so running the same window twice changes nothing, and the storage readout counts them separately from airings.
+
+#### What deletion does not solve
+
+Retention still does the routine work. Deletion is for taking a specific thing out, and for an operator who widened `history_retention` and now wants the space back. Neither can be undone, and nothing backfills either.
+
 ### Apply runs
 
 Every apply — from the web UI, the `serve` cron loop, or `schedularr generate --apply` — is recorded as a row in `apply_runs`, together with the conflict warnings that apply had to drop.

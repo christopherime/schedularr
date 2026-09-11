@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-09-11
+
+The deletion half of the History desk: the foundations v0.5.11 built,
+put in front of the operator. Nothing here can be undone, so every path
+previews first and every confirm says so.
+
+### Added
+
+- **`DELETE /api/v1/state/series/{show_title}`** — removes one show's
+  progression over `store.RemoveShow`. Refused with `409` while any block
+  still lists the show, naming the blocks to edit first: the next apply
+  would re-add it from the block spec and reset the cursor the removal
+  just deleted.
+- **`DELETE /api/v1/history`** — deletes airings inside a window
+  (`before`, or `from`+`to`), optionally narrowed by channel, block or
+  show. Exactly one window form is required; sending none is never read
+  as "delete everything". Refused with `409` when the range covers an
+  occurrence that is on air, because deleting the record of what is
+  playing is the one deletion that changes what a viewer sees — the next
+  unattended apply would re-plan the slot mid-program.
+- **`GET /api/v1/storage`** — row counts per table plus the span the
+  stored airings cover. Reports what IS stored, never what retention says
+  should be: a database whose retention was widened holds whatever it
+  holds.
+- **`store.DeleteHistoryRange` and `store.CountHistoryRange`** — one
+  transaction, sharing one predicate builder so a preview cannot count
+  different rows than the delete removes. An occurrence left with no
+  airings keeps its empty-`program_id` sentinel, so
+  `GetCommittedOccurrence` still answers "committed, produced nothing"
+  and a later apply does not re-plan a slot that already went out.
+  Sentinels are excluded from selection, which makes a second pass over
+  the same window a no-op.
+- **`store.CountShowRemoval`** — the dry run for `RemoveShow`, running
+  the same refusal check so the operator cannot be promised a removal the
+  real call would reject. It decides snapshot membership by parsing the
+  JSON map the way the removal does, not by a `LIKE` that would count a
+  snapshot whose episode title merely contains the show's name.
+- **The deletion desk on `/history/`** — a storage strip above the band;
+  a Remove action on each TRACKED row; a collapsed range-cleanup panel
+  inside the AS-RUN pane, inheriting that pane's filters and prefilled
+  from the stored span. Every destructive path runs its dry run first and
+  arms the shared confirm with the count it returned.
+- **A blocked removal says so before the click.** The TRACKED row reads
+  `GET /blocks` itself and, when a block still lists the show, shows the
+  block names linked to their editors instead of a button that would
+  fail. A failed block read leaves the button offered so the server's
+  refusal can still land — hiding the action would strand the operator.
+
+### Fixed
+
+- **Instant ranges compared by text rather than by instant.** v0.5.11
+  normalised the exact-match lookups and left the ranges, reasoning that
+  a stored instant's date prefix dominates a bytewise comparison for
+  same-zone data. That holds until one database carries rows written
+  under two different `log.timezone` settings: an instant stored at
+  `+14:00` renders a date a day ahead of the same instant stored at
+  `-11:00`, so a plain `>=` orders them backwards. Nine predicates across
+  `schedule_history`, the snapshots and the apply runs now normalise both
+  sides. The cost is the index — `datetime(column)` cannot use one — and
+  it is accepted because every table reached this way is bounded by
+  retention.
+
 ## [0.5.11] - 2026-09-10
 
 Foundations for deleting scheduling history, plus two fixes to code that
@@ -2623,7 +2685,8 @@ For users upgrading from previous versions:
 - Interactive TUI
 - CLI commands: channels, generate, run, tui
 
-[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.11...HEAD
+[Unreleased]: https://github.com/christopherime/schedularr/compare/v0.5.12...HEAD
+[0.5.12]: https://github.com/christopherime/schedularr/compare/v0.5.11...v0.5.12
 [0.5.11]: https://github.com/christopherime/schedularr/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/christopherime/schedularr/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/christopherime/schedularr/compare/v0.5.8...v0.5.9
