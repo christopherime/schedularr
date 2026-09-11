@@ -261,6 +261,79 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/HistoryEntry"
+    delete:
+      operationId: deleteHistoryRange
+      description: >-
+        Deletes airings inside a window. Exactly one window form is
+        required: `before`, or `from` with `to`. An occurrence left with
+        no airings keeps a marker saying it was committed and produced
+        nothing, so a later apply does not re-plan a slot that already
+        went out.
+
+        Cursors and snapshots are untouched -- a date range is not a
+        statement about any particular show. Use DELETE
+        /state/series/{show_title} for that.
+
+        This cannot be undone, and nothing backfills it.
+      parameters:
+        - name: before
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Delete everything scheduled before this instant. Mutually exclusive with from/to.
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: channel_id
+          in: query
+          schema:
+            type: string
+        - name: block_name
+          in: query
+          schema:
+            type: string
+        - name: show_title
+          in: query
+          schema:
+            type: string
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: what was deleted, or would be
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemovalReport"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /storage:
+    get:
+      operationId: getStorage
+      description: >-
+        Row counts per table, and the span the stored airings cover.
+        Reports what IS stored, not what retention says should be: a
+        database whose retention was widened holds whatever it holds.
+      responses:
+        "200":
+          description: storage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageReport"
   /events:
     get:
       operationId: streamEvents
@@ -355,6 +428,38 @@ paths:
         required: true
         schema:
           type: string
+    delete:
+      operationId: removeSeriesState
+      description: >-
+        Removes every trace of one show's progression: its cursor, its
+        airings, and its keys inside every occurrence snapshot, in one
+        transaction. Occurrences left with no airings stay committed and
+        empty rather than reading as never planned.
+
+        REFUSED WHILE A BLOCK STILL LISTS THE SHOW. The next apply would
+        re-add it from the block spec and reset the cursor this just
+        deleted, so the refusal names the blocks to edit first in the
+        problem's `blocks` member.
+
+        This cannot be undone, and nothing backfills it.
+      parameters:
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Report what would be removed without removing it.
+      responses:
+        "200":
+          description: what was removed, or would be
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemovalReport"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
     patch:
       operationId: patchSeriesState
       requestBody:
@@ -794,6 +899,56 @@ components:
         duration_minutes:
           type: integer
           description: How long the dropped occurrence would have run.
+
+    RemovalReport:
+      type: object
+      required: [airings, emptied_slots]
+      description: What a removal touched, per table. On a dry run, what it would touch.
+      properties:
+        series_states:
+          type: integer
+          description: Cursors removed. Always 0 for a range deletion.
+        airings:
+          type: integer
+        snapshots:
+          type: integer
+          description: Occurrence snapshots a key was scrubbed from. Always 0 for a range deletion.
+        emptied_slots:
+          type: integer
+          description: >-
+            Occurrences left with no airings. Each keeps a marker saying it
+            was committed and produced nothing, so a later apply does not
+            re-plan a slot that already went out.
+        dry_run:
+          type: boolean
+
+    StorageReport:
+      type: object
+      required: [series_states, airings, sentinels, snapshots, apply_runs, warnings]
+      properties:
+        series_states:
+          type: integer
+        airings:
+          type: integer
+        sentinels:
+          type: integer
+          description: >-
+            Committed-but-empty occurrence markers. Counted apart from
+            airings because they cannot be deleted by range.
+        snapshots:
+          type: integer
+        apply_runs:
+          type: integer
+        warnings:
+          type: integer
+        oldest_airing:
+          type: string
+          format: date-time
+          nullable: true
+        newest_airing:
+          type: string
+          format: date-time
+          nullable: true
 
     ApplyRun:
       type: object

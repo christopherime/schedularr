@@ -130,6 +130,91 @@ func (s *Store) RemoveShow(ctx context.Context, showTitle string) (RemovalReport
 	return report, nil
 }
 
+// CountShowRemoval reports what RemoveShow would remove, without removing
+// it -- the dry run every destructive confirm is built on.
+//
+// It runs the SAME refusal check first: a preview that promised a
+// removal the real call would refuse is worse than no preview, because
+// the operator would meet the 409 only after confirming.
+func (s *Store) CountShowRemoval(ctx context.Context, showTitle string) (RemovalReport, error) {
+	var report RemovalReport
+	if showTitle == "" {
+		return report, errors.New("show title must not be empty")
+	}
+
+	blocking, err := s.blocksScheduling(ctx, showTitle)
+	if err != nil {
+		return report, err
+	}
+	if len(blocking) > 0 {
+		return report, &ShowStillScheduledError{ShowTitle: showTitle, BlockNames: blocking}
+	}
+
+	if err := s.db.GetContext(ctx, &report.SeriesStates,
+		`SELECT COUNT(*) FROM series_state WHERE show_title = ?`, showTitle); err != nil {
+		return report, fmt.Errorf("failed to count series state for %q: %w", showTitle, err)
+	}
+	if err := s.db.GetContext(ctx, &report.Airings,
+		`SELECT COUNT(*) FROM schedule_history WHERE show_title = ? AND show_title <> ''`, showTitle); err != nil {
+		return report, fmt.Errorf("failed to count airings for %q: %w", showTitle, err)
+	}
+	report.Snapshots, err = countSnapshotsCarrying(ctx, s.db, showTitle)
+	if err != nil {
+		return report, err
+	}
+
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return report, fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	emptied, err := occurrencesLosingEveryAiring(ctx, tx, showTitle)
+	if err != nil {
+		return report, err
+	}
+	report.EmptiedSlots = int64(len(emptied))
+
+	return report, nil
+}
+
+// countSnapshotsCarrying counts the snapshots a removal would rewrite.
+//
+// It decides membership the same way stripShowFromSnapshots does -- by
+// parsing the JSON map and asking for the key -- rather than by a LIKE
+// over the raw text. A pattern match would count a snapshot whose EPISODE
+// title merely contains the show's name, so the preview would promise a
+// number the removal then contradicts. The operator confirms against this
+// number; it has to be the real one.
+func countSnapshotsCarrying(ctx context.Context, q queryer, showTitle string) (int64, error) {
+	var rows []struct {
+		SnapshotJSON  string  `db:"snapshot_json"`
+		PostStateJSON *string `db:"post_state_json"`
+	}
+	if err := q.SelectContext(ctx, &rows, `
+		SELECT snapshot_json, post_state_json FROM series_occurrence_snapshots`); err != nil {
+		return 0, fmt.Errorf("failed to read occurrence snapshots: %w", err)
+	}
+
+	var n int64
+	for _, row := range rows {
+		_, preHad, err := withoutKey(row.SnapshotJSON, showTitle)
+		if err != nil {
+			return 0, fmt.Errorf("failed to inspect snapshot for %q: %w", showTitle, err)
+		}
+		postHad := false
+		if row.PostStateJSON != nil {
+			if _, postHad, err = withoutKey(*row.PostStateJSON, showTitle); err != nil {
+				return 0, fmt.Errorf("failed to inspect post-state for %q: %w", showTitle, err)
+			}
+		}
+		if preHad || postHad {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // blocksScheduling names every block whose spec lists showTitle.
 func (s *Store) blocksScheduling(ctx context.Context, showTitle string) ([]string, error) {
 	records, err := s.ListBlocks(ctx)

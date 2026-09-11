@@ -155,6 +155,28 @@ export interface paths {
         get: operations["getHistory"];
         put?: never;
         post?: never;
+        /**
+         * @description Deletes airings inside a window. Exactly one window form is required: `before`, or `from` with `to`. An occurrence left with no airings keeps a marker saying it was committed and produced nothing, so a later apply does not re-plan a slot that already went out.
+         *     Cursors and snapshots are untouched -- a date range is not a statement about any particular show. Use DELETE /state/series/{show_title} for that.
+         *     This cannot be undone, and nothing backfills it.
+         */
+        delete: operations["deleteHistoryRange"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Row counts per table, and the span the stored airings cover. Reports what IS stored, not what retention says should be: a database whose retention was widened holds whatever it holds. */
+        get: operations["getStorage"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -229,7 +251,12 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * @description Removes every trace of one show's progression: its cursor, its airings, and its keys inside every occurrence snapshot, in one transaction. Occurrences left with no airings stay committed and empty rather than reading as never planned.
+         *     REFUSED WHILE A BLOCK STILL LISTS THE SHOW. The next apply would re-add it from the block spec and reset the cursor this just deleted, so the refusal names the blocks to edit first in the problem's `blocks` member.
+         *     This cannot be undone, and nothing backfills it.
+         */
+        delete: operations["removeSeriesState"];
         options?: never;
         head?: never;
         patch: operations["patchSeriesState"];
@@ -468,6 +495,30 @@ export interface components {
             channel_id?: string;
             /** @description How long the dropped occurrence would have run. */
             duration_minutes?: number;
+        };
+        /** @description What a removal touched, per table. On a dry run, what it would touch. */
+        RemovalReport: {
+            /** @description Cursors removed. Always 0 for a range deletion. */
+            series_states?: number;
+            airings: number;
+            /** @description Occurrence snapshots a key was scrubbed from. Always 0 for a range deletion. */
+            snapshots?: number;
+            /** @description Occurrences left with no airings. Each keeps a marker saying it was committed and produced nothing, so a later apply does not re-plan a slot that already went out. */
+            emptied_slots: number;
+            dry_run?: boolean;
+        };
+        StorageReport: {
+            series_states: number;
+            airings: number;
+            /** @description Committed-but-empty occurrence markers. Counted apart from airings because they cannot be deleted by range. */
+            sentinels: number;
+            snapshots: number;
+            apply_runs: number;
+            warnings: number;
+            /** Format: date-time */
+            oldest_airing?: string | null;
+            /** Format: date-time */
+            newest_airing?: string | null;
         };
         /** @description One recorded apply. Written before the apply pushes anything to Tunarr and finalized afterwards, so a process that dies mid-apply still leaves an entry -- which is why status can read "running" on a row whose finished_at will never arrive. */
         ApplyRun: {
@@ -888,6 +939,57 @@ export interface operations {
             };
         };
     };
+    deleteHistoryRange: {
+        parameters: {
+            query?: {
+                /** @description Delete everything scheduled before this instant. Mutually exclusive with from/to. */
+                before?: string;
+                from?: string;
+                to?: string;
+                channel_id?: string;
+                block_name?: string;
+                show_title?: string;
+                dry_run?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description what was deleted, or would be */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalReport"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    getStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description storage */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageReport"];
+                };
+            };
+        };
+    };
     streamEvents: {
         parameters: {
             query?: never;
@@ -954,6 +1056,33 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesState"][];
                 };
             };
+        };
+    };
+    removeSeriesState: {
+        parameters: {
+            query?: {
+                /** @description Report what would be removed without removing it. */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path: {
+                show_title: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description what was removed, or would be */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalReport"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
         };
     };
     patchSeriesState: {
