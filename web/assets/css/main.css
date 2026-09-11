@@ -3897,3 +3897,185 @@ dialog.panel .panel__body {
     margin-left: 0;
   }
 }
+
+/* == history desk: storage strip, blocked rows, range cleanup =============
+   The deletion half of the History page. Destructive controls stay quiet
+   until they are reached for: an instrument does not put its erase button
+   next to its readout. */
+
+/* -- storage strip --------------------------------------------------------
+   A measurement, so it reads as one: a legend, then labelled values on the
+   graticule ground the rest of the bench uses. It sits above the band
+   because it describes the whole record, not one pane. */
+
+.storage {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-inset);
+}
+
+.storage__legend {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.storage__readout {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+}
+
+.storage__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.storage__item dt {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.storage__item dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The span reads as a sentence, not a count, so it drops the tabular
+   treatment the numbers carry. */
+.storage__item--span dd {
+  font-variant-numeric: normal;
+  color: var(--color-ink-muted);
+}
+
+/* Sentinels need their name explained the first time they are seen, and
+   the strip is where an operator meets them. */
+.storage__note {
+  display: block;
+  font-size: var(--text-xs);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--color-ink-muted);
+  opacity: 0.85;
+}
+
+.storage__degraded {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+/* -- a row whose removal is blocked ---------------------------------------
+   The removal refuses while a block still lists the show. Saying so in the
+   row is the first of a two-step flow: the operator edits the block, then
+   comes back. A disabled button with no reason would read as a bug. */
+
+.row-blocked {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--color-ink-muted);
+}
+
+.row-blocked__legend {
+  display: block;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.row-blocked__block {
+  color: var(--color-accent);
+}
+
+.row-blocked__why {
+  display: block;
+}
+
+/* -- range cleanup --------------------------------------------------------
+   Collapsed by default and living inside the pane whose rows it deletes.
+   A destructive control does not belong permanently open above a log. */
+
+.cleanup {
+  margin-bottom: var(--space-5);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+
+.cleanup__summary {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-danger);
+  cursor: pointer;
+}
+
+.cleanup__summary:focus-visible {
+  outline: var(--border-width-thick) solid var(--color-border-interactive);
+  outline-offset: -3px;
+}
+
+.cleanup[open] .cleanup__summary {
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.cleanup__body {
+  padding: var(--space-4);
+  background: var(--surface-danger);
+}
+
+.cleanup__note {
+  margin: 0 0 var(--space-4);
+  max-width: var(--measure);
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+}
+
+.cleanup__controls {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.cleanup__controls .form-field {
+  min-width: 13rem;
+}
+
+.cleanup__armed {
+  flex: 1;
+  min-width: 16rem;
+}
+
+@media (max-width: 640px) {
+  .storage {
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .storage__readout {
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .cleanup__controls .form-field,
+  .cleanup__armed {
+    min-width: 100%;
+  }
+}

@@ -854,6 +854,41 @@ that will 400 on save. Findable beats complete -- the title still leads
 when there is one, because `Breaking Bad — add an episode count` points at
 a row and "row 3 is incomplete" makes the operator open all twelve.
 
+### The deletion desk (v0.5.12)
+
+Three additions to `/history/`, all of them destructive or about what
+destruction would touch. The rule governing every one: **a dry run runs
+first, and the confirm names the number it returned.** A dialog that
+guessed would be a dialog the operator confirms against a number that
+was never true.
+
+- **The storage strip** sits above the band selector, because it
+  describes the whole record rather than one pane. It reports ROWS, never
+  policy: retention says what should age out, and a database whose
+  retention was widened holds whatever it holds. Sentinels — occurrences
+  that were committed and aired nothing — are counted apart from airings
+  and carry their explanation inline, because the strip is where an
+  operator first meets the word. A failed read degrades to one muted line
+  rather than blanking the page; the panes below are independent.
+- **A blocked row says so before the click.** A removal refuses while any
+  block still lists the show, so the row names those blocks and links to
+  each one instead of offering a button that would 409. That is the first
+  half of a two-step flow, not a replacement for the server's guard: the
+  page reads `GET /blocks` itself, and a failed read leaves the button
+  offered so the refusal can still land. Hiding the action on a failed
+  read would strand the operator.
+- **Range cleanup lives inside the pane whose rows it deletes**,
+  collapsed behind a disclosure. A destructive control does not belong
+  permanently open above a log. Opened, it sits on `--surface-danger` so
+  the ground itself carries the warning, inherits the pane's own channel
+  and block filters so the preview counts the list being looked at, and
+  prefills its window from the strip's stored bounds so it opens on
+  something pickable rather than two empty fields.
+- **The copy names the surprise.** An emptied occurrence keeps a marker
+  saying it aired nothing, which is unexpected until it is explained, so
+  both the panel and the confirm explain it rather than leaving the
+  operator to discover a row they cannot delete.
+
 ## Typography
 
 One family everywhere: `var(--font-mono)`, a `ui-monospace` stack with
@@ -1414,6 +1449,25 @@ border. And a disabled preset (`.btn:disabled`, `opacity: 0.5`) falls
 under WCAG 1.4.3's inactive-component exception; the whole preset row goes
 disabled together while a write is on the wire, so nothing in it is a
 choice the operator can still make.
+
+**v0.5.12 history desk** introduced the storage strip, the blocked-row
+notice, and the range-cleanup panel. Checked computationally (same
+throwaway-script convention):
+
+| Pairing                                                            | Light   | Dark    |
+| ------------------------------------------------------------------ | ------- | ------- |
+| `--color-ink-muted` on `--color-bg-inset` (strip labels)           | 6.88:1  | 8.13:1  |
+| `--color-ink` on `--color-bg-inset` (strip values)                 | 13.45:1 | 16.60:1 |
+| `--color-ink-muted` at 85% over `--color-bg-inset` (the note line) | 4.79:1  | 6.09:1  |
+| `--color-danger` on `--color-bg-raised` (cleanup disclosure)       | 7.32:1  | 6.51:1  |
+| `--color-ink` on `--surface-danger` (cleanup body copy)            | 14.54:1 | 13.44:1 |
+| `--color-ink-muted` on `--surface-danger` (cleanup field labels)   | 7.43:1  | 6.58:1  |
+
+Every pairing clears the 4.5:1 AA text floor; the tightest is the
+strip's note line in light at 4.79:1, and it is the one pairing here
+carrying an opacity, so the ratio is computed against the composited
+colour rather than the token. The blocked row reuses the already-verified
+muted-on-raised and accent-on-raised pairings.
 
 ## TypeScript runtime and Alpine.js conventions
 

@@ -247,6 +247,96 @@ interface AiringRow extends HistoryEntry {
   duration: string;
 }
 
+// ---- deletion ---------------------------------------------------------------
+
+type StorageReport = ApiResponse<"getStorage", 200>;
+type RemovalReport = ApiResponse<"removeSeriesState", 200>;
+type BlockRecord = ApiResponse<"listBlocks", 200>[number];
+
+/** What the confirm is armed to do once the operator presses through. */
+type PendingRemoval =
+  | { kind: "none" }
+  | { kind: "show"; showTitle: string }
+  | { kind: "range"; from: string; to: string };
+
+/** The two fields blocksListingShow reads. Narrower than BlockRecord on
+ * purpose: a predicate that demanded the whole wire shape would make
+ * every caller and every fixture carry fields it never looks at. */
+interface BlockLike {
+  name: string;
+  spec: { series?: { show_title: string }[] };
+}
+
+/**
+ * Names every block whose spec lists showTitle, so the desk can show a
+ * removal as blocked BEFORE the operator clicks rather than after the
+ * server refuses it. The server still refuses -- this is the first step
+ * of a two-step flow, not a replacement for the guard.
+ *
+ * Only sequence blocks list shows by title; a selection block matches on
+ * criteria and names none, so it cannot block a removal here.
+ */
+export function blocksListingShow(blocks: BlockLike[], showTitle: string): string[] {
+  const names: string[] = [];
+  for (const block of blocks) {
+    const listed = block.spec.series?.some((row) => row.show_title === showTitle);
+    if (listed) names.push(block.name);
+  }
+  return names;
+}
+
+/**
+ * Reads a datetime-local value as an instant. The control has no zone, so
+ * the browser's own is the only honest reading: the operator picked the
+ * time they see on the page, and the page renders in local time.
+ * Undefined for a blank or unparseable field, which the caller treats as
+ * an open end rather than as now.
+ */
+export function instantFromLocalInput(value: string): string | undefined {
+  if (value.trim() === "") return undefined;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString();
+}
+
+/** A datetime-local value for an ISO instant, for prefilling the form. */
+export function localInputFromInstant(iso: string | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/**
+ * The sentence the confirm shows. It names the real counts from the dry
+ * run and states plainly that nothing brings the data back -- the same
+ * honesty the empty states carry, on the one action that cannot be
+ * walked back.
+ */
+export function removalConfirmBody(report: RemovalReport, subject: string): string {
+  const parts = [`${report.airings.toLocaleString()} ${report.airings === 1 ? "airing" : "airings"}`];
+  if (report.series_states) {
+    parts.push(`${report.series_states} tracked ${report.series_states === 1 ? "cursor" : "cursors"}`);
+  }
+  if (report.snapshots) {
+    parts.push(`${report.snapshots} ${report.snapshots === 1 ? "snapshot" : "snapshots"}`);
+  }
+
+  const emptied =
+    report.emptied_slots > 0
+      ? ` ${report.emptied_slots} ${report.emptied_slots === 1 ? "occurrence" : "occurrences"} will be left marked as having aired nothing, so a later apply does not re-plan them.`
+      : "";
+
+  return `Deleting ${subject} removes ${parts.join(", ")}.${emptied} This cannot be undone and nothing backfills it.`;
+}
+
+// Alpine's magics, reached through ThisType rather than declared as
+// fields -- the object literal never supplies them. Same shape guide.ts
+// uses for its own confirm dialog.
+interface WithMagics {
+  $refs: { confirmDialog: HTMLDialogElement };
+}
+
 interface HistoryPageState {
   view: Pane;
   days: number;
@@ -274,10 +364,31 @@ interface HistoryPageState {
   runsError: ProblemView | null;
   runs: ApplyRun[];
 
+  storage: StorageReport | null;
+  storageError: ProblemView | null;
+  blocks: BlockRecord[];
+
+  removal: {
+    pending: PendingRemoval;
+    title: string;
+    body: string;
+    busy: boolean;
+  };
+  cleanup: {
+    open: boolean;
+    from: string;
+    to: string;
+    busy: boolean;
+    problem: ProblemView | null;
+  };
+
   readonly visibleStates: SeriesRecord[];
   readonly dayGroups: (DayGroup<AiringRow> & { heading: string })[];
   readonly visibleRuns: ApplyRun[];
   readonly asRunCaption: string;
+  readonly storageSpan: string;
+  readonly cleanupWindowValid: boolean;
+  readonly cleanupHint: string;
 
   init(): void;
   select(pane: Pane): void;
@@ -292,6 +403,14 @@ interface HistoryPageState {
   loadHistory(background?: boolean): Promise<boolean>;
   loadRuns(background?: boolean): Promise<boolean>;
   loadPlateChannels(): void;
+  loadStorage(): Promise<void>;
+  loadBlocks(): Promise<void>;
+
+  blockingBlocks(showTitle: string): string[];
+  requestRemoval(showTitle: string): Promise<void>;
+  requestRangeCleanup(): Promise<void>;
+  confirmRemoval(): Promise<void>;
+  cancelRemoval(): void;
 
   cursorLabel(season: number, episode: number): string;
   runsLabel(n: number | undefined): string;
@@ -315,7 +434,7 @@ interface HistoryPageState {
 document.addEventListener("alpine:init", () => {
   Alpine.data(
     "history",
-    (): HistoryPageState => ({
+    (): HistoryPageState & ThisType<HistoryPageState & WithMagics> => ({
       view: paneFromSearch(window.location.search),
       days: 7,
       channelId: "",
@@ -342,6 +461,13 @@ document.addEventListener("alpine:init", () => {
       runsError: null,
       runs: [],
 
+      storage: null,
+      storageError: null,
+      blocks: [],
+
+      removal: { pending: { kind: "none" }, title: "", body: "", busy: false },
+      cleanup: { open: false, from: "", to: "", busy: false, problem: null },
+
       // Alpine calls this once per component instance and the page has
       // exactly one x-data="history", so there is no module-level one-shot
       // guard: the subscriptions below are wired from init and live with
@@ -351,6 +477,8 @@ document.addEventListener("alpine:init", () => {
         void this.loadStates();
         void this.loadHistory();
         void this.loadRuns();
+        void this.loadStorage();
+        void this.loadBlocks();
         this.loadPlateChannels();
         // Arming a new token re-fires whichever loads failed.
         onReauth(() => {
@@ -591,6 +719,185 @@ document.addEventListener("alpine:init", () => {
           },
           () => undefined,
         );
+      },
+
+      // The strip reports rows, so a failed read degrades to a one-line
+      // notice rather than blanking the page: the panes below it are
+      // independent and still work.
+      async loadStorage() {
+        this.storageError = null;
+        try {
+          this.storage = await apiGet<StorageReport>(apiPath("/storage"));
+          if (this.cleanup.from === "" && this.cleanup.to === "") {
+            // Prefilled from what is actually stored, so the form opens on
+            // a pickable window instead of two empty fields.
+            this.cleanup.from = localInputFromInstant(this.storage.oldest_airing ?? undefined);
+            this.cleanup.to = localInputFromInstant(this.storage.newest_airing ?? undefined);
+          }
+        } catch (err) {
+          this.storageError = toProblemView(err);
+          this.storage = null;
+        }
+      },
+
+      // Best-effort, like the channel plates: a failed read leaves
+      // blockingBlocks empty, so the desk offers the removal and the
+      // server's own refusal becomes the guard. Never the reverse --
+      // hiding the action on a failed read would strand the operator.
+      async loadBlocks() {
+        try {
+          this.blocks = await apiGet<BlockRecord[]>(apiPath("/blocks"));
+        } catch {
+          this.blocks = [];
+        }
+      },
+
+      blockingBlocks(showTitle) {
+        return blocksListingShow(this.blocks, showTitle);
+      },
+
+      get storageSpan() {
+        const oldest = this.storage?.oldest_airing;
+        const newest = this.storage?.newest_airing;
+        if (!oldest || !newest) return "Nothing stored yet";
+        return `${formatLocal(oldest)} — ${formatLocal(newest)}`;
+      },
+
+      get cleanupWindowValid() {
+        const from = instantFromLocalInput(this.cleanup.from);
+        const to = instantFromLocalInput(this.cleanup.to);
+        if (from === undefined && to === undefined) return false;
+        if (from !== undefined && to !== undefined) return from <= to;
+        return true;
+      },
+
+      get cleanupHint() {
+        const from = instantFromLocalInput(this.cleanup.from);
+        const to = instantFromLocalInput(this.cleanup.to);
+        if (from === undefined && to === undefined) return "Set at least one end of the window.";
+        if (from !== undefined && to !== undefined && from > to) return "From must not be after To.";
+
+        const scope: string[] = [];
+        if (this.channelId !== "") scope.push("this channel");
+        if (this.blockQuery.trim() !== "") scope.push(`blocks matching "${this.blockQuery.trim()}"`);
+        const narrowed = scope.length > 0 ? ` Narrowed to ${scope.join(" and ")}.` : "";
+
+        if (from === undefined) return `Everything before To.${narrowed}`;
+        if (to === undefined) return `Everything from From onward.${narrowed}`;
+        return `Airings inside the window.${narrowed}`;
+      },
+
+      // Both flows run their dry run FIRST and arm the confirm with its
+      // real counts. A dialog that guessed would be a dialog the operator
+      // confirms against a number that was never true.
+      async requestRemoval(showTitle) {
+        if (this.removal.busy) return;
+        this.removal.busy = true;
+        try {
+          const report = await apiSend<RemovalReport>(
+            "DELETE",
+            apiPath("/state/series/{show_title}", { show_title: showTitle }, { dry_run: "true" }),
+          );
+          this.removal.pending = { kind: "show", showTitle };
+          this.removal.title = `Remove ${showTitle}?`;
+          this.removal.body = removalConfirmBody(report, showTitle);
+          this.$refs.confirmDialog.showModal();
+        } catch (err) {
+          this.rowErrors[showTitle] = describeError(err);
+        } finally {
+          this.removal.busy = false;
+        }
+      },
+
+      async requestRangeCleanup() {
+        if (this.cleanup.busy) return;
+        const from = instantFromLocalInput(this.cleanup.from);
+        const to = instantFromLocalInput(this.cleanup.to);
+        if (from === undefined && to === undefined) return;
+
+        this.cleanup.busy = true;
+        this.cleanup.problem = null;
+        try {
+          const report = await apiSend<RemovalReport>(
+            "DELETE",
+            apiPath("/history", undefined, {
+              from,
+              to,
+              channel_id: this.channelId === "" ? undefined : this.channelId,
+              block_name: this.blockQuery.trim() === "" ? undefined : this.blockQuery.trim(),
+              dry_run: "true",
+            }),
+          );
+          if (report.airings === 0) {
+            this.cleanup.problem = {
+              title: "Nothing to delete",
+              detail: "No airings fall inside that window.",
+            } as ProblemView;
+            return;
+          }
+          this.removal.pending = { kind: "range", from: this.cleanup.from, to: this.cleanup.to };
+          this.removal.title = "Delete this range?";
+          this.removal.body = removalConfirmBody(report, "this range");
+          this.$refs.confirmDialog.showModal();
+        } catch (err) {
+          this.cleanup.problem = toProblemView(err);
+        } finally {
+          this.cleanup.busy = false;
+        }
+      },
+
+      async confirmRemoval() {
+        const pending = this.removal.pending;
+        if (pending.kind === "none" || this.removal.busy) return;
+
+        this.removal.busy = true;
+        try {
+          let report: RemovalReport;
+          let line: string;
+
+          if (pending.kind === "show") {
+            report = await apiSend<RemovalReport>(
+              "DELETE",
+              apiPath("/state/series/{show_title}", { show_title: pending.showTitle }),
+            );
+            line = `${pending.showTitle} removed — ${report.airings} ${report.airings === 1 ? "airing" : "airings"}`;
+          } else {
+            report = await apiSend<RemovalReport>(
+              "DELETE",
+              apiPath("/history", undefined, {
+                from: instantFromLocalInput(pending.from),
+                to: instantFromLocalInput(pending.to),
+                channel_id: this.channelId === "" ? undefined : this.channelId,
+                block_name: this.blockQuery.trim() === "" ? undefined : this.blockQuery.trim(),
+              }),
+            );
+            line = `Range deleted — ${report.airings} ${report.airings === 1 ? "airing" : "airings"}`;
+          }
+
+          this.$refs.confirmDialog.close();
+          this.removal.pending = { kind: "none" };
+          printTape(line);
+
+          // Every surface the deletion touched is now stale.
+          await Promise.all([this.loadStates(true), this.loadHistory(true), this.loadStorage()]);
+        } catch (err) {
+          const problem = toProblemView(err);
+          if (pending.kind === "show") {
+            this.rowErrors[pending.showTitle] = describeError(err);
+          } else {
+            this.cleanup.problem = problem;
+          }
+          this.$refs.confirmDialog.close();
+          this.removal.pending = { kind: "none" };
+        } finally {
+          this.removal.busy = false;
+        }
+      },
+
+      cancelRemoval() {
+        if (this.removal.busy) return;
+        this.$refs.confirmDialog.close();
+        this.removal.pending = { kind: "none" };
       },
 
       cursorLabel,

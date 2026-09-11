@@ -106,3 +106,70 @@ test("a run that never finished reports what it attempted, not zero counts", () 
 test("runSummary tolerates a run whose optional counts are absent", () => {
   assert.equal(runSummary({ status: "ok" }), "0 SLOTS ACROSS 0 CHANNELS · 0 DAYS · ALL CHANNELS");
 });
+
+// ---- the deletion desk ----------------------------------------------------
+
+const { blocksListingShow, instantFromLocalInput, localInputFromInstant, removalConfirmBody } =
+  await import("../assets/ts/pages/history.ts");
+
+test("blocksListingShow names only the blocks that list the show", () => {
+  const blocks = [
+    { name: "Anime Night", spec: { series: [{ show_title: "Bloody Mary" }] } },
+    { name: "Late Movie", spec: { series: [{ show_title: "Other" }] } },
+    { name: "Horror Hour", spec: {} }, // a selection block lists nothing by title
+  ];
+  assert.deepEqual(blocksListingShow(blocks, "Bloody Mary"), ["Anime Night"]);
+  assert.deepEqual(blocksListingShow(blocks, "Nobody"), []);
+});
+
+test("blocksListingShow tolerates a failed block read", () => {
+  // A failed /blocks read leaves the list empty, which offers the removal
+  // and lets the server's own refusal be the guard -- never the reverse.
+  assert.deepEqual(blocksListingShow([], "Bloody Mary"), []);
+});
+
+test("instantFromLocalInput reads a picker value, or nothing", () => {
+  const iso = instantFromLocalInput("2026-05-01T20:30");
+  assert.ok(iso, "a filled field parses");
+  assert.equal(new Date(iso).getMinutes(), 30);
+
+  assert.equal(instantFromLocalInput(""), undefined, "a blank field is an open end");
+  assert.equal(instantFromLocalInput("   "), undefined);
+  assert.equal(instantFromLocalInput("not a date"), undefined);
+});
+
+test("localInputFromInstant round-trips through the picker format", () => {
+  const iso = instantFromLocalInput("2026-05-01T20:30");
+  assert.equal(localInputFromInstant(iso), "2026-05-01T20:30");
+  assert.equal(localInputFromInstant(undefined), "");
+  assert.equal(localInputFromInstant("nonsense"), "");
+});
+
+test("removalConfirmBody names the real counts and says it cannot be undone", () => {
+  const body = removalConfirmBody(
+    { airings: 12, series_states: 1, snapshots: 3, emptied_slots: 0, dry_run: true },
+    "Bloody Mary",
+  );
+  assert.match(body, /12 airings/);
+  assert.match(body, /1 tracked cursor/);
+  assert.match(body, /3 snapshots/);
+  assert.match(body, /cannot be undone/);
+});
+
+test("removalConfirmBody explains an emptied occurrence rather than hiding it", () => {
+  const body = removalConfirmBody(
+    { airings: 4, series_states: 0, snapshots: 0, emptied_slots: 2, dry_run: true },
+    "this range",
+  );
+  assert.match(body, /2 occurrences will be left marked as having aired nothing/);
+  assert.doesNotMatch(body, /tracked cursor/, "a range touches no cursors, so it claims none");
+});
+
+test("removalConfirmBody singularises one of everything", () => {
+  const body = removalConfirmBody(
+    { airings: 1, series_states: 1, snapshots: 1, emptied_slots: 1, dry_run: true },
+    "X",
+  );
+  assert.match(body, /1 airing\b/);
+  assert.match(body, /1 occurrence will be/);
+});

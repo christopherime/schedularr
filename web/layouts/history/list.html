@@ -22,6 +22,46 @@
 
   {{ partial "ui/tape.html" . }}
 
+  {{- /* What is ACTUALLY stored, above the band because it describes the
+         whole record rather than one pane. Rows first, retention second
+         and visibly apart: retention says what should age out, and a
+         database whose retention was widened holds whatever it holds. */}}
+  <section class="storage" aria-labelledby="storage-title">
+    <h2 id="storage-title" class="storage__legend">Stored</h2>
+
+    <template x-if="storageError">
+      <p class="storage__degraded" role="status" x-text="'Counts unavailable — ' + storageError.title"></p>
+    </template>
+
+    <template x-if="!storageError">
+      <dl class="storage__readout">
+        <div class="storage__item">
+          <dt>Airings</dt>
+          <dd x-text="storage ? storage.airings.toLocaleString() : '—'"></dd>
+        </div>
+        <div class="storage__item">
+          <dt>Tracked</dt>
+          <dd x-text="storage ? storage.series_states.toLocaleString() : '—'"></dd>
+        </div>
+        <div class="storage__item">
+          <dt>Runs</dt>
+          <dd x-text="storage ? storage.apply_runs.toLocaleString() : '—'"></dd>
+        </div>
+        <div class="storage__item" x-show="storage && storage.sentinels > 0">
+          <dt>
+            Empty slots
+            <span class="storage__note">occurrences that aired nothing</span>
+          </dt>
+          <dd x-text="storage ? storage.sentinels.toLocaleString() : '—'"></dd>
+        </div>
+        <div class="storage__item storage__item--span">
+          <dt>Airings span</dt>
+          <dd x-text="storageSpan"></dd>
+        </div>
+      </dl>
+    </template>
+  </section>
+
   <div class="band" role="tablist" aria-label="History view">
     <button
       type="button" role="tab" id="band-tracked" class="band__tab"
@@ -140,6 +180,7 @@
               <th scope="col">Last Aired</th>
               <th scope="col">Completed</th>
               <th scope="col">Disabled</th>
+              <th scope="col">Remove</th>
             </tr>
           </thead>
           <tbody>
@@ -223,6 +264,33 @@
                     "on" "Disabled"
                     "off" "Active") }}
                 </td>
+                {{- /* The removal refuses while any block still lists the
+                       show, because the next apply would re-add it and
+                       reset the cursor. The page already knows which
+                       blocks those are, so it says so HERE rather than
+                       letting the operator meet the 409 after clicking. */}}
+                <td>
+                  <template x-if="blockingBlocks(state.show_title).length > 0">
+                    <p class="row-blocked">
+                      <span class="row-blocked__legend">Scheduled by</span>
+                      <template x-for="(name, i) in blockingBlocks(state.show_title)" :key="name">
+                        <span>
+                          <a class="row-blocked__block" href="/blocks/" x-text="name"></a><span
+                            x-show="i < blockingBlocks(state.show_title).length - 1">, </span>
+                        </span>
+                      </template>
+                      <span class="row-blocked__why">Remove it there first.</span>
+                    </p>
+                  </template>
+                  <template x-if="blockingBlocks(state.show_title).length === 0">
+                    <button
+                      type="button"
+                      class="btn btn--ghost btn--sm btn--danger-ghost"
+                      :disabled="pending[state.show_title] || rowNotFound[state.show_title] || removal.busy"
+                      @click="requestRemoval(state.show_title)"
+                    >Remove</button>
+                  </template>
+                </td>
               </tr>
             </template>
           </tbody>
@@ -240,6 +308,50 @@
       <h2>As-run airings</h2>
       <p x-text="asRunCaption"></p>
     </div>
+
+    {{- /* Cleanup sits in the pane whose rows it deletes, and inherits
+           that pane's filters, so the count it previews is the list the
+           operator is looking at. Collapsed by default: a destructive
+           control does not belong permanently open above a log. */}}
+    <details class="cleanup" x-show="history.length > 0 || cleanup.open" @toggle="cleanup.open = $event.target.open">
+      <summary class="cleanup__summary">Delete a range</summary>
+
+      <div class="cleanup__body">
+        <p class="cleanup__note">
+          Deletes airings only — cursors and snapshots stay. An occurrence
+          left with nothing keeps a marker saying it aired nothing, so a
+          later apply will not re-plan a slot that already went out.
+          <strong>This cannot be undone.</strong>
+        </p>
+
+        <div class="cleanup__controls">
+          <div class="form-field">
+            <label for="cleanup-from">From</label>
+            <input id="cleanup-from" type="datetime-local" x-model="cleanup.from">
+          </div>
+          <div class="form-field">
+            <label for="cleanup-to">To</label>
+            <input id="cleanup-to" type="datetime-local" x-model="cleanup.to">
+          </div>
+          <div class="form-field cleanup__armed">
+            <span class="form-field__label-spacer" aria-hidden="true"></span>
+            <button
+              type="button"
+              class="btn btn--ghost"
+              :disabled="cleanup.busy || !cleanupWindowValid"
+              :aria-busy="cleanup.busy"
+              @click="requestRangeCleanup()"
+              x-text="cleanup.busy ? 'Counting…' : 'Preview deletion'"
+            ></button>
+            <p class="form-field__hint" x-text="cleanupHint"></p>
+          </div>
+        </div>
+
+        <template x-if="cleanup.problem">
+          {{ partial "ui/problem.html" (dict "label" "Cleanup refused" "bind" "cleanup.problem") }}
+        </template>
+      </div>
+    </details>
 
     <template x-if="historyLoading">
       {{ partial "ui/skeleton.html" (dict "variant" "table-row" "count" 4) }}
@@ -370,6 +482,17 @@
       </div>
     </template>
   </section>
+
+  {{- /* One confirm for both destructive flows: each has already run its
+         dry run, so the dialog names a real count rather than a guess. */}}
+  {{ partial "ui/confirm.html" (dict
+    "title" "removal.title"
+    "body" "removal.body"
+    "confirmText" "removal.busy ? 'Deleting…' : 'Delete permanently'"
+    "confirm" "confirmRemoval()"
+    "cancel" "cancelRemoval()"
+    "busy" "removal.busy"
+    "confirmClass" "btn--danger") }}
 </div>
 {{ end }}
 

@@ -1235,6 +1235,78 @@
     "cancel" "cancelConfirm()"
     "busy" "confirmBusy") }}
 
+  <section class="kit-section" aria-labelledby="kit-storage-title">
+    <div class="section-head">
+      <h2 id="kit-storage-title">Storage strip</h2>
+      <p>What is actually stored. Rows, never policy — and sentinels counted apart, because they cannot be deleted by range.</p>
+    </div>
+    <section class="storage" aria-label="Storage fixture">
+      <h3 class="storage__legend">Stored</h3>
+      <dl class="storage__readout">
+        <div class="storage__item"><dt>Airings</dt><dd>1,284</dd></div>
+        <div class="storage__item"><dt>Tracked</dt><dd>17</dd></div>
+        <div class="storage__item"><dt>Runs</dt><dd>96</dd></div>
+        <div class="storage__item">
+          <dt>Empty slots<span class="storage__note">occurrences that aired nothing</span></dt>
+          <dd>3</dd>
+        </div>
+        <div class="storage__item storage__item--span">
+          <dt>Airings span</dt>
+          <dd>02/09/2026, 21:00 — 09/09/2026, 23:30</dd>
+        </div>
+      </dl>
+    </section>
+    <section class="storage" aria-label="Storage unavailable fixture">
+      <h3 class="storage__legend">Stored</h3>
+      <p class="storage__degraded">Counts unavailable — store unreachable</p>
+    </section>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-blocked-title">
+    <div class="section-head">
+      <h2 id="kit-blocked-title">Blocked removal</h2>
+      <p>The first step of a two-step flow: a removal refuses while a block still lists the show, so the row says which ones rather than offering a button that would fail.</p>
+    </div>
+    <p class="row-blocked">
+      <span class="row-blocked__legend">Scheduled by</span>
+      <a class="row-blocked__block" href="/blocks/">Anime Night</a>, <a class="row-blocked__block" href="/blocks/">Late Movie</a>
+      <span class="row-blocked__why">Remove it there first.</span>
+    </p>
+  </section>
+
+  <section class="kit-section" aria-labelledby="kit-cleanup-title">
+    <div class="section-head">
+      <h2 id="kit-cleanup-title">Range cleanup</h2>
+      <p>Collapsed by default; a destructive control does not belong permanently open above a log.</p>
+    </div>
+    <details class="cleanup" open>
+      <summary class="cleanup__summary">Delete a range</summary>
+      <div class="cleanup__body">
+        <p class="cleanup__note">
+          Deletes airings only — cursors and snapshots stay. An occurrence
+          left with nothing keeps a marker saying it aired nothing, so a
+          later apply will not re-plan a slot that already went out.
+          <strong>This cannot be undone.</strong>
+        </p>
+        <div class="cleanup__controls">
+          <div class="form-field">
+            <label for="kit-cleanup-from">From</label>
+            <input id="kit-cleanup-from" type="datetime-local" value="2026-09-02T21:00">
+          </div>
+          <div class="form-field">
+            <label for="kit-cleanup-to">To</label>
+            <input id="kit-cleanup-to" type="datetime-local" value="2026-09-09T23:30">
+          </div>
+          <div class="form-field cleanup__armed">
+            <span class="form-field__label-spacer" aria-hidden="true"></span>
+            <button type="button" class="btn btn--ghost">Preview deletion</button>
+            <p class="form-field__hint">Airings inside the window. Narrowed to this channel.</p>
+          </div>
+        </div>
+      </div>
+    </details>
+  </section>
+
   <section class="kit-section" aria-labelledby="kit-band-title">
     <div class="section-head">
       <h2 id="kit-band-title">Band selector</h2>
