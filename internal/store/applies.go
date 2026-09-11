@@ -120,8 +120,8 @@ func (s *Store) ListApplyRuns(ctx context.Context, since time.Time, limit int) (
 	if err := s.db.SelectContext(ctx, &runs, `
 		SELECT id, started_at, finished_at, source, scope, days, status, channel_count, slot_count, error
 		FROM apply_runs
-		WHERE started_at >= ?
-		ORDER BY started_at DESC
+		WHERE datetime(started_at) >= datetime(?)
+		ORDER BY datetime(started_at) DESC
 		LIMIT ?`, since, limit); err != nil {
 		return nil, fmt.Errorf("failed to list apply runs: %w", err)
 	}
@@ -133,7 +133,7 @@ func (s *Store) ListApplyRuns(ctx context.Context, since time.Time, limit int) (
 	if err := s.db.SelectContext(ctx, &warnings, `
 		SELECT run_id, block_name, occurrence_start, blocking_block_name, channel_id, duration_minutes
 		FROM apply_run_warnings
-		WHERE run_id IN (SELECT id FROM apply_runs WHERE started_at >= ? ORDER BY started_at DESC LIMIT ?)
+		WHERE run_id IN (SELECT id FROM apply_runs WHERE datetime(started_at) >= datetime(?) ORDER BY datetime(started_at) DESC LIMIT ?)
 		ORDER BY occurrence_start`, since, limit); err != nil {
 		return nil, fmt.Errorf("failed to list apply run warnings: %w", err)
 	}
@@ -164,11 +164,11 @@ func (s *Store) CleanupApplyRuns(ctx context.Context, window time.Duration) (int
 
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM apply_run_warnings
-		WHERE run_id IN (SELECT id FROM apply_runs WHERE started_at < ?)`, cutoff); err != nil {
+		WHERE run_id IN (SELECT id FROM apply_runs WHERE datetime(started_at) < datetime(?))`, cutoff); err != nil {
 		return 0, fmt.Errorf("failed to cleanup apply run warnings: %w", err)
 	}
 
-	result, err := tx.ExecContext(ctx, `DELETE FROM apply_runs WHERE started_at < ?`, cutoff)
+	result, err := tx.ExecContext(ctx, `DELETE FROM apply_runs WHERE datetime(started_at) < datetime(?)`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cleanup apply runs: %w", err)
 	}

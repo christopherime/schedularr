@@ -209,11 +209,26 @@ func (s *Store) RecordScheduleHistory(ctx context.Context, entries []scheduler.S
 // caller-supplied days window to since = now - days.
 func (s *Store) ListScheduleHistory(ctx context.Context, since time.Time) ([]scheduler.ScheduleHistoryEntry, error) {
 	var entries []scheduler.ScheduleHistoryEntry
+	// RANGES are normalised through datetime() too, not only the
+	// exact-match lookups above. v0.5.11 fixed the equalities and left the
+	// ranges, reasoning that a stored instant's date prefix dominates a
+	// bytewise comparison for same-zone data -- true, and it stops being
+	// true the moment one database holds rows written under two different
+	// log.timezone settings. An instant stored at +14:00 renders a DATE a
+	// day ahead of the same instant stored at -11:00, so a plain ">="
+	// orders them backwards. Range cleanup hands the operator an arbitrary
+	// cutoff over exactly that data.
+	//
+	// The cost is the index: datetime(scheduled_at) cannot use one, so
+	// these become scans. Accepted because every table reached this way is
+	// bounded by retention -- a week of history, ninety days of runs --
+	// and a wrong answer that reads as missing data is worse than a scan
+	// over a few thousand rows.
 	err := s.db.SelectContext(ctx, &entries, `
 		SELECT program_id, channel_id, block_name, scheduled_at, occurrence_start, sequence, duration_ms, title, show_title, type, run_id
 		FROM schedule_history
-		WHERE scheduled_at >= ?
-		ORDER BY scheduled_at DESC`, since)
+		WHERE datetime(scheduled_at) >= datetime(?)
+		ORDER BY datetime(scheduled_at) DESC`, since)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list schedule history: %w", err)
 	}
@@ -363,7 +378,7 @@ func (s *Store) SaveOccurrenceSnapshot(ctx context.Context, blockID string, occu
 // migration 000005 for why. Returns the number of rows deleted.
 func (s *Store) CleanupOccurrenceSnapshots(ctx context.Context, window time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-window)
-	result, err := s.db.ExecContext(ctx, `DELETE FROM series_occurrence_snapshots WHERE recorded_at < ?`, cutoff)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM series_occurrence_snapshots WHERE datetime(recorded_at) < datetime(?)`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cleanup occurrence snapshots: %w", err)
 	}
@@ -380,7 +395,7 @@ func (s *Store) CleanupOccurrenceSnapshots(ctx context.Context, window time.Dura
 // (internal/scheduler/interfaces.go) for when and why callers do this.
 func (s *Store) DeleteFutureOccurrenceSnapshots(ctx context.Context, blockID string, now time.Time) error {
 	if _, err := s.db.ExecContext(ctx, `
-		DELETE FROM series_occurrence_snapshots WHERE block_id = ? AND occurrence_start > ?`,
+		DELETE FROM series_occurrence_snapshots WHERE block_id = ? AND datetime(occurrence_start) > datetime(?)`,
 		blockID, now); err != nil {
 		return fmt.Errorf("failed to delete future occurrence snapshots for block %q: %w", blockID, err)
 	}
@@ -526,7 +541,7 @@ func (s *Store) WasRecentlyScheduled(ctx context.Context, programID, channelID s
 	query := `
 		SELECT 1
 		FROM schedule_history
-		WHERE program_id = ? AND channel_id = ? AND scheduled_at > ?
+		WHERE program_id = ? AND channel_id = ? AND datetime(scheduled_at) > datetime(?)
 		LIMIT 1
 	`
 	row := s.db.QueryRowContext(ctx, query, programID, channelID, cutoff)
@@ -545,7 +560,7 @@ func (s *Store) WasRecentlyScheduled(ctx context.Context, programID, channelID s
 // CleanupScheduleHistory removes schedule history entries older than the window.
 func (s *Store) CleanupScheduleHistory(ctx context.Context, window time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-window)
-	result, err := s.db.ExecContext(ctx, `DELETE FROM schedule_history WHERE scheduled_at < ?`, cutoff)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM schedule_history WHERE datetime(scheduled_at) < datetime(?)`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cleanup schedule history: %w", err)
 	}

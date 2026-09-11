@@ -68,3 +68,32 @@ func TestOccurrenceLookup_IsIndependentOfWriterOffset(t *testing.T) {
 	assert.True(t, ok, "the occurrence was not found when asked for in another zone")
 	assert.Len(t, programs, 1)
 }
+
+// The sibling above pins that two representations of ONE instant land on
+// the same side of a cutoff. This pins the case that actually broke: two
+// DIFFERENT instants, written in zones far enough apart that the stored
+// TEXT sorts backwards against the real order. A same-zone fixture can
+// never reach it, which is why the ranges looked correct until range
+// cleanup was about to hand an operator an arbitrary cutoff.
+func TestScheduleHistory_RangeSplitsByInstantNotStoredText(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	plus14 := time.FixedZone("UTC+14", 14*3600)
+	minus11 := time.FixedZone("UTC-11", -11*3600)
+
+	base := time.Date(2026, 3, 14, 23, 30, 0, 0, time.UTC)
+	early := base                   // stored as 2026-03-15T13:30+14:00
+	late := base.Add(1 * time.Hour) // stored as 2026-03-14T13:30-11:00
+
+	require.NoError(t, st.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{
+		historyEntry("early", "Early", "Early", early.In(plus14)),
+		historyEntry("late", "Late", "Late", late.In(minus11)),
+	}))
+
+	entries, err := st.ListScheduleHistory(ctx, base.Add(30*time.Minute))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "the cutoff splits by instant, not by stored text")
+	assert.Equal(t, "late", entries[0].ProgramID)
+}
