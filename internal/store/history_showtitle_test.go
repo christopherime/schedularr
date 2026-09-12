@@ -12,12 +12,21 @@ import (
 )
 
 func historyEntry(programID, title, showTitle string, at time.Time) scheduler.ScheduleHistoryEntry {
+	// Distinct programs in one occurrence carry distinct sequences in
+	// production (makeHistoryEntries indexes them); derive one from the
+	// program ID so fixtures sharing a block and occurrence never collide
+	// on the (block_name, occurrence_start, sequence) identity.
+	seq := 0
+	for _, b := range []byte(programID) {
+		seq = seq*31 + int(b)
+	}
 	return scheduler.ScheduleHistoryEntry{
 		ProgramID:       programID,
 		ChannelID:       "ch1",
 		BlockName:       "Anime Night",
 		ScheduledAt:     at,
 		OccurrenceStart: at,
+		Sequence:        seq % 1000,
 		Title:           title,
 		ShowTitle:       showTitle,
 		Type:            "episode",

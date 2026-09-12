@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An apply against a small library no longer fails on repeats.**
+  `schedule_history`'s original primary key `(program_id, channel_id,
+  scheduled_at)` predated the occurrence model: `scheduled_at` is
+  planning wall-clock time, identical for every occurrence planned in one
+  apply, so the same program legitimately planned twice on one channel —
+  once per occurrence of a multi-day window, or twice within one long
+  occurrence — aborted the whole apply with a UNIQUE violation. Migration
+  13 rebuilds the table around the identity migration 3 actually gave a
+  row, `(block_name, occurrence_start, sequence)`, as a partial unique
+  index; rows with no occurrence identity (pre-migration-3 history) are
+  exempt, exactly as they are already invisible to occurrence replay.
+
 ## [0.5.12] - 2026-09-11
 
 The deletion half of the History desk: the foundations v0.5.11 built,

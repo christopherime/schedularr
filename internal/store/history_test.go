@@ -45,3 +45,43 @@ func TestListScheduleHistory_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+// The same program may legitimately land on one channel more than once in
+// a single apply: once per occurrence of a multi-day window, and even
+// twice within one long occurrence when the library is small. All three
+// rows share the same planning wall-clock ScheduledAt -- the pre-v0.5.13
+// PRIMARY KEY rejected exactly this.
+func TestRecordScheduleHistory_SameProgramAcrossOccurrences(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	planned := time.Date(2026, 9, 12, 9, 0, 0, 0, time.UTC)
+	day1 := time.Date(2026, 9, 12, 22, 0, 0, 0, time.UTC)
+	day2 := day1.Add(24 * time.Hour)
+
+	entries := []scheduler.ScheduleHistoryEntry{
+		{ProgramID: "movie-1", ChannelID: "ch1", BlockName: "horror", ScheduledAt: planned, OccurrenceStart: day1, Sequence: 0},
+		{ProgramID: "movie-1", ChannelID: "ch1", BlockName: "horror", ScheduledAt: planned, OccurrenceStart: day1, Sequence: 1},
+		{ProgramID: "movie-1", ChannelID: "ch1", BlockName: "horror", ScheduledAt: planned, OccurrenceStart: day2, Sequence: 0},
+	}
+	require.NoError(t, s.RecordScheduleHistory(ctx, entries))
+
+	got, err := s.ListScheduleHistory(ctx, planned.Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Len(t, got, 3)
+}
+
+// A genuine double-commit of one occurrence row is still an integrity
+// error: the rebuilt identity is (block_name, occurrence_start, sequence).
+func TestRecordScheduleHistory_RejectsDuplicateOccurrenceRow(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	occ := time.Date(2026, 9, 12, 22, 0, 0, 0, time.UTC)
+	row := scheduler.ScheduleHistoryEntry{
+		ProgramID: "movie-1", ChannelID: "ch1", BlockName: "horror",
+		ScheduledAt: occ, OccurrenceStart: occ, Sequence: 0,
+	}
+	require.NoError(t, s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{row}))
+	require.Error(t, s.RecordScheduleHistory(ctx, []scheduler.ScheduleHistoryEntry{row}))
+}

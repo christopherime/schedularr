@@ -16,12 +16,19 @@ import (
 // say which occurrence a row belongs to rather than relying on the shared
 // historyEntry helper's fixed block.
 func airing(programID, showTitle, block string, occurrence, at time.Time) scheduler.ScheduleHistoryEntry {
+	// Same derivation as historyEntry's: distinct programs sharing a block
+	// and occurrence need distinct sequences, as production writes them.
+	seq := 0
+	for _, b := range []byte(programID) {
+		seq = seq*31 + int(b)
+	}
 	return scheduler.ScheduleHistoryEntry{
 		ProgramID:       programID,
 		ChannelID:       "ch1",
 		BlockName:       block,
 		ScheduledAt:     at,
 		OccurrenceStart: occurrence,
+		Sequence:        seq % 1000,
 		Title:           programID,
 		ShowTitle:       showTitle,
 		Type:            "episode",
