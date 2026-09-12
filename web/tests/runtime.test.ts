@@ -100,6 +100,16 @@ test("formatLocal renders an em dash for missing and echoes unparseable", () => 
   assert.equal(formatLocal("not a date"), "not a date");
 });
 
+// One clock voice: every other time this UI prints is 24-hour, so an
+// afternoon instant must never come back as "PM" whatever the locale.
+test("formatLocal keeps the 24-hour clock in any locale", () => {
+  const d = new Date();
+  d.setHours(18, 30, 0, 0);
+  const printed = formatLocal(d.toISOString());
+  assert.ok(printed.includes("18:30"), `expected a 24-hour clock, got ${printed}`);
+  assert.ok(!/[AP]M/i.test(printed), `expected no AM/PM marker, got ${printed}`);
+});
+
 test("plural and pad2", () => {
   assert.equal(plural(1, "slot"), "1 slot");
   assert.equal(plural(3, "channel"), "3 channels");

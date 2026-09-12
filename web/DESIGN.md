@@ -889,6 +889,58 @@ was never true.
   both the panel and the confirm explain it rather than leaving the
   operator to discover a row they cannot delete.
 
+### The polish pass (v0.5.13)
+
+A finish audit of the whole shipped surface — desktop and mobile, both
+palettes, print — with the mechanical detector and the motion inventory
+re-verified. What it changed, and the rules it left behind:
+
+- **One clock voice.** `formatLocal` (`runtime/format.ts`) pins its clock
+  half to 24-hour (`hourCycle: "h23"`) instead of leaving it to the
+  locale. Every other clock this UI prints — the guide ruler, slot
+  faces, the rundown, `formatClock` — was already 24-hour, and the rail's
+  occurrence line was pairing a locale "06:00 PM" start with a 24-hour
+  "19:30" end: two instruments disagreeing about one reading. The date
+  half keeps the locale's own order. Guarded by a unit test that rejects
+  any AM/PM marker.
+- **The token panel earns its interruption.** With no token stored the
+  shell now probes `GET /status` first and lets the 401 handler's
+  once-per-episode auto-open do the prompting (`runtime/shell.ts`). A
+  deployment running `api.insecure_no_auth` answers the probe without a
+  token, so it never sees a modal demanding one on every page load while
+  the bezel reads ARMED — chrome contradicting itself was the defect.
+- **The bezel unpins on mobile.** Wrapped to three rows under 640px the
+  sticky bezel held a third of a phone screen through every scroll; it
+  is `position: static` there now. The one thing that must stay pinned,
+  the guide's draft bar, re-pins to `top: 0` in the guide's own mobile
+  block instead of under a header that has scrolled away.
+- **Print is the calibration sheet.** The dark palette block is
+  `@media screen and (prefers-color-scheme: dark)` — print always takes
+  the light palette — and an `@media print` block removes everything
+  that exists to be clicked (nav, telemetry, the token trigger, filters,
+  the band, pagers, `.btn`, the deletion desk, the footer), drops each
+  table's trailing actions column, keeps rows/log lines/run cards
+  unsplit across pages, and clips wide scrollports at the sheet edge.
+- **Slot faces lead with the show.** The wire's `ScheduledProgram` grew
+  a `show` field (the episode's show title, omitted for movies) and
+  `slotFace` leads each program line with it: the slot's own heading is
+  the BLOCK, so an episode title alone could not say which of a block's
+  interleaved shows a line was. This closes a drift where this document
+  claimed `SHOW · SxxEyy` and the code printed the episode title.
+- **0 means 1, everywhere it leaks.** Specs bootstrapped from
+  `scheduler.yaml` before the import funnel mirrored the CUE defaults
+  stored `start_season`/`start_episode`/`episodes_per_block` as 0, which
+  the engine reads as "unset" but the editor read out loud as
+  `from S00E00` — and would have handed the cursor-rewind path a
+  position nothing airs at. `blockio.ParseYAML` now resolves the
+  defaults on import and `seriesConfigToForm` resolves them on read, so
+  both new and pre-existing records print the true position.
+- **Motion inventory re-verified, unchanged.** Every authored animation
+  either collapses safely under the global reduced-motion rule
+  (one 0.01ms iteration) or carries its own explicit `animation: none`
+  where a final keyframe frame would land wrong (the flares, the guide
+  draw-in/settle, the sweep trail). Nothing needed fixing.
+
 ## Typography
 
 One family everywhere: `var(--font-mono)`, a `ui-monospace` stack with

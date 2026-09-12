@@ -468,6 +468,8 @@ export interface components {
             title: string;
             /** @description Program kind as Tunarr reports it (movie, episode, flex, ...). Omitted when the source program carries no type. */
             type?: string;
+            /** @description The show an episode belongs to; omitted for non-episodes and when Tunarr reported none. The guide's slot faces lead with it -- an episode title alone cannot say which of a block's interleaved shows is airing. */
+            show?: string;
             /** @description Season number; omitted for non-episodes. */
             season?: number;
             /** @description Episode number; omitted for non-episodes. */

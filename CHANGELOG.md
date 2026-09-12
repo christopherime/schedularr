@@ -7,7 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A print stylesheet.** Printing any page removes everything that
+  exists to be clicked — nav, telemetry, the token trigger, filters,
+  tabs, pagers, action buttons, the deletion desk — and keeps the
+  readings; the dark palette is now screen-only, so a printout is always
+  the light calibration sheet. Table rows, log lines and run cards never
+  split across pages, and each table's actions column drops off with its
+  buttons.
+- **`ScheduledProgram.show` on the wire.** The show an episode belongs
+  to, omitted for movies. The guide's slot faces now lead each program
+  line with it (`Static Signal · S01E01`): the slot's heading is the
+  block, so an episode title alone could not say which of a block's
+  interleaved shows a line was — which also closes a drift where
+  `web/DESIGN.md` documented `SHOW · SxxEyy` and the face printed the
+  episode title.
+
+### Changed
+
+- **One clock voice.** `formatLocal` pins its time half to 24-hour
+  instead of following the locale: every other clock the UI prints (the
+  guide ruler, slot faces, the rundown) was already 24-hour, and the
+  editor's consequence rail was pairing a locale "06:00 PM" start with a
+  24-hour "19:30" end on one line.
+- **The bezel scrolls away on mobile.** Wrapped to three rows under
+  640px it pinned a third of a phone screen through every scroll. The
+  guide's draft bar — the one thing that must stay reachable — pins to
+  the viewport's top edge there instead.
+
 ### Fixed
+
+- **The token panel no longer demands a token the API doesn't want.**
+  With nothing stored, the shell probes `GET /status` first and only a
+  401 opens the panel (once per unarmed episode, as before). A
+  deployment running `api.insecure_no_auth: true` used to get the modal
+  on every page load while the bezel read ARMED.
+- **`from S00E00`.** Blocks imported from `scheduler.yaml` stored the
+  CUE defaults' absent series fields as zeros, which the engine reads as
+  "unset" but the editor read out loud as a position — and would have
+  handed the cursor rewind a `S00E00` nothing airs at. The import funnel
+  now resolves the defaults (`episodes_per_block`/`start_season`/
+  `start_episode` 0 → 1, `on_complete` → `continue`), and the editor
+  resolves them when reading records written before this fix.
 
 - **An apply against a small library no longer fails on repeats.**
   `schedule_history`'s original primary key `(program_id, channel_id,

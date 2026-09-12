@@ -232,6 +232,10 @@ func programToGen(p tunarr.Program, startTime time.Time) gen.ScheduledProgram {
 		t := p.Type
 		out.Type = &t
 	}
+	if p.ShowTitle != "" {
+		st := p.ShowTitle
+		out.Show = &st
+	}
 	if p.SeasonNumber > 0 {
 		s := p.SeasonNumber
 		out.Season = &s

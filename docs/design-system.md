@@ -10,7 +10,7 @@ Key characteristics: one font family, a fixed rem type scale (no `clamp()`), sma
 
 ## Colors and typography
 
-Every color is a CSS custom property on `:root`, light values first, overridden under `@media (prefers-color-scheme: dark)` — no third app-controlled theme state. The palette: a background/raised/inset triad, a graticule grid color, ink/ink-muted text, border/border-interactive, one accent (phosphor green), and warn/danger. `::selection`, the focus ring, and the scrollbar are themed from the same tokens.
+Every color is a CSS custom property on `:root`, light values first, overridden under `@media screen and (prefers-color-scheme: dark)` — no third app-controlled theme state, and the dark palette is screen-only: printing always takes the light palette, the instrument's own calibration sheet on paper. The palette: a background/raised/inset triad, a graticule grid color, ink/ink-muted text, border/border-interactive, one accent (phosphor green), and warn/danger. `::selection`, the focus ring, and the scrollbar are themed from the same tokens.
 
 One typeface everywhere: a `ui-monospace` stack (SF Mono, Cascadia Code, JetBrains Mono, Menlo, Consolas, Liberation Mono, generic `monospace`). A `--tracking-label` (`0.06em`) plus uppercase treatment marks the recurring "instrument legend" look — wordmark, nav, buttons, badges, form labels, headings. Body prose is the one context that stays sentence-case.
 

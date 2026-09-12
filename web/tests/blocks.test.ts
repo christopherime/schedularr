@@ -137,7 +137,15 @@ test("a series spec survives formFromSpec -> buildSpec unchanged", () => {
     ],
     fallback: { mode: "redistribute" as const },
   };
-  assert.deepEqual(buildSpec(formFromSpec(spec, true)), spec);
+  // Not byte-identical on purpose: reading a spec resolves the start
+  // defaults (0/absent means 1 throughout the model -- the engine and
+  // the API's create path already say so), so the round trip makes the
+  // implicit position explicit instead of echoing an unset one.
+  const expected = {
+    ...spec,
+    series: [{ ...spec.series[0], start_season: 1, start_episode: 1 }],
+  };
+  assert.deepEqual(buildSpec(formFromSpec(spec, true)), expected);
 });
 
 // ---- the list row's readings (v0.5.10 block power tools) -----------------

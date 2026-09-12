@@ -414,7 +414,17 @@ blocks the release; each item names the gap and why it was left.
 - **The as-run block link goes to `/blocks/`, not to the block.** The
   blocks page has no per-row anchor yet — the same limitation the guide
   inspector's link already carries.
-- **The mobile TRACKED table still scrolls horizontally.** Inherited
+- **AS-RUN rows print planning time, not air time (2026-09-12).** The
+  pane's clock, its day buckets, the storage strip's span, `GET
+  /history?days=N`, and range deletion all share one axis —
+  `scheduled_at`, the wall-clock instant planning happened — a deliberate
+  single-axis decision recorded on `rangeWhere` (internal/store). The
+  wire already carries `occurrence_start` + `sequence` + `duration_ms`,
+  so each row's true air instant is computable; but moving the DISPLAY
+  to air time while the window and the deletion desk stay on
+  `scheduled_at` would preview one set and delete another. If the
+  station-log reading ever matters more than the axis coherence, move
+  every surface to the occurrence axis together, not the clock alone. Inherited
   unchanged from `/series/`: `.table-wrap` scrolls a six-column table
   inside a 390px viewport. A card layout below the table breakpoint is a
   polish-pass item, not a memory-slice one.

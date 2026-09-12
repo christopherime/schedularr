@@ -1,7 +1,8 @@
 // Shell wiring, run once per page by every page entry (initShell):
 //
-//   1. The token panel: opens automatically when no token is stored or on
-//      a 401 -- but at most ONCE per unarmed episode (see
+//   1. The token panel: opens automatically when a request 401s (the
+//      tokenless first-load probe included) -- but at most ONCE per
+//      unarmed episode (see
 //      promptedThisEpisode below): the 60s telemetry poll also 401s while
 //      the token is bad, and re-opening the modal on every poll would
 //      steal focus from whatever the operator dismissed it to finish.
@@ -316,10 +317,13 @@ export function initShell(): void {
     if (token === null) {
       setArmedState("unarmed");
       renderTelemetry();
-      // The first-load auto-open IS this episode's one prompt -- the poll's
-      // ensuing 401s must not reopen a panel the operator dismissed.
-      promptedThisEpisode = true;
-      openPanel();
+      // Probe before prompting: a deployment running with auth off
+      // (api.insecure_no_auth) answers /status without any token, and a
+      // modal demanding one there is chrome contradicting itself on
+      // every page load. When the probe 401s instead, onUnauthorized
+      // below opens the panel -- its once-per-episode guard makes that
+      // first prompt this episode's one prompt, exactly as before.
+      void poll();
     } else {
       setArmedState("unknown");
       void poll();

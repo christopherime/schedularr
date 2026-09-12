@@ -308,8 +308,8 @@ test("rundownDaySlots keeps the half-open day window", () => {
 
 // ---- slot faces ------------------------------------------------------------
 
-function mkProgram(title: string, season?: number, episode?: number) {
-  return { title, season, episode, durationMs: 30 * 60_000, startMs: at(21) };
+function mkProgram(title: string, season?: number, episode?: number, show?: string) {
+  return { title, show, season, episode, durationMs: 30 * 60_000, startMs: at(21) };
 }
 
 function seriesSlot(programs: ReturnType<typeof mkProgram>[]) {
@@ -325,6 +325,20 @@ test("slotFace lists a series slot's programs, SHOW · SxxEyy per line", () => {
     wideSpan,
   );
   assert.deepEqual(face, { lines: ["Bloody Mary · S01E05", "Skin · S01E06"], more: 0 });
+});
+
+// The slot's heading is the BLOCK, so an episode title alone cannot say
+// which of a block's interleaved shows a line is: the show leads when
+// the wire names one, and a movie (no show) stays its title.
+test("slotFace leads with the show over the episode title", () => {
+  const face = slotFace(
+    seriesSlot([
+      mkProgram("Pilot", 1, 1, "Static Signal"),
+      mkProgram("Phantom Carrier"),
+    ]),
+    wideSpan,
+  );
+  assert.deepEqual(face, { lines: ["Static Signal · S01E01", "Phantom Carrier"], more: 0 });
 });
 
 test("slotFace folds a long lineup into +N more past FACE_MAX_LINES", () => {

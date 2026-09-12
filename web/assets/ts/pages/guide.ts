@@ -1315,6 +1315,7 @@ document.addEventListener("alpine:init", () => {
               endMs,
               programs: (s.programs ?? []).map((p) => ({
                 title: p.title,
+                show: p.show,
                 type: p.type,
                 season: p.season,
                 episode: p.episode,

@@ -124,8 +124,11 @@
   --surface-danger: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-raised));
 }
 
-/* -- palette: dark ("live phosphor trace on the glass") -------------- */
-@media (prefers-color-scheme: dark) {
+/* -- palette: dark ("live phosphor trace on the glass") --------------
+   Screen-only: a printout is the instrument's own calibration sheet on
+   paper, so print always takes the light palette below regardless of
+   the OS scheme. */
+@media screen and (prefers-color-scheme: dark) {
   :root {
     --color-bg: #0a0f0d;
     --color-bg-raised: #101715;
@@ -466,6 +469,15 @@ p {
    row-leading divider dangles); narrow bezels swap to a quiet
    two-column readout grid with no rules between items. */
 @media (max-width: 640px) {
+  /* The wrapped three-row bezel is a third of a phone screen; pinned,
+     it turns every scroll into reading a log through a letterbox. It
+     scrolls away with the page instead -- the one thing that must stay
+     pinned on mobile, the guide's draft bar, re-pins itself to top: 0
+     in the guide's own mobile block. */
+  .bezel {
+    position: static;
+  }
+
   .telemetry {
     flex-basis: 100%;
     display: grid;
@@ -3428,6 +3440,13 @@ dialog.panel .panel__body {
     padding-inline: var(--space-4);
   }
 
+  /* The bezel is static on mobile (see the shell block), so the draft
+     bar pins to the viewport's own top edge rather than under a header
+     that has scrolled away. */
+  .guide-draftzone {
+    top: 0;
+  }
+
   .guide-body {
     padding-inline: var(--space-4);
   }
@@ -4077,5 +4096,60 @@ dialog.panel .panel__body {
   .cleanup__controls .form-field,
   .cleanup__armed {
     min-width: 100%;
+  }
+}
+
+/* -- print: the instrument's calibration printout ------------------------
+   A printed page is a record, not a control surface: everything that
+   exists to be clicked -- nav, telemetry, the token trigger, filters,
+   pagers, action buttons, the deletion desk -- comes off the sheet, and
+   the readings stay. The light palette is guaranteed above (the dark
+   block is screen-only). The guide's grid is a scrollport; on paper it
+   prints the sheet it was showing, clipped to the page, which is the
+   same honest reading a photograph of the instrument would give. */
+@media print {
+  .bezel .nav,
+  .bezel .telemetry,
+  #token-trigger,
+  .tape,
+  .filter-bar,
+  .band,
+  .cleanup,
+  .guide-toolbar,
+  .guide-pager,
+  .guide-draftzone,
+  .row-actions,
+  .btn,
+  .footer {
+    display: none !important;
+  }
+
+  .bezel {
+    position: static;
+    border-bottom: var(--border-width) solid var(--color-ink);
+  }
+
+  /* The last column of every table is actions (blocks: Edit/…, tracked:
+     Remove); with the buttons gone the empty column and its header go
+     with them. */
+  .history-table th:last-child,
+  .history-table td:last-child {
+    display: none;
+  }
+
+  /* One reading per sheet where possible: never split a table row, a
+     log line, or a run card across pages. */
+  tr,
+  li,
+  article {
+    break-inside: avoid;
+  }
+
+  /* Wide tables clip rather than spill: the scrollbar idiom has no
+     paper equivalent, and a clipped column edge says "wider than the
+     sheet" more honestly than a second horizontal page would. */
+  .table-wrap,
+  .guide-viewport {
+    overflow: hidden;
   }
 }

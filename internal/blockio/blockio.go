@@ -107,14 +107,32 @@ func ParseYAML(data []byte) ([]scheduler.Block, error) {
 		return nil, fmt.Errorf("failed to validate blocks: duplicate block name(s): %s", strings.Join(dupes, ", "))
 	}
 
-	// Mirror #Block's `*"filter"` default into the decoded structs: raw
-	// validation above accepted an omitted `type`, so fill in what the
-	// schema says an absent field means (matching the JSON API path's
-	// normalization in internal/api's fromGen). Runs before the
-	// agreement check below so that check always sees resolved types.
+	// Mirror #Block's defaults into the decoded structs: raw validation
+	// above accepted the omitted fields, so fill in what the schema says
+	// an absent field means (matching the JSON API path's normalization
+	// in internal/api's fromGen). Runs before the agreement check below
+	// so that check always sees resolved types. The series defaults
+	// matter downstream: a stored spec carrying 0s makes the UI read
+	// "from S00E00" and hands the cursor-rewind path a position nothing
+	// airs at, even though the engine itself treats 0 as unset.
 	for i := range cfg.Blocks {
 		if cfg.Blocks[i].Type == "" {
 			cfg.Blocks[i].Type = scheduler.BlockTypeFilter
+		}
+		for j := range cfg.Blocks[i].Series {
+			sc := &cfg.Blocks[i].Series[j]
+			if sc.EpisodesPerBlock == 0 {
+				sc.EpisodesPerBlock = 1
+			}
+			if sc.StartSeason == 0 {
+				sc.StartSeason = 1
+			}
+			if sc.StartEpisode == 0 {
+				sc.StartEpisode = 1
+			}
+			if sc.OnComplete == "" {
+				sc.OnComplete = scheduler.CompletionActionContinue
+			}
 		}
 	}
 

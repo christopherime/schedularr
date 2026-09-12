@@ -240,6 +240,9 @@ export function rundownDayHeading(dayIndex: number, dayStartMs: number): string 
 /** One program of a slot's lineup, projected from the typed wire shape. */
 export interface GuideProgram {
   title: string;
+  /** The show an episode belongs to; absent for movies and when Tunarr
+   * reported none. The face leads with it -- see slotFace. */
+  show?: string;
   type?: string;
   season?: number;
   episode?: number;
@@ -383,9 +386,13 @@ export function slotFace(slot: GuideSlot, span: SlotSpan): SlotFace {
   if (span.endQ - span.startQ < FACE_MIN_DIVS * 6) return { lines: [], more: 0 };
   if (slot.programs.length === 0) return { lines: [], more: 0 };
   const all = slot.programs.map((p) => {
-    const title = p.title.trim() === "" ? "—" : p.title;
+    // The show leads when the wire names one: the slot's own heading is
+    // the BLOCK, so an episode title alone cannot say which of a
+    // block's interleaved shows this line is. A movie has no show and
+    // stays its title.
+    const name = p.show?.trim() || p.title.trim() || "—";
     const marker = sxxeyy(p.season, p.episode);
-    return marker ? `${title} · ${marker}` : title;
+    return marker ? `${name} · ${marker}` : name;
   });
   if (all.length <= FACE_MAX_LINES) return { lines: all, more: 0 };
   const kept = FACE_MAX_LINES - 1;

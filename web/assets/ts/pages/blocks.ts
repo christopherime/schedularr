@@ -576,9 +576,14 @@ function fillerToForm(f: FillerConfig | undefined): FillerForm {
 function seriesConfigToForm(sc: SeriesConfig): SeriesRowForm {
   return {
     show_title: sc.show_title,
-    episodes_per_block: String(sc.episodes_per_block),
-    start_season: numToStr(sc.start_season),
-    start_episode: numToStr(sc.start_episode),
+    // 0 is "unset" throughout the model -- the engine treats a zero
+    // start as 1, and specs bootstrapped before the import funnel
+    // mirrored the CUE defaults still store 0s. Reading them as 1 here
+    // keeps the summary from claiming "from S00E00" and the rewind path
+    // from PATCHing a position nothing airs at.
+    episodes_per_block: String(sc.episodes_per_block || 1),
+    start_season: numToStr(sc.start_season || 1),
+    start_episode: numToStr(sc.start_episode || 1),
     on_complete: sc.on_complete ?? "continue",
     skip_episodes: joinList(sc.skip_episodes),
     max_runs: numToStr(sc.max_runs),

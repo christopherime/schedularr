@@ -5,6 +5,13 @@
  * for a missing value and echoes an unparseable one verbatim rather than
  * guessing -- the binding contract calls for local time, not the UTC wire
  * value.
+ *
+ * The clock half is pinned to 24-hour (hourCycle h23), not left to the
+ * locale: every other clock this UI prints -- the guide ruler, slot
+ * faces, the rundown, formatClock -- is 24-hour, and one occurrence line
+ * pairing a locale "06:00 PM" start with a 24-hour "19:30" end read as
+ * two instruments disagreeing about one reading. The date half keeps the
+ * locale's own order.
  */
 export function formatLocal(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -16,6 +23,7 @@ export function formatLocal(iso: string | null | undefined): string {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
 }
 
